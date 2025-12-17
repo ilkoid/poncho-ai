@@ -1,0 +1,56 @@
+# Models Configuration
+models:
+  default_vision: "glm-4.6v-flash"
+  definitions:
+    glm-4.6v-flash:
+      provider: "zai"
+      model_name: "glm-4.6v-flash"
+      api_key: "${ZAI_API_KEY}" # Берется из ENV
+      max_tokens: 2000
+      temperature: 0.5
+      timeout: "60s"
+
+# Tools Configuration
+tools:
+  article_importer:
+    enabled: true
+    timeout: "60s"
+    retry_count: 3
+
+# S3 Configuration
+s3:
+  endpoint: "storage.yandexcloud.net"
+  region: "ru-central1"
+  bucket: "your-bucket-name"
+  access_key: "${S3_ACCESS_KEY}"
+  secret_key: "${S3_SECRET_KEY}"
+  use_ssl: true
+
+# Image Settings
+image_processing:
+  max_width: 800
+  quality: 90
+
+# App Settings
+app:
+  debug: true
+  prompts_dir: "./prompts"
+
+# Классификация файлов в бакете
+file_rules:
+  - tag: "sketch"
+    patterns: 
+      - "*.jpg"
+      - "*.jpeg"
+      - "*.png"
+    required: true
+
+  - tag: "plm_data"
+    patterns: 
+      - "*.json"
+    required: true
+    
+  - tag: "marketing"
+    patterns:
+      - "*seo*"
+      - "*keys*"
