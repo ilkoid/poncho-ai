@@ -1,0 +1,66 @@
+package wb
+
+import (
+	"context"
+	_ "fmt"
+)
+
+// Dictionaries - контейнер для всех справочников
+type Dictionaries struct {
+    Colors  []Color
+    Genders []string
+	Countries []Country
+    Seasons []string
+	Vats    []string // <--- Добавили НДС
+}
+
+// LoadDictionaries загружает все необходимые справочники параллельно
+func (c *Client) LoadDictionaries(ctx context.Context) (*Dictionaries, error) {
+    // В будущем лучше переделать на errgroup.Group для параллелизма, 
+    // чтобы загрузка 3 справочников занимала время самого медленного, а не сумму.
+    
+    colors, err := c.GetColors(ctx)
+    if err != nil { return nil, err }
+
+    genders, err := c.GetGenders(ctx)
+    if err != nil { return nil, err }
+
+    seasons, err := c.GetSeasons(ctx) // <--- Добавили
+    if err != nil { return nil, err }
+
+    vats, err := c.GetVats(ctx) // <--- Загружаем
+    if err != nil { return nil, err }
+
+	countries, err := c.GetCountries(ctx) // <--- Загружаем
+    if err != nil { return nil, err }
+
+    return &Dictionaries{
+        Colors:  colors,
+        Genders: genders,
+        Seasons: seasons,
+		Vats:    vats,
+		Countries: countries,
+    }, nil
+}
+
+/* 
+===
+Использование в main.go
+// ... внутри main
+fmt.Print("📚 Loading WB dictionaries... ")
+dicts, err := wbClient.LoadDictionaries(context.Background())
+if err != nil {
+    log.Fatal(err)
+}
+// Сохраняем в State
+state.Dictionaries = dicts 
+fmt.Printf("OK (%d colors, %d genders)\n", len(dicts.Colors), len(dicts.Genders))
+===
+Это решит проблему "разрозненных сущностей". Все справочные данные будут лежать в одном месте state.Dictionaries и будут доступны для Tools и LLM.
+
+Пример Tool для пола:
+LLM: "Пол: для мальчика"
+Tool match_gender: Ищет "для мальчика" в state.Dictionaries.Genders. Находит "Детский" (если он там есть) или возвращает список доступных: ["Мужской", "Женский", "Детский", "Унисекс"].
+*/
+
+// ================

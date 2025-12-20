@@ -16,86 +16,85 @@ import (
 
 // CommandResultMsg - сообщение, которое возвращает worker после работы
 type CommandResultMsg struct {
-    Output string
-    Err    error
+	Output string
+	Err    error
 }
 
 func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    var (
-        tiCmd tea.Cmd
-        vpCmd tea.Cmd
-    )
+	var (
+		tiCmd tea.Cmd
+		vpCmd tea.Cmd
+	)
 
-    m.textarea, tiCmd = m.textarea.Update(msg)
-    m.viewport, vpCmd = m.viewport.Update(msg)
+	m.textarea, tiCmd = m.textarea.Update(msg)
+	m.viewport, vpCmd = m.viewport.Update(msg)
 
-    switch msg := msg.(type) {
+	switch msg := msg.(type) {
 
-    // 1. Изменение размера окна терминала
-    case tea.WindowSizeMsg:
-        headerHeight := 1
-        footerHeight := m.textarea.Height() + 2 // + граница
-        
-        // Вычисляем высоту для области контента
-        vpHeight := msg.Height - headerHeight - footerHeight
-        if vpHeight < 0 { 
-            vpHeight = 0 
-        }
+	// 1. Изменение размера окна терминала
+	case tea.WindowSizeMsg:
+		headerHeight := 1
+		footerHeight := m.textarea.Height() + 2 // + граница
 
-        // Обновляем размеры существующего вьюпорта
-        m.viewport.Width = msg.Width
-        m.viewport.Height = vpHeight
-        
-        // Только при первом запуске (если нужно инициализировать контент)
-        if !m.ready {
-            m.ready = true
-            // Опционально: можно принудительно обновить контент, если он зависит от ширины
-        }
-        
-        m.textarea.SetWidth(msg.Width)
+		// Вычисляем высоту для области контента
+		vpHeight := msg.Height - headerHeight - footerHeight
+		if vpHeight < 0 {
+			vpHeight = 0
+		}
 
+		// Обновляем размеры существующего вьюпорта
+		m.viewport.Width = msg.Width
+		m.viewport.Height = vpHeight
 
-    // 2. Клавиши
-    case tea.KeyMsg:
-        switch msg.Type {
-        case tea.KeyCtrlC, tea.KeyEsc:
-            return m, tea.Quit
-        
-        case tea.KeyEnter:
-            input := m.textarea.Value()
-            if strings.TrimSpace(input) == "" {
-                return m, nil
-            }
-            
-            // Очищаем ввод
-            m.textarea.Reset()
+		// Только при первом запуске (если нужно инициализировать контент)
+		if !m.ready {
+			m.ready = true
+			// Опционально: можно принудительно обновить контент, если он зависит от ширины
+		}
 
-            // Добавляем сообщение пользователя в лог
-            m.appendLog(userMsgStyle("USER > ") + input)
+		m.textarea.SetWidth(msg.Width)
 
-            // Запускаем асинхронную команду
-            return m, performCommand(input, m.appState)
-        }
+	// 2. Клавиши
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyEsc:
+			return m, tea.Quit
 
-    // 3. Результат выполнения команды (прилетел асинхронно)
-    case CommandResultMsg:
-        if msg.Err != nil {
-            m.appendLog(errorMsgStyle("ERROR: ") + msg.Err.Error())
-        } else {
-            m.appendLog(systemMsgStyle("SYSTEM: ") + msg.Output)
-        }
-        // Возвращаем фокус на ввод
-        m.textarea.Focus() 
-    }
+		case tea.KeyEnter:
+			input := m.textarea.Value()
+			if strings.TrimSpace(input) == "" {
+				return m, nil
+			}
 
-    return m, tea.Batch(tiCmd, vpCmd)
+			// Очищаем ввод
+			m.textarea.Reset()
+
+			// Добавляем сообщение пользователя в лог
+			m.appendLog(userMsgStyle("USER > ") + input)
+
+			// Запускаем асинхронную команду
+			return m, performCommand(input, m.appState)
+		}
+
+	// 3. Результат выполнения команды (прилетел асинхронно)
+	case CommandResultMsg:
+		if msg.Err != nil {
+			m.appendLog(errorMsgStyle("ERROR: ") + msg.Err.Error())
+		} else {
+			m.appendLog(systemMsgStyle("SYSTEM: ") + msg.Output)
+		}
+		// Возвращаем фокус на ввод
+		m.textarea.Focus()
+	}
+
+	return m, tea.Batch(tiCmd, vpCmd)
 }
 
 // Хелпер для добавления строки в лог и прокрутки вниз
 func (m *MainModel) appendLog(str string) {
-    newContent := fmt.Sprintf("%s\n%s", m.viewport.View(), str)
-    m.viewport.SetContent(newContent)
-    m.viewport.GotoBottom()
+	newContent := fmt.Sprintf("%s\n%s", m.viewport.View(), str)
+	m.viewport.SetContent(newContent)
+	m.viewport.GotoBottom()
 }
 
 // performCommand - симуляция работы (позже подключим реальный контроллер)
@@ -130,7 +129,7 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 			if state.S3 == nil {
 				return CommandResultMsg{Err: fmt.Errorf("s3 client is not initialized")}
 			}
-			
+
 			rawObjects, err := state.S3.ListFiles(ctx, articleID)
 			if err != nil {
 				return CommandResultMsg{Err: fmt.Errorf("s3 error: %w", err)}
@@ -143,27 +142,40 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 				return CommandResultMsg{Err: fmt.Errorf("classification error: %w", err)}
 			}
 
-			// 3. Обновляем глобальный State (потокобезопасно, т.к. мы в одной горутине tea.Cmd)
+			// 3. Конвертируем ClassifiedFile в FileMeta
+			convertedFiles := make(map[string][]*app.FileMeta)
+			for tag, files := range classifiedFiles {
+				var fileMetas []*app.FileMeta
+				for _, file := range files {
+					fileMetas = append(fileMetas, &app.FileMeta{
+						ClassifiedFile:    file,
+						VisionDescription: "",
+						Tags:              []string{},
+					})
+				}
+				convertedFiles[tag] = fileMetas
+			}
+
+			// 4. Обновляем глобальный State (потокобезопасно, т.к. мы в одной горутине tea.Cmd)
 			state.CurrentArticleID = articleID
-			state.Files = classifiedFiles
+			state.Files = convertedFiles
 
 			// 4. Формируем красивый отчет для пользователя
 			var report strings.Builder
 			report.WriteString(fmt.Sprintf("✅ Article %s loaded successfully.\n", articleID))
 			report.WriteString("Found files:\n")
-			
+
 			// Проходимся по всем найденным категориям
 			for tag, files := range classifiedFiles {
 				report.WriteString(fmt.Sprintf("  • [%s]: %d files\n", strings.ToUpper(tag), len(files)))
 			}
-			
+
 			// Добавим предупреждение, если важных категорий нет (опционально)
 			if len(classifiedFiles["sketch"]) == 0 {
 				report.WriteString("⚠️ WARNING: No sketches found!\n")
 			}
 
 			return CommandResultMsg{Output: report.String()}
-
 
 		// === КОМАНДА 2: RENDER <PROMPT_FILE> ===
 		// Тестирует промпт, подставляя данные из загруженного артикула
@@ -211,7 +223,7 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 			var output strings.Builder
 			output.WriteString(fmt.Sprintf("📋 Rendered Prompt for model: %s\n", p.Config.Model))
 			output.WriteString("--------------------------------------------------\n")
-			
+
 			for _, m := range messages {
 				// Обрезаем длинный текст для красоты лога
 				contentPreview := m.Content
@@ -222,7 +234,6 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 			}
 
 			return CommandResultMsg{Output: output.String()}
-
 
 		// === КОМАНДА 3: PING ===
 		case "ping":

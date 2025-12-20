@@ -16,7 +16,12 @@ type AppConfig struct {
 	S3              S3Config              `yaml:"s3"`
 	ImageProcessing ImageProcConfig       `yaml:"image_processing"`
 	App             AppSpecific           `yaml:"app"`
-    FileRules []FileRule `yaml:"file_rules"` // Новая секция
+    FileRules 		[]FileRule            `yaml:"file_rules"` // Новая секция
+	WB				 WBConfig             `yaml:"wb"`
+}
+
+type WBConfig struct {
+    APIKey string `yaml:"api_key"`
 }
 
 type FileRule struct {
@@ -28,6 +33,7 @@ type FileRule struct {
 // ModelsConfig — настройки AI моделей.
 type ModelsConfig struct {
 	DefaultVision string              `yaml:"default_vision"` // Алиас по умолчанию (например, "glm-4.6v-flash")
+	DefaultChat   string              `yaml:"default_chat"`   // Алиас для чата по умолчанию (например, "glm-4.5")
 	Definitions   map[string]ModelDef `yaml:"definitions"`    // Словарь определений моделей
 }
 

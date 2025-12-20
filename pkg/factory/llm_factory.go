@@ -12,19 +12,19 @@ import (
 func NewLLMProvider(cfg config.ModelDef) (llm.Provider, error) {
 	switch cfg.Provider {
 	case "zai", "openai", "deepseek":
-		baseURL := cfg.BaseURL
-		
-		// Fallback defaults если URL не задан в конфиге
-		if baseURL == "" {
-			if cfg.Provider == "zai" {
-				baseURL = "https://open.bigmodel.cn/api/paas/v4"
-			} else if cfg.Provider == "openai" {
-				baseURL = "https://api.openai.com/v1"
-			}
+		// Create a temporary AppConfig with just the model definition
+		// This is a workaround since NewClient expects a full AppConfig
+		tempCfg := &config.AppConfig{
+			Models: config.ModelsConfig{
+				DefaultChat: "temp", // This won't be used
+				Definitions: map[string]config.ModelDef{
+					"temp": cfg,
+				},
+			},
 		}
 
-		return openai.New(cfg.APIKey, baseURL, cfg.Timeout), nil
-	
+		return openai.NewClient(tempCfg), nil
+
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", cfg.Provider)
 	}

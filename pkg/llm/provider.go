@@ -4,8 +4,13 @@ package llm
 
 import "context"
 
-// Provider — контракт для любого AI-сервиса
+// Пакет llm/provider.go определяет интерфейс, который должны реализовать
+// все адаптеры (OpenAI, Anthropic, Ollama и т.д.).
+
+// Provider — абстракция над LLM API.
 type Provider interface {
-	// Chat отправляет запрос и возвращает текстовый ответ (или JSON строку)
-	Chat(ctx context.Context, req ChatRequest) (string, error)
+	// Generate принимает контекст и историю сообщений.
+	// Возвращает ответ модели в унифицированном формате Message.
+	// tools — опциональный список определений функций (если провайдер поддерживает Function Calling).
+	Generate(ctx context.Context, messages []Message, tools ...any) (Message, error)
 }
