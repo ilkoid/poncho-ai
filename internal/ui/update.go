@@ -239,9 +239,13 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 		case "ping":
 			return CommandResultMsg{Output: "Pong! System is alive."}
 
-		// Неизвестная команда
+		// Неизвестная команда - пробуем передать в CommandRegistry если он существует
 		default:
-			return CommandResultMsg{Err: fmt.Errorf("unknown command: '%s'. Try 'load <id>' or 'render <file>'", cmd)}
+			// Если в state есть CommandRegistry, пробуем использовать его
+			if cmdRegistry := state.GetCommandRegistry(); cmdRegistry != nil {
+				return cmdRegistry.Execute(input, state)
+			}
+			return CommandResultMsg{Err: fmt.Errorf("unknown command: '%s'. Try 'load <id>', 'render <file>' or 'todo help'", cmd)}
 		}
 	}
 }

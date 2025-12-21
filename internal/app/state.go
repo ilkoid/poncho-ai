@@ -1,4 +1,4 @@
-/* 
+/*
 Обновленный файл.
 Теперь это не просто конфиг-контейнер, а потокобезопасное хранилище (Store).
 Ключевые изменения:
@@ -17,6 +17,8 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
+	"github.com/ilkoid/poncho-ai/pkg/todo"
+	"github.com/ilkoid/poncho-ai/pkg/tools"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -40,9 +42,12 @@ type FileMeta struct {
 // Доступ к полям, которые меняются в runtime (History, Files, IsProcessing),
 // должен идти через методы с мьютексом.
 type GlobalState struct {
-	Config       *config.AppConfig
-	S3           *s3storage.Client
-	Dictionaries *wb.Dictionaries
+	Config          *config.AppConfig
+	S3              *s3storage.Client
+	Dictionaries    *wb.Dictionaries
+	Todo            *todo.Manager
+	CommandRegistry *CommandRegistry
+	ToolsRegistry   *tools.Registry
 
 	// mu защищает доступ к History, Files и IsProcessing
 	mu sync.RWMutex
@@ -67,6 +72,9 @@ func NewState(cfg *config.AppConfig, s3Client *s3storage.Client) *GlobalState {
 	return &GlobalState{
 		Config:           cfg,
 		S3:               s3Client,
+		Todo:             todo.NewManager(),
+		CommandRegistry:  NewCommandRegistry(),
+		ToolsRegistry:    tools.NewRegistry(),
 		CurrentArticleID: "NONE",
 		CurrentModel:     cfg.Models.DefaultVision,
 		IsProcessing:     false,
@@ -125,7 +133,8 @@ func (s *GlobalState) SetProcessing(busy bool) {
 // Он объединяет:
 // 1. Системный промпт.
 // 2. "Рабочую память" (результаты анализа файлов).
-// 3. Историю диалога.
+// 3. Контекст плана (Todo Manager).
+// 4. Историю диалога.
 func (s *GlobalState) BuildAgentContext(systemPrompt string) []llm.Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -145,13 +154,22 @@ func (s *GlobalState) BuildAgentContext(systemPrompt string) []llm.Message {
 		knowledgeMsg = fmt.Sprintf("\nКОНТЕКСТ АРТИКУЛА (Результаты анализа файлов):\n%s", visualContext)
 	}
 
-	// 2. Собираем итоговый массив сообщений
-	messages := make([]llm.Message, 0, len(s.History)+2)
+	// 2. Формируем контекст плана
+	todoContext := s.Todo.String()
+
+	// 3. Собираем итоговый массив сообщений
+	messages := make([]llm.Message, 0, len(s.History)+3)
 
 	// Системное сообщение с инъекцией знаний
 	messages = append(messages, llm.Message{
 		Role:    llm.RoleSystem,
 		Content: systemPrompt + knowledgeMsg,
+	})
+
+	// Добавляем контекст плана
+	messages = append(messages, llm.Message{
+		Role:    llm.RoleSystem,
+		Content: todoContext,
 	})
 
 	// Добавляем историю переписки
@@ -160,7 +178,30 @@ func (s *GlobalState) BuildAgentContext(systemPrompt string) []llm.Message {
 	return messages
 }
 
-/* 
+// --- Вспомогательные методы для работы с Todo ---
+
+// AddTodoTask безопасно добавляет новую задачу в план
+func (s *GlobalState) AddTodoTask(description string, metadata ...map[string]interface{}) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Todo.Add(description, metadata...)
+}
+
+// CompleteTodoTask безопасно отмечает задачу как выполненную
+func (s *GlobalState) CompleteTodoTask(id int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Todo.Complete(id)
+}
+
+// FailTodoTask безопасно отмечает задачу как проваленную
+func (s *GlobalState) FailTodoTask(id int, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Todo.Fail(id, reason)
+}
+
+/*
 Как это использовать (Пример логики)
 Теперь в коде вашего агента (или в команде analyze) вы делаете так:
 
@@ -176,9 +217,25 @@ Vision этап (отдельно):
 
 Вызываете state.BuildAgentContext("Ты менеджер WB...").
 
-Этот метод сам склеит ("Платье красное...") в системный промпт.
+Этот метод сам склеит ("Платье красное...") и контекст плана в системный промпт.
 
 Отправляете результат в LLM.
 
-LLM "видит" описание картинки, но не тратит токены на vision.
+LLM "видит" описание картинки и текущий план, но не тратит токены на vision.
+
+Управление задачами:
+
+state.AddTodoTask("Проанализировать эскиз платья") - добавить задачу
+state.CompleteTodoTask(1) - отметить задачу как выполненную
+state.FailTodoTask(1, "Ошибка загрузки файла") - отметить задачу как проваленную
 */
+
+// GetCommandRegistry возвращает реестр команд для использования в UI
+func (s *GlobalState) GetCommandRegistry() *CommandRegistry {
+	return s.CommandRegistry
+}
+
+// GetToolsRegistry возвращает реестр инструментов для использования в агенте
+func (s *GlobalState) GetToolsRegistry() *tools.Registry {
+	return s.ToolsRegistry
+}

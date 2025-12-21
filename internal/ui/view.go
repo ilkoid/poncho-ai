@@ -2,37 +2,131 @@
 package ui
 
 import (
-    "fmt"
-    "github.com/charmbracelet/lipgloss"
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/ilkoid/poncho-ai/pkg/todo"
 )
 
+// Стили для Todo панели
+var (
+	todoBorderStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62")).
+			Padding(0, 1).
+			MarginRight(1)
+
+	todoTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("212")).
+			MarginBottom(1)
+
+	taskPendingStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("251"))
+
+	taskDoneStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("46")).
+			Strikethrough(true)
+
+	taskFailedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Strikethrough(true)
+
+	statsStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Italic(true).
+			MarginTop(1)
+)
+
+// renderTodoPanel рендерит панель с задачами
+func renderTodoPanel(manager *todo.Manager, width int) string {
+	tasks := manager.GetTasks()
+	pending, done, failed := manager.GetStats()
+
+	if len(tasks) == 0 {
+		return todoBorderStyle.Width(width).Render(
+			todoTitleStyle.Render("📋 ПЛАН ДЕЙСТВИЙ") + "\n" +
+				taskPendingStyle.Render("Нет активных задач"),
+		)
+	}
+
+	var content strings.Builder
+	content.WriteString(todoTitleStyle.Render("📋 ПЛАН ДЕЙСТВИЙ"))
+	content.WriteString("\n\n")
+
+	for _, task := range tasks {
+		var statusIcon string
+		var taskStyle lipgloss.Style
+
+		switch task.Status {
+		case todo.StatusDone:
+			statusIcon = "✓"
+			taskStyle = taskDoneStyle
+		case todo.StatusFailed:
+			statusIcon = "✗"
+			taskStyle = taskFailedStyle
+		default:
+			statusIcon = "○"
+			taskStyle = taskPendingStyle
+		}
+
+		content.WriteString(fmt.Sprintf("%s %d. %s\n",
+			statusIcon, task.ID,
+			taskStyle.Render(task.Description)))
+
+		if task.Status == todo.StatusFailed && task.Metadata != nil {
+			if err, ok := task.Metadata["error"].(string); ok {
+				content.WriteString(fmt.Sprintf("   %s\n",
+					taskFailedStyle.Render("Ошибка: "+err)))
+			}
+		}
+	}
+
+	content.WriteString("\n")
+	content.WriteString(statsStyle.Render(
+		fmt.Sprintf("Выполнено: %d | В работе: %d | Провалено: %d",
+			done, pending, failed)))
+
+	return todoBorderStyle.Width(width).Render(content.String())
+}
+
 func (m MainModel) View() string {
-    if !m.ready {
-        return "Initializing UI..."
-    }
+	if !m.ready {
+		return "Initializing UI..."
+	}
 
-    // Формируем строку статуса (Header)
-    status := fmt.Sprintf(" ACT: %s | MODEL: %s ", 
-        m.appState.CurrentArticleID, 
-        m.appState.CurrentModel,
-    )
-    
-    // Растягиваем хедер на всю ширину
-    header := headerStyle.
-        Width(m.viewport.Width).
-        Render(status)
+	// Формируем строку статуса (Header)
+	status := fmt.Sprintf(" ACT: %s | MODEL: %s ",
+		m.appState.CurrentArticleID,
+		m.appState.CurrentModel,
+	)
 
-    // Разделительная линия
-    border := lipgloss.NewStyle().
-        Foreground(grayColor).
-        Width(m.viewport.Width).
-        Render("──────────────────────────────────────────────────")
+	// Растягиваем хедер на всю ширину
+	header := headerStyle.
+		Width(m.viewport.Width).
+		Render(status)
 
-    // Собираем всё вместе: Header + Viewport + Border + Input
-    return fmt.Sprintf("%s\n%s\n%s\n%s",
-        header,
-        m.viewport.View(),
-        border,
-        m.textarea.View(),
-    )
+	// Разделительная линия
+	border := lipgloss.NewStyle().
+		Foreground(grayColor).
+		Width(m.viewport.Width).
+		Render("──────────────────────────────────────────────────")
+
+	// Создаем основной контент
+	mainContent := fmt.Sprintf("%s\n%s\n%s\n%s",
+		header,
+		m.viewport.View(),
+		border,
+		m.textarea.View(),
+	)
+
+	// Добавляем Todo панель справа
+	todoPanel := renderTodoPanel(m.appState.Todo, 40)
+
+	// Комбинируем основной контент с Todo панелью
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		mainContent,
+		todoPanel,
+	)
 }

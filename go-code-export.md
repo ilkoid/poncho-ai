@@ -1,45 +1,191 @@
 # internal/app/state.go
 
 ```go
+/* 
+Обновленный файл.
+Теперь это не просто конфиг-контейнер, а потокобезопасное хранилище (Store).
+Ключевые изменения:
+sync.RWMutex — защита от паники при одновременной записи агентом и чтении UI.
+ClassifiedFile расширен полями VisionDescription — это и есть ваша "Рабочая память" для результатов анализа.
+Метод BuildAgentContext — реализует логику "сжатия" знаний перед отправкой в LLM.
+*/
+
 package app
 
 import (
+	"fmt"
+	"sync"
+
 	"github.com/ilkoid/poncho-ai/pkg/classifier"
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
-// GlobalState хранит данные сессии
+// Пакет app хранит глобальное состояние приложения (GlobalState).
+// Он выступает "Single Source of Truth" для UI, Агента и системных утилит.
+
+// FileMeta расширяет базовую классификацию файла результатами анализа.
+// Это позволяет хранить "знание" о картинке, не гоняя саму картинку в LLM каждый раз.
+type FileMeta struct {
+	classifier.ClassifiedFile
+
+	// VisionDescription хранит текстовое описание, полученное от Vision-модели.
+	// Пример: "На эскизе изображено платье миди с V-образным вырезом..."
+	VisionDescription string
+
+	// Tags — теги, извлеченные или сгенерированные в процессе.
+	Tags []string
+}
+
+// GlobalState хранит данные сессии, конфигурацию и историю.
+// Доступ к полям, которые меняются в runtime (History, Files, IsProcessing),
+// должен идти через методы с мьютексом.
 type GlobalState struct {
-    Config       *config.AppConfig
-    S3           *s3storage.Client
-    Dictionaries *wb.Dictionaries // <--- Чтобы доступ был отовсюду
-    
-    // Данные текущей сессии
-    CurrentArticleID string
-    CurrentModel     string
-    IsProcessing     bool
+	Config       *config.AppConfig
+	S3           *s3storage.Client
+	Dictionaries *wb.Dictionaries
 
-    // Files хранит классифицированные файлы артикула
-    // Ключ: тег (например, "sketch", "plm_data")
-    // Значение: список файлов
-    Files map[string][]classifier.ClassifiedFile // <--- Добавляем это поле
+	// mu защищает доступ к History, Files и IsProcessing
+	mu sync.RWMutex
+
+	// History — хронология общения (User <-> Agent).
+	// Сюда НЕ попадают тяжелые base64, только текст и tool calls.
+	History []llm.Message
+
+	// Files — "Рабочая память" (Working Memory).
+	// Хранит файлы текущего артикула и результаты их анализа.
+	// Ключ: тег (например, "sketch", "plm_data").
+	Files map[string][]*FileMeta
+
+	// Данные текущей сессии
+	CurrentArticleID string
+	CurrentModel     string
+	IsProcessing     bool
 }
 
-// NewState создает начальное состояние
+// NewState создает начальное состояние.
 func NewState(cfg *config.AppConfig, s3Client *s3storage.Client) *GlobalState {
-    return &GlobalState{
-        Config:           cfg,
-        S3:               s3Client,
-        CurrentArticleID: "NONE",
-        CurrentModel:     cfg.Models.DefaultVision,
-        IsProcessing:     false,
-        
-        // Инициализируем пустую карту, чтобы не было panic при чтении
-        Files:            make(map[string][]classifier.ClassifiedFile), 
-    }
+	return &GlobalState{
+		Config:           cfg,
+		S3:               s3Client,
+		CurrentArticleID: "NONE",
+		CurrentModel:     cfg.Models.DefaultVision,
+		IsProcessing:     false,
+		Files:            make(map[string][]*FileMeta),
+		History:          make([]llm.Message, 0),
+	}
 }
+
+// --- Thread-Safe Methods (Методы для работы с данными) ---
+
+// AppendMessage безопасно добавляет сообщение в историю.
+func (s *GlobalState) AppendMessage(msg llm.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.History = append(s.History, msg)
+}
+
+// GetHistory возвращает копию истории для рендера в UI или отправки в LLM.
+// Возвращаем копию, чтобы избежать race condition при чтении слайса.
+func (s *GlobalState) GetHistory() []llm.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	dst := make([]llm.Message, len(s.History))
+	copy(dst, s.History)
+	return dst
+}
+
+// UpdateFileAnalysis сохраняет результат работы Vision модели в "память" файла.
+// path — путь к файлу (ключ поиска), description — результат анализа.
+func (s *GlobalState) UpdateFileAnalysis(tag string, filename string, description string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	files, ok := s.Files[tag]
+	if !ok {
+		return
+	}
+
+	for _, f := range files {
+		if f.Filename == filename { // Предполагаем, что Filename есть в ClassifiedFile
+			f.VisionDescription = description
+			return
+		}
+	}
+}
+
+// SetProcessing меняет статус занятости (для спиннера в UI).
+func (s *GlobalState) SetProcessing(busy bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.IsProcessing = busy
+}
+
+// BuildAgentContext собирает полный контекст для генеративного запроса (ReAct).
+// Он объединяет:
+// 1. Системный промпт.
+// 2. "Рабочую память" (результаты анализа файлов).
+// 3. Историю диалога.
+func (s *GlobalState) BuildAgentContext(systemPrompt string) []llm.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// 1. Формируем блок знаний из проанализированных файлов
+	var visualContext string
+	for tag, files := range s.Files {
+		for _, f := range files {
+			if f.VisionDescription != "" {
+				visualContext += fmt.Sprintf("- Файл [%s] %s: %s\n", tag, f.Filename, f.VisionDescription)
+			}
+		}
+	}
+
+	knowledgeMsg := ""
+	if visualContext != "" {
+		knowledgeMsg = fmt.Sprintf("\nКОНТЕКСТ АРТИКУЛА (Результаты анализа файлов):\n%s", visualContext)
+	}
+
+	// 2. Собираем итоговый массив сообщений
+	messages := make([]llm.Message, 0, len(s.History)+2)
+
+	// Системное сообщение с инъекцией знаний
+	messages = append(messages, llm.Message{
+		Role:    llm.RoleSystem,
+		Content: systemPrompt + knowledgeMsg,
+	})
+
+	// Добавляем историю переписки
+	messages = append(messages, s.History...)
+
+	return messages
+}
+
+/* 
+Как это использовать (Пример логики)
+Теперь в коде вашего агента (или в команде analyze) вы делаете так:
+
+Vision этап (отдельно):
+
+Берете файл, отправляете в LLM (без истории).
+
+Получаете текст.
+
+Вызываете state.UpdateFileAnalysis("sketch", "img1.jpg", "Платье красное...").
+
+Генерация карточки (ReAct):
+
+Вызываете state.BuildAgentContext("Ты менеджер WB...").
+
+Этот метод сам склеит ("Платье красное...") в системный промпт.
+
+Отправляете результат в LLM.
+
+LLM "видит" описание картинки, но не тратит токены на vision.
+*/
+
 ```
 
 =================
@@ -178,86 +324,85 @@ import (
 
 // CommandResultMsg - сообщение, которое возвращает worker после работы
 type CommandResultMsg struct {
-    Output string
-    Err    error
+	Output string
+	Err    error
 }
 
 func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    var (
-        tiCmd tea.Cmd
-        vpCmd tea.Cmd
-    )
+	var (
+		tiCmd tea.Cmd
+		vpCmd tea.Cmd
+	)
 
-    m.textarea, tiCmd = m.textarea.Update(msg)
-    m.viewport, vpCmd = m.viewport.Update(msg)
+	m.textarea, tiCmd = m.textarea.Update(msg)
+	m.viewport, vpCmd = m.viewport.Update(msg)
 
-    switch msg := msg.(type) {
+	switch msg := msg.(type) {
 
-    // 1. Изменение размера окна терминала
-    case tea.WindowSizeMsg:
-        headerHeight := 1
-        footerHeight := m.textarea.Height() + 2 // + граница
-        
-        // Вычисляем высоту для области контента
-        vpHeight := msg.Height - headerHeight - footerHeight
-        if vpHeight < 0 { 
-            vpHeight = 0 
-        }
+	// 1. Изменение размера окна терминала
+	case tea.WindowSizeMsg:
+		headerHeight := 1
+		footerHeight := m.textarea.Height() + 2 // + граница
 
-        // Обновляем размеры существующего вьюпорта
-        m.viewport.Width = msg.Width
-        m.viewport.Height = vpHeight
-        
-        // Только при первом запуске (если нужно инициализировать контент)
-        if !m.ready {
-            m.ready = true
-            // Опционально: можно принудительно обновить контент, если он зависит от ширины
-        }
-        
-        m.textarea.SetWidth(msg.Width)
+		// Вычисляем высоту для области контента
+		vpHeight := msg.Height - headerHeight - footerHeight
+		if vpHeight < 0 {
+			vpHeight = 0
+		}
 
+		// Обновляем размеры существующего вьюпорта
+		m.viewport.Width = msg.Width
+		m.viewport.Height = vpHeight
 
-    // 2. Клавиши
-    case tea.KeyMsg:
-        switch msg.Type {
-        case tea.KeyCtrlC, tea.KeyEsc:
-            return m, tea.Quit
-        
-        case tea.KeyEnter:
-            input := m.textarea.Value()
-            if strings.TrimSpace(input) == "" {
-                return m, nil
-            }
-            
-            // Очищаем ввод
-            m.textarea.Reset()
+		// Только при первом запуске (если нужно инициализировать контент)
+		if !m.ready {
+			m.ready = true
+			// Опционально: можно принудительно обновить контент, если он зависит от ширины
+		}
 
-            // Добавляем сообщение пользователя в лог
-            m.appendLog(userMsgStyle("USER > ") + input)
+		m.textarea.SetWidth(msg.Width)
 
-            // Запускаем асинхронную команду
-            return m, performCommand(input, m.appState)
-        }
+	// 2. Клавиши
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyEsc:
+			return m, tea.Quit
 
-    // 3. Результат выполнения команды (прилетел асинхронно)
-    case CommandResultMsg:
-        if msg.Err != nil {
-            m.appendLog(errorMsgStyle("ERROR: ") + msg.Err.Error())
-        } else {
-            m.appendLog(systemMsgStyle("SYSTEM: ") + msg.Output)
-        }
-        // Возвращаем фокус на ввод
-        m.textarea.Focus() 
-    }
+		case tea.KeyEnter:
+			input := m.textarea.Value()
+			if strings.TrimSpace(input) == "" {
+				return m, nil
+			}
 
-    return m, tea.Batch(tiCmd, vpCmd)
+			// Очищаем ввод
+			m.textarea.Reset()
+
+			// Добавляем сообщение пользователя в лог
+			m.appendLog(userMsgStyle("USER > ") + input)
+
+			// Запускаем асинхронную команду
+			return m, performCommand(input, m.appState)
+		}
+
+	// 3. Результат выполнения команды (прилетел асинхронно)
+	case CommandResultMsg:
+		if msg.Err != nil {
+			m.appendLog(errorMsgStyle("ERROR: ") + msg.Err.Error())
+		} else {
+			m.appendLog(systemMsgStyle("SYSTEM: ") + msg.Output)
+		}
+		// Возвращаем фокус на ввод
+		m.textarea.Focus()
+	}
+
+	return m, tea.Batch(tiCmd, vpCmd)
 }
 
 // Хелпер для добавления строки в лог и прокрутки вниз
 func (m *MainModel) appendLog(str string) {
-    newContent := fmt.Sprintf("%s\n%s", m.viewport.View(), str)
-    m.viewport.SetContent(newContent)
-    m.viewport.GotoBottom()
+	newContent := fmt.Sprintf("%s\n%s", m.viewport.View(), str)
+	m.viewport.SetContent(newContent)
+	m.viewport.GotoBottom()
 }
 
 // performCommand - симуляция работы (позже подключим реальный контроллер)
@@ -292,7 +437,7 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 			if state.S3 == nil {
 				return CommandResultMsg{Err: fmt.Errorf("s3 client is not initialized")}
 			}
-			
+
 			rawObjects, err := state.S3.ListFiles(ctx, articleID)
 			if err != nil {
 				return CommandResultMsg{Err: fmt.Errorf("s3 error: %w", err)}
@@ -305,27 +450,40 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 				return CommandResultMsg{Err: fmt.Errorf("classification error: %w", err)}
 			}
 
-			// 3. Обновляем глобальный State (потокобезопасно, т.к. мы в одной горутине tea.Cmd)
+			// 3. Конвертируем ClassifiedFile в FileMeta
+			convertedFiles := make(map[string][]*app.FileMeta)
+			for tag, files := range classifiedFiles {
+				var fileMetas []*app.FileMeta
+				for _, file := range files {
+					fileMetas = append(fileMetas, &app.FileMeta{
+						ClassifiedFile:    file,
+						VisionDescription: "",
+						Tags:              []string{},
+					})
+				}
+				convertedFiles[tag] = fileMetas
+			}
+
+			// 4. Обновляем глобальный State (потокобезопасно, т.к. мы в одной горутине tea.Cmd)
 			state.CurrentArticleID = articleID
-			state.Files = classifiedFiles
+			state.Files = convertedFiles
 
 			// 4. Формируем красивый отчет для пользователя
 			var report strings.Builder
 			report.WriteString(fmt.Sprintf("✅ Article %s loaded successfully.\n", articleID))
 			report.WriteString("Found files:\n")
-			
+
 			// Проходимся по всем найденным категориям
 			for tag, files := range classifiedFiles {
 				report.WriteString(fmt.Sprintf("  • [%s]: %d files\n", strings.ToUpper(tag), len(files)))
 			}
-			
+
 			// Добавим предупреждение, если важных категорий нет (опционально)
 			if len(classifiedFiles["sketch"]) == 0 {
 				report.WriteString("⚠️ WARNING: No sketches found!\n")
 			}
 
 			return CommandResultMsg{Output: report.String()}
-
 
 		// === КОМАНДА 2: RENDER <PROMPT_FILE> ===
 		// Тестирует промпт, подставляя данные из загруженного артикула
@@ -373,7 +531,7 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 			var output strings.Builder
 			output.WriteString(fmt.Sprintf("📋 Rendered Prompt for model: %s\n", p.Config.Model))
 			output.WriteString("--------------------------------------------------\n")
-			
+
 			for _, m := range messages {
 				// Обрезаем длинный текст для красоты лога
 				contentPreview := m.Content
@@ -385,7 +543,6 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 
 			return CommandResultMsg{Output: output.String()}
 
-
 		// === КОМАНДА 3: PING ===
 		case "ping":
 			return CommandResultMsg{Output: "Pong! System is alive."}
@@ -396,6 +553,7 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 		}
 	}
 }
+
 ```
 
 =================
@@ -461,9 +619,10 @@ import (
 
 // ClassifiedFile - файл с присвоенным тегом
 type ClassifiedFile struct {
-	Tag          string // "sketch", "plm" и т.д.
-	OriginalKey  string
-	Size         int64
+	Tag         string // "sketch", "plm" и т.д.
+	OriginalKey string
+	Size        int64
+	Filename    string // Извлеченное имя файла из OriginalKey
 }
 
 // Engine выполняет классификацию
@@ -481,20 +640,22 @@ func (e *Engine) Process(objects []s3storage.StoredObject) (map[string][]Classif
 
 	for _, obj := range objects {
 		filename := filepath.Base(obj.Key) // Смотрим только на имя файла, не на путь
-		
+
 		matched := false
 		for _, rule := range e.rules {
 			for _, pattern := range rule.Patterns {
 				// Используем Case-insensitive сравнение для расширений
-				// (на самом деле filepath.Match в Linux чувствителен к регистру, 
+				// (на самом деле filepath.Match в Linux чувствителен к регистру,
 				// для надежности лучше приводить к нижнему регистру оба)
 				isMatch, _ := filepath.Match(strings.ToLower(pattern), strings.ToLower(filename))
-				
+
 				if isMatch {
+					filename := filepath.Base(obj.Key)
 					result[rule.Tag] = append(result[rule.Tag], ClassifiedFile{
 						Tag:         rule.Tag,
 						OriginalKey: obj.Key,
 						Size:        obj.Size,
+						Filename:    filename,
 					})
 					matched = true
 					break // Файл попал в категорию, дальше не проверяем (или проверяем, если нужен мульти-тег?)
@@ -504,13 +665,15 @@ func (e *Engine) Process(objects []s3storage.StoredObject) (map[string][]Classif
 				break
 			}
 		}
-		
+
 		// Если файл не попал ни под одно правило, можно сохранить его в "other"
 		if !matched {
+			filename := filepath.Base(obj.Key)
 			result["other"] = append(result["other"], ClassifiedFile{
 				Tag:         "other",
 				OriginalKey: obj.Key,
 				Size:        obj.Size,
+				Filename:    filename,
 			})
 		}
 	}
@@ -684,19 +847,19 @@ import (
 func NewLLMProvider(cfg config.ModelDef) (llm.Provider, error) {
 	switch cfg.Provider {
 	case "zai", "openai", "deepseek":
-		baseURL := cfg.BaseURL
-		
-		// Fallback defaults если URL не задан в конфиге
-		if baseURL == "" {
-			if cfg.Provider == "zai" {
-				baseURL = "https://open.bigmodel.cn/api/paas/v4"
-			} else if cfg.Provider == "openai" {
-				baseURL = "https://api.openai.com/v1"
-			}
+		// Create a temporary AppConfig with just the model definition
+		// This is a workaround since NewClient expects a full AppConfig
+		tempCfg := &config.AppConfig{
+			Models: config.ModelsConfig{
+				DefaultChat: "temp", // This won't be used
+				Definitions: map[string]config.ModelDef{
+					"temp": cfg,
+				},
+			},
 		}
 
-		return openai.New(cfg.APIKey, baseURL, cfg.Timeout), nil
-	
+		return openai.NewClient(tempCfg), nil
+
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", cfg.Provider)
 	}
@@ -709,187 +872,110 @@ func NewLLMProvider(cfg config.ModelDef) (llm.Provider, error) {
 # pkg/llm/openai/client.go
 
 ```go
-/*
-Адаптер OpenAI-Compatible (pkg/llm/adapters/openai/client.go)
-Большинство современных API (включая GLM-4.6 и DeepSeek) совместимы с форматом OpenAI. Адаптер покрывает 99% нужд.
-Важно: используем стандартную библиотеку net/http и encoding/json, чтобы не тащить тяжелые SDK.
-*/
-
 package openai
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	_ "log"
-	"net/http"
-	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
+	openai "github.com/sashabaranov/go-openai"
 )
 
-// Client реализует интерфейс llm.Provider
+// Client реализует интерфейс llm.Provider для OpenAI.
 type Client struct {
-	apiKey  string
-	baseURL string
-	http    *http.Client
+	api   *openai.Client
+	model string
 }
 
-// New создает нового клиента
-func New(apiKey, baseURL string, timeout time.Duration) *Client {
-	if timeout == 0 {
-		timeout = 60 * time.Second
-	}
+func NewClient(cfg *config.AppConfig) *Client {
+	// Get the default chat model configuration
+	modelDef, _ := cfg.GetVisionModel(cfg.Models.DefaultChat)
 	return &Client{
-		apiKey:  apiKey,
-		baseURL: baseURL,
-		http: &http.Client{
-			Timeout: timeout,
+		api:   openai.NewClient(modelDef.APIKey), // Use API key from model definition
+		model: modelDef.ModelName,                // Use model name from definition
+	}
+}
+
+// Generate выполняет запрос к API.
+func (c *Client) Generate(ctx context.Context, messages []llm.Message, tools ...any) (llm.Message, error) {
+	// 1. Конвертируем наши сообщения в формат OpenAI
+	openaiMsgs := make([]openai.ChatCompletionMessage, len(messages))
+	for i, m := range messages {
+		openaiMsgs[i] = mapToOpenAI(m)
+	}
+
+	// 2. Создаем запрос
+	req := openai.ChatCompletionRequest{
+		Model:    c.model,
+		Messages: openaiMsgs,
+	}
+
+	// (Тут можно добавить логику для tools, если нужно, пока пропускаем для краткости)
+
+	// 3. Вызываем API
+	resp, err := c.api.CreateChatCompletion(ctx, req)
+	if err != nil {
+		return llm.Message{}, err
+	}
+
+	// 4. Маппим ответ обратно в наш формат
+	choice := resp.Choices[0].Message
+
+	result := llm.Message{
+		Role:    llm.Role(choice.Role),
+		Content: choice.Content,
+	}
+
+	// Обработка Tool Calls (если модель решила вызвать функцию)
+	if len(choice.ToolCalls) > 0 {
+		result.ToolCalls = make([]llm.ToolCall, len(choice.ToolCalls))
+		for i, tc := range choice.ToolCalls {
+			result.ToolCalls[i] = llm.ToolCall{
+				ID:   tc.ID,
+				Name: tc.Function.Name,
+				Args: tc.Function.Arguments,
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// mapToOpenAI конвертирует наше внутреннее сообщение в формат SDK.
+// Здесь происходит магия Vision: если есть картинки, создаем MultiContent.
+func mapToOpenAI(m llm.Message) openai.ChatCompletionMessage {
+	msg := openai.ChatCompletionMessage{
+		Role: string(m.Role),
+	}
+
+	// Если картинок нет, отправляем просто текст
+	if len(m.Images) == 0 {
+		msg.Content = m.Content
+		return msg
+	}
+
+	// Если есть картинки (Vision запрос)
+	parts := []openai.ChatMessagePart{
+		{
+			Type: openai.ChatMessagePartTypeText,
+			Text: m.Content,
 		},
 	}
+
+	for _, imgURL := range m.Images {
+		parts = append(parts, openai.ChatMessagePart{
+			Type: openai.ChatMessagePartTypeImageURL,
+			ImageURL: &openai.ChatMessageImageURL{
+				URL:    imgURL, // Ожидается base64 data-uri или http ссылка
+				Detail: openai.ImageURLDetailAuto,
+			},
+		})
+	}
+
+	msg.MultiContent = parts
+	return msg
 }
-
-// Структуры для JSON API (внутренние)
-type apiRequest struct {
-	Model       string       `json:"model"`
-	Messages    []apiMessage `json:"messages"`
-	Temperature float64      `json:"temperature,omitempty"`
-	MaxTokens   int          `json:"max_tokens,omitempty"`
-	Stream      bool         `json:"stream"`
-	// Поддержка JSON режима
-	ResponseFormat *apiRespFormat `json:"response_format,omitempty"`
-}
-
-type apiRespFormat struct {
-	Type string `json:"type"` // "json_object"
-}
-
-type apiMessage struct {
-	Role    string       `json:"role"`
-	Content interface{}  `json:"content"` // string или []apiContent
-}
-
-type apiContent struct {
-	Type     string    `json:"type"`
-	Text     string    `json:"text,omitempty"`
-	ImageURL *apiImage `json:"image_url,omitempty"`
-}
-
-type apiImage struct {
-	URL string `json:"url"`
-}
-
-type apiResponse struct {
-	Choices []struct {
-		Message struct {
-			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"`
-		} `json:"message"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-		Code    string `json:"code"`
-	} `json:"error,omitempty"`
-}
-
-
-// Chat — реализация интерфейса
-func (c *Client) Chat(ctx context.Context, req llm.ChatRequest) (string, error) {
-	// 1. Конвертация нашего формата в формат API
-	apiMsgs := make([]apiMessage, len(req.Messages))
-	for i, msg := range req.Messages {
-		if len(msg.Content) == 1 && msg.Content[0].Type == llm.TypeText {
-			apiMsgs[i] = apiMessage{
-				Role:    msg.Role,
-				Content: msg.Content[0].Text,
-			}
-			continue
-		}
-
-		contentList := make([]apiContent, len(msg.Content))
-		for j, part := range msg.Content {
-			if part.Type == llm.TypeText {
-				contentList[j] = apiContent{Type: "text", Text: part.Text}
-			} else if part.Type == llm.TypeImage {
-				contentList[j] = apiContent{
-					Type:     "image_url",
-					ImageURL: &apiImage{URL: part.ImageURL},
-				}
-			}
-		}
-		apiMsgs[i] = apiMessage{
-			Role:    msg.Role,
-			Content: contentList,
-		}
-	}
-
-	apiReq := apiRequest{
-		Model:       req.Model,
-		Messages:    apiMsgs,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
-		Stream:      false,
-	}
-
-	if req.Format == "json_object" {
-		apiReq.ResponseFormat = &apiRespFormat{Type: "json_object"}
-	}
-
-	// 2. Сериализация
-	bodyBytes, err := json.Marshal(apiReq)
-	if err != nil {
-		return "", fmt.Errorf("marshal error: %w", err)
-	}
-
-	// 3. Запрос
-	url := fmt.Sprintf("%s/chat/completions", c.baseURL)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(bodyBytes))
-	if err != nil {
-		return "", fmt.Errorf("request creation error: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("api call error: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 4. Чтение ответа
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("api error (status %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var result apiResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", fmt.Errorf("unmarshal response error: %w. body: %s", err, string(respBody))
-	}
-
-	if result.Error != nil {
-		return "", fmt.Errorf("api returned error: %s (code: %s)", result.Error.Message, result.Error.Code)
-	}
-
-	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("empty choices in response")
-	}
-
-	msg := result.Choices[0].Message
-	
-	// FIX: Поддержка моделей, возвращающих ответ в reasoning_content
-	content := msg.Content
-	if content == "" && msg.ReasoningContent != "" {
-		content = msg.ReasoningContent
-	}
-
-	return content, nil
-}
-
 
 ```
 
@@ -904,10 +990,15 @@ package llm
 
 import "context"
 
-// Provider — контракт для любого AI-сервиса
+// Пакет llm/provider.go определяет интерфейс, который должны реализовать
+// все адаптеры (OpenAI, Anthropic, Ollama и т.д.).
+
+// Provider — абстракция над LLM API.
 type Provider interface {
-	// Chat отправляет запрос и возвращает текстовый ответ (или JSON строку)
-	Chat(ctx context.Context, req ChatRequest) (string, error)
+	// Generate принимает контекст и историю сообщений.
+	// Возвращает ответ модели в унифицированном формате Message.
+	// tools — опциональный список определений функций (если провайдер поддерживает Function Calling).
+	Generate(ctx context.Context, messages []Message, tools ...any) (Message, error)
 }
 
 ```
@@ -917,41 +1008,45 @@ type Provider interface {
 # pkg/llm/types.go
 
 ```go
-// Базовые типы - определяем универсальный язык общения с моделями
 package llm
 
-// ChatRequest — унифицированный запрос к любой модели
-type ChatRequest struct {
-	Model       string
-	Temperature float64
-	MaxTokens   int
-	Format      string    // "json_object" или пустая строка
-	Messages    []Message // История чата
-}
+// Пакет llm содержит абстракции и типы данных для взаимодействия с языковыми моделями.
+// Этот файл определяет универсальную структуру сообщений, чтобы отвязать бизнес-логику
+// от конкретных SDK (OpenAI, Anthropic и т.д.).
 
-// Message — одно сообщение
-type Message struct {
-	Role    string        // "system", "user", "assistant"
-	Content []ContentPart // Мультимодальное содержимое
-}
+// Role определяет, кто автор сообщения.
+type Role string
 
-// ContentPart — часть сообщения (текст или картинка)
-type ContentPart struct {
-	Type     string // "text" или "image_url"
-	Text     string // Заполнено, если Type == "text"
-	ImageURL string // Заполнено, если Type == "image_url"
-}
-
-// Константы для удобства
 const (
-	RoleSystem    = "system"
-	RoleUser      = "user"
-	RoleAssistant = "assistant"
-	
-	TypeText  = "text"
-	TypeImage = "image_url"
+	RoleSystem    Role = "system"
+	RoleUser      Role = "user"
+	RoleAssistant Role = "assistant"
+	RoleTool      Role = "tool" // Результат выполнения функции
 )
 
+// ToolCall описывает запрос модели на вызов инструмента.
+type ToolCall struct {
+	ID   string // Уникальный ID вызова (нужен для mapping'а ответа)
+	Name string // Имя функции (например, "wb_update_card")
+	Args string // JSON-строка с аргументами
+}
+
+// Message — универсальная единица общения в ReAct цикле.
+type Message struct {
+	Role    Role
+	Content string
+
+	// ToolCalls заполняется, если Role == RoleAssistant и модель хочет вызвать тулы.
+	ToolCalls []ToolCall
+
+	// ToolCallID заполняется, если Role == RoleTool (ссылка на запрос).
+	ToolCallID string
+
+	// Images — пути к файлам или base64.
+	// Используется ТОЛЬКО для одноразовых Vision-запросов (analyze image).
+	// В основную историю ReAct эти данные попадать НЕ должны (экономия токенов).
+	Images []string
+}
 
 ```
 
