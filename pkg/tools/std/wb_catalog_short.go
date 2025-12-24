@@ -1,0 +1,76 @@
+//go:build short
+
+// Реализация конкретных инструментов для WB (Subjects, Categories).
+package std
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/ilkoid/poncho-ai/pkg/tools"
+	"github.com/ilkoid/poncho-ai/pkg/wb"
+)
+
+// --- Tool: get_wb_parent_categories ---
+
+type WbParentCategoriesTool struct {
+	client *wb.Client
+}
+
+func NewWbParentCategoriesTool(c *wb.Client) *WbParentCategoriesTool {
+	return &WbParentCategoriesTool{client: c}
+}
+
+func (t *WbParentCategoriesTool) Definition() tools.ToolDefinition {
+	return tools.ToolDefinition{
+		Name:        "get_wb_parent_categories",
+		Description: "Возвращает список родительских категорий Wildberries (например: Женщинам, Электроника). Используй это, чтобы найти ID категории.",
+		Parameters: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{}, // Нет параметров
+		},
+	}
+}
+
+func (t *WbParentCategoriesTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	// TODO: Call WB client to get parent categories
+	// TODO: Serialize result to JSON
+	// TODO: Return JSON string of categories
+	return "", nil
+}
+
+// --- Tool: get_wb_subjects ---
+
+type WbSubjectsTool struct {
+	client *wb.Client
+}
+
+func NewWbSubjectsTool(c *wb.Client) *WbSubjectsTool {
+	return &WbSubjectsTool{client: c}
+}
+
+func (t *WbSubjectsTool) Definition() tools.ToolDefinition {
+	return tools.ToolDefinition{
+		Name:        "get_wb_subjects",
+		Description: "Возвращает список предметов (подкатегорий) для заданной родительской категории.",
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"parentID": map[string]interface{}{
+					"type":        "integer",
+					"description": "ID родительской категории (получи его из get_wb_parent_categories)",
+				},
+			},
+			"required": []string{"parentID"},
+		},
+	}
+}
+
+func (t *WbSubjectsTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	// TODO: Parse JSON arguments for parentID
+	// TODO: Call WB client to get subjects for parent category
+	// TODO: Serialize result to JSON
+	// TODO: Return JSON string of subjects
+	return "", nil
+}
