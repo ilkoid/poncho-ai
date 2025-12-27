@@ -21,7 +21,35 @@ type AppConfig struct {
 }
 
 type WBConfig struct {
-    APIKey string `yaml:"api_key"`
+	APIKey        string `yaml:"api_key"`
+	BaseURL       string `yaml:"base_url"`        // Базовый URL WB Content API
+	RateLimit     int    `yaml:"rate_limit"`      // Запросов в минуту
+	BurstLimit    int    `yaml:"burst_limit"`     // Burst для rate limiter
+	RetryAttempts int    `yaml:"retry_attempts"`  // Количество retry попыток
+	Timeout       string `yaml:"timeout"`         // Timeout для HTTP запросов (например, "30s")
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c *WBConfig) GetDefaults() WBConfig {
+	result := *c // Копируем текущие значения
+
+	if result.BaseURL == "" {
+		result.BaseURL = "https://content-api.wildberries.ru"
+	}
+	if result.RateLimit == 0 {
+		result.RateLimit = 100 // запросов в минуту
+	}
+	if result.BurstLimit == 0 {
+		result.BurstLimit = 5
+	}
+	if result.RetryAttempts == 0 {
+		result.RetryAttempts = 3
+	}
+	if result.Timeout == "" {
+		result.Timeout = "30s"
+	}
+
+	return result
 }
 
 type FileRule struct {
@@ -50,7 +78,8 @@ type ModelDef struct {
 
 // ToolConfig — настройки инструментов (импорт, поиск и т.д.).
 type ToolConfig struct {
-	Enabled    bool          `yaml:"enabled"`
+	Enabled    bool   `yaml:"enabled"`
+	PostPrompt string `yaml:"post_prompt"` // Путь к post-prompt файлу (относительно prompts_dir)
 	Timeout    time.Duration `yaml:"timeout"`
 	RetryCount int           `yaml:"retry_count"`
 }

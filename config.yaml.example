@@ -1,27 +1,38 @@
 # Models Configuration
 models:
-  default_vision: "glm-4.6v-flash"
+  default_chat: "glm-4.6"  # Текстовая модель для чата (не vision)
   definitions:
-    glm-4.6v-flash:
+    glm-4.6:
       provider: "zai"
-      model_name: "glm-4.6v-flash"
-      api_key: "${ZAI_API_KEY}" # Берется из ENV
+      model_name: "glm-4.6"
+      api_key: "${ZAI_API_KEY}"
+      base_url: "https://api.z.ai/api/paas/v4"
       max_tokens: 2000
       temperature: 0.5
-      timeout: "60s"
+      timeout: "120s"
+      thinking: "enabled"  # Эта строка включает thinking
+    glm-4.5:
+      provider: "zai"
+      model_name: "glm-4.5"
+      api_key: "${ZAI_API_KEY}"
+      base_url: "https://api.z.ai/api/paas/v4"
+      max_tokens: 2000
+      temperature: 0.5
+      timeout: "120s"
+      thinking: "disabled"  # Эта строка отключает thinking
 
 # Tools Configuration
 tools:
   article_importer:
     enabled: true
-    timeout: "60s"
+    timeout: "120s"
     retry_count: 3
 
 # S3 Configuration
 s3:
   endpoint: "storage.yandexcloud.net"
   region: "ru-central1"
-  bucket: "your-bucket-name"
+  bucket: "plm-ai"
   access_key: "${S3_ACCESS_KEY}"
   secret_key: "${S3_SECRET_KEY}"
   use_ssl: true
@@ -54,3 +65,54 @@ file_rules:
     patterns:
       - "*seo*"
       - "*keys*"
+
+wb:
+  api_key: "${WB_API_KEY}"
+  # Rate limiting параметры (опционально, есть дефолтные значения)
+  base_url: "https://content-api.wildberries.ru"  # Default
+  rate_limit: 100      # Default: запросов в минуту
+  burst_limit: 5       # Default: burst capacity
+  retry_attempts: 3    # Default: retry attempts
+  timeout: "30s"       # Default: HTTP timeout
+
+# Post-Prompts для инструментов (tools)
+#
+# Этот файл определяет какие системные промпты используются после выполнения
+# конкретных инструментов. Post-prompt активируется на следующей итерации LLM
+# и помогает модели правильно обработать результат инструмента.
+#
+# Формат:
+#   tools:
+#     <tool_name>:
+#       post_prompt: <path_to_prompt_file>  # Относительный путь от prompts/
+#       enabled: true                        # Включён ли post-prompt
+
+tools:
+  # Wildberries: родительские категории
+  get_wb_parent_categories:
+    post_prompt: "wb/parent_categories_analysis.yaml"
+    enabled: true
+
+  # Wildberries: subjects (подкатегории)
+  get_wb_subjects:
+    post_prompt: "wb/subjects_analysis.yaml"
+    enabled: true
+
+  # Wildberries: ping API
+  ping_wb_api:
+    post_prompt: "wb/api_health_report.yaml"
+    enabled: true
+
+  # Planner инструменты (не требуют post-prompt)
+  plan_add_task:
+    enabled: true
+
+  plan_mark_done:
+    enabled: true
+
+  plan_mark_failed:
+    enabled: true
+
+  plan_clear:
+    enabled: true
+

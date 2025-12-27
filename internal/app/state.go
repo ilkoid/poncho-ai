@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/ilkoid/poncho-ai/pkg/agent"
 	"github.com/ilkoid/poncho-ai/pkg/classifier"
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
@@ -48,8 +49,9 @@ type GlobalState struct {
 	Todo            *todo.Manager
 	CommandRegistry *CommandRegistry
 	ToolsRegistry   *tools.Registry
+	Orchestrator    agent.Agent // AI-агент для обработки запросов (интерфейс)
 
-	// mu защищает доступ к History, Files и IsProcessing
+	// mu защищает доступ к History, Files, UserChoice и IsProcessing
 	mu sync.RWMutex
 
 	// History — хронология общения (User <-> Agent).
@@ -60,6 +62,9 @@ type GlobalState struct {
 	// Хранит файлы текущего артикула и результаты их анализа.
 	// Ключ: тег (например, "sketch", "plm_data").
 	Files map[string][]*FileMeta
+
+	// UserChoice — данные для интерактивного выбора пользователя
+	UserChoice *userChoiceData
 
 	// Данные текущей сессии
 	CurrentArticleID string
@@ -103,6 +108,14 @@ func (s *GlobalState) GetHistory() []llm.Message {
 	return dst
 }
 
+// ClearHistory очищает историю диалога.
+// Thread-safe метод для сброса истории сообщений.
+func (s *GlobalState) ClearHistory() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.History = make([]llm.Message, 0)
+}
+
 // UpdateFileAnalysis сохраняет результат работы Vision модели в "память" файла.
 // path — путь к файлу (ключ поиска), description — результат анализа.
 func (s *GlobalState) UpdateFileAnalysis(tag string, filename string, description string) {
@@ -127,6 +140,28 @@ func (s *GlobalState) SetProcessing(busy bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.IsProcessing = busy
+}
+
+// SetCurrentArticle потокобезопасно обновляет текущий артикул и файлы.
+func (s *GlobalState) SetCurrentArticle(articleID string, files map[string][]*FileMeta) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.CurrentArticleID = articleID
+	s.Files = files
+}
+
+// GetCurrentArticle потокобезопасно возвращает текущий артикул и файлы.
+func (s *GlobalState) GetCurrentArticle() (articleID string, files map[string][]*FileMeta) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.CurrentArticleID, s.Files
+}
+
+// GetCurrentArticleID потокобезопасно возвращает только ID текущего артикула.
+func (s *GlobalState) GetCurrentArticleID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.CurrentArticleID
 }
 
 // BuildAgentContext собирает полный контекст для генеративного запроса (ReAct).
@@ -238,4 +273,42 @@ func (s *GlobalState) GetCommandRegistry() *CommandRegistry {
 // GetToolsRegistry возвращает реестр инструментов для использования в агенте
 func (s *GlobalState) GetToolsRegistry() *tools.Registry {
 	return s.ToolsRegistry
+}
+
+// --- User Choice Support (для интерактивных сценариев) ---
+
+// userChoiceData хранит данные для выбора пользователя
+type userChoiceData struct {
+	question string
+	options  []string
+}
+
+// SetUserChoice сохраняет данные для выбора пользователя.
+// Thread-safe метод.
+func (s *GlobalState) SetUserChoice(question string, options []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.UserChoice = &userChoiceData{
+		question: question,
+		options:  options,
+	}
+}
+
+// GetUserChoice возвращает данные для выбора пользователя.
+// Thread-safe метод. Возвращает question и options.
+func (s *GlobalState) GetUserChoice() (string, []string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.UserChoice == nil {
+		return "", nil
+	}
+	return s.UserChoice.question, s.UserChoice.options
+}
+
+// ClearUserChoice очищает данные выбора пользователя.
+func (s *GlobalState) ClearUserChoice() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.UserChoice = nil
 }

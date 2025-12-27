@@ -1,4 +1,6 @@
-// Реализация конкретных инструментов для WB (Subjects, Categories).
+// Package std содержит стандартные инструменты для работы с Wildberries.
+//
+// Реализует инструменты для получения каталога категорий и предметов.
 package std
 
 import (
@@ -10,34 +12,44 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
-// --- Tool: get_wb_parent_categories ---
-
+// WbParentCategoriesTool — инструмент для получения родительских категорий Wildberries.
+//
+// Позволяет агенту получить список верхнеуровневых категорий (Женщинам, Мужчинам, и т.д.).
 type WbParentCategoriesTool struct {
 	client *wb.Client
 }
 
+// NewWbParentCategoriesTool создает инструмент для получения родительских категорий.
+//
+// Параметры:
+//   - c: экземпляр клиента Wildberries API
+//
+// Возвращает инструмент, готовый к регистрации в реестре.
 func NewWbParentCategoriesTool(c *wb.Client) *WbParentCategoriesTool {
 	return &WbParentCategoriesTool{client: c}
 }
 
+// Definition возвращает определение инструмента для function calling.
 func (t *WbParentCategoriesTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "get_wb_parent_categories",
 		Description: "Возвращает список родительских категорий Wildberries (например: Женщинам, Электроника). Используй это, чтобы найти ID категории.",
 		Parameters: map[string]interface{}{
 			"type":       "object",
-			"properties": map[string]interface{}{}, // Нет параметров
+			"properties": map[string]interface{}{},
+			"required":   []string{}, // Нет обязательных параметров
 		},
 	}
 }
 
+// Execute выполняет инструмент согласно контракту "Raw In, String Out".
 func (t *WbParentCategoriesTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 	// Аргументы не нужны, но JSON может быть "{}"
 	cats, err := t.client.GetParentCategories(ctx)
 	if err != nil {
-		return "", fmt.Errorf("wb api error: %w", err)
+		return "", fmt.Errorf("failed to get parent categories: %w", err)
 	}
-	
+
 	// Сериализуем результат
 	data, err := json.Marshal(cats)
 	if err != nil {
@@ -46,16 +58,24 @@ func (t *WbParentCategoriesTool) Execute(ctx context.Context, argsJSON string) (
 	return string(data), nil
 }
 
-// --- Tool: get_wb_subjects ---
-
+// WbSubjectsTool — инструмент для получения предметов (подкатегорий) Wildberries.
+//
+// Позволяет агенту получить список подкатегорий для заданной родительской категории.
 type WbSubjectsTool struct {
 	client *wb.Client
 }
 
+// NewWbSubjectsTool создает инструмент для получения предметов (подкатегорий).
+//
+// Параметры:
+//   - c: экземпляр клиента Wildberries API
+//
+// Возвращает инструмент, готовый к регистрации в реестре.
 func NewWbSubjectsTool(c *wb.Client) *WbSubjectsTool {
 	return &WbSubjectsTool{client: c}
 }
 
+// Definition возвращает определение инструмента для function calling.
 func (t *WbSubjectsTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "get_wb_subjects",
@@ -73,6 +93,7 @@ func (t *WbSubjectsTool) Definition() tools.ToolDefinition {
 	}
 }
 
+// Execute выполняет инструмент согласно контракту "Raw In, String Out".
 func (t *WbSubjectsTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 	var args struct {
 		ParentID int `json:"parentID"`
@@ -84,7 +105,7 @@ func (t *WbSubjectsTool) Execute(ctx context.Context, argsJSON string) (string, 
 	// Используем метод GetAllSubjects (с пагинацией), который мы делали ранее
 	subjects, err := t.client.GetAllSubjectsLazy(ctx, args.ParentID)
 	if err != nil {
-		return "", fmt.Errorf("wb api error: %w", err)
+		return "", fmt.Errorf("failed to get subjects: %w", err)
 	}
 
 	data, err := json.Marshal(subjects)
@@ -94,3 +115,63 @@ func (t *WbSubjectsTool) Execute(ctx context.Context, argsJSON string) (string, 
 	return string(data), nil
 }
 
+// WbPingTool — инструмент для проверки доступности Wildberries API.
+//
+// Позволяет агенту проверить, доступен ли WB Content API и валиден ли API ключ.
+// Возвращает детальную диагностику: статус сервиса, timestamp, тип ошибки.
+type WbPingTool struct {
+	client *wb.Client
+}
+
+// NewWbPingTool создает инструмент для проверки доступности WB API.
+//
+// Параметры:
+//   - c: экземпляр клиента Wildberries API
+//
+// Возвращает инструмент, готовый к регистрации в реестре.
+func NewWbPingTool(c *wb.Client) *WbPingTool {
+	return &WbPingTool{client: c}
+}
+
+// Definition возвращает определение инструмента для function calling.
+func (t *WbPingTool) Definition() tools.ToolDefinition {
+	return tools.ToolDefinition{
+		Name:        "ping_wb_api",
+		Description: "Проверяет доступность Wildberries Content API. Возвращает статус сервиса, timestamp и информацию об ошибках (например, неверный API ключ, недоступность сети). Используй для диагностики перед другими операциями с WB.",
+		Parameters: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{}, // Нет обязательных параметров
+		},
+	}
+}
+
+// Execute выполняет инструмент согласно контракту "Raw In, String Out".
+func (t *WbPingTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	// Вызываем Ping метод клиента
+	resp, err := t.client.Ping(ctx)
+
+	// Формируем развернутый ответ для LLM
+	result := map[string]interface{}{
+		"available": err == nil,
+	}
+
+	if err != nil {
+		// Используем ClassifyError из wb.Client для определения типа ошибки
+		errType := t.client.ClassifyError(err)
+		result["error"] = err.Error()
+		result["error_type"] = errType.String()
+		result["message"] = errType.HumanMessage()
+	} else {
+		// Успешный ответ
+		result["status"] = resp.Status
+		result["timestamp"] = resp.TS
+		result["message"] = "Wildberries Content API доступен и работает корректно."
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}

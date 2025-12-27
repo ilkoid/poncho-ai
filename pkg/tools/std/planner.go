@@ -1,3 +1,6 @@
+// Package std содержит стандартные инструменты Poncho AI.
+//
+// Реализует инструменты управления планом действий (planner).
 package std
 
 import (
@@ -9,25 +12,35 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 )
 
+// PlannerTool — базовый тип для инструментов планировщика (не используется напрямую).
+//
+// Реальные инструменты реализованы как отдельные типы для каждого действия.
 type PlannerTool struct {
 	manager *todo.Manager
 }
 
+// NewPlannerTool создает базовый инструмент планировщика.
+//
+// Примечание: на практике используются конкретные инструменты (PlanAddTaskTool и т.д.).
 func NewPlannerTool(manager *todo.Manager) *PlannerTool {
 	return &PlannerTool{manager: manager}
 }
 
-// --- Tool: plan_add_task ---
-// Позволяет агенту добавлять новые задачи в план действий
-
+// PlanAddTaskTool — инструмент для добавления задач в план действий.
+//
+// Позволяет агенту создавать новые задачи в Todo Manager.
 type PlanAddTaskTool struct {
 	manager *todo.Manager
 }
 
+// NewPlanAddTaskTool создает инструмент для добавления задач.
 func NewPlanAddTaskTool(manager *todo.Manager) *PlanAddTaskTool {
 	return &PlanAddTaskTool{manager: manager}
 }
 
+// Definition возвращает определение инструмента для function calling.
+//
+// Соответствует Tool interface (Rule 1).
 func (t *PlanAddTaskTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "plan_add_task",
@@ -49,6 +62,10 @@ func (t *PlanAddTaskTool) Definition() tools.ToolDefinition {
 	}
 }
 
+// Execute выполняет инструмент согласно контракту "Raw In, String Out".
+//
+// Принимает JSON строку с аргументами от LLM, возвращает результат выполнения.
+// Соответствует Tool interface (Rule 1).
 func (t *PlanAddTaskTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 	var args struct {
 		Description string                 `json:"description"`
@@ -67,17 +84,19 @@ func (t *PlanAddTaskTool) Execute(ctx context.Context, argsJSON string) (string,
 	return fmt.Sprintf("✅ Задача добавлена в план (ID: %d): %s", id, args.Description), nil
 }
 
-// --- Tool: plan_mark_done ---
-// Позволяет агенту отмечать задачи как выполненные
-
+// PlanMarkDoneTool — инструмент для отметки задач как выполненных.
+//
+// Позволяет агенту отмечать завершенные задачи в Todo Manager.
 type PlanMarkDoneTool struct {
 	manager *todo.Manager
 }
 
+// NewPlanMarkDoneTool создает инструмент для отметки задач как выполненных.
 func NewPlanMarkDoneTool(manager *todo.Manager) *PlanMarkDoneTool {
 	return &PlanMarkDoneTool{manager: manager}
 }
 
+// Definition возвращает определение инструмента для function calling.
 func (t *PlanMarkDoneTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "plan_mark_done",
@@ -95,6 +114,7 @@ func (t *PlanMarkDoneTool) Definition() tools.ToolDefinition {
 	}
 }
 
+// Execute выполняет инструмент согласно контракту "Raw In, String Out".
 func (t *PlanMarkDoneTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 	var args struct {
 		TaskID int `json:"task_id"`
@@ -111,17 +131,19 @@ func (t *PlanMarkDoneTool) Execute(ctx context.Context, argsJSON string) (string
 	return fmt.Sprintf("✅ Задача %d отмечена как выполненная", args.TaskID), nil
 }
 
-// --- Tool: plan_mark_failed ---
-// Позволяет агенту отмечать задачи как проваленные
-
+// PlanMarkFailedTool — инструмент для отметки задач как проваленных.
+//
+// Позволяет агенту отмечать задачи с указанием причины провала.
 type PlanMarkFailedTool struct {
 	manager *todo.Manager
 }
 
+// NewPlanMarkFailedTool создает инструмент для отметки задач как проваленных.
 func NewPlanMarkFailedTool(manager *todo.Manager) *PlanMarkFailedTool {
 	return &PlanMarkFailedTool{manager: manager}
 }
 
+// Definition возвращает определение инструмента для function calling.
 func (t *PlanMarkFailedTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "plan_mark_failed",
@@ -143,6 +165,7 @@ func (t *PlanMarkFailedTool) Definition() tools.ToolDefinition {
 	}
 }
 
+// Execute выполняет инструмент согласно контракту "Raw In, String Out".
 func (t *PlanMarkFailedTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 	var args struct {
 		TaskID int    `json:"task_id"`
@@ -160,31 +183,42 @@ func (t *PlanMarkFailedTool) Execute(ctx context.Context, argsJSON string) (stri
 	return fmt.Sprintf("❌ Задача %d отмечена как проваленная: %s", args.TaskID, args.Reason), nil
 }
 
-// --- Tool: plan_clear ---
-// Позволяет агенту очищать весь план действий
-
+// PlanClearTool — инструмент для очистки всего плана действий.
+//
+// Позволяет агенту удалять все задачи из Todo Manager.
 type PlanClearTool struct {
 	manager *todo.Manager
 }
 
+// NewPlanClearTool создает инструмент для очистки плана.
 func NewPlanClearTool(manager *todo.Manager) *PlanClearTool {
 	return &PlanClearTool{manager: manager}
 }
 
+// Definition возвращает определение инструмента для function calling.
 func (t *PlanClearTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "plan_clear",
 		Description: "Очищает весь план действий",
-		Parameters:  map[string]interface{}{"type": "object"},
+		Parameters: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{}, // Нет параметров
+		},
 	}
 }
 
+// Execute выполняет инструмент согласно контракту "Raw In, String Out".
 func (t *PlanClearTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 	t.manager.Clear()
 	return "🗑️ План действий очищен", nil
 }
 
-// Вспомогательные функции для создания всех инструментов планировщика
+// NewPlannerTools создает карту всех инструментов планировщика.
+//
+// Удобная функция для массовой регистрации инструментов planner'а.
+// Возвращает map[string]tools.Tool, которую можно использовать
+// для непосредственной регистрации в Registry.
 func NewPlannerTools(manager *todo.Manager) map[string]tools.Tool {
 	return map[string]tools.Tool{
 		"plan_add_task":    NewPlanAddTaskTool(manager),

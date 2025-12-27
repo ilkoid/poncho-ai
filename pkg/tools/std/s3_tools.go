@@ -48,7 +48,7 @@ func (t *S3ListTool) Definition() tools.ToolDefinition {
 					"description": "Путь к папке (например '12345/' или пусто для корня).",
 				},
 			},
-			// prefix не обязателен (тогда покажет корень)
+			"required": []string{}, // Prefix is optional, but field must be present for LLM API compatibility
 		},
 	}
 }
@@ -201,7 +201,7 @@ func NewS3ReadImageTool(c *s3storage.Client, cfg config.ImageProcConfig) *S3Read
 
 func (t *S3ReadImageTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
-		Name:        "read_s3_image_base64",
+		Name:        "read_s3_image",
 		Description: "Скачивает изображение из S3, оптимизирует его (resize) и возвращает в формате Base64. Используй это для Vision-анализа.",
 		Parameters: map[string]interface{}{
 			"type": "object",

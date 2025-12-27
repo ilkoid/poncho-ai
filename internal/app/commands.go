@@ -1,41 +1,53 @@
+// Package app реализует реестр команд TUI.
+//
+// Позволяет регистрировать обработчики команд и выполнять их асинхронно.
 package app
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// CommandResultMsg - сообщение, которое возвращает worker после работы
-// Дублируем тип из ui пакета для избежания циклических зависимостей
-type CommandResultMsg struct {
-	Output string
-	Err    error
-}
-
-// CommandHandler - тип функции-обработчика команды
+// CommandHandler — тип функции-обработчика команды.
+//
+// Принимает GlobalState и аргументы команды, возвращает tea.Cmd
+// для асинхронного выполнения в Bubble Tea.
 type CommandHandler func(state *GlobalState, args []string) tea.Cmd
 
-// CommandRegistry - реестр команд
+// CommandRegistry — реестр зарегистрированных команд TUI.
+//
+// Позволяет динамически регистрировать и выполнять команды.
+// Thread-safe: одновременные вызовы безопасны.
 type CommandRegistry struct {
+	mu       sync.RWMutex
 	commands map[string]CommandHandler
 }
 
-// NewCommandRegistry создает новый реестр команд
+// NewCommandRegistry создает новый пустой реестр команд.
 func NewCommandRegistry() *CommandRegistry {
 	return &CommandRegistry{
 		commands: make(map[string]CommandHandler),
 	}
 }
 
-// Register регистрирует новую команду
+// Register регистрирует новую команду в реестре.
+//
+// Если команда с таким именем уже существует, она будет перезаписана.
 func (r *CommandRegistry) Register(name string, handler CommandHandler) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.commands[name] = handler
 }
 
-// Execute выполняет команду и возвращает tea.Cmd для асинхронного выполнения
+// Execute выполняет команду и возвращает tea.Cmd для асинхронного выполнения.
+//
+// Парсит ввод на имя команды и аргументы, находит соответствующий handler
+// и возвращает tea.Cmd для выполнения в Bubble Tea.
+// Если команда не найдена, возвращает команду с ошибкой.
 func (r *CommandRegistry) Execute(input string, state *GlobalState) tea.Cmd {
 	parts := strings.Fields(input)
 	if len(parts) == 0 {
@@ -45,7 +57,11 @@ func (r *CommandRegistry) Execute(input string, state *GlobalState) tea.Cmd {
 	cmd := parts[0]
 	args := parts[1:]
 
+	// Получаем handler под read lock
+	r.mu.RLock()
 	handler, exists := r.commands[cmd]
+	r.mu.RUnlock()
+
 	if !exists {
 		return func() tea.Msg {
 			return CommandResultMsg{Err: fmt.Errorf("неизвестная команда: '%s'", cmd)}
@@ -55,16 +71,28 @@ func (r *CommandRegistry) Execute(input string, state *GlobalState) tea.Cmd {
 	return handler(state, args)
 }
 
-// GetCommands возвращает список зарегистрированных команд
+// GetCommands возвращает список имен зарегистрированных команд.
 func (r *CommandRegistry) GetCommands() []string {
-	var cmds []string
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	cmds := make([]string, 0, len(r.commands))
 	for name := range r.commands {
 		cmds = append(cmds, name)
 	}
 	return cmds
 }
 
-// SetupTodoCommands регистрирует команды для управления Todo
+// SetupTodoCommands регистрирует команды для управления Todo в реестре.
+//
+// Регистрирует команду "todo" с подкомандами:
+//   - todo add <description>  — добавить задачу
+//   - todo done <id>          — отметить как выполненную
+//   - todo fail <id> <reason> — отметить как проваленную
+//   - todo clear              — очистить план
+//   - todo help               — показать справку
+//
+// Также регистрирует псевдоним "t" для быстрого доступа.
 func SetupTodoCommands(registry *CommandRegistry, state *GlobalState) {
 	registry.Register("todo", func(state *GlobalState, args []string) tea.Cmd {
 		return func() tea.Msg {

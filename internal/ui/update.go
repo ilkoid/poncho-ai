@@ -1,5 +1,6 @@
-// Логика - Обрабатывает нажатия клавиш и результаты команд.
-
+// Package ui реализует логику обновления TUI (Bubble Tea).
+//
+// Обрабатывает нажатия клавиш, результаты команд и обновляет состояние UI.
 package ui
 
 import (
@@ -12,14 +13,18 @@ import (
 	"github.com/ilkoid/poncho-ai/internal/app"
 	"github.com/ilkoid/poncho-ai/pkg/classifier"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
-// CommandResultMsg - сообщение, которое возвращает worker после работы
-type CommandResultMsg struct {
-	Output string
-	Err    error
-}
-
+// Update обрабатывает сообщения Bubble Tea и обновляет состояние модели.
+//
+// Является частью Model-View-Update архитектуры Bubble Tea.
+// Обрабатывает:
+//   - tea.WindowSizeMsg: изменение размера терминала
+//   - tea.KeyMsg: нажатия клавиш
+//   - app.CommandResultMsg: результаты выполнения команд
+//
+// Возвращает обновленную модель и команду для асинхронного выполнения.
 func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
 		tiCmd tea.Cmd
@@ -33,6 +38,10 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// 1. Изменение размера окна терминала
 	case tea.WindowSizeMsg:
+		// Реальная ширина todo панели = Width(40) + MarginRight(1) = 41
+		const todoPanelWidth = 41 // Ширина todo панели с учетом margin
+		const panelGap = 0        // Gap уже включен в MarginRight
+
 		headerHeight := 1
 		footerHeight := m.textarea.Height() + 2 // + граница
 
@@ -42,17 +51,28 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			vpHeight = 0
 		}
 
-		// Обновляем размеры существующего вьюпорта
-		m.viewport.Width = msg.Width
+		// Вычисляем ширину для основного контента (вычитаем todo панель)
+		vpWidth := msg.Width - todoPanelWidth - panelGap
+		if vpWidth < 20 {
+			vpWidth = 20 // Минимальная ширина для очень узких окон
+		}
+
+		// Обновляем размеров существующего вьюпорта
+		m.viewport.Width = vpWidth
 		m.viewport.Height = vpHeight
 
 		// Только при первом запуске (если нужно инициализировать контент)
 		if !m.ready {
 			m.ready = true
-			// Опционально: можно принудительно обновить контент, если он зависит от ширины
+
+			// Выводим информацию о размере окна для отладки
+			dimensions := fmt.Sprintf("Window: %dx%d | Viewport: %dx%d | Todo: 40",
+				msg.Width, msg.Height, vpWidth, vpHeight)
+			m.appendLog(systemMsgStyle("INFO: ") + dimensions)
 		}
 
-		m.textarea.SetWidth(msg.Width)
+		// Textarea тоже на всю ширину основного контента
+		m.textarea.SetWidth(vpWidth)
 
 	// 2. Клавиши
 	case tea.KeyMsg:
@@ -77,7 +97,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	// 3. Результат выполнения команды (прилетел асинхронно)
-	case CommandResultMsg:
+	case app.CommandResultMsg:
 		if msg.Err != nil {
 			m.appendLog(errorMsgStyle("ERROR: ") + msg.Err.Error())
 		} else {
@@ -90,20 +110,69 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(tiCmd, vpCmd)
 }
 
-// Хелпер для добавления строки в лог и прокрутки вниз
+// appendLog добавляет строку в лог чата и прокручивает вьюпорт вниз.
+//
+// Функция автоматически переносит длинные строки, чтобы они влезали в ширину вьюпорта.
+// Короткие сообщения (ввод пользователя) остаются без переносов для красоты.
 func (m *MainModel) appendLog(str string) {
-	newContent := fmt.Sprintf("%s\n%s", m.viewport.View(), str)
+	// Используем полную ширину вьюпорта (уже вычтена todo панель)
+	availableWidth := m.viewport.Width
+	if availableWidth < 10 {
+		availableWidth = 10 // Минимальная ширина
+	}
+
+	// Проверяем длину самой длинной строки в тексте
+	maxLineLen := longestLineLength(str)
+
+	// Переносим только если есть очень длинные строки
+	// Короткие сообщения (ввод пользователя) оставляем как есть
+	var finalStr string
+	if maxLineLen > availableWidth {
+		finalStr = utils.WrapText(str, availableWidth)
+	} else {
+		finalStr = str
+	}
+
+	newContent := fmt.Sprintf("%s\n%s", m.viewport.View(), finalStr)
 	m.viewport.SetContent(newContent)
 	m.viewport.GotoBottom()
 }
 
-// performCommand - симуляция работы (позже подключим реальный контроллер)
-// performCommand — это "мозг", обрабатывающий ввод пользователя.
-// Она возвращает tea.Cmd, который выполнится асинхронно, чтобы не завис UI.
+// longestLineLength находит длину самой длинной строки в многострочном тексте.
+//
+// Используется для определения необходимости переноса строк при выводе в лог.
+func longestLineLength(s string) int {
+	maxLen := 0
+	lines := strings.Split(s, "\n")
+	for _, line := range lines {
+		if len(line) > maxLen {
+			maxLen = len(line)
+		}
+	}
+	return maxLen
+}
+
+// performCommand обрабатывает ввод пользователя и маршрутизирует команды.
+//
+// Это "мозг" TUI, который:
+//  1. Парсит ввод на команду и аргументы
+//  2. Проверяет CommandRegistry для зарегистрированных команд
+//  3. Делегирует неизвестные команды агенту (естественный интерфейс)
+//  4. Выполняет команды асинхронно через tea.Cmd
+//
+// Поддерживаемые команды:
+//   - load <article_id>: Загружает метаданные из S3 и классифицирует файлы
+//   - render <prompt_file>: Рендерит промпт с данными текущего артикула
+//   - ask <query>: Делегирует запрос агенту
+//   - todo <subcommand>: Управление задачами (через CommandRegistry)
+//   - <любой текст>: Делегируется агенту напрямую (естественный интерфейс)
+//   - ping: Проверка работоспособности системы
+//
+// Возвращает tea.Cmd для асинхронного выполнения, чтобы UI не зависал.
 func performCommand(input string, state *app.GlobalState) tea.Cmd {
 	return func() tea.Msg {
-		// Создаем контекст с таймаутом (чтобы не висеть вечно)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// Создаем контекст с таймаутом (увеличен для сложных запросов)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 
 		// Разбираем ввод на команду и аргументы
@@ -120,26 +189,26 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 		// Загружает метаданные из S3 и раскладывает файлы по полочкам
 		case "load":
 			if len(args) < 1 {
-				return CommandResultMsg{Err: fmt.Errorf("usage: load <article_id>")}
+				return app.CommandResultMsg{Err: fmt.Errorf("usage: load <article_id>")}
 			}
 			articleID := args[0]
 
 			// 1. Получаем "сырой" список файлов из S3
 			// (Предполагаем, что state.S3 уже инициализирован в main.go)
 			if state.S3 == nil {
-				return CommandResultMsg{Err: fmt.Errorf("s3 client is not initialized")}
+				return app.CommandResultMsg{Err: fmt.Errorf("s3 client is not initialized")}
 			}
 
 			rawObjects, err := state.S3.ListFiles(ctx, articleID)
 			if err != nil {
-				return CommandResultMsg{Err: fmt.Errorf("s3 error: %w", err)}
+				return app.CommandResultMsg{Err: fmt.Errorf("s3 error: %w", err)}
 			}
 
 			// 2. Классифицируем файлы согласно правилам из config.yaml
 			classifierEngine := classifier.New(state.Config.FileRules)
 			classifiedFiles, err := classifierEngine.Process(rawObjects)
 			if err != nil {
-				return CommandResultMsg{Err: fmt.Errorf("classification error: %w", err)}
+				return app.CommandResultMsg{Err: fmt.Errorf("classification error: %w", err)}
 			}
 
 			// 3. Конвертируем ClassifiedFile в FileMeta
@@ -156,9 +225,8 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 				convertedFiles[tag] = fileMetas
 			}
 
-			// 4. Обновляем глобальный State (потокобезопасно, т.к. мы в одной горутине tea.Cmd)
-			state.CurrentArticleID = articleID
-			state.Files = convertedFiles
+			// 4. Обновляем глобальный State потокобезопасно
+			state.SetCurrentArticle(articleID, convertedFiles)
 
 			// 4. Формируем красивый отчет для пользователя
 			var report strings.Builder
@@ -175,19 +243,19 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 				report.WriteString("⚠️ WARNING: No sketches found!\n")
 			}
 
-			return CommandResultMsg{Output: report.String()}
+			return app.CommandResultMsg{Output: report.String()}
 
 		// === КОМАНДА 2: RENDER <PROMPT_FILE> ===
 		// Тестирует промпт, подставляя данные из загруженного артикула
 		case "render":
 			if len(args) < 1 {
-				return CommandResultMsg{Err: fmt.Errorf("usage: render <prompt_file.yaml>")}
+				return app.CommandResultMsg{Err: fmt.Errorf("usage: render <prompt_file.yaml>")}
 			}
 			filename := args[0]
 
-			// Проверяем, загружен ли вообще артикул
-			if state.CurrentArticleID == "NONE" {
-				return CommandResultMsg{Err: fmt.Errorf("no article loaded. use 'load <id>' first")}
+			// Проверяем, загружен ли вообще артикул (потокобезопасно)
+			if state.GetCurrentArticleID() == "NONE" {
+				return app.CommandResultMsg{Err: fmt.Errorf("no article loaded. use 'load <id>' first")}
 			}
 
 			// 1. Загружаем сам файл промпта
@@ -195,20 +263,20 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 			fullPath := fmt.Sprintf("%s/%s", state.Config.App.PromptsDir, filename)
 			p, err := prompt.Load(fullPath)
 			if err != nil {
-				return CommandResultMsg{Err: fmt.Errorf("failed to load prompt '%s': %w", filename, err)}
+				return app.CommandResultMsg{Err: fmt.Errorf("failed to load prompt '%s': %w", filename, err)}
 			}
 
 			// 2. Готовим данные для шаблона (Data Context)
-			// Берем реальные данные из State.
-			// Например, берем первый попавшийся эскиз для демонстрации.
+			// Берем реальные данные из State потокобезопасно.
+			articleID, files := state.GetCurrentArticle()
 			imageURL := "NO_IMAGE_FOUND"
-			if sketches, ok := state.Files["sketch"]; ok && len(sketches) > 0 {
+			if sketches, ok := files["sketch"]; ok && len(sketches) > 0 {
 				// В реальном S3 URL может быть подписанным (Presigned), но пока просто ключ
 				imageURL = fmt.Sprintf("s3://%s/%s", state.Config.S3.Bucket, sketches[0].OriginalKey)
 			}
 
 			templateData := map[string]interface{}{
-				"ArticleID": state.CurrentArticleID,
+				"ArticleID": articleID,
 				"ImageURL":  imageURL,
 				// Можно добавить сюда содержимое JSON из категории plm_data, если нужно
 			}
@@ -216,7 +284,7 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 			// 3. Рендерим сообщения
 			messages, err := p.RenderMessages(templateData)
 			if err != nil {
-				return CommandResultMsg{Err: fmt.Errorf("render error: %w", err)}
+				return app.CommandResultMsg{Err: fmt.Errorf("render error: %w", err)}
 			}
 
 			// 4. Выводим результат (симуляция отправки)
@@ -233,19 +301,75 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 				output.WriteString(fmt.Sprintf("[%s]: %s\n\n", strings.ToUpper(m.Role), contentPreview))
 			}
 
-			return CommandResultMsg{Output: output.String()}
+			return app.CommandResultMsg{Output: output.String()}
 
-		// === КОМАНДА 3: PING ===
+		// === КОМАНДА 3: DEMO ===
+		// Добавляет тестовые задачи для проверки отображения todo панели
+		case "demo":
+			state.Todo.Add("Проверить API Wildberries")
+			state.Todo.Add("Загрузить эскизы из S3")
+			state.Todo.Add("Сгенерировать описание товара")
+			taskID := state.Todo.Add("Провалить эту задачу для теста")
+			state.Todo.Complete(2)
+			state.Todo.Fail(taskID, "Тестовая ошибка")
+			return app.CommandResultMsg{Output: "✅ Added 4 demo todos (1 done, 1 failed, 2 pending)"}
+
+		// === КОМАНДА 4: PING ===
 		case "ping":
-			return CommandResultMsg{Output: "Pong! System is alive."}
+			return app.CommandResultMsg{Output: "Pong! System is alive."}
 
-		// Неизвестная команда - пробуем передать в CommandRegistry если он существует
-		default:
-			// Если в state есть CommandRegistry, пробуем использовать его
-			if cmdRegistry := state.GetCommandRegistry(); cmdRegistry != nil {
-				return cmdRegistry.Execute(input, state)
+		// === КОМАНДА 5: ASK <QUERY> ===
+		// Передаёт запрос в AI-агент для обработки с помощью LLM и tools
+		case "ask":
+			if len(args) < 1 {
+				return app.CommandResultMsg{Err: fmt.Errorf("usage: ask <your question or task>")}
 			}
-			return CommandResultMsg{Err: fmt.Errorf("unknown command: '%s'. Try 'load <id>', 'render <file>' or 'todo help'", cmd)}
+			userQuery := strings.Join(args, " ")
+
+			// Проверяем, что Orchestrator инициализирован
+			if state.Orchestrator == nil {
+				return app.CommandResultMsg{Err: fmt.Errorf("orchestrator not initialized")}
+			}
+
+			// Выполняем запрос через агента
+			answer, err := state.Orchestrator.Run(ctx, userQuery)
+			if err != nil {
+				return app.CommandResultMsg{Err: fmt.Errorf("agent error: %w", err)}
+			}
+
+			return app.CommandResultMsg{Output: answer}
+
+		// === НЕИЗВЕСТНАЯ КОМАНДА ===
+		// Сначала пробуем CommandRegistry, затем делегируем агенту
+		default:
+			// 1. Проверяем CommandRegistry (для команд todo, t и т.д.)
+			if cmdRegistry := state.GetCommandRegistry(); cmdRegistry != nil {
+				// Проверяем, есть ли такая команда в реестре
+				cmds := cmdRegistry.GetCommands()
+				isKnownCommand := false
+				for _, c := range cmds {
+					if c == cmd {
+						isKnownCommand = true
+						break
+					}
+				}
+
+				if isKnownCommand {
+					return cmdRegistry.Execute(input, state)
+				}
+			}
+
+			// 2. Команда неизвестна → делегируем агенту (естественный интерфейс)
+			// Это позволяет пользователю вводить запросы без префикса "ask"
+			if state.Orchestrator != nil {
+				answer, err := state.Orchestrator.Run(ctx, input)
+				if err != nil {
+					return app.CommandResultMsg{Err: fmt.Errorf("agent error: %w", err)}
+				}
+				return app.CommandResultMsg{Output: answer}
+			}
+
+			return app.CommandResultMsg{Err: fmt.Errorf("unknown command: '%s'. Try 'load <id>', 'demo', 'render <file>', 'ask <query>' or 'todo help'", cmd)}
 		}
 	}
 }

@@ -5,27 +5,16 @@ import (
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
-	"github.com/ilkoid/poncho-ai/pkg/llm/openai" // Импорт конкретной реализации
+	"github.com/ilkoid/poncho-ai/pkg/llm/openai"
 )
 
-// NewLLMProvider создает провайдера на основе конфига
-func NewLLMProvider(cfg config.ModelDef) (llm.Provider, error) {
-	switch cfg.Provider {
+// NewLLMProvider создает провайдера на основе конфигурации модели
+func NewLLMProvider(modelDef config.ModelDef) (llm.Provider, error) {
+	switch modelDef.Provider {
 	case "zai", "openai", "deepseek":
-		// Create a temporary AppConfig with just the model definition
-		// This is a workaround since NewClient expects a full AppConfig
-		tempCfg := &config.AppConfig{
-			Models: config.ModelsConfig{
-				DefaultChat: "temp", // This won't be used
-				Definitions: map[string]config.ModelDef{
-					"temp": cfg,
-				},
-			},
-		}
-
-		return openai.NewClient(tempCfg), nil
+		return openai.NewClient(modelDef), nil
 
 	default:
-		return nil, fmt.Errorf("unknown provider type: %s", cfg.Provider)
+		return nil, fmt.Errorf("unknown provider type: %s", modelDef.Provider)
 	}
 }

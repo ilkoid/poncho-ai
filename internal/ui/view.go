@@ -39,8 +39,18 @@ var (
 			MarginTop(1)
 )
 
-// renderTodoPanel рендерит панель с задачами
-func renderTodoPanel(manager *todo.Manager, width int) string {
+// RenderTodoPanel рендерит панель с задачами для TUI.
+//
+// Переиспользуемая функция для отображения todo списка в любом приложении
+// этого репозитория. Использует lipgloss для красивого форматирования с
+// рамкой, цветами и иконками статуса.
+//
+// Параметры:
+//   - manager: Todo Manager с задачами для отображения
+//   - width: Ширина панели в символах (рекомендуется 40)
+//
+// Возвращает отформатированную строку готовую для вывода в TUI.
+func RenderTodoPanel(manager *todo.Manager, width int) string {
 	tasks := manager.GetTasks()
 	pending, done, failed := manager.GetStats()
 
@@ -102,12 +112,12 @@ func (m MainModel) View() string {
 		m.appState.CurrentModel,
 	)
 
-	// Растягиваем хедер на всю ширину
+	// Хедер на ширину вьюпорта (уже вычтена todo панель)
 	header := headerStyle.
 		Width(m.viewport.Width).
 		Render(status)
 
-	// Разделительная линия
+	// Разделительная линия на ширину вьюпорта
 	border := lipgloss.NewStyle().
 		Foreground(grayColor).
 		Width(m.viewport.Width).
@@ -122,7 +132,7 @@ func (m MainModel) View() string {
 	)
 
 	// Добавляем Todo панель справа
-	todoPanel := renderTodoPanel(m.appState.Todo, 40)
+	todoPanel := RenderTodoPanel(m.appState.Todo, 40)
 
 	// Комбинируем основной контент с Todo панелью
 	return lipgloss.JoinHorizontal(lipgloss.Top,

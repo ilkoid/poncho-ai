@@ -20,3 +20,15 @@ type Message struct {
 	Role    string `yaml:"role"`    // system, user, assistant
 	Content string `yaml:"content"` // Шаблон с {{.Variables}}
 }
+
+// ToolPostPrompt описывает post-prompt для конкретного tool
+type ToolPostPrompt struct {
+	PostPrompt string `yaml:"post_prompt"` // Относительный путь к файлу промпта
+	Enabled    bool   `yaml:"enabled"`     // Включён ли post-prompt
+}
+
+// ToolPostPromptConfig описывает конфигурацию связки tool → post-prompt
+// Загружается из prompts/tool_postprompts.yaml
+type ToolPostPromptConfig struct {
+	Tools map[string]ToolPostPrompt `yaml:"tools"`
+}

@@ -1,3 +1,7 @@
+// Package todo реализует потокобезопасный менеджер задач для AI-агента.
+//
+// Предоставляет инструменты для создания, отслеживания и управления задачами
+// в рамках агentic workflow (ReAct pattern).
 package todo
 
 import (
@@ -7,6 +11,7 @@ import (
 	"time"
 )
 
+// TaskStatus представляет статус задачи в плане.
 type TaskStatus string
 
 const (
@@ -15,6 +20,7 @@ const (
 	StatusFailed  TaskStatus = "FAILED"
 )
 
+// Task представляет задачу в плане действий агента.
 type Task struct {
 	ID          int                    `json:"id"`
 	Description string                 `json:"description"`
@@ -24,13 +30,17 @@ type Task struct {
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// Manager - потокобезопасное хранилище задач
+// Manager — потокобезопасное хранилище задач для агента.
+//
+// Используется для управления планом действий в ReAct цикле.
+// Все методы thread-safe.
 type Manager struct {
 	mu     sync.RWMutex
 	tasks  []Task
 	nextID int
 }
 
+// NewManager создает новый пустой менеджер задач.
 func NewManager() *Manager {
 	return &Manager{
 		tasks:  make([]Task, 0),
@@ -38,7 +48,10 @@ func NewManager() *Manager {
 	}
 }
 
-// Методы для Tools
+// Add добавляет новую задачу в план и возвращает её ID.
+//
+// Принимает опциональные метаданные для хранения дополнительной информации.
+// Thread-safe метод.
 func (m *Manager) Add(description string, metadata ...map[string]interface{}) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -61,6 +74,10 @@ func (m *Manager) Add(description string, metadata ...map[string]interface{}) in
 	return task.ID
 }
 
+// Complete отмечает задачу как выполненную.
+//
+// Возвращает ошибку если задача не найдена или уже имеет статус DONE/FAILED.
+// Thread-safe метод.
 func (m *Manager) Complete(id int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -79,6 +96,11 @@ func (m *Manager) Complete(id int) error {
 	return fmt.Errorf("задача %d не найдена", id)
 }
 
+// Fail отмечает задачу как проваленную с указанием причины.
+//
+// Возвращает ошибку если задача не найдена или уже имеет статус DONE/FAILED.
+// Причина провала сохраняется в Metadata["error"].
+// Thread-safe метод.
 func (m *Manager) Fail(id int, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -99,6 +121,9 @@ func (m *Manager) Fail(id int, reason string) error {
 	return fmt.Errorf("задача %d не найдена", id)
 }
 
+// Clear удаляет все задачи из плана и сбрасывает счётчик ID.
+//
+// Thread-safe метод.
 func (m *Manager) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -106,7 +131,15 @@ func (m *Manager) Clear() {
 	m.nextID = 1
 }
 
-// Метод для Context Injection - превращает лист в строку для промпта
+// String форматирует план задач для вставки в промпт (Context Injection).
+//
+// Возвращает текстовое представление плана с визуальными индикаторами статуса:
+//   - [ ] для PENDING
+//   - [✓] для DONE
+//   - [✗] для FAILED
+//
+// Используется автоматически в BuildAgentContext для передачи контекста в LLM.
+// Thread-safe метод.
 func (m *Manager) String() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -150,7 +183,10 @@ func (m *Manager) String() string {
 	return result.String()
 }
 
-// Методы для UI
+// GetTasks возвращает копию списка всех задач для использования в UI.
+//
+// Возвращает копию слайса, чтобы избежать race conditions при итерации.
+// Thread-safe метод.
 func (m *Manager) GetTasks() []Task {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -160,6 +196,10 @@ func (m *Manager) GetTasks() []Task {
 	return tasks
 }
 
+// GetStats возвращает статистику по задачам.
+//
+// Возвращает кортеж (pending, done, failed) с количеством задач в каждом статусе.
+// Thread-safe метод.
 func (m *Manager) GetStats() (pending, done, failed int) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
