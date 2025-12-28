@@ -144,7 +144,7 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, error
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	utils.Info("Agent started", "query", userQuery, "maxIters", o.maxIters)
+	utils.Info("=== Orchestrator.Run STARTED ===", "query", userQuery, "maxIters", o.maxIters)
 
 	// 1. Добавляем запрос пользователя в историю (thread-safe)
 	o.state.AppendMessage(llm.Message{
@@ -226,6 +226,13 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, error
 		// 3.6. Нет tool calls — это финальный ответ
 		// Сбрасываем active post-prompt после завершения
 		o.activePostPrompt = ""
+
+		// Выводим финальный todo list для визуализации
+		todoString := o.state.Todo.String()
+		if todoString != "" && todoString != "Нет активных задач" {
+			utils.Info("Final todo list", "plan", todoString)
+		}
+
 		utils.Info("Agent completed", "iterations", iterCount, "duration_ms", time.Since(startTime).Milliseconds())
 		return response.Content, nil
 	}
@@ -282,6 +289,11 @@ func (o *Orchestrator) executeTool(ctx context.Context, tc llm.ToolCall) string 
 		"tool", tc.Name,
 		"result_length", len(result),
 		"duration_ms", duration)
+
+	// 4.5. Для planner tools выводим результат отдельно (для визуализации todo list)
+	if isPlannerTool(tc.Name) {
+		utils.Info("Plan updated", "action", tc.Name, "result", result)
+	}
 
 	// 5. Проверяем есть ли post-prompt для этого tool
 	if o.toolPostPrompts != nil {
@@ -406,4 +418,14 @@ func defaultSystemPrompt() string {
 - Для СЛОЖНЫХ запросов (2+ действий) → сначала создай план через plan_add_task
 - Пользователь видит план в правой панели — это помогает понимать прогресс
 `
+}
+
+// isPlannerTool проверяет, является ли tool инструментом планировщика.
+func isPlannerTool(toolName string) bool {
+	switch toolName {
+	case "plan_add_task", "plan_mark_done", "plan_mark_failed", "plan_clear":
+		return true
+	default:
+		return false
+	}
 }

@@ -3,7 +3,10 @@ package wb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strconv"
 )
@@ -322,7 +325,7 @@ func (c *Client) GetCountries(ctx context.Context) ([]Country, error) {
     return resp.Data, nil
 }
 
-/* 
+/*
 Резюме по справочникам
 Мы собрали фулл-хаус статических справочников:
 Цвета (Colors) -> Номенклатура (nmID)
@@ -334,3 +337,84 @@ func (c *Client) GetCountries(ctx context.Context) ([]Country, error) {
 
 Теперь у нас есть всё, чтобы AI-агент мог "собрать" JSON карточки товара, опираясь на реальные, валидные значения WB, а не галлюцинируя "Страна: Поднебесная" или "Сезон: Дождливый".
 */
+
+// BrandsResponse представляет ответ от API брендов
+// Структура отличается от стандартной APIResponse
+type BrandsResponse struct {
+    Brands []Brand `json:"brands"`
+    Next   int     `json:"next"`   // 0 если это последняя страница
+    Total  int     `json:"total"`  // Общее количество брендов
+}
+
+// GetBrands возвращает список брендов для указанного предмета с авто-пагинацией
+//
+// Параметры:
+//   - subjectID: ID предмета для фильтрации брендов
+//   - limit: максимальное количество брендов для возврата (0 = все доступные)
+//
+// Возвращает:
+//   - []Brand: список брендов (отсортированы по популярности)
+//   - error: ошибка при выполнении запроса
+func (c *Client) GetBrands(ctx context.Context, subjectID int, limit int) ([]Brand, error) {
+    var allBrands []Brand
+    next := 0
+
+    for {
+        // Формируем параметры запроса
+        params := url.Values{}
+        params.Set("subjectId", fmt.Sprintf("%d", subjectID))
+        if next > 0 {
+            params.Set("next", fmt.Sprintf("%d", next))
+        }
+
+        // Выполняем запрос
+        req, err := http.NewRequestWithContext(ctx, "GET",
+            c.baseURL+"/api/content/v1/brands?"+params.Encode(), nil)
+        if err != nil {
+            return nil, err
+        }
+
+        req.Header.Set("Authorization", c.apiKey)
+        req.Header.Set("Content-Type", "application/json")
+
+        // Ждем разрешения от rate limiter
+        if err := c.limiter.Wait(ctx); err != nil {
+            return nil, fmt.Errorf("rate limiter wait: %w", err)
+        }
+
+        resp, err := c.httpClient.Do(req)
+        if err != nil {
+            return nil, err
+        }
+        defer resp.Body.Close()
+
+        if resp.StatusCode != http.StatusOK {
+            body, _ := io.ReadAll(resp.Body)
+            return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+        }
+
+        // Парсим ответ
+        var brandsResp BrandsResponse
+        if err := json.NewDecoder(resp.Body).Decode(&brandsResp); err != nil {
+            return nil, fmt.Errorf("failed to decode brands response: %w", err)
+        }
+
+        // Добавляем бренды к результату
+        allBrands = append(allBrands, brandsResp.Brands...)
+
+        // Проверяем условия выхода
+        if brandsResp.Next == 0 {
+            // Это последняя страница
+            break
+        }
+        if limit > 0 && len(allBrands) >= limit {
+            // Достигнут лимит
+            allBrands = allBrands[:limit]
+            break
+        }
+
+        next = brandsResp.Next
+    }
+
+    return allBrands, nil
+}

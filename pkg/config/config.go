@@ -27,6 +27,7 @@ type WBConfig struct {
 	BurstLimit    int    `yaml:"burst_limit"`     // Burst для rate limiter
 	RetryAttempts int    `yaml:"retry_attempts"`  // Количество retry попыток
 	Timeout       string `yaml:"timeout"`         // Timeout для HTTP запросов (например, "30s")
+	BrandsLimit   int    `yaml:"brands_limit"`    // Макс. кол-во брендов для get_wb_brands tool
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.
@@ -47,6 +48,9 @@ func (c *WBConfig) GetDefaults() WBConfig {
 	}
 	if result.Timeout == "" {
 		result.Timeout = "30s"
+	}
+	if result.BrandsLimit == 0 {
+		result.BrandsLimit = 500 // дефолтный лимит брендов
 	}
 
 	return result

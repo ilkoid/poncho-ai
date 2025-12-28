@@ -42,8 +42,18 @@ func InitLogger() error {
 	initialized = true
 	// Пишем напрямую без Info чтобы избежать deadlock (мьютекс уже захвачен)
 	timestampNow := time.Now().Format("2006-01-02 15:04:05")
-	logFile.WriteString(fmt.Sprintf("[%s] INFO: Logger initialized file=%s\n", timestampNow, filename))
-	logFile.Sync() // Сбрасываем буфер на диск
+	initLine := fmt.Sprintf("[%s] INFO: Logger initialized file=%s\n", timestampNow, filename)
+
+	if _, err := logFile.WriteString(initLine); err != nil {
+		// Fallback на stderr при ошибке
+		fmt.Fprintf(os.Stderr, "%s", initLine)
+		fmt.Fprintf(os.Stderr, "[LOGGER ERROR: WriteString failed: %v]\n", err)
+	}
+
+	if err := logFile.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "[LOGGER WARNING: Sync failed: %v]\n", err)
+	}
+
 	return nil
 }
 
@@ -65,6 +75,7 @@ func Debug(msg string, keyvals ...any) {
 // log - внутренняя функция записи в лог.
 //
 // Формат: [YYYY-MM-DD HH:MM:SS] LEVEL: message key1=value1 key2=value2
+// При ошибке записи в файл, fallback на stderr.
 func log(level, msg string, keyvals ...any) {
 	logMutex.Lock()
 	defer logMutex.Unlock()
@@ -83,8 +94,19 @@ func log(level, msg string, keyvals ...any) {
 	}
 
 	line += "\n"
-	logFile.WriteString(line)
-	logFile.Sync() // Сбрасываем буфер на диск немедленно
+
+	// Пишем в файл с обработкой ошибок
+	if _, err := logFile.WriteString(line); err != nil {
+		// Fallback: если файл недоступен, пишем в stderr
+		fmt.Fprintf(os.Stderr, "%s", line)
+		fmt.Fprintf(os.Stderr, "[LOGGER ERROR: WriteString failed: %v]\n", err)
+		return
+	}
+
+	if err := logFile.Sync(); err != nil {
+		// Sync failed - warning в stderr, но лог уже записан
+		fmt.Fprintf(os.Stderr, "[LOGGER WARNING: Sync failed: %v]\n", err)
+	}
 }
 
 // Close закрывает лог-файл.
@@ -95,7 +117,10 @@ func Close() {
 	defer logMutex.Unlock()
 
 	if logFile != nil {
-		logFile.Close()
+		if err := logFile.Close(); err != nil {
+			// Логгер уже закрывается, только stderr
+			fmt.Fprintf(os.Stderr, "[LOGGER WARNING: Close failed: %v]\n", err)
+		}
 		logFile = nil
 	}
 }

@@ -25,17 +25,22 @@ func NewRegistry() *Registry {
 // Валидирует:
 //   - Name не пустой
 //   - Parameters является JSON объектом
-//   - Parameters.type == "object"
-//   - Parameters.required является массивом строк
+//   - Parameters.type == "object" (или пустой объект для tools без параметров)
+//   - Parameters.required является массивом строк (если присутствует)
+//
+// Инструменты без параметров могут иметь:
+//   - parameters == nil (не рекомендуется, но допустимо для совместимости)
+//   - parameters == {"type": "object", "properties": {}} (рекомендуется)
 func validateToolDefinition(def ToolDefinition) error {
 	// 1. Проверяем имя
 	if def.Name == "" {
 		return fmt.Errorf("tool name cannot be empty")
 	}
 
-	// 2. Проверяем что Parameters не nil
+	// 2. Разрешаем tools без параметров (nil или пустой объект)
 	if def.Parameters == nil {
-		return fmt.Errorf("tool '%s': parameters cannot be nil", def.Name)
+		// tools без параметров - допустимо для совместимости
+		return nil
 	}
 
 	// 3. Сериализуем Parameters в JSON для проверки структуры

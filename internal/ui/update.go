@@ -16,6 +16,14 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
+// AgentFinishedMsg — сигнал что агент завершил выполнение.
+type AgentFinishedMsg struct {
+	Result app.CommandResultMsg
+}
+
+// AgentTickMsg — периодическое сообщение для проверки результата работы агента.
+type AgentTickMsg time.Time
+
 // Update обрабатывает сообщения Bubble Tea и обновляет состояние модели.
 //
 // Является частью Model-View-Update архитектуры Bubble Tea.
@@ -23,6 +31,7 @@ import (
 //   - tea.WindowSizeMsg: изменение размера терминала
 //   - tea.KeyMsg: нажатия клавиш
 //   - app.CommandResultMsg: результаты выполнения команд
+//   - AgentFinishedMsg: завершение выполнения агента
 //
 // Возвращает обновленную модель и команду для асинхронного выполнения.
 func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -35,6 +44,41 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.viewport, vpCmd = m.viewport.Update(msg)
 
 	switch msg := msg.(type) {
+
+	// 0. Агент завершил работу
+	case AgentFinishedMsg:
+		// Обрабатываем результат
+		if msg.Result.Err != nil {
+			m.appendLog(errorMsgStyle("ERROR: ") + msg.Result.Err.Error())
+		} else {
+			m.appendLog(systemMsgStyle("SYSTEM: ") + msg.Result.Output)
+		}
+		m.textarea.Focus()
+		return m, nil
+
+	// 0a. Tick от агента - продолжаем опрос канала
+	case AgentTickMsg:
+		// Проверяем что агент запущен и получаем канал
+		if m.agent != nil && m.agent.isRunning() {
+			resultCh := m.agent.getChannel()
+			if resultCh != nil {
+				// Проверяем канал
+				select {
+				case agentMsg := <-resultCh:
+					// Результат получен - останавливаем агент
+					m.agent.stop()
+					return m, func() tea.Msg {
+						return AgentFinishedMsg{Result: agentMsg.result}
+					}
+				default:
+					// Продолжаем тикать
+					return m, tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+						return AgentTickMsg(t)
+					})
+				}
+			}
+		}
+		return m, nil
 
 	// 1. Изменение размера окна терминала
 	case tea.WindowSizeMsg:
@@ -92,12 +136,52 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Добавляем сообщение пользователя в лог
 			m.appendLog(userMsgStyle("USER > ") + input)
 
-			// Запускаем асинхронную команду
+			// Парсим команду
+			parts := strings.Fields(input)
+			if len(parts) == 0 {
+				return m, nil
+			}
+			cmd := parts[0]
+
+			// Проверяем special cases для агента
+			if cmd == "ask" && len(parts) > 1 {
+				// Команда "ask" - запускаем агент
+				query := strings.Join(parts[1:], " ")
+				return m, startAgent(&m, query)
+			}
+
+			// Проверяем CommandRegistry
+			cmdRegistry := m.appState.GetCommandRegistry()
+			isKnownCommand := false
+			if cmdRegistry != nil {
+				cmds := cmdRegistry.GetCommands()
+				for _, c := range cmds {
+					if c == cmd {
+						isKnownCommand = true
+						break
+					}
+				}
+			}
+
+			if isKnownCommand {
+				// Известная команда - выполняем через performCommand
+				return m, performCommand(input, m.appState)
+			}
+
+			// Неизвестная команда - делегируем агенту
+			if m.appState.Orchestrator != nil {
+				return m, startAgent(&m, input)
+			}
+
+			// Неизвестная команда и нет агента
 			return m, performCommand(input, m.appState)
 		}
 
 	// 3. Результат выполнения команды (прилетел асинхронно)
+	//    NOTE: для agent-запросов используем AgentFinishedMsg для интерактивности
 	case app.CommandResultMsg:
+		// Если это не агентский запрос — обрабатываем как обычно
+		// (агентские запросы приходят через AgentFinishedMsg)
 		if msg.Err != nil {
 			m.appendLog(errorMsgStyle("ERROR: ") + msg.Err.Error())
 		} else {
@@ -318,58 +402,66 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 		case "ping":
 			return app.CommandResultMsg{Output: "Pong! System is alive."}
 
-		// === КОМАНДА 5: ASK <QUERY> ===
-		// Передаёт запрос в AI-агент для обработки с помощью LLM и tools
-		case "ask":
-			if len(args) < 1 {
-				return app.CommandResultMsg{Err: fmt.Errorf("usage: ask <your question or task>")}
-			}
-			userQuery := strings.Join(args, " ")
-
-			// Проверяем, что Orchestrator инициализирован
-			if state.Orchestrator == nil {
-				return app.CommandResultMsg{Err: fmt.Errorf("orchestrator not initialized")}
-			}
-
-			// Выполняем запрос через агента
-			answer, err := state.Orchestrator.Run(ctx, userQuery)
-			if err != nil {
-				return app.CommandResultMsg{Err: fmt.Errorf("agent error: %w", err)}
-			}
-
-			return app.CommandResultMsg{Output: answer}
-
 		// === НЕИЗВЕСТНАЯ КОМАНДА ===
-		// Сначала пробуем CommandRegistry, затем делегируем агенту
+		// NOTE: "ask" и делегирование агенту обрабатываются в Update напрямую
 		default:
-			// 1. Проверяем CommandRegistry (для команд todo, t и т.д.)
-			if cmdRegistry := state.GetCommandRegistry(); cmdRegistry != nil {
-				// Проверяем, есть ли такая команда в реестре
-				cmds := cmdRegistry.GetCommands()
-				isKnownCommand := false
-				for _, c := range cmds {
-					if c == cmd {
-						isKnownCommand = true
-						break
-					}
-				}
-
-				if isKnownCommand {
-					return cmdRegistry.Execute(input, state)
-				}
-			}
-
-			// 2. Команда неизвестна → делегируем агенту (естественный интерфейс)
-			// Это позволяет пользователю вводить запросы без префикса "ask"
-			if state.Orchestrator != nil {
-				answer, err := state.Orchestrator.Run(ctx, input)
-				if err != nil {
-					return app.CommandResultMsg{Err: fmt.Errorf("agent error: %w", err)}
-				}
-				return app.CommandResultMsg{Output: answer}
-			}
-
 			return app.CommandResultMsg{Err: fmt.Errorf("unknown command: '%s'. Try 'load <id>', 'demo', 'render <file>', 'ask <query>' or 'todo help'", cmd)}
 		}
 	}
+}
+
+// startAgent запускает агента в отдельной горутине и возвращает tea.Tick для опроса результата.
+//
+// Канал сохраняется в модели для последующей проверки в Update().
+// Возвращаемая команда только отправляет AgentTickMsg - чтение канала происходит в Update().
+func startAgent(m *MainModel, query string) tea.Cmd {
+	state := m.appState
+
+	// Проверяем что оркестратор инициализирован
+	if state.Orchestrator == nil {
+		utils.Error("startAgent: Orchestrator is nil!", "query", query)
+		return func() tea.Msg {
+			return AgentFinishedMsg{Result: app.CommandResultMsg{Err: fmt.Errorf("orchestrator not initialized")}}
+		}
+	}
+
+	// Создаем канал для результата
+	resultCh := make(chan agentResultMsg, 1)
+
+	// Пытаемся запустить агент (thread-safe проверка)
+	if !m.agent.tryStart(resultCh) {
+		utils.Error("startAgent: Agent already running!", "query", query)
+		return func() tea.Msg {
+			return AgentFinishedMsg{Result: app.CommandResultMsg{Err: fmt.Errorf("agent already running")}}
+		}
+	}
+
+	// Запускаем агента в отдельной горутине
+	go func() {
+		utils.Info("startAgent: Agent goroutine started", "query", query)
+
+		// Создаём контекст с таймаутом
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		answer, err := state.Orchestrator.Run(ctx, query)
+		result := app.CommandResultMsg{}
+		if err != nil {
+			utils.Error("startAgent: Agent FAILED", "error", err)
+			result.Err = fmt.Errorf("agent error: %w", err)
+		} else {
+			utils.Info("startAgent: Agent SUCCEEDED", "response_length", len(answer))
+			result.Output = answer
+		}
+
+		// Отправляем результат в канал (блокируется пока Update не прочитает)
+		resultCh <- agentResultMsg{result: result}
+		utils.Info("startAgent: Result sent to channel")
+	}()
+
+	// Возвращаем команду которая просто тикает - чтение канала в Update()
+	// ИЗМЕНЕНО: убран select из этого места чтобы избежать двойного чтения
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return AgentTickMsg(t)
+	})
 }

@@ -216,19 +216,39 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string, toolSe
 		"rate_limit", cfg.WB.RateLimit,
 		"burst_limit", cfg.WB.BurstLimit)
 
-	// 3. Создаём глобальное состояние (thread-safe)
-	state := app.NewState(cfg, s3Client)
+	// 3. Загружаем справочники WB (кэшируем при старте)
+	var dicts *wb.Dictionaries
+	if wbClient != nil {
+		ctx := context.Background()
+		dicts, err = wbClient.LoadDictionaries(ctx)
+		if err != nil {
+			log.Printf("Warning: failed to load WB dictionaries: %v", err)
+			utils.Error("WB dictionaries loading failed", "error", err)
+			// Продолжаем работу со справочниками = nil (dictionary tools вернут ошибку)
+		} else {
+			utils.Info("WB dictionaries loaded",
+				"colors", len(dicts.Colors),
+				"genders", len(dicts.Genders),
+				"countries", len(dicts.Countries),
+				"seasons", len(dicts.Seasons),
+				"vats", len(dicts.Vats))
+		}
+	}
 
-	// 4. Регистрируем Todo команды
+	// 4. Создаём глобальное состояние (thread-safe)
+	state := app.NewState(cfg, s3Client)
+	state.Dictionaries = dicts // Сохраняем справочники в state
+
+	// 5. Регистрируем Todo команды
 	app.SetupTodoCommands(state.CommandRegistry, state)
 
-	// 5. Регистрируем инструменты
-	if err := SetupTools(state, wbClient, toolSet); err != nil {
+	// 6. Регистрируем инструменты
+	if err := SetupTools(state, wbClient, toolSet, cfg); err != nil {
 		utils.Error("Tools registration failed", "error", err)
 		return nil, fmt.Errorf("failed to register tools: %w", err)
 	}
 
-	// 6. Создаём LLM провайдер
+	// 7. Создаём LLM провайдер
 	modelDef, ok := cfg.Models.Definitions[cfg.Models.DefaultChat]
 	if !ok {
 		utils.Error("Default chat model not found", "model", cfg.Models.DefaultChat)
@@ -242,7 +262,7 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string, toolSe
 	}
 	utils.Info("LLM provider created", "provider", modelDef.Provider, "model", modelDef.ModelName)
 
-	// 7. Загружаем системный промпт
+	// 8. Загружаем системный промпт
 	agentSystemPrompt := systemPrompt
 	if agentSystemPrompt == "" {
 		agentPrompt, err := prompt.LoadAgentSystemPrompt(cfg)
@@ -254,7 +274,7 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string, toolSe
 		}
 	}
 
-	// 8. Загружаем post-prompts для tools
+	// 9. Загружаем post-prompts для tools
 	toolPostPrompts, err := prompt.LoadToolPostPrompts(cfg)
 	if err != nil {
 		utils.Error("Failed to load tool post-prompts", "error", err)
@@ -264,7 +284,7 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string, toolSe
 		utils.Info("Tool post-prompts loaded", "count", len(toolPostPrompts.Tools))
 	}
 
-	// 9. Создаём Orchestrator
+	// 10. Создаём Orchestrator
 	orchestrator, err := agent.New(agent.Config{
 		LLM:             llmProvider,
 		Registry:        state.GetToolsRegistry(),
@@ -349,7 +369,7 @@ func (c *Components) ClearTodos() {
 //   ToolWB | ToolPlanner    // WB + планировщик
 //
 // Возвращает ошибку если валидация схемы какого-либо инструмента не прошла.
-func SetupTools(state *app.GlobalState, wbClient *wb.Client, toolSet ToolSet) error {
+func SetupTools(state *app.GlobalState, wbClient *wb.Client, toolSet ToolSet, cfg *config.AppConfig) error {
 	registry := state.GetToolsRegistry()
 	var registered []string
 
@@ -370,8 +390,39 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, toolSet ToolSet) er
 		if err := register("wb_subjects", std.NewWbSubjectsTool(wbClient)); err != nil {
 			return err
 		}
+		if err := register("wb_subjects_by_name", std.NewWbSubjectsByNameTool(wbClient)); err != nil {
+			return err
+		}
+		if err := register("wb_characteristics", std.NewWbCharacteristicsTool(wbClient)); err != nil {
+			return err
+		}
+		if err := register("wb_tnved", std.NewWbTnvedTool(wbClient)); err != nil {
+			return err
+		}
+		if err := register("wb_brands", std.NewWbBrandsTool(wbClient, state.Config.WB.BrandsLimit)); err != nil {
+			return err
+		}
 		if err := register("ping_wb_api", std.NewWbPingTool(wbClient)); err != nil {
 			return err
+		}
+
+		// Dictionary tools (требуют загруженных справочников)
+		if state.Dictionaries != nil {
+			if err := register("wb_colors", std.NewWbColorsTool(state.Dictionaries)); err != nil {
+				return err
+			}
+			if err := register("wb_countries", std.NewWbCountriesTool(state.Dictionaries)); err != nil {
+				return err
+			}
+			if err := register("wb_genders", std.NewWbGendersTool(state.Dictionaries)); err != nil {
+				return err
+			}
+			if err := register("wb_seasons", std.NewWbSeasonsTool(state.Dictionaries)); err != nil {
+				return err
+			}
+			if err := register("wb_vat_rates", std.NewWbVatRatesTool(state.Dictionaries)); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -381,11 +432,17 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, toolSet ToolSet) er
 		// register("ozon_categories", std.NewOzonCategoriesTool(ozonClient))
 	}
 
-	// S3 инструменты (для будущего использования)
+	// S3 инструменты
 	if toolSet&ToolS3 != 0 {
-		// TODO: добавить S3 инструменты
-		// register("s3_list", std.NewS3ListTool(state.S3))
-		// register("s3_read", std.NewS3ReadTool(state.S3))
+		if err := register("list_s3_files", std.NewS3ListTool(state.S3)); err != nil {
+			return err
+		}
+		if err := register("read_s3_object", std.NewS3ReadTool(state.S3)); err != nil {
+			return err
+		}
+		if err := register("read_s3_image", std.NewS3ReadImageTool(state.S3, cfg.ImageProcessing)); err != nil {
+			return err
+		}
 	}
 
 	// Planner инструменты (обязательны для управления задачами)

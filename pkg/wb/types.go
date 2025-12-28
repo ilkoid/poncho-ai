@@ -48,3 +48,10 @@ type Country struct {
     FullName string `json:"fullName"` // "Китайская Народная Республика"
 }
 
+// Brand представляет бренд в справочнике WB
+type Brand struct {
+    ID      int    `json:"id"`      // Уникальный ID бренда
+    LogoURL string `json:"logoUrl"` // URL логотипа бренда
+    Name    string `json:"name"`    // Название бренда
+}
+

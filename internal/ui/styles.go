@@ -27,6 +27,10 @@ var (
 			Foreground(lipgloss.Color("#04B575")). // Зеленый
 			Render
 
+	infoMsgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("220")). // Желтый
+			Render
+
 	errorMsgStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FF0000")).
 			Bold(true).
@@ -35,5 +39,6 @@ var (
 	// Экспортированные версии стилей для использования в других пакетах
 	UserMsgStyle   = userMsgStyle
 	SystemMsgStyle = systemMsgStyle
+	InfoMsgStyle   = infoMsgStyle
 	ErrorMsgStyle  = errorMsgStyle
 )
