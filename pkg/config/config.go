@@ -64,9 +64,10 @@ type FileRule struct {
 
 // ModelsConfig — настройки AI моделей.
 type ModelsConfig struct {
-	DefaultVision string              `yaml:"default_vision"` // Алиас по умолчанию (например, "glm-4.6v-flash")
-	DefaultChat   string              `yaml:"default_chat"`   // Алиас для чата по умолчанию (например, "glm-4.5")
-	Definitions   map[string]ModelDef `yaml:"definitions"`    // Словарь определений моделей
+	DefaultReasoning string              `yaml:"default_reasoning"` // Алиас reasoning модели по умолчанию (для orchestrator)
+	DefaultChat      string              `yaml:"default_chat"`      // Алиас для чата по умолчанию (например, "glm-4.5")
+	DefaultVision    string              `yaml:"default_vision"`    // Алиас по умолчанию (например, "glm-4.6v-flash")
+	Definitions      map[string]ModelDef `yaml:"definitions"`      // Словарь определений моделей
 }
 
 // ModelDef — параметры конкретной модели.
@@ -80,12 +81,21 @@ type ModelDef struct {
     BaseURL string `yaml:"base_url"` // <--- Добавить
 }
 
-// ToolConfig — настройки инструментов (импорт, поиск и т.д.).
+// ToolConfig — настройки инструментов.
+//
+// Поля поддерживают YAML-конфигурацию для каждого tool индивидуально.
+// Ключом в map является имя tool (например, "get_wb_parent_categories").
 type ToolConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	PostPrompt string `yaml:"post_prompt"` // Путь к post-prompt файлу (относительно prompts_dir)
-	Timeout    time.Duration `yaml:"timeout"`
-	RetryCount int           `yaml:"retry_count"`
+	Enabled     bool   `yaml:"enabled"`
+	Description string `yaml:"description,omitempty"`    // Описание для LLM (function calling)
+	Type        string `yaml:"type,omitempty"`           // "wb", "dictionary", "planner"
+	Endpoint    string `yaml:"endpoint,omitempty"`       // Base URL для API
+	Path        string `yaml:"path,omitempty"`           // API path
+	RateLimit   int    `yaml:"rate_limit,omitempty"`     // запросов в минуту
+	Burst       int    `yaml:"burst,omitempty"`
+	Timeout     string `yaml:"timeout,omitempty"`
+	PostPrompt  string `yaml:"post_prompt,omitempty"`    // Путь к post-prompt файлу
+	DefaultTake int    `yaml:"default_take,omitempty"`   // Для feedbacks API
 }
 
 // S3Config — настройки объектного хранилища.
@@ -149,16 +159,57 @@ func (c *AppConfig) validate() error {
 	if c.S3.Endpoint == "" {
 		return fmt.Errorf("s3.endpoint is required")
 	}
-	// Можно добавить проверку наличия дефолтной модели
+
+	// Валидируем default_reasoning если указан
+	if c.Models.DefaultReasoning != "" {
+		if _, ok := c.Models.Definitions[c.Models.DefaultReasoning]; !ok {
+			return fmt.Errorf("default_reasoning model '%s' is not defined in definitions", c.Models.DefaultReasoning)
+		}
+	}
+
+	// Валидируем default_chat если указан
+	if c.Models.DefaultChat != "" {
+		if _, ok := c.Models.Definitions[c.Models.DefaultChat]; !ok {
+			return fmt.Errorf("default_chat model '%s' is not defined in definitions", c.Models.DefaultChat)
+		}
+	}
+
+	// Валидируем default_vision если указан
 	if c.Models.DefaultVision != "" {
 		if _, ok := c.Models.Definitions[c.Models.DefaultVision]; !ok {
 			return fmt.Errorf("default_vision model '%s' is not defined in definitions", c.Models.DefaultVision)
 		}
 	}
+
 	return nil
 }
 
 // Helper методы для удобства доступа (Syntactic sugar)
+
+// GetReasoningModel возвращает конфигурацию reasoning модели по умолчанию или по имени.
+// Если name пустое, использует default_reasoning из конфига.
+// Если default_reasoning не указан, fallback на default_chat.
+func (c *AppConfig) GetReasoningModel(name string) (ModelDef, bool) {
+	if name == "" {
+		name = c.Models.DefaultReasoning
+		// Fallback: если default_reasoning не указан, используем default_chat
+		if name == "" {
+			name = c.Models.DefaultChat
+		}
+	}
+	m, ok := c.Models.Definitions[name]
+	return m, ok
+}
+
+// GetChatModel возвращает конфигурацию chat модели по умолчанию или по имени.
+// Если name пустое, использует default_chat из конфига.
+func (c *AppConfig) GetChatModel(name string) (ModelDef, bool) {
+	if name == "" {
+		name = c.Models.DefaultChat
+	}
+	m, ok := c.Models.Definitions[name]
+	return m, ok
+}
 
 // GetVisionModel возвращает конфигурацию модели по умолчанию или по имени.
 func (c *AppConfig) GetVisionModel(name string) (ModelDef, bool) {

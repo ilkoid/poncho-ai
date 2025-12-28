@@ -22,9 +22,13 @@ import (
 //   - Базовую генерацию текста
 //   - Function Calling (tools)
 //   - Vision запросы (изображения)
+//   - Runtime переопределение параметров через GenerateOption
+//
+// Правило 4 ("Тупой клиент"): Не хранит состояние между вызовами.
+// Все параметры передаются при каждом Generate() вызове.
 type Client struct {
-	api   *openai.Client
-	model string
+	api        *openai.Client
+	baseConfig llm.GenerateOptions // Дефолтные параметры из config.yaml
 }
 
 // NewClient создает OpenAI клиент на основе конфигурации модели.
@@ -42,86 +46,107 @@ func NewClient(modelDef config.ModelDef) *Client {
 
 	client := openai.NewClientWithConfig(cfg)
 
+	// Заполняем baseConfig из ModelDef для использования как дефолты
+	baseConfig := llm.GenerateOptions{
+		Model:       modelDef.ModelName,
+		Temperature: modelDef.Temperature,
+		MaxTokens:   modelDef.MaxTokens,
+		Format:      "",
+	}
+
 	return &Client{
-		api:   client,
-		model: modelDef.ModelName,
+		api:        client,
+		baseConfig: baseConfig,
 	}
 }
 
 // Generate выполняет запрос к API и возвращает ответ модели.
 //
-// Поддерживает опциональную передачу definitions инструментов для Function Calling:
-//   toolsArgs[0] должен быть []tools.ToolDefinition
+// Поддерживает:
+//   - Function Calling (tools): []tools.ToolDefinition
+//   - Runtime переопределение параметров: GenerateOption
 //
 // Алгоритм:
-//   1. Конвертирует внутренние сообщения в формат OpenAI SDK
-//   2. Если переданы tools — добавляет их в запрос
-//   3. Вызывает API
-//   4. Конвертирует ответ обратно в наш формат
-//   5. Извлекает ToolCalls если модель решила вызвать функции
+//   1. Разделяет opts на tools и GenerateOptions
+//   2. Применяет GenerateOptions к baseConfig (runtime override)
+//   3. Конвертирует сообщения в формат OpenAI SDK
+//   4. Если переданы tools — добавляет их в запрос
+//   5. Вызывает API с итоговыми параметрами
+//   6. Конвертирует ответ обратно в наш формат
 //
 // Правило 7: Все ошибки возвращаются, никаких panic.
-//
 // Правило 4: Работает только через интерфейс llm.Provider.
-func (c *Client) Generate(ctx context.Context, messages []llm.Message, toolsArgs ...any) (llm.Message, error) {
+func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...any) (llm.Message, error) {
 	startTime := time.Now()
 
-	utils.Debug("LLM request started",
-		"model", c.model,
-		"messages_count", len(messages),
-		"tools_count", func() int {
-			if len(toolsArgs) > 0 {
-				if defs, ok := toolsArgs[0].([]tools.ToolDefinition); ok {
-					return len(defs)
-				}
-			}
-			return 0
-		}())
+	// 1. Начинаем с дефолтных значений из config.yaml
+	options := c.baseConfig
 
-	// 1. Конвертируем наши сообщения в формат OpenAI SDK
+	// 2. Разделяем opts на tools и GenerateOption
+	var toolDefs []tools.ToolDefinition
+	for _, opt := range opts {
+		switch v := opt.(type) {
+		case []tools.ToolDefinition:
+			// Tools для Function Calling
+			toolDefs = v
+		case llm.GenerateOption:
+			// Runtime переопределение параметров модели
+			v(&options)
+		default:
+			return llm.Message{}, fmt.Errorf("invalid option type: expected []tools.ToolDefinition or llm.GenerateOption, got %T", opt)
+		}
+	}
+
+	utils.Debug("LLM request started",
+		"model", options.Model,
+		"temperature", options.Temperature,
+		"max_tokens", options.MaxTokens,
+		"messages_count", len(messages),
+		"tools_count", len(toolDefs))
+
+	// 3. Конвертируем наши сообщения в формат OpenAI SDK
 	openaiMsgs := make([]openai.ChatCompletionMessage, len(messages))
 	for i, m := range messages {
 		openaiMsgs[i] = mapToOpenAI(m)
 	}
 
-	// 2. Создаём базовый запрос
+	// 4. Создаём запрос с итоговыми параметрами (baseConfig + runtime override)
 	req := openai.ChatCompletionRequest{
-		Model:    c.model,
-		Messages: openaiMsgs,
+		Model:       options.Model,
+		Temperature: float32(options.Temperature),
+		MaxTokens:   options.MaxTokens,
+		Messages:    openaiMsgs,
 	}
 
-	// 3. Добавляем tools если переданы
-	// Ожидаем toolsArgs[0] = []tools.ToolDefinition
-	if len(toolsArgs) > 0 {
-		toolDefs, ok := toolsArgs[0].([]tools.ToolDefinition)
-		if !ok {
-			return llm.Message{}, fmt.Errorf("invalid tools type: expected []tools.ToolDefinition, got %T", toolsArgs[0])
+	// 5. ResponseFormat если указан
+	if options.Format == "json_object" {
+		req.ResponseFormat = &openai.ChatCompletionResponseFormat{
+			Type: openai.ChatCompletionResponseFormatTypeJSONObject,
 		}
+	}
 
-		// Конвертируем в формат OpenAI
+	// 6. Добавляем tools если переданы
+	if len(toolDefs) > 0 {
 		req.Tools = convertToolsToOpenAI(toolDefs)
-
-		// Включаем автоматический режим — LLM сама решает когда вызывать tools
 		req.ToolChoice = "auto"
 	}
 
-	// 4. Вызываем API
-	// Правило 7: возвращаем ошибку вместо panic
+	// 7. Вызываем API
 	resp, err := c.api.CreateChatCompletion(ctx, req)
 	if err != nil {
 		utils.Error("LLM API request failed",
 			"error", err,
-			"model", c.model,
+			"model", options.Model,
 			"duration_ms", time.Since(startTime).Milliseconds())
 		return llm.Message{}, fmt.Errorf("openai api error: %w", err)
 	}
 
-	// Проверяем что есть хотя бы один выбор
+	// 8. Проверяем что есть хотя бы один выбор
 	if len(resp.Choices) == 0 {
 		return llm.Message{}, fmt.Errorf("no choices in response")
 	}
 
-	// 5. Маппим ответ обратно в наш формат
+	// 9. Маппим ответ обратно в наш формат
 	choice := resp.Choices[0].Message
 
 	result := llm.Message{
@@ -129,7 +154,7 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, toolsArgs
 		Content: choice.Content,
 	}
 
-	// 6. Извлекаем ToolCalls если модель решила вызвать функции
+	// 10. Извлекаем ToolCalls если модель решила вызвать функции
 	if len(choice.ToolCalls) > 0 {
 		result.ToolCalls = make([]llm.ToolCall, len(choice.ToolCalls))
 		for i, tc := range choice.ToolCalls {
@@ -142,7 +167,7 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, toolsArgs
 	}
 
 	utils.Info("LLM response received",
-		"model", c.model,
+		"model", options.Model,
 		"tool_calls_count", len(result.ToolCalls),
 		"content_length", len(result.Content),
 		"duration_ms", time.Since(startTime).Milliseconds())

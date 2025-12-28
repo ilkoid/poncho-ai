@@ -59,6 +59,18 @@ type Orchestrator struct {
 	// activePostPrompt — текущий активный post-prompt (действует одну итерацию)
 	activePostPrompt string
 
+	// reasoningConfig — дефолтные параметры для reasoning модели (из config.yaml)
+	// Используется по умолчанию в orchestrator для планирования и tool selection
+	reasoningConfig llm.GenerateOptions
+
+	// chatConfig — дефолтные параметры для chat модели (из config.yaml)
+	// Используется когда post-prompt переопределяет параметры
+	chatConfig llm.GenerateOptions
+
+	// activePromptConfig — параметры модели из активного post-prompt
+	// Переопределяет reasoningConfig на одну итерацию
+	activePromptConfig *prompt.PromptConfig
+
 	// mu защищает одновременные вызовы Run
 	mu sync.Mutex
 }
@@ -84,6 +96,12 @@ type Config struct {
 
 	// ToolPostPrompts — конфигурация post-prompts для tools (опционально)
 	ToolPostPrompts *prompt.ToolPostPromptConfig
+
+	// ReasoningConfig — дефолтные параметры для reasoning модели (из config.yaml)
+	ReasoningConfig llm.GenerateOptions
+
+	// ChatConfig — дефолтные параметры для chat модели (из config.yaml)
+	ChatConfig llm.GenerateOptions
 }
 
 // New создает новый Orchestrator с заданной конфигурацией.
@@ -110,12 +128,14 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 
 	return &Orchestrator{
-		llm:             cfg.LLM,
-		registry:        cfg.Registry,
-		state:           cfg.State,
-		maxIters:        cfg.MaxIters,
-		systemPrompt:    cfg.SystemPrompt,
-		toolPostPrompts:  cfg.ToolPostPrompts,
+		llm:               cfg.LLM,
+		registry:          cfg.Registry,
+		state:             cfg.State,
+		maxIters:          cfg.MaxIters,
+		systemPrompt:      cfg.SystemPrompt,
+		toolPostPrompts:   cfg.ToolPostPrompts,
+		reasoningConfig:   cfg.ReasoningConfig,
+		chatConfig:        cfg.ChatConfig,
 	}, nil
 }
 
@@ -178,9 +198,46 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, error
 		}
 		messages := o.state.BuildAgentContext(systemPrompt)
 
-		// 3.2. Вызываем LLM с tools definitions
+		// 3.2. Определяем параметры для этого вызова LLM
+		// Приоритет: activePromptConfig (из post-prompt) → reasoningConfig (дефолт)
+		var opts []any
+		if o.activePromptConfig != nil {
+			// Промпт переопределяет параметры модели
+			cfg := o.activePromptConfig
+			if cfg.Model != "" {
+				opts = append(opts, llm.WithModel(cfg.Model))
+			}
+			if cfg.Temperature != 0 {
+				opts = append(opts, llm.WithTemperature(cfg.Temperature))
+			}
+			if cfg.MaxTokens != 0 {
+				opts = append(opts, llm.WithMaxTokens(cfg.MaxTokens))
+			}
+			if cfg.Format != "" {
+				opts = append(opts, llm.WithFormat(cfg.Format))
+			}
+		} else {
+			// Используем reasoning параметры из config.yaml
+			if o.reasoningConfig.Model != "" {
+				opts = append(opts, llm.WithModel(o.reasoningConfig.Model))
+			}
+			if o.reasoningConfig.Temperature != 0 {
+				opts = append(opts, llm.WithTemperature(o.reasoningConfig.Temperature))
+			}
+			if o.reasoningConfig.MaxTokens != 0 {
+				opts = append(opts, llm.WithMaxTokens(o.reasoningConfig.MaxTokens))
+			}
+			if o.reasoningConfig.Format != "" {
+				opts = append(opts, llm.WithFormat(o.reasoningConfig.Format))
+			}
+		}
+
+		// Добавляем tools definitions
+		opts = append(opts, toolDefs)
+
+		// 3.3. Вызываем LLM с tools definitions и opts
 		// Generate работает через интерфейс Provider (правило 4)
-		response, err := o.llm.Generate(ctx, messages, toolDefs)
+		response, err := o.llm.Generate(ctx, messages, opts...)
 		if err != nil {
 			utils.Error("LLM generation failed", "error", err, "iteration", iterCount)
 			return "", fmt.Errorf("llm generation failed (iter %d): %w", iterCount, err)
@@ -224,8 +281,9 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, error
 		}
 
 		// 3.6. Нет tool calls — это финальный ответ
-		// Сбрасываем active post-prompt после завершения
+		// Сбрасываем active post-prompt и config после завершения
 		o.activePostPrompt = ""
+		o.activePromptConfig = nil
 
 		// Выводим финальный todo list для визуализации
 		todoString := o.state.Todo.String()
@@ -297,14 +355,18 @@ func (o *Orchestrator) executeTool(ctx context.Context, tc llm.ToolCall) string 
 
 	// 5. Проверяем есть ли post-prompt для этого tool
 	if o.toolPostPrompts != nil {
-		postPrompt, err := o.toolPostPrompts.GetToolPostPrompt(tc.Name, o.state.Config.App.PromptsDir)
+		promptFile, err := o.toolPostPrompts.GetToolPromptFile(tc.Name, o.state.Config.App.PromptsDir)
 		if err != nil {
 			// Логируем ошибку, но не прерываем выполнение
-			utils.Error("Failed to get post-prompt", "tool", tc.Name, "error", err)
-		} else if postPrompt != "" {
+			utils.Error("Failed to get post-prompt file", "tool", tc.Name, "error", err)
+		} else if promptFile != nil {
 			// Устанавливаем активный post-prompt для следующей итерации
-			o.activePostPrompt = postPrompt
-			utils.Info("Post-prompt activated", "tool", tc.Name, "next_iteration")
+			if len(promptFile.Messages) > 0 && promptFile.Messages[0].Role == "system" {
+				o.activePostPrompt = promptFile.Messages[0].Content
+			}
+			// Сохраняем Config для переопределения параметров модели
+			o.activePromptConfig = &promptFile.Config
+			utils.Info("Post-prompt activated", "tool", tc.Name, "has_config", promptFile.Config.Model != "")
 		}
 	}
 

@@ -34,10 +34,11 @@ import (
 // Эта структура может быть использована в TUI для избежания дублирования
 // кода инициализации между CLI и GUI версиями.
 type Components struct {
-	Config      *config.AppConfig
-	State       *app.GlobalState
-	LLM         llm.Provider
-	WBClient    *wb.Client
+	Config       *config.AppConfig
+	State        *app.GlobalState
+	LLM          llm.Provider      // Chat модель (для ReAct loop)
+	VisionLLM    llm.Provider      // Vision модель (для batch image analysis)
+	WBClient     *wb.Client
 	Orchestrator *agent.Orchestrator
 }
 
@@ -60,35 +61,6 @@ type TodoStats struct {
 	Failed  int
 	Total   int
 }
-
-// ToolSet определяет набор инструментов для регистрации.
-//
-// Использует битовые флаги для комбинирования различных наборов инструментов.
-// Позволяет экономить токены при работе с LLM, регистрируя только нужные
-// инструменты для конкретной утилиты.
-//
-// Примеры комбинаций:
-//   ToolWB | ToolPlanner           // WB + планировщик
-//   ToolWB | ToolOzon              // Все маркетплейсы
-//   ToolWB | ToolOzon | ToolPlanner // Всё кроме S3
-type ToolSet int
-
-const (
-	// ToolWB регистрирует Wildberries инструменты
-	ToolWB ToolSet = 1 << iota // 1
-	// ToolOzon регистрирует Ozon инструменты
-	ToolOzon // 2
-	// ToolPlanner регистрирует инструменты планировщика задач
-	ToolPlanner // 4
-	// ToolS3 регистрирует S3 инструменты (для будущего использования)
-	ToolS3 // 8
-
-	// Предопределённые комбинации
-	ToolsWBWithPlanner  = ToolWB | ToolPlanner        // WB + планировщик
-	ToolsMarketplaces   = ToolWB | ToolOzon           // Все маркетплейсы
-	ToolsAll            = ToolWB | ToolOzon | ToolPlanner | ToolS3 // Все инструменты
-	ToolsMinimal        = ToolPlanner                // Только планировщик (минимальный набор)
-)
 
 // ConfigPathFinder определяет стратегию поиска пути к config.yaml.
 //
@@ -179,8 +151,13 @@ func InitializeConfig(finder ConfigPathFinder) (*config.AppConfig, string, error
 //
 // Правило 6: entry points - initialization and orchestration only.
 // Правило 5: использует thread-safe GlobalState.
-func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string, toolSet ToolSet) (*Components, error) {
-	utils.Info("Initializing components", "maxIters", maxIters, "toolSet", toolSet)
+//
+// Параметры:
+//   - cfg: конфигурация приложения
+//   - maxIters: максимальное количество итераций оркестратора
+//   - systemPrompt: опциональный системный промпт (если пустой, загружается из промптов)
+func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Components, error) {
+	utils.Info("Initializing components", "maxIters", maxIters)
 
 	// 1. Инициализируем S3 клиент
 	s3Client, err := s3storage.New(cfg.S3)
@@ -242,25 +219,69 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string, toolSe
 	// 5. Регистрируем Todo команды
 	app.SetupTodoCommands(state.CommandRegistry, state)
 
-	// 6. Регистрируем инструменты
-	if err := SetupTools(state, wbClient, toolSet, cfg); err != nil {
-		utils.Error("Tools registration failed", "error", err)
-		return nil, fmt.Errorf("failed to register tools: %w", err)
-	}
-
-	// 7. Создаём LLM провайдер
-	modelDef, ok := cfg.Models.Definitions[cfg.Models.DefaultChat]
+	// 6. Создаём LLM провайдер (ОДИН для reasoning и chat, правило 4)
+	// Получаем reasoning модель (или fallback на chat если не указана)
+	reasoningModelDef, ok := cfg.GetReasoningModel("")
 	if !ok {
-		utils.Error("Default chat model not found", "model", cfg.Models.DefaultChat)
-		return nil, fmt.Errorf("default_chat model '%s' not found in definitions", cfg.Models.DefaultChat)
+		utils.Error("Reasoning model not found", "model", cfg.Models.DefaultReasoning)
+		return nil, fmt.Errorf("reasoning model not found - configure default_reasoning or default_chat in config.yaml")
 	}
 
-	llmProvider, err := factory.NewLLMProvider(modelDef)
+	llmProvider, err := factory.NewLLMProvider(reasoningModelDef)
 	if err != nil {
 		utils.Error("LLM provider creation failed", "error", err)
 		return nil, fmt.Errorf("failed to create LLM provider: %w", err)
 	}
-	utils.Info("LLM provider created", "provider", modelDef.Provider, "model", modelDef.ModelName)
+	utils.Info("LLM provider created", "provider", reasoningModelDef.Provider, "model", reasoningModelDef.ModelName)
+
+	// Формируем reasoningConfig из config.yaml
+	reasoningConfig := llm.GenerateOptions{
+		Model:       reasoningModelDef.ModelName,
+		Temperature: reasoningModelDef.Temperature,
+		MaxTokens:   reasoningModelDef.MaxTokens,
+		Format:      "",
+	}
+
+	// Формируем chatConfig из config.yaml (используется как fallback для post-prompts)
+	chatConfig := llm.GenerateOptions{}
+	if chatModelDef, ok := cfg.GetChatModel(""); ok {
+		chatConfig = llm.GenerateOptions{
+			Model:       chatModelDef.ModelName,
+			Temperature: chatModelDef.Temperature,
+			MaxTokens:   chatModelDef.MaxTokens,
+			Format:      "",
+		}
+		utils.Info("Chat config loaded", "model", chatModelDef.ModelName)
+	} else {
+		// Fallback на reasoning config если chat не настроен
+		chatConfig = reasoningConfig
+		utils.Info("Chat config not set, using reasoning config as fallback")
+	}
+
+	// Vision LLM (для batch image analysis) - отдельный провайдер
+	var visionLLM llm.Provider
+	if cfg.Models.DefaultVision != "" {
+		visionModelDef, ok := cfg.Models.Definitions[cfg.Models.DefaultVision]
+		if !ok {
+			utils.Error("Default vision model not found", "model", cfg.Models.DefaultVision)
+			return nil, fmt.Errorf("default_vision model '%s' not found in definitions", cfg.Models.DefaultVision)
+		}
+
+		visionLLM, err = factory.NewLLMProvider(visionModelDef)
+		if err != nil {
+			utils.Error("Vision LLM provider creation failed", "error", err)
+			return nil, fmt.Errorf("failed to create vision LLM provider: %w", err)
+		}
+		utils.Info("Vision LLM provider created", "provider", visionModelDef.Provider, "model", visionModelDef.ModelName)
+	} else {
+		utils.Info("No vision model configured, batch image analysis will be unavailable")
+	}
+
+	// 7. Регистрируем инструменты из YAML конфигурации
+	if err := SetupTools(state, wbClient, visionLLM, cfg); err != nil {
+		utils.Error("Tools registration failed", "error", err)
+		return nil, fmt.Errorf("failed to register tools: %w", err)
+	}
 
 	// 8. Загружаем системный промпт
 	agentSystemPrompt := systemPrompt
@@ -286,22 +307,25 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string, toolSe
 
 	// 10. Создаём Orchestrator
 	orchestrator, err := agent.New(agent.Config{
-		LLM:             llmProvider,
-		Registry:        state.GetToolsRegistry(),
-		State:           state,
-		MaxIters:        maxIters,
-		SystemPrompt:    agentSystemPrompt,
+		LLM:              llmProvider,
+		Registry:         state.GetToolsRegistry(),
+		State:            state,
+		MaxIters:         maxIters,
+		SystemPrompt:     agentSystemPrompt,
 		ToolPostPrompts:  toolPostPrompts,
+		ReasoningConfig:  reasoningConfig,
+		ChatConfig:       chatConfig,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create orchestrator: %w", err)
 	}
 
 	return &Components{
-		Config:      cfg,
-		State:       state,
-		LLM:         llmProvider,
-		WBClient:    wbClient,
+		Config:       cfg,
+		State:        state,
+		LLM:          llmProvider,
+		VisionLLM:    visionLLM,
+		WBClient:     wbClient,
 		Orchestrator: orchestrator,
 	}, nil
 }
@@ -359,21 +383,22 @@ func (c *Components) ClearTodos() {
 	c.State.Todo.Clear()
 }
 
-// SetupTools регистрирует инструменты в реестре.
+// SetupTools регистрирует инструменты из YAML конфигурации.
 //
 // Правило 3: все инструменты регистрируются через Registry.Register().
 // Правило 1: инструменты реализуют Tool интерфейс.
 //
-// Параметр toolSet использует битовые флаги для выборочной регистрации,
-// экономя токены при работе с LLM. Используйте побитовое ИЛИ для комбинирования:
-//   ToolWB | ToolPlanner    // WB + планировщик
+// Конфигурация читается из cfg.Tools, где ключом является имя tool.
+// Инструмент регистрируется только если cfg.Tools[toolName].Enabled == true.
 //
-// Возвращает ошибку если валидация схемы какого-либо инструмента не прошла.
-func SetupTools(state *app.GlobalState, wbClient *wb.Client, toolSet ToolSet, cfg *config.AppConfig) error {
+// Возвращает ошибку если:
+//   - инструмент не найден в коде (unknown tool)
+//   - валидация схемы инструмента не прошла
+func SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provider, cfg *config.AppConfig) error {
 	registry := state.GetToolsRegistry()
 	var registered []string
 
-	// Helper для регистрации с логированием и возвратом ошибки
+	// Helper для регистрации с логированием
 	register := func(name string, tool tools.Tool) error {
 		if err := registry.Register(tool); err != nil {
 			return fmt.Errorf("failed to register tool '%s': %w", name, err)
@@ -382,88 +407,254 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, toolSet ToolSet, cf
 		return nil
 	}
 
-	// Wildberries инструменты
-	if toolSet&ToolWB != 0 {
-		if err := register("wb_parent_categories", std.NewWbParentCategoriesTool(wbClient)); err != nil {
+	// Helper для получения конфигурации tool с дефолтными значениями
+	getToolCfg := func(name string) (config.ToolConfig, bool) {
+		tc, exists := cfg.Tools[name]
+		if !exists {
+			// Если tool не указан в конфиге, возвращаем disabled
+			return config.ToolConfig{Enabled: false}, false
+		}
+		return tc, true
+	}
+
+	// === WB Content API Tools ===
+	if toolCfg, exists := getToolCfg("search_wb_products"); exists && toolCfg.Enabled {
+		if err := register("search_wb_products", std.NewWbProductSearchTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
-		if err := register("wb_subjects", std.NewWbSubjectsTool(wbClient)); err != nil {
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_parent_categories"); exists && toolCfg.Enabled {
+		if err := register("get_wb_parent_categories", std.NewWbParentCategoriesTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
-		if err := register("wb_subjects_by_name", std.NewWbSubjectsByNameTool(wbClient)); err != nil {
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_subjects"); exists && toolCfg.Enabled {
+		if err := register("get_wb_subjects", std.NewWbSubjectsTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
-		if err := register("wb_characteristics", std.NewWbCharacteristicsTool(wbClient)); err != nil {
+	}
+
+	if toolCfg, exists := getToolCfg("ping_wb_api"); exists && toolCfg.Enabled {
+		if err := register("ping_wb_api", std.NewWbPingTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
-		if err := register("wb_tnved", std.NewWbTnvedTool(wbClient)); err != nil {
+	}
+
+	// === WB Feedbacks API Tools (новые) ===
+	if toolCfg, exists := getToolCfg("get_wb_feedbacks"); exists && toolCfg.Enabled {
+		if err := register("get_wb_feedbacks", std.NewWbFeedbacksTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
-		if err := register("wb_brands", std.NewWbBrandsTool(wbClient, state.Config.WB.BrandsLimit)); err != nil {
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_questions"); exists && toolCfg.Enabled {
+		if err := register("get_wb_questions", std.NewWbQuestionsTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
-		if err := register("ping_wb_api", std.NewWbPingTool(wbClient)); err != nil {
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_new_feedbacks_questions"); exists && toolCfg.Enabled {
+		if err := register("get_wb_new_feedbacks_questions", std.NewWbNewFeedbacksQuestionsTool(wbClient, toolCfg)); err != nil {
 			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_unanswered_feedbacks_counts"); exists && toolCfg.Enabled {
+		if err := register("get_wb_unanswered_feedbacks_counts", std.NewWbUnansweredFeedbacksCountsTool(wbClient, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_unanswered_questions_counts"); exists && toolCfg.Enabled {
+		if err := register("get_wb_unanswered_questions_counts", std.NewWbUnansweredQuestionsCountsTool(wbClient, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	// === WB Dictionary Tools ===
+	if state.Dictionaries != nil {
+		if toolCfg, exists := getToolCfg("wb_colors"); exists && toolCfg.Enabled {
+			if err := register("wb_colors", std.NewWbColorsTool(state.Dictionaries, toolCfg)); err != nil {
+				return err
+			}
 		}
 
-		// Dictionary tools (требуют загруженных справочников)
-		if state.Dictionaries != nil {
-			if err := register("wb_colors", std.NewWbColorsTool(state.Dictionaries)); err != nil {
+		if toolCfg, exists := getToolCfg("wb_countries"); exists && toolCfg.Enabled {
+			if err := register("wb_countries", std.NewWbCountriesTool(state.Dictionaries, toolCfg)); err != nil {
 				return err
 			}
-			if err := register("wb_countries", std.NewWbCountriesTool(state.Dictionaries)); err != nil {
+		}
+
+		if toolCfg, exists := getToolCfg("wb_genders"); exists && toolCfg.Enabled {
+			if err := register("wb_genders", std.NewWbGendersTool(state.Dictionaries, toolCfg)); err != nil {
 				return err
 			}
-			if err := register("wb_genders", std.NewWbGendersTool(state.Dictionaries)); err != nil {
+		}
+
+		if toolCfg, exists := getToolCfg("wb_seasons"); exists && toolCfg.Enabled {
+			if err := register("wb_seasons", std.NewWbSeasonsTool(state.Dictionaries, toolCfg)); err != nil {
 				return err
 			}
-			if err := register("wb_seasons", std.NewWbSeasonsTool(state.Dictionaries)); err != nil {
-				return err
-			}
-			if err := register("wb_vat_rates", std.NewWbVatRatesTool(state.Dictionaries)); err != nil {
+		}
+
+		if toolCfg, exists := getToolCfg("wb_vat_rates"); exists && toolCfg.Enabled {
+			if err := register("wb_vat_rates", std.NewWbVatRatesTool(state.Dictionaries, toolCfg)); err != nil {
 				return err
 			}
 		}
 	}
 
-	// Ozon инструменты (заглушка для будущего)
-	if toolSet&ToolOzon != 0 {
-		// TODO: добавить Ozon инструменты когда они будут готовы
-		// register("ozon_categories", std.NewOzonCategoriesTool(ozonClient))
+	// === WB Service Tools ===
+	if toolCfg, exists := getToolCfg("reload_wb_dictionaries"); exists && toolCfg.Enabled {
+		if err := register("reload_wb_dictionaries", std.NewReloadWbDictionariesTool(wbClient, toolCfg)); err != nil {
+			return err
+		}
 	}
 
-	// S3 инструменты
-	if toolSet&ToolS3 != 0 {
+	// === S3 Basic Tools ===
+	if toolCfg, exists := getToolCfg("list_s3_files"); exists && toolCfg.Enabled {
 		if err := register("list_s3_files", std.NewS3ListTool(state.S3)); err != nil {
 			return err
 		}
+	}
+
+	if toolCfg, exists := getToolCfg("read_s3_object"); exists && toolCfg.Enabled {
 		if err := register("read_s3_object", std.NewS3ReadTool(state.S3)); err != nil {
-			return err
-		}
-		if err := register("read_s3_image", std.NewS3ReadImageTool(state.S3, cfg.ImageProcessing)); err != nil {
 			return err
 		}
 	}
 
-	// Planner инструменты (обязательны для управления задачами)
-	if toolSet&ToolPlanner != 0 {
-		if err := register("plan_add_task", std.NewPlanAddTaskTool(state.Todo)); err != nil {
+	if toolCfg, exists := getToolCfg("read_s3_image"); exists && toolCfg.Enabled {
+		tool := std.NewS3ReadImageTool(state.S3, cfg.ImageProcessing)
+		if err := register("read_s3_image", tool); err != nil {
 			return err
 		}
-		if err := register("plan_mark_done", std.NewPlanMarkDoneTool(state.Todo)); err != nil {
+	}
+
+	// === S3 Batch Tools ===
+	if toolCfg, exists := getToolCfg("classify_and_download_s3_files"); exists && toolCfg.Enabled {
+		tool := std.NewClassifyAndDownloadS3Files(
+			state.S3,
+			state,
+			cfg.ImageProcessing,
+			cfg.FileRules,
+			toolCfg,
+		)
+		if err := register("classify_and_download_s3_files", tool); err != nil {
 			return err
 		}
-		if err := register("plan_mark_failed", std.NewPlanMarkFailedTool(state.Todo)); err != nil {
+	}
+
+	if toolCfg, exists := getToolCfg("analyze_article_images_batch"); exists && toolCfg.Enabled {
+		// Vision LLM обязателен для этого tool
+		if visionLLM == nil {
+			return fmt.Errorf("analyze_article_images_batch tool requires default_vision model to be configured")
+		}
+
+		// Load vision system prompt
+		visionPrompt, err := prompt.LoadVisionSystemPrompt(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to load vision prompt: %w", err)
+		}
+
+		tool := std.NewAnalyzeArticleImagesBatch(
+			state,
+			state.S3, // S3 клиент для скачивания изображений
+			visionLLM,
+			visionPrompt,
+			toolCfg,
+		)
+		if err := register("analyze_article_images_batch", tool); err != nil {
 			return err
 		}
-		if err := register("plan_clear", std.NewPlanClearTool(state.Todo)); err != nil {
+	}
+
+	// === Planner Tools ===
+	if toolCfg, exists := getToolCfg("plan_add_task"); exists && toolCfg.Enabled {
+		if err := register("plan_add_task", std.NewPlanAddTaskTool(state.Todo, toolCfg)); err != nil {
 			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("plan_mark_done"); exists && toolCfg.Enabled {
+		if err := register("plan_mark_done", std.NewPlanMarkDoneTool(state.Todo, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("plan_mark_failed"); exists && toolCfg.Enabled {
+		if err := register("plan_mark_failed", std.NewPlanMarkFailedTool(state.Todo, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("plan_clear"); exists && toolCfg.Enabled {
+		if err := register("plan_clear", std.NewPlanClearTool(state.Todo, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	// === Валидация на неизвестные tools ===
+	for toolName := range cfg.Tools {
+		if !isKnownTool(toolName) {
+			return fmt.Errorf("unknown tool '%s' in config. Known tools: %v",
+				toolName, getAllKnownToolNames())
 		}
 	}
 
 	log.Printf("Tools registered (%d): %s", len(registered), registered)
 	utils.Info("Tools registered", "count", len(registered), "tools", registered)
 	return nil
+}
+
+// isKnownTool проверяет что tool известен в коде.
+func isKnownTool(name string) bool {
+	knownTools := getAllKnownToolNames()
+	for _, known := range knownTools {
+		if name == known {
+			return true
+		}
+	}
+	return false
+}
+
+// getAllKnownToolNames возвращает список всех известных tools.
+func getAllKnownToolNames() []string {
+	return []string{
+		// WB Content API
+		"search_wb_products",
+		"get_wb_parent_categories",
+		"get_wb_subjects",
+		"ping_wb_api",
+		// WB Feedbacks API
+		"get_wb_feedbacks",
+		"get_wb_questions",
+		"get_wb_new_feedbacks_questions",
+		"get_wb_unanswered_feedbacks_counts",
+		"get_wb_unanswered_questions_counts",
+		// WB Dictionary Tools
+		"wb_colors",
+		"wb_countries",
+		"wb_genders",
+		"wb_seasons",
+		"wb_vat_rates",
+		// WB Service Tools
+		"reload_wb_dictionaries",
+		// S3 Basic Tools
+		"list_s3_files",
+		"read_s3_object",
+		"read_s3_image",
+		// S3 Batch Tools
+		"classify_and_download_s3_files",
+		"analyze_article_images_batch",
+		// Planner Tools
+		"plan_add_task",
+		"plan_mark_done",
+		"plan_mark_failed",
+		"plan_clear",
+	}
 }
 
 // ValidateWBKey проверяет что API ключ установлен и не является шаблоном.

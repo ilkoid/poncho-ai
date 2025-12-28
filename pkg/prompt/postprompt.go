@@ -78,3 +78,32 @@ func (cfg *ToolPostPromptConfig) GetToolPostPrompt(toolName string, promptsDir s
 
 	return string(data), nil
 }
+
+// GetToolPromptFile возвращает весь PromptFile включая Config для заданного tool.
+//
+// Возвращает:
+//   - *PromptFile: весь файл промпта с Config и Messages (nil если не настроен)
+//   - error: ошибка если не удалось загрузить файл промпта
+//
+// Используется для runtime переопределения параметров модели (model, temperature, max_tokens).
+func (cfg *ToolPostPromptConfig) GetToolPromptFile(toolName string, promptsDir string) (*PromptFile, error) {
+	// Проверяем есть ли конфиг для этого tool
+	toolCfg, exists := cfg.Tools[toolName]
+	if !exists {
+		return nil, nil // Не настроен — это нормально
+	}
+
+	// Проверяем включён ли
+	if !toolCfg.Enabled || toolCfg.PostPrompt == "" {
+		return nil, nil // Отключён — это нормально
+	}
+
+	// Загружаем файл промпта
+	promptPath := filepath.Join(promptsDir, toolCfg.PostPrompt)
+	pf, err := Load(promptPath)
+	if err != nil {
+		return nil, fmt.Errorf("load post-prompt file for tool '%s': %w", toolName, err)
+	}
+
+	return pf, nil
+}
