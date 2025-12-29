@@ -1,12 +1,6 @@
 # Directories that start with underscore
 _*/
 
-# YAML files (except examples)
-*.yaml
-*.yml
-!*.example.yaml
-!*.example.yml
-
 # Environment files
 .env
 .env.*
