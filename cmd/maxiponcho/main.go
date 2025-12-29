@@ -44,15 +44,11 @@ func run() error {
 	// Логируем загруженные ключи (с маскированием для безопасности)
 	logKeysInfo(cfg)
 
-	// 2. Инициализируем компоненты с нужными tools
-	// ToolS3 - для работы с S3 хранилищем
-	// ToolWB - для работы с Wildberries API
-	// ToolPlanner - для управления задачами
+	// 2. Инициализируем компоненты
 	components, err := appcomponents.Initialize(
 		cfg,
-		10,                                  // max iterations
-		"",                                  // system prompt - загрузится из конфига
-		appcomponents.ToolS3|appcomponents.ToolWB|appcomponents.ToolPlanner,
+		10,    // max iterations
+		"",    // system prompt - загрузится из конфига
 	)
 	if err != nil {
 		utils.Error("Components initialization failed", "error", err)

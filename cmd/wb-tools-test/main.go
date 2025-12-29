@@ -28,6 +28,9 @@ type ToolInfo struct {
 }
 
 var menuTools = []ToolInfo{
+	// Поиск товаров
+	{"search_wb_products", "Поиск по артикулам (supplierArticle -> nmID)", true, `{"supplierArticles": ["ABC-123"]}`},
+
 	// Категории и предметы
 	{"get_wb_parent_categories", "Родительские категории WB", false, ""},
 	{"get_wb_subjects", "Предметы по parentID", true, `{"parentID": 1234}`},
@@ -64,8 +67,8 @@ func main() {
 		log.Fatalf("WB API key validation failed: %v", err)
 	}
 
-	// 3. Инициализируем компоненты (ToolWB = все WB инструменты)
-	components, err := appcomp.Initialize(cfg, 10, "", appcomp.ToolWB|appcomp.ToolPlanner)
+	// 3. Инициализируем компоненты
+	components, err := appcomp.Initialize(cfg, 10, "")
 	if err != nil {
 		log.Fatalf("Failed to initialize components: %v", err)
 	}

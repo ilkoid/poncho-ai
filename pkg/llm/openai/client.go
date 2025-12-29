@@ -104,6 +104,28 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...a
 		"messages_count", len(messages),
 		"tools_count", len(toolDefs))
 
+	// Debug: логируем структуру сообщений
+	for i, msg := range messages {
+		imagesCount := len(msg.Images)
+		contentPreview := msg.Content
+		if len(contentPreview) > 100 {
+			contentPreview = contentPreview[:100] + "..."
+		}
+		utils.Debug("LLM message",
+			"index", i,
+			"role", msg.Role,
+			"content_preview", contentPreview,
+			"images_count", imagesCount)
+	}
+
+	// Debug: логируем инструменты
+	for i, tool := range toolDefs {
+		utils.Debug("LLM tool",
+			"index", i,
+			"name", tool.Name,
+			"description", tool.Description)
+	}
+
 	// 3. Конвертируем наши сообщения в формат OpenAI SDK
 	openaiMsgs := make([]openai.ChatCompletionMessage, len(messages))
 	for i, m := range messages {
@@ -164,6 +186,19 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...a
 				Args: tc.Function.Arguments,
 			}
 		}
+	}
+
+	// Debug: логируем tool calls в ответе
+	for i, tc := range result.ToolCalls {
+		argsPreview := tc.Args
+		if len(argsPreview) > 200 {
+			argsPreview = argsPreview[:200] + "..."
+		}
+		utils.Debug("LLM tool call",
+			"index", i,
+			"id", tc.ID,
+			"name", tc.Name,
+			"args_preview", argsPreview)
 	}
 
 	utils.Info("LLM response received",

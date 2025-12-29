@@ -44,7 +44,7 @@ func run() error {
 	logKeysInfo(cfg)
 
 	// 2. Инициализируем компоненты (переиспользуем из pkg/app)
-	components, err := appcomponents.Initialize(cfg, 10, "", appcomponents.ToolsAll)
+	components, err := appcomponents.Initialize(cfg, 10, "")
 	if err != nil {
 		utils.Error("Components initialization failed", "error", err)
 		return fmt.Errorf("initialization failed: %w", err)

@@ -67,7 +67,6 @@ func run() error {
 		cfg,
 		10,    // max iterations
 		"",    // system prompt - из конфига
-		appcomponents.ToolS3|appcomponents.ToolWB|appcomponents.ToolPlanner,
 	)
 	if err != nil {
 		utils.Error("Components initialization failed", "error", err)

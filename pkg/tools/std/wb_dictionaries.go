@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -19,25 +20,34 @@ import (
 type WbColorsTool struct {
 	colorService *wb.ColorService
 	dicts        *wb.Dictionaries // Для получения топа цветов при пустом поиске
+	toolID       string
+	description  string
 }
 
 // NewWbColorsTool создает инструмент для поиска цветов.
 //
 // Параметры:
 //   - dicts: Кэшированные справочники (полученные из wb.Client.LoadDictionaries)
+//   - cfg: Конфигурация tool из YAML (используется для единообразия)
 //
 // Возвращает инструмент с инициализированным ColorService.
-func NewWbColorsTool(dicts *wb.Dictionaries) *WbColorsTool {
+func NewWbColorsTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbColorsTool {
 	return &WbColorsTool{
 		colorService: wb.NewColorService(dicts.Colors),
 		dicts:        dicts,
+		toolID:       "get_wb_colors",
+		description:  cfg.Description,
 	}
 }
 
 func (t *WbColorsTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Ищет цвета в справочнике Wildberries по подстроке. Возвращает топ-N подходящих цветов с названиями и базовыми цветами (parentName). Используй для точного определения цвета товара из описания или анализа изображения."
+	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_colors",
-		Description: "Ищет цвета в справочнике Wildberries по подстроке. Возвращает топ-N подходящих цветов с названиями и базовыми цветами (parentName). Используй для точного определения цвета товара из описания или анализа изображения.",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -104,18 +114,28 @@ func (t *WbColorsTool) Execute(ctx context.Context, argsJSON string) (string, er
 //
 // Возвращает список стран производства для карточки товара.
 type WbCountriesTool struct {
-	dicts *wb.Dictionaries
+	dicts  *wb.Dictionaries
+	toolID string
+	description string
 }
 
 // NewWbCountriesTool создает инструмент для получения стран.
-func NewWbCountriesTool(dicts *wb.Dictionaries) *WbCountriesTool {
-	return &WbCountriesTool{dicts: dicts}
+func NewWbCountriesTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbCountriesTool {
+	return &WbCountriesTool{
+		dicts:  dicts,
+		toolID: "get_wb_countries",
+		description: cfg.Description,
+	}
 }
 
 func (t *WbCountriesTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Возвращает справочник стран производства для Wildberries. Используй для выбора страны происхождения товара при создании карточки."
+	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_countries",
-		Description: "Возвращает справочник стран производства для Wildberries. Используй для выбора страны происхождения товара при создании карточки.",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -136,18 +156,28 @@ func (t *WbCountriesTool) Execute(ctx context.Context, argsJSON string) (string,
 //
 // Возвращает список допустимых значений для характеристики "Пол".
 type WbGendersTool struct {
-	dicts *wb.Dictionaries
+	dicts  *wb.Dictionaries
+	toolID string
+	description string
 }
 
 // NewWbGendersTool создает инструмент для получения полов.
-func NewWbGendersTool(dicts *wb.Dictionaries) *WbGendersTool {
-	return &WbGendersTool{dicts: dicts}
+func NewWbGendersTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbGendersTool {
+	return &WbGendersTool{
+		dicts:  dicts,
+		toolID: "get_wb_genders",
+		description: cfg.Description,
+	}
 }
 
 func (t *WbGendersTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Возвращает справочник значений пола (gender/kind) для Wildberries. Используй для выбора пола товара при создании карточки."
+	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_genders",
-		Description: "Возвращает справочник значений пола (gender/kind) для Wildberries. Используй для выбора пола товара при создании карточки.",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -168,18 +198,28 @@ func (t *WbGendersTool) Execute(ctx context.Context, argsJSON string) (string, e
 //
 // Возвращает список допустимых значений для характеристики "Сезон".
 type WbSeasonsTool struct {
-	dicts *wb.Dictionaries
+	dicts  *wb.Dictionaries
+	toolID string
+	description string
 }
 
 // NewWbSeasonsTool создает инструмент для получения сезонов.
-func NewWbSeasonsTool(dicts *wb.Dictionaries) *WbSeasonsTool {
-	return &WbSeasonsTool{dicts: dicts}
+func NewWbSeasonsTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbSeasonsTool {
+	return &WbSeasonsTool{
+		dicts:  dicts,
+		toolID: "get_wb_seasons",
+		description: cfg.Description,
+	}
 }
 
 func (t *WbSeasonsTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Возвращает справочник сезонов для Wildberries. Используй для выбора сезона товара при создании карточки."
+	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_seasons",
-		Description: "Возвращает справочник сезонов для Wildberries. Используй для выбора сезона товара при создании карточки.",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -200,18 +240,28 @@ func (t *WbSeasonsTool) Execute(ctx context.Context, argsJSON string) (string, e
 //
 // Возвращает список допустимых значений НДС для карточки товара.
 type WbVatRatesTool struct {
-	dicts *wb.Dictionaries
+	dicts  *wb.Dictionaries
+	toolID string
+	description string
 }
 
 // NewWbVatRatesTool создает инструмент для получения ставок НДС.
-func NewWbVatRatesTool(dicts *wb.Dictionaries) *WbVatRatesTool {
-	return &WbVatRatesTool{dicts: dicts}
+func NewWbVatRatesTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbVatRatesTool {
+	return &WbVatRatesTool{
+		dicts:  dicts,
+		toolID: "get_wb_vat_rates",
+		description: cfg.Description,
+	}
 }
 
 func (t *WbVatRatesTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Возвращает справочник ставок НДС (VAT) для Wildberries. Используй для выбора ставки НДС товара при создании карточки."
+	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_vat_rates",
-		Description: "Возвращает справочник ставок НДС (VAT) для Wildberries. Используй для выбора ставки НДС товара при создании карточки.",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},

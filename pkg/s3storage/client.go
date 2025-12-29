@@ -17,10 +17,20 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/config"
 )
 
+// ClientInterface определяет интерфейс для S3 клиента.
+// Используется для мокания в тестах и внедрения зависимостей.
+type ClientInterface interface {
+	ListFiles(ctx context.Context, prefix string) ([]StoredObject, error)
+	DownloadFile(ctx context.Context, key string) ([]byte, error)
+}
+
 type Client struct {
     api    *minio.Client
     bucket string
 }
+
+// Проверка что Client реализует ClientInterface
+var _ ClientInterface = (*Client)(nil)
 
 // StoredObject - сырой объект из S3
 type StoredObject struct {

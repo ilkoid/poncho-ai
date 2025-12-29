@@ -295,22 +295,9 @@ func performCommand(input string, state *app.GlobalState) tea.Cmd {
 				return app.CommandResultMsg{Err: fmt.Errorf("classification error: %w", err)}
 			}
 
-			// 3. Конвертируем ClassifiedFile в FileMeta
-			convertedFiles := make(map[string][]*app.FileMeta)
-			for tag, files := range classifiedFiles {
-				var fileMetas []*app.FileMeta
-				for _, file := range files {
-					fileMetas = append(fileMetas, &app.FileMeta{
-						ClassifiedFile:    file,
-						VisionDescription: "",
-						Tags:              []string{},
-					})
-				}
-				convertedFiles[tag] = fileMetas
-			}
-
-			// 4. Обновляем глобальный State потокобезопасно
-			state.SetCurrentArticle(articleID, convertedFiles)
+			// 3. Обновляем глобальный State потокобезопасно
+			// (SetCurrentArticle сам конвертирует в FileMeta внутренне)
+			state.SetCurrentArticle(articleID, classifiedFiles)
 
 			// 4. Формируем красивый отчет для пользователя
 			var report strings.Builder

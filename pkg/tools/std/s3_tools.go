@@ -7,22 +7,17 @@ read_s3_object: Аналог cat. Позволяет агенту прочита
 package std
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64" // Теперь используем!
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/jpeg"
-	_ "image/png"
 	"path/filepath"
 	"strings"
 
-	"github.com/ilkoid/poncho-ai/pkg/config" // Нужен конфиг для параметров ресайза
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
-
-	"github.com/nfnt/resize" // go get github.com/nfnt/resize
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 // --- Tool: list_s3_files ---
@@ -233,25 +228,12 @@ func (t *S3ReadImageTool) Execute(ctx context.Context, argsJSON string) (string,
 		return "", err
 	}
 
-	// 3. Декодируем и Ресайзим (если включено в конфиге)
-	// Если конфиг пустой или ширина 0 -> пропускаем ресайз
+	// 3. Ресайзим (если включено в конфиге)
 	if t.cfg.MaxWidth > 0 {
-		img, _, err := image.Decode(bytes.NewReader(rawBytes))
+		rawBytes, err = utils.ResizeImage(rawBytes, t.cfg.MaxWidth, t.cfg.Quality)
 		if err != nil {
-			return "", fmt.Errorf("image decode error: %w", err)
+			return "", fmt.Errorf("resize error: %w", err)
 		}
-
-		// Ресайз с сохранением пропорций (width, 0, ...)
-		// Используем Lanczos3 для качества
-		newImg := resize.Resize(uint(t.cfg.MaxWidth), 0, img, resize.Lanczos3)
-
-		// Кодируем обратно в JPEG (для уменьшения веса)
-		buf := new(bytes.Buffer)
-		err = jpeg.Encode(buf, newImg, &jpeg.Options{Quality: t.cfg.Quality})
-		if err != nil {
-			return "", fmt.Errorf("jpeg encode error: %w", err)
-		}
-		rawBytes = buf.Bytes()
 	}
 
 	// 4. Base64 encode

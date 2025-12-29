@@ -324,6 +324,15 @@ func (o *Orchestrator) executeTool(ctx context.Context, tc llm.ToolCall) string 
 	// LLM может вернуть ```json {...}``` вместо чистого JSON
 	cleanArgs := utils.CleanJsonBlock(tc.Args)
 
+	// Debug: логируем аргументы инструмента
+	argsPreview := cleanArgs
+	if len(argsPreview) > 300 {
+		argsPreview = argsPreview[:300] + "..."
+	}
+	utils.Debug("Tool execution args",
+		"tool", tc.Name,
+		"args_preview", argsPreview)
+
 	// 3. Выполняем инструмент (Raw In, String Out — правило 1)
 	result, err := tool.Execute(ctx, cleanArgs)
 	if err != nil {
@@ -347,6 +356,15 @@ func (o *Orchestrator) executeTool(ctx context.Context, tc llm.ToolCall) string 
 		"tool", tc.Name,
 		"result_length", len(result),
 		"duration_ms", duration)
+
+	// Debug: логируем результат инструмента
+	resultPreview := result
+	if len(resultPreview) > 500 {
+		resultPreview = resultPreview[:500] + "..."
+	}
+	utils.Debug("Tool execution result",
+		"tool", tc.Name,
+		"result_preview", resultPreview)
 
 	// 4.5. Для planner tools выводим результат отдельно (для визуализации todo list)
 	if isPlannerTool(tc.Name) {

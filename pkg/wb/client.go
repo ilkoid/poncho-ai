@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
@@ -16,11 +17,11 @@ import (
 )
 
 const (
-	// Лимиты для Content API (согласно документации)
-	BurstLimit    = 5
-	RateLimit     = 100 // запросов в минуту
-	RetryAttempts = 3
-	DefaultBaseURL = "https://content-api.wildberries.ru"
+	// Дефолтные лимиты (устаревшие, используются для обратной совместимости)
+	DefaultBurstLimit    = 5
+	DefaultRateLimit     = 100 // запросов в минуту
+	DefaultRetryAttempts = 3
+	DefaultBaseURL       = "https://content-api.wildberries.ru"
 )
 
 // ErrorType представляет тип ошибки при работе с WB API.
@@ -76,42 +77,38 @@ type HTTPClient interface {
 
 type Client struct {
 	apiKey        string
-	baseURL       string
 	httpClient    HTTPClient // Интерфейс вместо конкретного типа для testability
-	limiter       *rate.Limiter
 	retryAttempts int        // Количество retry попыток
+
+	mu       sync.RWMutex
+	limiters map[string]*rate.Limiter // tool ID → limiter
 }
 
-// New создает новый клиент для работы с Wildberries Content API.
+// New создает новый клиент для работы с Wildberries API.
 //
 // Параметры:
 //   - apiKey: API ключ для авторизации в Wildberries
 //
-// Возвращает настроенный клиент с rate limiting (100 req/min, burst 5).
+// Возвращает настроенный клиент без лимитеров (создаются динамически).
 // Рекомендуется использовать NewFromConfig для конфигурируемого клиента.
 func New(apiKey string) *Client {
-	// 100 req/min = 1.66 req/sec
-	// Но лучше быть чуть консервативнее, скажем 1.5 rps
-	r := rate.Limit(1.6)
-
 	return &Client{
 		apiKey:        apiKey,
-		baseURL:       DefaultBaseURL,
-		retryAttempts: RetryAttempts,
+		retryAttempts: DefaultRetryAttempts,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		// Burst=5, Rate=1.6 req/s
-		limiter: rate.NewLimiter(r, BurstLimit),
+		limiters: make(map[string]*rate.Limiter),
 	}
 }
 
 // NewFromConfig создает новый клиент из конфигурации.
 //
 // Параметры:
-//   - cfg: Конфигурация WB API с настройками rate limiting и timeout
+//   - cfg: Конфигурация WB API с настройками timeout
 //
 // Возвращает настроенный клиент с параметрами из конфига.
+// Лимитеры создаются динамически при вызове Get().
 // Поля с нулевыми значениями используют дефолтные значения через GetDefaults().
 func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 	// Применяем дефолтные значения
@@ -127,17 +124,13 @@ func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 		return nil, fmt.Errorf("invalid wb.timeout format: %w", err)
 	}
 
-	// Вычисляем rate limit (запросов в минуту → запросов в секунду)
-	ratePerSec := float64(cfg.RateLimit) / 60.0
-
 	return &Client{
 		apiKey:        cfg.APIKey,
-		baseURL:       cfg.BaseURL,
 		retryAttempts: cfg.RetryAttempts,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
-		limiter: rate.NewLimiter(rate.Limit(ratePerSec), cfg.BurstLimit),
+		limiters: make(map[string]*rate.Limiter),
 	}, nil
 }
 
@@ -185,76 +178,215 @@ func (c *Client) ClassifyError(err error) ErrorType {
 	return ErrUnknown
 }
 
-// genericGet с поддержкой Rate Limit и Retries
+// Get выполняет GET запрос к Wildberries API с поддержкой Rate Limit и Retries.
+//
+// Параметры передаются при каждом вызове, что позволяет каждому tool иметь
+// свой endpoint и rate limit.
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - toolID: идентификатор tool для выбора limiter (например, "get_wb_parent_categories")
+//   - baseURL: базовый URL API (например, "https://content-api.wildberries.ru")
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - path: путь к endpoint (например, "/api/v1/directory/parent-categories")
+//   - params: query параметры (может быть nil)
+//   - dest: указатель на структуру для unmarshal результата
+//
+// Возвращает ошибку если запрос не удался.
+func (c *Client) Get(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params url.Values, dest interface{}) error {
+	u, err := url.Parse(baseURL + path)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	if params != nil {
+		u.RawQuery = params.Encode()
+	}
+
+	// Получаем или создаём limiter для этого tool
+	limiter := c.getOrCreateLimiter(toolID, rateLimit, burst)
+
+	var lastErr error
+
+	// Retry loop
+	for i := 0; i < c.retryAttempts; i++ {
+		// 1. Ждем разрешения от лимитера (блокирует горутину, если превысили лимит)
+		if err := limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait: %w", err)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+		if err != nil {
+			return err
+		}
+
+		req.Header.Set("Authorization", c.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue // Сетевая ошибка, пробуем еще
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+
+		// Обработка 429 (Too Many Requests)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			// Читаем заголовок X-Ratelimit-Retry или Retry-After
+			retryAfter := 1 * time.Second // Дефолт
+			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
+				if sec, err := strconv.Atoi(s); err == nil {
+					retryAfter = time.Duration(sec) * time.Second
+				}
+			}
+
+			// Ждем и ретраем
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryAfter):
+				continue
+			}
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+		}
+
+		if err := json.Unmarshal(body, dest); err != nil {
+			return fmt.Errorf("unmarshal error: %w", err)
+		}
+
+		return nil // Успех
+	}
+
+	return fmt.Errorf("max retries exceeded, last error: %v", lastErr)
+}
+
+// getOrCreateLimiter возвращает существующий limiter для toolID или создаёт новый.
+//
+// Параметры:
+//   - toolID: идентификатор tool (ключ для map)
+//   - rateLimit: запросов в минуту
+//   - burst: burst для rate limiter
+//
+// Возвращает *rate.Limiter для этого tool.
+func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *rate.Limiter {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Если limiter уже существует - возвращаем
+	if limiter, exists := c.limiters[toolID]; exists {
+		return limiter
+	}
+
+	// Создаём новый limiter
+	// rateLimit в запросах/минуту → rate.Limit в запросах/секунду
+	ratePerSec := float64(rateLimit) / 60.0
+	limiter := rate.NewLimiter(rate.Limit(ratePerSec), burst)
+	c.limiters[toolID] = limiter
+
+	return limiter
+}
+
+// get - устаревший метод для обратной совместимости.
+// Используйте Get() с параметрами.
 func (c *Client) get(ctx context.Context, path string, params url.Values, dest interface{}) error {
-    u, err := url.Parse(c.baseURL + path)
-    if err != nil {
-        return fmt.Errorf("invalid url: %w", err)
-    }
-    if params != nil {
-        u.RawQuery = params.Encode()
-    }
+	return c.Get(ctx, "legacy", DefaultBaseURL, DefaultRateLimit, DefaultBurstLimit, path, params, dest)
+}
 
-    var lastErr error
+// Post выполняет POST запрос к Wildberries API с поддержкой Rate Limit и Retries.
+//
+// Параметры передаются при каждом вызове, что позволяет каждому tool иметь
+// свой endpoint и rate limit.
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - toolID: идентификатор tool для выбора limiter (например, "search_wb_products")
+//   - baseURL: базовый URL API (например, "https://content-api.wildberries.ru")
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - path: путь к endpoint (например, "/api/v2/list/goods")
+//   - body: тело запроса (будет сериализовано в JSON)
+//   - dest: указатель на структуру для unmarshal результата
+//
+// Возвращает ошибку если запрос не удался.
+func (c *Client) Post(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, body interface{}, dest interface{}) error {
+	u, err := url.Parse(baseURL + path)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
 
-    // Retry loop
-    for i := 0; i < c.retryAttempts; i++ {
-        // 1. Ждем разрешения от лимитера (блокирует горутину, если превысили лимит)
-        if err := c.limiter.Wait(ctx); err != nil {
-            return fmt.Errorf("rate limiter wait: %w", err)
-        }
+	// Сериализуем body
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal body: %w", err)
+	}
 
-        req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-        if err != nil {
-            return err
-        }
+	// Получаем или создаём limiter для этого tool
+	limiter := c.getOrCreateLimiter(toolID, rateLimit, burst)
 
-        req.Header.Set("Authorization", c.apiKey)
-        req.Header.Set("Content-Type", "application/json")
-        req.Header.Set("Accept", "application/json")
-        // Можно добавить локаль, если нужно
-        // req.Header.Set("Accept-Language", "ru")
+	var lastErr error
 
-        resp, err := c.httpClient.Do(req)
-        if err != nil {
-            lastErr = err
-            continue // Сетевая ошибка, пробуем еще
-        }
-        defer resp.Body.Close()
+	// Retry loop
+	for i := 0; i < c.retryAttempts; i++ {
+		// 1. Ждем разрешения от лимитера (блокирует горутину, если превысили лимит)
+		if err := limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait: %w", err)
+		}
 
-        body, _ := io.ReadAll(resp.Body)
+		req, err := http.NewRequestWithContext(ctx, "POST", u.String(), strings.NewReader(string(bodyJSON)))
+		if err != nil {
+			return err
+		}
 
-        // Обработка 429 (Too Many Requests)
-        if resp.StatusCode == http.StatusTooManyRequests {
-            // Читаем заголовок X-Ratelimit-Retry или Retry-After
-            retryAfter := 1 * time.Second // Дефолт
-            if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
-                if sec, err := strconv.Atoi(s); err == nil {
-                    retryAfter = time.Duration(sec) * time.Second
-                }
-            }
-            
-            // Ждем и ретраем
-            select {
-            case <-ctx.Done():
-                return ctx.Err()
-            case <-time.After(retryAfter):
-                continue
-            }
-        }
+		req.Header.Set("Authorization", c.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
 
-        if resp.StatusCode != http.StatusOK {
-            return fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
-        }
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue // Сетевая ошибка, пробуем еще
+		}
+		defer resp.Body.Close()
 
-        if err := json.Unmarshal(body, dest); err != nil {
-            return fmt.Errorf("unmarshal error: %w", err)
-        }
+		responseBody, _ := io.ReadAll(resp.Body)
 
-        return nil // Успех
-    }
+		// Обработка 429 (Too Many Requests)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			// Читаем заголовок X-Ratelimit-Retry или Retry-After
+			retryAfter := 1 * time.Second // Дефолт
+			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
+				if sec, err := strconv.Atoi(s); err == nil {
+					retryAfter = time.Duration(sec) * time.Second
+				}
+			}
 
-    return fmt.Errorf("max retries exceeded, last error: %v", lastErr)
+			// Ждем и ретраем
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryAfter):
+				continue
+			}
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(responseBody))
+		}
+
+		if err := json.Unmarshal(responseBody, dest); err != nil {
+			return fmt.Errorf("unmarshal error: %w", err)
+		}
+
+		return nil // Успех
+	}
+
+	return fmt.Errorf("max retries exceeded, last error: %v", lastErr)
 }
 // PingResponse представляет ответ от ping endpoint Wildberries Content API.
 //

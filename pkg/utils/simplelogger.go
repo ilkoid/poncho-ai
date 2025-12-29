@@ -72,6 +72,11 @@ func Debug(msg string, keyvals ...any) {
 	log("DEBUG", msg, keyvals...)
 }
 
+// Warn - предупреждение.
+func Warn(msg string, keyvals ...any) {
+	log("WARN", msg, keyvals...)
+}
+
 // log - внутренняя функция записи в лог.
 //
 // Формат: [YYYY-MM-DD HH:MM:SS] LEVEL: message key1=value1 key2=value2

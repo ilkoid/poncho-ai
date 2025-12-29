@@ -564,6 +564,7 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provi
 			state.S3, // S3 клиент для скачивания изображений
 			visionLLM,
 			visionPrompt,
+			cfg.ImageProcessing,
 			toolCfg,
 		)
 		if err := register("analyze_article_images_batch", tool); err != nil {

@@ -7,11 +7,11 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
-	appcomponents "github.com/ilkoid/poncho-ai/pkg/app"
+	"github.com/ilkoid/poncho-ai/pkg/app"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 var (
@@ -23,19 +23,29 @@ var (
 func main() {
 	flag.Parse()
 
+	// === ИНИЦИАЛИЗАЦИЯ ЛОГГЕРА ===
+	if err := utils.InitLogger(); err != nil {
+		fmt.Fprintf(os.Stderr, "Logger init failed: %v\n", err)
+	}
+	defer utils.Close()
+
+	utils.Info("vision-cli started", "config", *configFlag, "query", *queryFlag)
+
 	// === СТРОГАЯ ИНИЦИАЛИЗАЦИЯ ===
 	// Ищет config.yaml рядом с бинарником, падает если не найден
-	finder := &appcomponents.StandaloneConfigPathFinder{ConfigFlag: *configFlag}
+	finder := &app.StandaloneConfigPathFinder{ConfigFlag: *configFlag}
 
-	components, cfgPath, err := appcomponents.InitializeForStandalone(finder, 10, "")
+	components, cfgPath, err := app.InitializeForStandalone(finder, 10, "")
 	if err != nil {
-		log.Fatalf("Initialization failed: %v\n\n"+
+		utils.Error("Initialization failed", "error", err)
+		fmt.Fprintf(os.Stderr, "Initialization failed: %v\n\n"+
 			"Make sure config.yaml and prompts/ are next to the binary.\n"+
 			"Binary location: %s\n", err, getBinDir())
+		os.Exit(1)
 	}
 
-	log.Printf("Config loaded from: %s", cfgPath)
-	log.Printf("Prompts directory: %s", components.Config.App.PromptsDir)
+	utils.Info("Config loaded", "path", cfgPath)
+	utils.Info("Prompts directory", "path", components.Config.App.PromptsDir)
 
 	// === ВЫПОЛНЕНИЕ ЗАПРОСА ===
 	query := *queryFlag
@@ -53,14 +63,22 @@ func main() {
 	}
 
 	if query == "" {
-		log.Fatal("Query is required. Use -query flag or pass as argument.")
+		utils.Error("Query is required")
+		fmt.Fprintln(os.Stderr, "Query is required. Use -query flag or pass as argument.")
+		os.Exit(1)
 	}
 
+	utils.Info("Executing query", "query", query)
+
 	// Выполняем запрос
-	result, err := appcomponents.Execute(components, query, *timeoutFlag)
+	result, err := app.Execute(components, query, *timeoutFlag)
 	if err != nil {
-		log.Fatalf("Query execution failed: %v", err)
+		utils.Error("Query execution failed", "error", err)
+		fmt.Fprintf(os.Stderr, "Query execution failed: %v\n", err)
+		os.Exit(1)
 	}
+
+	utils.Info("Query completed", "duration", result.Duration, "todos", result.TodoStats.Total)
 
 	// === ВЫВОД РЕЗУЛЬТАТА ===
 	fmt.Println("\n=== Response ===")

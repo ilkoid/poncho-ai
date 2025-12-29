@@ -14,30 +14,18 @@ import (
 	"sync"
 
 	"github.com/ilkoid/poncho-ai/pkg/agent"
-	"github.com/ilkoid/poncho-ai/pkg/classifier"
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
+	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/todo"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
 // Пакет app хранит глобальное состояние приложения (GlobalState).
 // Он выступает "Single Source of Truth" для UI, Агента и системных утилит.
-
-// FileMeta расширяет базовую классификацию файла результатами анализа.
-// Это позволяет хранить "знание" о картинке, не гоняя саму картинку в LLM каждый раз.
-type FileMeta struct {
-	classifier.ClassifiedFile
-
-	// VisionDescription хранит текстовое описание, полученное от Vision-модели.
-	// Пример: "На эскизе изображено платье миди с V-образным вырезом..."
-	VisionDescription string
-
-	// Tags — теги, извлеченные или сгенерированные в процессе.
-	Tags []string
-}
 
 // GlobalState хранит данные сессии, конфигурацию и историю.
 // Доступ к полям, которые меняются в runtime (History, Files, IsProcessing),
@@ -61,7 +49,8 @@ type GlobalState struct {
 	// Files — "Рабочая память" (Working Memory).
 	// Хранит файлы текущего артикула и результаты их анализа.
 	// Ключ: тег (например, "sketch", "plm_data").
-	Files map[string][]*FileMeta
+	// Использует state.FileMeta как единый тип для метаданных.
+	Files map[string][]*state.FileMeta
 
 	// UserChoice — данные для интерактивного выбора пользователя
 	UserChoice *userChoiceData
@@ -83,7 +72,7 @@ func NewState(cfg *config.AppConfig, s3Client *s3storage.Client) *GlobalState {
 		CurrentArticleID: "NONE",
 		CurrentModel:     cfg.Models.DefaultVision,
 		IsProcessing:     false,
-		Files:            make(map[string][]*FileMeta),
+		Files:            make(map[string][]*state.FileMeta),
 		History:          make([]llm.Message, 0),
 	}
 }
@@ -118,21 +107,41 @@ func (s *GlobalState) ClearHistory() {
 
 // UpdateFileAnalysis сохраняет результат работы Vision модели в "память" файла.
 // path — путь к файлу (ключ поиска), description — результат анализа.
+//
+// Thread-safe: атомарно заменяет объект в слайсе под мьютексом.
 func (s *GlobalState) UpdateFileAnalysis(tag string, filename string, description string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	files, ok := s.Files[tag]
 	if !ok {
+		utils.Error("UpdateFileAnalysis: tag not found", "tag", tag, "filename", filename)
 		return
 	}
 
-	for _, f := range files {
-		if f.Filename == filename { // Предполагаем, что Filename есть в ClassifiedFile
-			f.VisionDescription = description
+	// Находим индекс файла и атомарно заменяем объект (thread-safe)
+	for i := range files {
+		if files[i].Filename == filename {
+			// Обновляем VisionDescription (создаём новый объект для thread-safety)
+			updated := &state.FileMeta{
+				Tag:               files[i].Tag,
+				OriginalKey:       files[i].OriginalKey,
+				Size:              files[i].Size,
+				Filename:          files[i].Filename,
+				VisionDescription: description,
+				Tags:              files[i].Tags,
+			}
+			files[i] = updated
+			utils.Debug("File analysis updated", "tag", tag, "filename", filename, "desc_length", len(description))
 			return
 		}
 	}
+
+	// Файл не найден - логируем предупреждение
+	utils.Warn("UpdateFileAnalysis: file not found in state",
+		"tag", tag,
+		"filename", filename,
+		"available_files", len(files))
 }
 
 // SetProcessing меняет статус занятости (для спиннера в UI).
@@ -143,17 +152,24 @@ func (s *GlobalState) SetProcessing(busy bool) {
 }
 
 // SetCurrentArticle потокобезопасно обновляет текущий артикул и файлы.
-func (s *GlobalState) SetCurrentArticle(articleID string, files map[string][]*FileMeta) {
+//
+// Принимает map[string][]*state.FileMeta и сохраняет напрямую без конвертации.
+// VisionDescription заполняется позже через UpdateFileAnalysis().
+func (s *GlobalState) SetCurrentArticle(articleID string, files map[string][]*state.FileMeta) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.CurrentArticleID = articleID
+	// Прямое присваивание без конвертации - state.FileMeta используется везде
 	s.Files = files
 }
 
 // GetCurrentArticle потокобезопасно возвращает текущий артикул и файлы.
-func (s *GlobalState) GetCurrentArticle() (articleID string, files map[string][]*FileMeta) {
+//
+// Возвращает map[string][]*state.FileMeta напрямую без конвертации.
+func (s *GlobalState) GetCurrentArticle() (articleID string, files map[string][]*state.FileMeta) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	// Прямое возвращение без конвертации
 	return s.CurrentArticleID, s.Files
 }
 

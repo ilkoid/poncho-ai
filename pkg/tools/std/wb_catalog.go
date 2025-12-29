@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -16,24 +17,51 @@ import (
 //
 // Позволяет агенту получить список верхнеуровневых категорий (Женщинам, Мужчинам, и т.д.).
 type WbParentCategoriesTool struct {
-	client *wb.Client
+	client      *wb.Client
+	toolID      string
+	endpoint    string
+	rateLimit   int
+	burst       int
+	description string // Описание из YAML конфигурации
 }
 
 // NewWbParentCategoriesTool создает инструмент для получения родительских категорий.
 //
 // Параметры:
 //   - c: экземпляр клиента Wildberries API
+//   - cfg: конфигурация tool из YAML
 //
 // Возвращает инструмент, готовый к регистрации в реестре.
-func NewWbParentCategoriesTool(c *wb.Client) *WbParentCategoriesTool {
-	return &WbParentCategoriesTool{client: c}
+func NewWbParentCategoriesTool(c *wb.Client, cfg config.ToolConfig) *WbParentCategoriesTool {
+	// Дефолтные значения если не указаны в конфиге
+	rateLimit := cfg.RateLimit
+	if rateLimit == 0 {
+		rateLimit = 100 // дефолт
+	}
+	burst := cfg.Burst
+	if burst == 0 {
+		burst = 5 // дефолт
+	}
+
+	return &WbParentCategoriesTool{
+		client:      c,
+		toolID:      "get_wb_parent_categories",
+		endpoint:    cfg.Endpoint,
+		rateLimit:   rateLimit,
+		burst:       burst,
+		description: cfg.Description,
+	}
 }
 
 // Definition возвращает определение инструмента для function calling.
 func (t *WbParentCategoriesTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Возвращает список родительских категорий Wildberries (например: Женщинам, Электроника). Используй это, чтобы найти ID категории."
+	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_parent_categories",
-		Description: "Возвращает список родительских категорий Wildberries (например: Женщинам, Электроника). Используй это, чтобы найти ID категории.",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -62,24 +90,50 @@ func (t *WbParentCategoriesTool) Execute(ctx context.Context, argsJSON string) (
 //
 // Позволяет агенту получить список подкатегорий для заданной родительской категории.
 type WbSubjectsTool struct {
-	client *wb.Client
+	client      *wb.Client
+	toolID      string
+	endpoint    string
+	rateLimit   int
+	burst       int
+	description string
 }
 
 // NewWbSubjectsTool создает инструмент для получения предметов (подкатегорий).
 //
 // Параметры:
 //   - c: экземпляр клиента Wildberries API
+//   - cfg: конфигурация tool из YAML
 //
 // Возвращает инструмент, готовый к регистрации в реестре.
-func NewWbSubjectsTool(c *wb.Client) *WbSubjectsTool {
-	return &WbSubjectsTool{client: c}
+func NewWbSubjectsTool(c *wb.Client, cfg config.ToolConfig) *WbSubjectsTool {
+	rateLimit := cfg.RateLimit
+	if rateLimit == 0 {
+		rateLimit = 100
+	}
+	burst := cfg.Burst
+	if burst == 0 {
+		burst = 5
+	}
+
+	return &WbSubjectsTool{
+		client:      c,
+		toolID:      "get_wb_subjects",
+		endpoint:    cfg.Endpoint,
+		rateLimit:   rateLimit,
+		burst:       burst,
+		description: cfg.Description,
+	}
 }
 
 // Definition возвращает определение инструмента для function calling.
 func (t *WbSubjectsTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Возвращает список предметов (подкатегорий) для заданной родительской категории."
+	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_subjects",
-		Description: "Возвращает список предметов (подкатегорий) для заданной родительской категории.",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -120,24 +174,50 @@ func (t *WbSubjectsTool) Execute(ctx context.Context, argsJSON string) (string, 
 // Позволяет агенту проверить, доступен ли WB Content API и валиден ли API ключ.
 // Возвращает детальную диагностику: статус сервиса, timestamp, тип ошибки.
 type WbPingTool struct {
-	client *wb.Client
+	client      *wb.Client
+	toolID      string
+	endpoint    string
+	rateLimit   int
+	burst       int
+	description string
 }
 
 // NewWbPingTool создает инструмент для проверки доступности WB API.
 //
 // Параметры:
 //   - c: экземпляр клиента Wildberries API
+//   - cfg: конфигурация tool из YAML
 //
 // Возвращает инструмент, готовый к регистрации в реестре.
-func NewWbPingTool(c *wb.Client) *WbPingTool {
-	return &WbPingTool{client: c}
+func NewWbPingTool(c *wb.Client, cfg config.ToolConfig) *WbPingTool {
+	rateLimit := cfg.RateLimit
+	if rateLimit == 0 {
+		rateLimit = 100
+	}
+	burst := cfg.Burst
+	if burst == 0 {
+		burst = 5
+	}
+
+	return &WbPingTool{
+		client:      c,
+		toolID:      "ping_wb_api",
+		endpoint:    cfg.Endpoint,
+		rateLimit:   rateLimit,
+		burst:       burst,
+		description: cfg.Description,
+	}
 }
 
 // Definition возвращает определение инструмента для function calling.
 func (t *WbPingTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Проверяет доступность Wildberries Content API. Возвращает статус сервиса, timestamp и информацию об ошибках (например, неверный API ключ, недоступность сети). Используй для диагностики перед другими операциями с WB."
+	}
 	return tools.ToolDefinition{
 		Name:        "ping_wb_api",
-		Description: "Проверяет доступность Wildberries Content API. Возвращает статус сервиса, timestamp и информацию об ошибках (например, неверный API ключ, недоступность сети). Используй для диагностики перед другими операциями с WB.",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},

@@ -3,10 +3,7 @@ package wb
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strconv"
 )
@@ -359,6 +356,14 @@ func (c *Client) GetBrands(ctx context.Context, subjectID int, limit int) ([]Bra
     var allBrands []Brand
     next := 0
 
+    // Используем дефолтные значения для rate limiting
+    const (
+        brandsToolID = "get_brands"
+        baseURL      = DefaultBaseURL
+        rateLimit    = DefaultRateLimit
+        burst        = DefaultBurstLimit
+    )
+
     for {
         // Формируем параметры запроса
         params := url.Values{}
@@ -367,36 +372,15 @@ func (c *Client) GetBrands(ctx context.Context, subjectID int, limit int) ([]Bra
             params.Set("next", fmt.Sprintf("%d", next))
         }
 
-        // Выполняем запрос
-        req, err := http.NewRequestWithContext(ctx, "GET",
-            c.baseURL+"/api/content/v1/brands?"+params.Encode(), nil)
-        if err != nil {
-            return nil, err
-        }
-
-        req.Header.Set("Authorization", c.apiKey)
-        req.Header.Set("Content-Type", "application/json")
-
-        // Ждем разрешения от rate limiter
-        if err := c.limiter.Wait(ctx); err != nil {
-            return nil, fmt.Errorf("rate limiter wait: %w", err)
-        }
-
-        resp, err := c.httpClient.Do(req)
-        if err != nil {
-            return nil, err
-        }
-        defer resp.Body.Close()
-
-        if resp.StatusCode != http.StatusOK {
-            body, _ := io.ReadAll(resp.Body)
-            return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
-        }
-
-        // Парсим ответ
+        // Создаём временную структуру для ответа
         var brandsResp BrandsResponse
-        if err := json.NewDecoder(resp.Body).Decode(&brandsResp); err != nil {
-            return nil, fmt.Errorf("failed to decode brands response: %w", err)
+
+        // Используем общий метод Get
+        // Бренды API имеет другой формат ответа, поэтому получаем сырой ответ
+        err := c.Get(ctx, brandsToolID, baseURL, rateLimit, burst,
+            "/api/content/v1/brands", params, &brandsResp)
+        if err != nil {
+            return nil, err
         }
 
         // Добавляем бренды к результату
@@ -417,4 +401,75 @@ func (c *Client) GetBrands(ctx context.Context, subjectID int, limit int) ([]Bra
     }
 
     return allBrands, nil
+}
+
+// ============================================================================
+// Product Search Methods (supplierArticle -> nmID mapping)
+// ============================================================================
+
+// GetProductsByArticles ищет товары по артикулам поставщика (supplierArticle).
+//
+// Этот метод используется для конвертации артикулов поставщика в nmID Wildberries.
+// Пользователи обычно знают свой артикул (vendor code/supplier article), а не nmID.
+//
+// Использует Content API: POST /content/v2/get/cards/list с textSearch.
+// Требует токен с категорией Promotion (бит 6).
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - toolID: идентификатор tool для rate limiting
+//   - baseURL: базовый URL API (content-api.wildberries.ru)
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - articles: список артикулов поставщика (поиск по одному за раз)
+//
+// Возвращает список найденных товаров с их nmID и другой информацией.
+//
+// Правило 8: добавляем функциональность через новые методы, не меняя существующие.
+func (c *Client) GetProductsByArticles(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, articles []string) ([]ProductInfo, error) {
+	if len(articles) == 0 {
+		return []ProductInfo{}, nil
+	}
+
+	var results []ProductInfo
+
+	// Content API не поддерживает поиск по нескольким артикулам одновременно
+	// API с токеном Promotion видит только карточки продавца
+	// Получаем все карточки и фильтруем на стороне клиента
+
+	// Сначала получаем все карточки (без фильтра)
+	reqBody := CardsListRequest{
+		Settings: CardsSettings{
+			Cursor: CardsCursor{
+				Limit: 100, // Максимум
+			},
+		},
+	}
+
+	var resp CardsListResponse
+	err := c.Post(ctx, toolID, baseURL, rateLimit, burst, "/content/v2/get/cards/list", reqBody, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	// Создаём map для быстрого поиска
+	articleMap := make(map[string]bool)
+	for _, a := range articles {
+		articleMap[a] = true
+	}
+
+	// Фильтруем по vendorCode
+	for _, card := range resp.Cards {
+		if articleMap[card.VendorCode] {
+			results = append(results, ProductInfo{
+				NmID:    card.NmID,
+				Article: card.VendorCode,
+				Name:    card.Title,
+				Price:   0,
+			})
+			delete(articleMap, card.VendorCode) // Удаляем из map чтобы не дублировать
+		}
+	}
+
+	return results, nil
 }

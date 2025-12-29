@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/todo"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 )
@@ -22,7 +23,7 @@ type PlannerTool struct {
 // NewPlannerTool создает базовый инструмент планировщика.
 //
 // Примечание: на практике используются конкретные инструменты (PlanAddTaskTool и т.д.).
-func NewPlannerTool(manager *todo.Manager) *PlannerTool {
+func NewPlannerTool(manager *todo.Manager, cfg config.ToolConfig) *PlannerTool {
 	return &PlannerTool{manager: manager}
 }
 
@@ -30,21 +31,26 @@ func NewPlannerTool(manager *todo.Manager) *PlannerTool {
 //
 // Позволяет агенту создавать новые задачи в Todo Manager.
 type PlanAddTaskTool struct {
-	manager *todo.Manager
+	manager     *todo.Manager
+	description string
 }
 
 // NewPlanAddTaskTool создает инструмент для добавления задач.
-func NewPlanAddTaskTool(manager *todo.Manager) *PlanAddTaskTool {
-	return &PlanAddTaskTool{manager: manager}
+func NewPlanAddTaskTool(manager *todo.Manager, cfg config.ToolConfig) *PlanAddTaskTool {
+	return &PlanAddTaskTool{manager: manager, description: cfg.Description}
 }
 
 // Definition возвращает определение инструмента для function calling.
 //
 // Соответствует Tool interface (Rule 1).
 func (t *PlanAddTaskTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Добавляет новую задачу в план действий"
+	}
 	return tools.ToolDefinition{
 		Name:        "plan_add_task",
-		Description: "Добавляет новую задачу в план действий",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -88,19 +94,24 @@ func (t *PlanAddTaskTool) Execute(ctx context.Context, argsJSON string) (string,
 //
 // Позволяет агенту отмечать завершенные задачи в Todo Manager.
 type PlanMarkDoneTool struct {
-	manager *todo.Manager
+	manager     *todo.Manager
+	description string
 }
 
 // NewPlanMarkDoneTool создает инструмент для отметки задач как выполненных.
-func NewPlanMarkDoneTool(manager *todo.Manager) *PlanMarkDoneTool {
-	return &PlanMarkDoneTool{manager: manager}
+func NewPlanMarkDoneTool(manager *todo.Manager, cfg config.ToolConfig) *PlanMarkDoneTool {
+	return &PlanMarkDoneTool{manager: manager, description: cfg.Description}
 }
 
 // Definition возвращает определение инструмента для function calling.
 func (t *PlanMarkDoneTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Отмечает задачу как выполненную"
+	}
 	return tools.ToolDefinition{
 		Name:        "plan_mark_done",
-		Description: "Отмечает задачу как выполненную",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -135,19 +146,24 @@ func (t *PlanMarkDoneTool) Execute(ctx context.Context, argsJSON string) (string
 //
 // Позволяет агенту отмечать задачи с указанием причины провала.
 type PlanMarkFailedTool struct {
-	manager *todo.Manager
+	manager     *todo.Manager
+	description string
 }
 
 // NewPlanMarkFailedTool создает инструмент для отметки задач как проваленных.
-func NewPlanMarkFailedTool(manager *todo.Manager) *PlanMarkFailedTool {
-	return &PlanMarkFailedTool{manager: manager}
+func NewPlanMarkFailedTool(manager *todo.Manager, cfg config.ToolConfig) *PlanMarkFailedTool {
+	return &PlanMarkFailedTool{manager: manager, description: cfg.Description}
 }
 
 // Definition возвращает определение инструмента для function calling.
 func (t *PlanMarkFailedTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Отмечает задачу как проваленную с указанием причины"
+	}
 	return tools.ToolDefinition{
 		Name:        "plan_mark_failed",
-		Description: "Отмечает задачу как проваленную с указанием причины",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -187,19 +203,24 @@ func (t *PlanMarkFailedTool) Execute(ctx context.Context, argsJSON string) (stri
 //
 // Позволяет агенту удалять все задачи из Todo Manager.
 type PlanClearTool struct {
-	manager *todo.Manager
+	manager     *todo.Manager
+	description string
 }
 
 // NewPlanClearTool создает инструмент для очистки плана.
-func NewPlanClearTool(manager *todo.Manager) *PlanClearTool {
-	return &PlanClearTool{manager: manager}
+func NewPlanClearTool(manager *todo.Manager, cfg config.ToolConfig) *PlanClearTool {
+	return &PlanClearTool{manager: manager, description: cfg.Description}
 }
 
 // Definition возвращает определение инструмента для function calling.
 func (t *PlanClearTool) Definition() tools.ToolDefinition {
+	desc := t.description
+	if desc == "" {
+		desc = "Очищает весь план действий"
+	}
 	return tools.ToolDefinition{
 		Name:        "plan_clear",
-		Description: "Очищает весь план действий",
+		Description: desc,
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -219,11 +240,15 @@ func (t *PlanClearTool) Execute(ctx context.Context, argsJSON string) (string, e
 // Удобная функция для массовой регистрации инструментов planner'а.
 // Возвращает map[string]tools.Tool, которую можно использовать
 // для непосредственной регистрации в Registry.
-func NewPlannerTools(manager *todo.Manager) map[string]tools.Tool {
+//
+// Параметры:
+//   - manager: Todo Manager для управления задачами
+//   - cfg: Конфигурация tools (используется для единообразия с другими tools)
+func NewPlannerTools(manager *todo.Manager, cfg config.ToolConfig) map[string]tools.Tool {
 	return map[string]tools.Tool{
-		"plan_add_task":    NewPlanAddTaskTool(manager),
-		"plan_mark_done":   NewPlanMarkDoneTool(manager),
-		"plan_mark_failed": NewPlanMarkFailedTool(manager),
-		"plan_clear":       NewPlanClearTool(manager),
+		"plan_add_task":    NewPlanAddTaskTool(manager, cfg),
+		"plan_mark_done":   NewPlanMarkDoneTool(manager, cfg),
+		"plan_mark_failed": NewPlanMarkFailedTool(manager, cfg),
+		"plan_clear":       NewPlanClearTool(manager, cfg),
 	}
 }
