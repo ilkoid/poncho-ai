@@ -22,8 +22,7 @@ poncho-ai/
 │   ├── poncho/            # Main TUI application (primary interface)
 │   ├── maxiponcho/        # Fashion PLM analyzer (TUI)
 │   ├── vision-cli/        # CLI utility for vision analysis
-│   ├── wb-tools-test/     # CLI utility for testing WB tools
-│   └── tools-test/        # CLI utility for testing tools
+│   └── wb-tools-test/     # CLI utility for testing WB tools
 ├── internal/              # Application-specific logic
 │   ├── agent/            # Orchestrator implementation (ReAct loop)
 │   ├── app/              # Global state, command registry, types
@@ -41,7 +40,6 @@ poncho-ai/
 │   ├── tools/            # Tool system (registry + std tools)
 │   ├── utils/            # JSON sanitization utilities
 │   └── wb/               # Wildberries API client
-├── prompts/              # YAML prompt templates (flat structure)
 └── config.yaml           # Main configuration file
 ```
 
@@ -127,13 +125,10 @@ All tools must support mocking dependencies. No direct HTTP calls without abstra
 ### Rule 10: Documentation
 All public APIs must have godoc comments.
 
-### Rule 11: Resource Localization (NEW)
+### Rule 11: Resource Localization
 Each application in `/cmd` must be **autonomous** and store resources nearby:
+- **Config**: `{app_dir}/config.yaml` (searches binary directory first)
 - **Prompts**: `{app_dir}/prompts/` (flat structure)
-- **Config**: `{app_dir}/config.yaml`
-- **Logs**: `{app_dir}/logs/` (or stdout for CLI)
-
-Each app must implement `ConfigPathFinder` for local config discovery.
 
 ---
 
@@ -165,19 +160,17 @@ type Tool interface {
 | **WB Content API** | `search_wb_products`, `get_wb_parent_categories`, `get_wb_subjects`, `ping_wb_api` |
 | **WB Feedbacks API** | `get_wb_feedbacks`, `get_wb_questions`, `get_wb_new_feedbacks_questions`, `get_wb_unanswered_*_counts` |
 | **WB Dictionaries** | `wb_colors`, `wb_countries`, `wb_genders`, `wb_seasons`, `wb_vat_rates` |
-| **WB Service** | `reload_wb_dictionaries` |
 | **S3 Basic** | `list_s3_files`, `read_s3_object`, `read_s3_image` |
 | **S3 Batch** | `classify_and_download_s3_files`, `analyze_article_images_batch` |
 | **Planner** | `plan_add_task`, `plan_mark_done`, `plan_mark_failed`, `plan_clear` |
 
 ### 2. LLM Abstraction with Options Pattern (`pkg/llm/`)
 
-**NEW**: Options Pattern for Runtime Parameter Overrides
+**Options Pattern for Runtime Parameter Overrides**
 
-The framework now supports runtime parameter overrides through functional options:
+The framework supports runtime parameter overrides through functional options:
 
 ```go
-// pkg/llm/options.go
 type GenerateOptions struct {
     Model       string
     Temperature float64
@@ -209,53 +202,13 @@ llm.Generate(ctx, messages)
 // Override model
 llm.Generate(ctx, messages, llm.WithModel("glm-4.6"))
 
-// Override temperature
-llm.Generate(ctx, messages, llm.WithTemperature(0.7))
-
 // With tools + options
 llm.Generate(ctx, messages, toolDefs, llm.WithTemperature(0.5))
-```
-
-**Implementation** (`pkg/llm/openai/client.go`):
-```go
-type Client struct {
-    api        *openai.Client
-    baseConfig GenerateOptions  // Defaults from config.yaml
-}
-
-func (c *Client) Generate(ctx context.Context, messages []Message, opts ...any) (Message, error) {
-    // Start with defaults
-    options := c.baseConfig
-
-    // Apply runtime overrides
-    for _, opt := range opts {
-        switch v := opt.(type) {
-        case []ToolDefinition:
-            toolDefs = v
-        case GenerateOption:
-            v(&options)  // Override defaults
-        }
-    }
-
-    // Use final options in API request
-    req := openai.ChatCompletionRequest{
-        Model:       options.Model,
-        Temperature: options.Temperature,
-        MaxTokens:   options.MaxTokens,
-        // ...
-    }
-}
 ```
 
 ### 3. Orchestrator (`internal/agent/orchestrator.go`)
 
 **Purpose**: Coordinates interaction between LLM and Tools using ReAct pattern.
-
-**NEW Features**:
-1. **Reasoning Config** - Default parameters for planning/tool selection
-2. **Chat Config** - Default parameters for chat responses
-3. **Active Prompt Config** - Runtime overrides from post-prompts
-4. **Post-Prompt System** - Tool-specific prompts for next iteration
 
 **Key Fields**:
 ```go
@@ -266,7 +219,7 @@ type Orchestrator struct {
     systemPrompt       string
     toolPostPrompts    *prompt.ToolPostPromptConfig
 
-    // NEW: Model parameter management
+    // Model parameter management
     reasoningConfig    llm.GenerateOptions   // From config.yaml
     chatConfig         llm.GenerateOptions   // From config.yaml
     activePromptConfig *prompt.PromptConfig  // From post-prompt
@@ -294,7 +247,7 @@ type Orchestrator struct {
 7. Reset activePostPrompt and activePromptConfig
 ```
 
-### 4. Tool Post-Prompts (NEW)
+### 4. Tool Post-Prompts
 
 **Purpose**: Specialized system prompts that activate after tool execution to guide LLM response formatting AND override model parameters.
 
@@ -323,32 +276,37 @@ messages:
       Format the parent categories as a structured table...
 ```
 
-**Flow**:
+**Flow**: Post-prompts are active for **one iteration** only.
+
+### 5. Global State Management (`internal/app/state.go`)
+
+**Purpose**: Thread-safe centralized state for the entire application.
+
+**Components**:
+```go
+type GlobalState struct {
+    Config          *config.AppConfig
+    S3              *s3storage.Client
+    Dictionaries    *wb.Dictionaries
+    Todo            *todo.Manager
+    CommandRegistry *CommandRegistry
+    ToolsRegistry   *tools.Registry
+    Orchestrator    agent.Agent
+
+    mu              sync.RWMutex     // Protects fields below
+    History         []llm.Message
+    Files           map[string][]*state.FileMeta  // "Working Memory"
+    CurrentArticleID string
+    CurrentModel    string
+    IsProcessing    bool
+}
 ```
-Iteration N:
-  Tool: get_wb_parent_categories → Result
-  LoadToolPostPrompt("get_wb_parent_categories") → PromptFile
-  activePostPrompt = <system message content>
-  activePromptConfig = <model, temperature, max_tokens>
 
-Iteration N+1:
-  BuildAgentContext(activePostPrompt) ← System prompt replaced!
-  llm.Generate(messages,
-      WithModel("glm-4.6"),
-      WithTemperature(0.7),
-      WithMaxTokens(2000))  ← Prompt overrides config.yaml!
+**"Working Memory" Pattern**: Vision model results are stored in `FileMeta.VisionDescription` and injected into prompts without re-sending images.
 
-Iteration N+2:
-  activePostPrompt = ""  ← Reset
-  activePromptConfig = nil
-  Back to reasoningConfig
-```
+### 6. Configuration (`config.yaml`)
 
-**Scope**: Post-prompts are active for **one iteration** only.
-
-### 5. Configuration (`config.yaml`)
-
-**NEW Structure** with reasoning/chat separation:
+**Structure** with reasoning/chat separation:
 
 ```yaml
 # Models Configuration
@@ -385,16 +343,6 @@ s3:
   access_key: "${S3_ACCESS_KEY}"
   secret_key: "${S3_SECRET_KEY}"
 
-# Image Processing
-image_processing:
-  max_width: 800
-  quality: 90
-
-# App Settings
-app:
-  debug: true
-  prompts_dir: "./prompts"
-
 # File Classification Rules
 file_rules:
   - tag: "sketch"
@@ -418,99 +366,13 @@ cfg.GetChatModel(name)       // Returns ModelDef for chat
 cfg.GetVisionModel(name)     // Returns ModelDef for vision
 ```
 
-### 6. Global State Management (`internal/app/state.go`)
-
-**Purpose**: Thread-safe centralized state for the entire application.
-
-**Components**:
-```go
-type GlobalState struct {
-    Config          *config.AppConfig
-    S3              *s3storage.Client
-    Dictionaries    *wb.Dictionaries
-    Todo            *todo.Manager
-    CommandRegistry *CommandRegistry
-    ToolsRegistry   *tools.Registry
-    Orchestrator    agent.Agent
-
-    mu              sync.RWMutex     // Protects fields below
-    History         []llm.Message
-    Files           map[string][]*state.FileMeta  // "Working Memory"
-    CurrentArticleID string
-    CurrentModel    string
-    IsProcessing    bool
-}
-```
-
-**Thread-Safe Methods**:
-- `AppendMessage()` - Add message to history
-- `GetHistory()` - Return copy of history
-- `UpdateFileAnalysis()` - Store vision analysis results
-- `SetCurrentArticle()` - Update current article context
-- `BuildAgentContext()` - Assemble full context for LLM
-
-**"Working Memory" Pattern**: Vision model results are stored in `FileMeta.VisionDescription` and injected into prompts without re-sending images.
-
-### 7. Component Initialization (`pkg/app/`)
-
-**Purpose**: Provides reusable initialization logic across all entry points.
-
-**Key Structures**:
-```go
-type Components struct {
-    Config       *config.AppConfig
-    State        *app.GlobalState
-    LLM          llm.Provider      // Chat model
-    VisionLLM    llm.Provider      // Vision model
-    WBClient     *wb.Client
-    Orchestrator *agent.Orchestrator
-}
-
-type ExecutionResult struct {
-    Response   string
-    TodoString string
-    TodoStats  TodoStats
-    History    []llm.Message
-    Duration   time.Duration
-}
-```
-
-**Key Functions**:
-```go
-InitializeConfig(finder ConfigPathFinder) (*config.AppConfig, string, error)
-Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Components, error)
-Execute(c *Components, query string, timeout time.Duration) (*ExecutionResult, error)
-SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provider, cfg *config.AppConfig) error
-```
-
-**Config Path Finders**:
-- `DefaultConfigPathFinder` - For development (searches multiple locations)
-- `StandaloneConfigPathFinder` - For production (binary directory only)
-
-### 8. Standalone CLI Support (`pkg/app/standalone.go`)
-
-**Purpose**: Support for autonomous CLI utilities that can be distributed independently.
-
-**Key Functions**:
-```go
-InitializeConfigStrict(finder ConfigPathFinder) (*config.AppConfig, string, error)
-ValidateToolPromptsStrict(cfg *config.AppConfig, promptsDir string) error
-InitializeForStandalone(finder ConfigPathFinder, maxIters int, systemPrompt string) (*Components, string, error)
-```
-
-**Features**:
-- Fail-fast if config.yaml not found
-- Validates all post-prompt files exist
-- Converts relative paths to absolute
-- Strict error messages for missing resources
-
 ---
 
-## Request Flow Diagram (UPDATED)
+## Request Flow Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         REQUEST FLOW DIAGRAM (NEW)                          │
+│                         REQUEST FLOW DIAGRAM                                │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  1. USER INPUT                                                               │
@@ -527,7 +389,7 @@ InitializeForStandalone(finder ConfigPathFinder, maxIters int, systemPrompt stri
 │     │ state.BuildAgentContext(systemPrompt)                                  │
 │     │ - System prompt + File metadata + Todos + History                      │
 │     ▼                                                                        │
-│  5. DETERMINE LLM PARAMETERS (NEW)                                           │
+│  5. DETERMINE LLM PARAMETERS                                                 │
 │     │ if activePromptConfig != nil:                                          │
 │     │     opts = [WithModel(prompt.model), WithTemp(prompt.temp)]           │
 │     │ else:                                                                  │
@@ -564,78 +426,25 @@ InitializeForStandalone(finder ConfigPathFinder, maxIters int, systemPrompt stri
 
 ---
 
-## Key Architectural Patterns
+## Key Design Patterns
 
-### 1. ReAct Pattern (Reasoning + Acting)
-
-**Location**: `internal/agent/orchestrator.go`
-
-The agent loops between:
-1. **Reasoning**: LLM analyzes context and decides which tool to use
-2. **Acting**: Tool is executed and result is fed back to LLM
-3. **Repeat**: Until LLM provides final answer or max iterations reached
-
-### 2. Options Pattern (NEW)
-
-**Location**: `pkg/llm/options.go`
-
-Functional options for runtime parameter overrides:
-```go
-llm.Generate(ctx, messages,
-    WithModel("glm-4.6"),
-    WithTemperature(0.7),
-    WithMaxTokens(2000))
-```
-
-**Benefits**:
-- Single Provider instance (Rule 4)
-- Runtime flexibility from prompts
-- Backward compatible (opts optional)
-
-### 3. Dependency Inversion Principle
-
-**Problem**: Circular import between `internal/agent` (implementation) and `internal/app` (usage).
-
-**Solution**: `pkg/agent` package defines `Agent` interface:
-- `internal/app` imports `pkg/agent` (interface only)
-- `internal/agent` imports `internal/app` (concrete implementation)
-
-### 4. Context Injection Pattern
-
-**Purpose**: Automatically include Todo and File context in prompts.
-
-**Implementation**: `BuildAgentContext()` method combines:
-1. System prompt
-2. "Working Memory" (vision descriptions from analyzed files)
-3. Todo plan context
-4. Dialog history
-
-**Benefit**: AI always sees current state without tool calls, saving tokens.
-
-### 5. Registry Pattern
-
-**Used In**:
-- `ToolsRegistry` - Tool registration and discovery
-- `CommandRegistry` - TUI command management
-
-**Benefits**:
-- Dynamic feature registration
-- Decoupling of registration and usage
-- Thread-safe concurrent access
-
-### 6. Model-View-Update (TEA)
-
-**Location**: `internal/ui/` (Bubble Tea framework)
-
-- **Model**: `MainModel` holds application state
-- **View**: `view()` renders UI to terminal
-- **Update**: `update()` handles events and returns commands
+| Pattern | Location | Purpose |
+|---------|----------|---------|
+| **Registry** | `pkg/tools/registry.go` | Tool registration and discovery |
+| **Factory** | `pkg/factory/llm_factory.go` | LLM provider creation |
+| **Options** | `pkg/llm/options.go` | Runtime parameter overrides |
+| **Component Initialization** | `pkg/app/components.go` | Reusable initialization across entry points |
+| **Strategy** | `pkg/classifier/` | File classification rules |
+| **Command** | `internal/app/commands.go` | TUI command handling |
+| **Template Method** | `pkg/prompt/` | Prompt rendering with Go templates |
+| **Context Injection** | `internal/app/state.go` | Automatic context inclusion in prompts |
+| **Adapter** | `pkg/llm/openai/` | OpenAI-compatible API adapter |
+| **Model-View-Update** | `internal/ui/` | Bubble Tea TUI architecture |
+| **ReAct** | `internal/agent/orchestrator.go` | Agent reasoning and acting loop |
 
 ---
 
-## Development Workflow
-
-### Building and Running
+## Building and Running
 
 ```bash
 # Main TUI application (primary interface)
@@ -644,14 +453,17 @@ go build -o poncho cmd/poncho/main.go
 
 # WB Tools Test CLI
 go run cmd/wb-tools-test/main.go -query "show categories"
-go build -o wb-tools-test cmd/wb-tools-test/main.go
 
 # Vision CLI
 go run cmd/vision-cli/main.go -article 12345
-go build -o vision-cli cmd/vision-cli/main.go
+
+# Maxiponcho (Fashion PLM analyzer)
+go run cmd/maxiponcho/main.go
 ```
 
-### Creating a New Tool
+---
+
+## Creating a New Tool
 
 1. Create file in `pkg/tools/std/` (e.g., `my_tool.go`)
 2. Implement `Tool` interface
@@ -713,35 +525,6 @@ func (t *MyTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 
 **Important**: Tools without parameters MUST include `"required": []string{}`.
 
-### Creating a Post-Prompt
-
-1. Create YAML file in `prompts/` (e.g., `prompts/wb/parent_categories_analysis.yaml`)
-
-```yaml
-config:
-  model: "glm-4.6"
-  temperature: 0.7
-  max_tokens: 2000
-
-messages:
-  - role: system
-    content: |
-      Format the response as a structured table with columns:
-      - ID
-      - Name
-      - Parent ID
-
-      Sort by Name alphabetically.
-```
-
-2. Add reference in `config.yaml`:
-```yaml
-tools:
-  get_wb_parent_categories:
-    post_prompt: "wb/parent_categories_analysis.yaml"
-    enabled: true
-```
-
 ---
 
 ## Environment Variables
@@ -764,24 +547,6 @@ Required:
 | `gopkg.in/yaml.v3` | v3.0.1 | YAML configuration |
 | `github.com/sashabaranov/go-openai` | v1.41.2 | OpenAI-compatible API |
 | `golang.org/x/time/rate` | v0.14.0 | Rate limiting |
-
----
-
-## Design Patterns Summary
-
-| Pattern | Location | Purpose |
-|---------|----------|---------|
-| **Registry** | `pkg/tools/registry.go` | Tool registration and discovery |
-| **Factory** | `pkg/factory/llm_factory.go` | LLM provider creation |
-| **Options** | `pkg/llm/options.go` | Runtime parameter overrides |
-| **Component Initialization** | `pkg/app/components.go` | Reusable initialization across entry points |
-| **Strategy** | `pkg/classifier/` | File classification rules |
-| **Command** | `internal/app/commands.go` | TUI command handling |
-| **Template Method** | `pkg/prompt/` | Prompt rendering with Go templates |
-| **Context Injection** | `internal/app/state.go` | Automatic context inclusion in prompts |
-| **Adapter** | `pkg/llm/openai/` | OpenAI-compatible API adapter |
-| **Model-View-Update** | `internal/ui/` | Bubble Tea TUI architecture |
-| **ReAct** | `internal/agent/orchestrator.go` | Agent reasoning and acting loop |
 
 ---
 
@@ -833,66 +598,3 @@ return "", fmt.Errorf("llm generation failed: %w", err)
 ```
 
 **Benefit**: Framework is resilient against LLM hallucinations.
-
----
-
-## Recent Architecture Changes
-
-### 1. Reasoning Model + Prompt-based Model Override (LATEST)
-
-**Purpose**: Allow different LLM parameters for reasoning vs. chat, with runtime overrides from prompts.
-
-**Changes**:
-- `pkg/llm/options.go` - NEW functional options pattern
-- `pkg/llm/provider.go` - Updated Generate signature
-- `pkg/llm/openai/client.go` - Implements opts pattern
-- `pkg/config/config.go` - Added `default_reasoning`, `default_chat`
-- `internal/agent/orchestrator.go` - Supports reasoning/chat configs
-- `pkg/prompt/postprompt.go` - Returns PromptFile with Config
-- `pkg/prompt/model.go` - Added PromptConfig struct
-
-**Benefits**:
-- Single Provider (Rule 4) - not multiple clients
-- Runtime flexibility from prompts
-- Backward compatible (opts optional)
-
-### 2. Standalone CLI Support
-
-**Changes**:
-- `pkg/app/standalone.go` - NEW strict initialization for CLI utilities
-- `StandaloneConfigPathFinder` - Binary-directory-only config search
-- `InitializeConfigStrict` - Fail-fast validation
-- `ValidateToolPromptsStrict` - Validate all post-prompt files exist
-
-**Benefits**:
-- Autonomous utilities that can be distributed independently
-- Clear error messages for missing resources
-- No dependency on project root structure
-
-### 3. State Package Refactoring
-
-**Changes**:
-- `pkg/state/types.go` - NEW package for state types
-- `pkg/state/writer.go` - State writer interface
-- Moved `FileMeta` to `pkg/state` to avoid circular imports
-
-**Benefits**:
-- Cleaner separation between `internal/app` and `pkg/tools`
-- Tools can access state types without importing internal packages
-
----
-
-## Conclusion
-
-Poncho AI represents a **mature AI agent framework** with:
-
-1. **Clear separation of concerns** - Tools, Orchestrator, State, UI
-2. **Thread-safe operations** - All runtime state protected
-3. **LLM-agnostic design** - Works with any OpenAI-compatible API
-4. **Resilient error handling** - No panics, graceful degradation
-5. **Extensible architecture** - Easy to add tools, commands, LLM providers
-6. **Natural interface** - TUI with seamless AI integration
-7. **Flexible parameter management** - Options pattern for runtime overrides
-8. **Autonomous utilities** - Standalone CLI support
-
-The framework follows the principle of **"Convention over Configuration"** - developers follow simple rules, and the framework handles the complexity of prompt engineering, validation, and orchestration.
