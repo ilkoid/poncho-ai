@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -17,18 +18,39 @@ import (
 //
 // Позволяет агенту найти предмет по названию (без учета регистра).
 type WbSubjectsByNameTool struct {
-	client *wb.Client
+	client      *wb.Client
+	toolID      string
+	endpoint    string
+	rateLimit   int
+	burst       int
+	description string
 }
 
 // NewWbSubjectsByNameTool создает инструмент для поиска предметов по имени.
-func NewWbSubjectsByNameTool(c *wb.Client) *WbSubjectsByNameTool {
-	return &WbSubjectsByNameTool{client: c}
+//
+// Параметры:
+//   - c: экземпляр клиента Wildberries API
+//   - cfg: конфигурация tool из YAML
+//   - wbDefaults: дефолтные значения из wb секции config.yaml
+//
+// Возвращает инструмент, готовый к регистрации в реестре.
+func NewWbSubjectsByNameTool(c *wb.Client, cfg config.ToolConfig, wbDefaults config.WBConfig) *WbSubjectsByNameTool {
+	endpoint, rateLimit, burst := applyWbDefaults(cfg, wbDefaults)
+
+	return &WbSubjectsByNameTool{
+		client:      c,
+		toolID:      "get_wb_subjects_by_name",
+		endpoint:    endpoint,
+		rateLimit:   rateLimit,
+		burst:       burst,
+		description: cfg.Description,
+	}
 }
 
 func (t *WbSubjectsByNameTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "get_wb_subjects_by_name",
-		Description: "Ищет предметы (подкатегории) Wildberries по подстроке в названии. Возвращает список подходящих предметов с их ID и родительскими категориями.",
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -63,9 +85,8 @@ func (t *WbSubjectsByNameTool) Execute(ctx context.Context, argsJSON string) (st
 		args.Limit = 1000
 	}
 
-	// Используем существующий метод с пагинацией
-	// GetAllSubjectsLazy возвращает все предметы, поэтому фильтруем в Go
-	allSubjects, err := t.client.GetAllSubjectsLazy(ctx, 0)
+	// Передаем параметры из tool config в client
+	allSubjects, err := t.client.GetAllSubjectsLazy(ctx, t.endpoint, t.rateLimit, t.burst, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to get subjects: %w", err)
 	}
@@ -74,7 +95,6 @@ func (t *WbSubjectsByNameTool) Execute(ctx context.Context, argsJSON string) (st
 	var matches []wb.Subject
 
 	for _, s := range allSubjects {
-		// Простая проверка на вхождение (можно улучшить fuzzy search)
 		if containsIgnoreCase(s.SubjectName, args.Name) {
 			matches = append(matches, s)
 			if len(matches) >= args.Limit {
@@ -94,18 +114,39 @@ func (t *WbSubjectsByNameTool) Execute(ctx context.Context, argsJSON string) (st
 //
 // Возвращает обязательные и опциональные характеристики для указанного предмета.
 type WbCharacteristicsTool struct {
-	client *wb.Client
+	client      *wb.Client
+	toolID      string
+	endpoint    string
+	rateLimit   int
+	burst       int
+	description string
 }
 
 // NewWbCharacteristicsTool создает инструмент для получения характеристик.
-func NewWbCharacteristicsTool(c *wb.Client) *WbCharacteristicsTool {
-	return &WbCharacteristicsTool{client: c}
+//
+// Параметры:
+//   - c: экземпляр клиента Wildberries API
+//   - cfg: конфигурация tool из YAML
+//   - wbDefaults: дефолтные значения из wb секции config.yaml
+//
+// Возвращает инструмент, готовый к регистрации в реестре.
+func NewWbCharacteristicsTool(c *wb.Client, cfg config.ToolConfig, wbDefaults config.WBConfig) *WbCharacteristicsTool {
+	endpoint, rateLimit, burst := applyWbDefaults(cfg, wbDefaults)
+
+	return &WbCharacteristicsTool{
+		client:      c,
+		toolID:      "get_wb_characteristics",
+		endpoint:    endpoint,
+		rateLimit:   rateLimit,
+		burst:       burst,
+		description: cfg.Description,
+	}
 }
 
 func (t *WbCharacteristicsTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "get_wb_characteristics",
-		Description: "Возвращает список характеристик для указанного предмета (subjectID). Включает информацию о том, является ли характеристика обязательной, тип данных, единицы измерения.",
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -127,7 +168,8 @@ func (t *WbCharacteristicsTool) Execute(ctx context.Context, argsJSON string) (s
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	charcs, err := t.client.GetCharacteristics(ctx, args.SubjectID)
+	// Передаем параметры из tool config в client
+	charcs, err := t.client.GetCharacteristics(ctx, t.endpoint, t.rateLimit, t.burst, args.SubjectID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get characteristics: %w", err)
 	}
@@ -143,18 +185,39 @@ func (t *WbCharacteristicsTool) Execute(ctx context.Context, argsJSON string) (s
 //
 // Возвращает список кодов ТНВЭД для указанного предмета с информацией о маркировке.
 type WbTnvedTool struct {
-	client *wb.Client
+	client      *wb.Client
+	toolID      string
+	endpoint    string
+	rateLimit   int
+	burst       int
+	description string
 }
 
 // NewWbTnvedTool создает инструмент для получения кодов ТНВЭД.
-func NewWbTnvedTool(c *wb.Client) *WbTnvedTool {
-	return &WbTnvedTool{client: c}
+//
+// Параметры:
+//   - c: экземпляр клиента Wildberries API
+//   - cfg: конфигурация tool из YAML
+//   - wbDefaults: дефолтные значения из wb секции config.yaml
+//
+// Возвращает инструмент, готовый к регистрации в реестре.
+func NewWbTnvedTool(c *wb.Client, cfg config.ToolConfig, wbDefaults config.WBConfig) *WbTnvedTool {
+	endpoint, rateLimit, burst := applyWbDefaults(cfg, wbDefaults)
+
+	return &WbTnvedTool{
+		client:      c,
+		toolID:      "get_wb_tnved",
+		endpoint:    endpoint,
+		rateLimit:   rateLimit,
+		burst:       burst,
+		description: cfg.Description,
+	}
 }
 
 func (t *WbTnvedTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "get_wb_tnved",
-		Description: "Возвращает список кодов ТНВЭД для указанного предмета. Коды ТНВЭД нужны для создания карточки товара и маркировки Честный ЗНАК (isKiz=true).",
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -181,7 +244,8 @@ func (t *WbTnvedTool) Execute(ctx context.Context, argsJSON string) (string, err
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	tnveds, err := t.client.GetTnved(ctx, args.SubjectID, args.Search)
+	// Передаем параметры из tool config в client
+	tnveds, err := t.client.GetTnved(ctx, t.endpoint, t.rateLimit, t.burst, args.SubjectID, args.Search)
 	if err != nil {
 		return "", fmt.Errorf("failed to get tnved: %w", err)
 	}
@@ -197,19 +261,47 @@ func (t *WbTnvedTool) Execute(ctx context.Context, argsJSON string) (string, err
 //
 // Возвращает бренды для указанного предмета (с авто-пагинацией и лимитом из конфига).
 type WbBrandsTool struct {
-	client *wb.Client
-	limit  int // Лимит из конфига
+	client      *wb.Client
+	toolID      string
+	endpoint    string
+	rateLimit   int
+	burst       int
+	limit       int
+	description string
 }
 
 // NewWbBrandsTool создает инструмент для получения брендов.
-func NewWbBrandsTool(c *wb.Client, brandsLimit int) *WbBrandsTool {
-	return &WbBrandsTool{client: c, limit: brandsLimit}
+//
+// Параметры:
+//   - c: экземпляр клиента Wildberries API
+//   - cfg: конфигурация tool из YAML
+//   - wbDefaults: дефолтные значения из wb секции config.yaml
+//
+// Возвращает инструмент, готовый к регистрации в реестре.
+func NewWbBrandsTool(c *wb.Client, cfg config.ToolConfig, wbDefaults config.WBConfig) *WbBrandsTool {
+	endpoint, rateLimit, burst := applyWbDefaults(cfg, wbDefaults)
+
+	// limit берется из tool config или из wb defaults
+	limit := cfg.DefaultTake
+	if limit == 0 {
+		limit = wbDefaults.BrandsLimit // 500 по дефолту из config.go
+	}
+
+	return &WbBrandsTool{
+		client:      c,
+		toolID:      "get_wb_brands",
+		endpoint:    endpoint,
+		rateLimit:   rateLimit,
+		burst:       burst,
+		limit:       limit,
+		description: cfg.Description,
+	}
 }
 
 func (t *WbBrandsTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name:        "get_wb_brands",
-		Description: "Возвращает список брендов для указанного предмета. Бренды отсортированы по популярности. Используй это для выбора бренда при создании карточки товара.",
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -231,7 +323,8 @@ func (t *WbBrandsTool) Execute(ctx context.Context, argsJSON string) (string, er
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	brands, err := t.client.GetBrands(ctx, args.SubjectID, t.limit)
+	// Передаем параметры из tool config в client
+	brands, err := t.client.GetBrands(ctx, t.endpoint, t.rateLimit, t.burst, args.SubjectID, t.limit)
 	if err != nil {
 		return "", fmt.Errorf("failed to get brands: %w", err)
 	}

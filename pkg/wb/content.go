@@ -8,15 +8,16 @@ import (
 	"strconv"
 )
 
-// GetParentCategories возвращает список родительских категорий
-func (c *Client) GetParentCategories(ctx context.Context) ([]ParentCategory, error) {
+// GetParentCategories возвращает список родительских категорий.
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) GetParentCategories(ctx context.Context, baseURL string, rateLimit int, burst int) ([]ParentCategory, error) {
 	var resp APIResponse[[]ParentCategory]
-	
-	err := c.get(ctx, "/content/v2/object/parent/all", nil, &resp)
+
+	err := c.Get(ctx, "get_wb_parent_categories", baseURL, rateLimit, burst, "/content/v2/object/parent/all", nil, &resp)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if resp.Error {
 		return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
 	}
@@ -92,55 +93,58 @@ func (c *Client) GetParentCategories(ctx context.Context) ([]ParentCategory, err
 //     return allSubjects, nil
 // }
 
-// FetchSubjectsPage - низкоуровневый запрос одной страницы + для GetAllSubjectsLazy
-func (c *Client) FetchSubjectsPage(ctx context.Context, parentID, limit, offset int) ([]Subject, error) {
-    params := url.Values{}
-    params.Set("limit", strconv.Itoa(limit))
-    params.Set("offset", strconv.Itoa(offset))
-    if parentID > 0 {
-        params.Set("parentID", strconv.Itoa(parentID))
-    }
+// FetchSubjectsPage - низкоуровневый запрос одной страницы предметов.
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) FetchSubjectsPage(ctx context.Context, baseURL string, rateLimit int, burst int, parentID, limit, offset int) ([]Subject, error) {
+	params := url.Values{}
+	params.Set("limit", strconv.Itoa(limit))
+	params.Set("offset", strconv.Itoa(offset))
+	if parentID > 0 {
+		params.Set("parentID", strconv.Itoa(parentID))
+	}
 
-    var resp APIResponse[[]Subject]
-    err := c.get(ctx, "/content/v2/object/all", params, &resp)
-    if err != nil {
-        return nil, err
-    }
-    if resp.Error {
-        return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
-    }
-    return resp.Data, nil
+	var resp APIResponse[[]Subject]
+	err := c.Get(ctx, "get_wb_subjects", baseURL, rateLimit, burst, "/content/v2/object/all", params, &resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error {
+		return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
+	}
+	return resp.Data, nil
 }
 
-// GetAllSubjects2 - "ленивый" метод, который выкачивает всё используя FetchSubjectsPage. Основной метод и для Tools в том числе
-func (c *Client) GetAllSubjectsLazy(ctx context.Context, parentID int) ([]Subject, error) {
-    var all []Subject
-    limit := 1000
-    offset := 0
+// GetAllSubjectsLazy - "ленивый" метод, который выкачивает всё используя FetchSubjectsPage.
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) GetAllSubjectsLazy(ctx context.Context, baseURL string, rateLimit int, burst int, parentID int) ([]Subject, error) {
+	var all []Subject
+	limit := 1000
+	offset := 0
 
-    for {
-        batch, err := c.FetchSubjectsPage(ctx, parentID, limit, offset)
-        if err != nil {
-            return nil, err
-        }
-        
-        all = append(all, batch...)
+	for {
+		batch, err := c.FetchSubjectsPage(ctx, baseURL, rateLimit, burst, parentID, limit, offset)
+		if err != nil {
+			return nil, err
+		}
 
-        if len(batch) < limit {
-            break
-        }
-        offset += limit
-    }
-    return all, nil
+		all = append(all, batch...)
+
+		if len(batch) < limit {
+			break
+		}
+		offset += limit
+	}
+	return all, nil
 }
 
-// GetCharacteristics получает хар-ки для предмета
-func (c *Client) GetCharacteristics(ctx context.Context, subjectID int) ([]Characteristic, error) {
+// GetCharacteristics получает характеристики для предмета.
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) GetCharacteristics(ctx context.Context, baseURL string, rateLimit int, burst int, subjectID int) ([]Characteristic, error) {
 	path := fmt.Sprintf("/content/v2/object/charcs/%d", subjectID)
-	
+
 	var resp APIResponse[[]Characteristic]
-	
-	err := c.get(ctx, path, nil, &resp)
+
+	err := c.Get(ctx, "get_wb_characteristics", baseURL, rateLimit, burst, path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -179,58 +183,53 @@ LLM выбирает "персиковый мелок".
 Иметь в виду, что использовать его надо с кэшированием, а не дергать каждый раз.
 */
 
-// GetColors возвращает справочник всех допустимых цветов WB
-func (c *Client) GetColors(ctx context.Context) ([]Color, error) {
-    // Этот список может быть огромным. В доке не сказано про limit/offset.
-    // Обычно справочники отдаются целиком или имеют поиск.
-    // Если в query params нет limit, значит отдается всё или топ-N.
-    // Судя по документации, параметров пагинации НЕТ, только locale.
-    
-    var resp APIResponse[[]Color]
-    err := c.get(ctx, "/content/v2/directory/colors", nil, &resp)
-    if err != nil {
-        return nil, err
-    }
-    if resp.Error {
-        return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
-    }
-    return resp.Data, nil
+// GetColors возвращает справочник всех допустимых цветов WB.
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) GetColors(ctx context.Context, baseURL string, rateLimit int, burst int) ([]Color, error) {
+	var resp APIResponse[[]Color]
+	err := c.Get(ctx, "get_wb_colors", baseURL, rateLimit, burst, "/content/v2/directory/colors", nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error {
+		return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
+	}
+	return resp.Data, nil
 }
 
-// Метод GetGenders GetGenders (в API называется "Kinds") возвращает справочник полов/видов.
-// Пример: "Мужской", "Женский", "Детский"
-func (c *Client) GetGenders(ctx context.Context) ([]string, error) {
-    // URL из документации: /content/v2/directory/kinds
-    var resp APIResponse[[]string]
-    
-    err := c.get(ctx, "/content/v2/directory/kinds", nil, &resp)
-    if err != nil {
-        return nil, err
-    }
-    
-    if resp.Error {
-        return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
-    }
+// GetGenders возвращает справочник полов/видов.
+// В API называется "Kinds". Пример: "Мужской", "Женский", "Детский".
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) GetGenders(ctx context.Context, baseURL string, rateLimit int, burst int) ([]string, error) {
+	var resp APIResponse[[]string]
 
-    return resp.Data, nil
+	err := c.Get(ctx, "get_wb_genders", baseURL, rateLimit, burst, "/content/v2/directory/kinds", nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Error {
+		return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
+	}
+
+	return resp.Data, nil
 }
-
 
 // GetSeasons возвращает справочник сезонов.
-func (c *Client) GetSeasons(ctx context.Context) ([]string, error) {
-    // URL: /content/v2/directory/seasons
-    var resp APIResponse[[]string]
-    
-    err := c.get(ctx, "/content/v2/directory/seasons", nil, &resp)
-    if err != nil {
-        return nil, err
-    }
-    
-    if resp.Error {
-        return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
-    }
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) GetSeasons(ctx context.Context, baseURL string, rateLimit int, burst int) ([]string, error) {
+	var resp APIResponse[[]string]
 
-    return resp.Data, nil
+	err := c.Get(ctx, "get_wb_seasons", baseURL, rateLimit, burst, "/content/v2/directory/seasons", nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Error {
+		return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
+	}
+
+	return resp.Data, nil
 }
 
 // pkg/wb/types.go
@@ -239,28 +238,27 @@ type Tnved struct {
     IsKiz bool   `json:"isKiz"` // Требует ли маркировки КИЗ
 }
 
-// GetTnved возвращает список кодов ТНВЭД для конкретного предмета
-func (c *Client) GetTnved(ctx context.Context, subjectID int, search string) ([]Tnved, error) {
-    // Параметры
-    params := url.Values{}
-    params.Set("subjectID", fmt.Sprintf("%d", subjectID))
-    if search != "" {
-        params.Set("search", search) // Опциональный поиск по коду
-    }
-    
-    var resp APIResponse[[]Tnved]
-    
-    // URL: /content/v2/directory/tnved
-    err := c.get(ctx, "/content/v2/directory/tnved", params, &resp)
-    if err != nil {
-        return nil, err
-    }
-    
-    if resp.Error {
-        return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
-    }
+// GetTnved возвращает список кодов ТНВЭД для конкретного предмета.
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) GetTnved(ctx context.Context, baseURL string, rateLimit int, burst int, subjectID int, search string) ([]Tnved, error) {
+	params := url.Values{}
+	params.Set("subjectID", fmt.Sprintf("%d", subjectID))
+	if search != "" {
+		params.Set("search", search)
+	}
 
-    return resp.Data, nil
+	var resp APIResponse[[]Tnved]
+
+	err := c.Get(ctx, "get_wb_tnved", baseURL, rateLimit, burst, "/content/v2/directory/tnved", params, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Error {
+		return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
+	}
+
+	return resp.Data, nil
 }
 
 /* 
@@ -279,47 +277,44 @@ LLM: "Ага, раз блузка шелковая, беру код 6206100000".
 =============================
 */
 
-// GetVats возвращает список ставок НДС. Пример: ["22%", "Без НДС", "10%"]
-func (c *Client) GetVats(ctx context.Context) ([]string, error) {
-    // URL: /content/v2/directory/vat
-    var resp APIResponse[[]string]
-    
-    // В доке пример с locale=ru, добавим это, хотя это дефолт
-    params := url.Values{}
-    params.Set("locale", "ru")
+// GetVats возвращает список ставок НДС. Пример: ["22%", "Без НДС", "10%"].
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) GetVats(ctx context.Context, baseURL string, rateLimit int, burst int) ([]string, error) {
+	var resp APIResponse[[]string]
 
-    err := c.get(ctx, "/content/v2/directory/vat", params, &resp)
-    if err != nil {
-        return nil, err
-    }
-    
-    if resp.Error {
-        return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
-    }
+	params := url.Values{}
+	params.Set("locale", "ru")
 
-    return resp.Data, nil
+	err := c.Get(ctx, "get_wb_vats", baseURL, rateLimit, burst, "/content/v2/directory/vat", params, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Error {
+		return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
+	}
+
+	return resp.Data, nil
 }
 
-
 // GetCountries возвращает список стран производства.
-func (c *Client) GetCountries(ctx context.Context) ([]Country, error) {
-    // URL: /content/v2/directory/countries
-    var resp APIResponse[[]Country]
-    
-    // locale=ru (хотя по дефолту ru)
-    params := url.Values{}
-    params.Set("locale", "ru")
+// Параметры baseURL, rateLimit, burst передаются из tool config.
+func (c *Client) GetCountries(ctx context.Context, baseURL string, rateLimit int, burst int) ([]Country, error) {
+	var resp APIResponse[[]Country]
 
-    err := c.get(ctx, "/content/v2/directory/countries", params, &resp)
-    if err != nil {
-        return nil, err
-    }
-    
-    if resp.Error {
-        return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
-    }
+	params := url.Values{}
+	params.Set("locale", "ru")
 
-    return resp.Data, nil
+	err := c.Get(ctx, "get_wb_countries", baseURL, rateLimit, burst, "/content/v2/directory/countries", params, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Error {
+		return nil, fmt.Errorf("wb logic error: %s", resp.ErrorText)
+	}
+
+	return resp.Data, nil
 }
 
 /*
@@ -343,64 +338,49 @@ type BrandsResponse struct {
     Total  int     `json:"total"`  // Общее количество брендов
 }
 
-// GetBrands возвращает список брендов для указанного предмета с авто-пагинацией
+// GetBrands возвращает список брендов для указанного предмета с авто-пагинацией.
 //
 // Параметры:
+//   - baseURL: базовый URL API (из tool config)
+//   - rateLimit: лимит запросов в минуту (из tool config)
+//   - burst: burst для rate limiter (из tool config)
 //   - subjectID: ID предмета для фильтрации брендов
 //   - limit: максимальное количество брендов для возврата (0 = все доступные)
 //
-// Возвращает:
-//   - []Brand: список брендов (отсортированы по популярности)
-//   - error: ошибка при выполнении запроса
-func (c *Client) GetBrands(ctx context.Context, subjectID int, limit int) ([]Brand, error) {
-    var allBrands []Brand
-    next := 0
+// Возвращает список брендов отсортированных по популярности.
+func (c *Client) GetBrands(ctx context.Context, baseURL string, rateLimit int, burst int, subjectID int, limit int) ([]Brand, error) {
+	var allBrands []Brand
+	next := 0
 
-    // Используем дефолтные значения для rate limiting
-    const (
-        brandsToolID = "get_brands"
-        baseURL      = DefaultBaseURL
-        rateLimit    = DefaultRateLimit
-        burst        = DefaultBurstLimit
-    )
+	for {
+		params := url.Values{}
+		params.Set("subjectId", fmt.Sprintf("%d", subjectID))
+		if next > 0 {
+			params.Set("next", fmt.Sprintf("%d", next))
+		}
 
-    for {
-        // Формируем параметры запроса
-        params := url.Values{}
-        params.Set("subjectId", fmt.Sprintf("%d", subjectID))
-        if next > 0 {
-            params.Set("next", fmt.Sprintf("%d", next))
-        }
+		var brandsResp BrandsResponse
 
-        // Создаём временную структуру для ответа
-        var brandsResp BrandsResponse
+		err := c.Get(ctx, "get_wb_brands", baseURL, rateLimit, burst,
+			"/api/content/v1/brands", params, &brandsResp)
+		if err != nil {
+			return nil, err
+		}
 
-        // Используем общий метод Get
-        // Бренды API имеет другой формат ответа, поэтому получаем сырой ответ
-        err := c.Get(ctx, brandsToolID, baseURL, rateLimit, burst,
-            "/api/content/v1/brands", params, &brandsResp)
-        if err != nil {
-            return nil, err
-        }
+		allBrands = append(allBrands, brandsResp.Brands...)
 
-        // Добавляем бренды к результату
-        allBrands = append(allBrands, brandsResp.Brands...)
+		if brandsResp.Next == 0 {
+			break
+		}
+		if limit > 0 && len(allBrands) >= limit {
+			allBrands = allBrands[:limit]
+			break
+		}
 
-        // Проверяем условия выхода
-        if brandsResp.Next == 0 {
-            // Это последняя страница
-            break
-        }
-        if limit > 0 && len(allBrands) >= limit {
-            // Достигнут лимит
-            allBrands = allBrands[:limit]
-            break
-        }
+		next = brandsResp.Next
+	}
 
-        next = brandsResp.Next
-    }
-
-    return allBrands, nil
+	return allBrands, nil
 }
 
 // ============================================================================

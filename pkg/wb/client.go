@@ -16,13 +16,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
-const (
-	// Дефолтные лимиты (устаревшие, используются для обратной совместимости)
-	DefaultBurstLimit    = 5
-	DefaultRateLimit     = 100 // запросов в минуту
-	DefaultRetryAttempts = 3
-	DefaultBaseURL       = "https://content-api.wildberries.ru"
-)
+// Константы удалены - все параметры теперь из config.yaml
+// Defaults для tools задаются в wb секции config.yaml
 
 // ErrorType представляет тип ошибки при работе с WB API.
 type ErrorType int
@@ -84,6 +79,13 @@ type Client struct {
 	limiters map[string]*rate.Limiter // tool ID → limiter
 }
 
+// IsDemoKey проверяет что используется demo ключ (для mock режима).
+func (c *Client) IsDemoKey() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.apiKey == "demo_key"
+}
+
 // New создает новый клиент для работы с Wildberries API.
 //
 // Параметры:
@@ -94,7 +96,7 @@ type Client struct {
 func New(apiKey string) *Client {
 	return &Client{
 		apiKey:        apiKey,
-		retryAttempts: DefaultRetryAttempts,
+		retryAttempts: 3, // дефолтное значение для обратной совместимости
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -195,6 +197,17 @@ func (c *Client) ClassifyError(err error) ErrorType {
 //
 // Возвращает ошибку если запрос не удался.
 func (c *Client) Get(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params url.Values, dest interface{}) error {
+	// Валидация обязательных параметров - client "тупой", ожидает что их предоставит tool
+	if baseURL == "" {
+		return fmt.Errorf("baseURL is required (tool should provide value from config)")
+	}
+	if rateLimit <= 0 {
+		return fmt.Errorf("rateLimit must be positive (tool should provide value from config)")
+	}
+	if burst <= 0 {
+		return fmt.Errorf("burst must be positive (tool should provide value from config)")
+	}
+
 	u, err := url.Parse(baseURL + path)
 	if err != nil {
 		return fmt.Errorf("invalid url: %w", err)
@@ -292,12 +305,6 @@ func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *ra
 	return limiter
 }
 
-// get - устаревший метод для обратной совместимости.
-// Используйте Get() с параметрами.
-func (c *Client) get(ctx context.Context, path string, params url.Values, dest interface{}) error {
-	return c.Get(ctx, "legacy", DefaultBaseURL, DefaultRateLimit, DefaultBurstLimit, path, params, dest)
-}
-
 // Post выполняет POST запрос к Wildberries API с поддержкой Rate Limit и Retries.
 //
 // Параметры передаются при каждом вызове, что позволяет каждому tool иметь
@@ -315,6 +322,17 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, dest i
 //
 // Возвращает ошибку если запрос не удался.
 func (c *Client) Post(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, body interface{}, dest interface{}) error {
+	// Валидация обязательных параметров - client "тупой", ожидает что их предоставит tool
+	if baseURL == "" {
+		return fmt.Errorf("baseURL is required (tool should provide value from config)")
+	}
+	if rateLimit <= 0 {
+		return fmt.Errorf("rateLimit must be positive (tool should provide value from config)")
+	}
+	if burst <= 0 {
+		return fmt.Errorf("burst must be positive (tool should provide value from config)")
+	}
+
 	u, err := url.Parse(baseURL + path)
 	if err != nil {
 		return fmt.Errorf("invalid url: %w", err)
@@ -400,30 +418,28 @@ type PingResponse struct {
 
 // Ping проверяет связь именно с сервисом Content API.
 //
+// Параметры:
+//   - ctx: контекст для отмены
+//   - baseURL: базовый URL API (например, "https://content-api.wildberries.ru")
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//
 // Возвращает ответ от API или ошибку. Полезен для диагностики:
 // - проверка доступности сервиса
 // - проверка валидности API ключа (401 = unauthorized)
 // - определение сетевых проблем
-func (c *Client) Ping(ctx context.Context) (*PingResponse, error) {
-    // В документации сказано, что URL для Content: https://content-api.wildberries.ru/ping
-    // Наш c.baseURL по умолчанию как раз https://content-api.wildberries.ru
+func (c *Client) Ping(ctx context.Context, baseURL string, rateLimit int, burst int) (*PingResponse, error) {
+	var resp PingResponse
 
-    // ВАЖНО: Ping возвращает простой JSON, а не обертку APIResponse[T].
-    // Поэтому используем c.get() с умом или пишем отдельный запрос, если c.get заточен под APIResponse.
-    // Но наш c.get() просто делает Unmarshal в dest, так что всё ок.
+	// Ping возвращает простой JSON без обертки APIResponse[T]
+	err := c.Get(ctx, "ping_wb_api", baseURL, rateLimit, burst, "/ping", nil, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("ping failed: %w", err)
+	}
 
-    var resp PingResponse
+	if resp.Status != "OK" {
+		return nil, fmt.Errorf("ping status not OK: %s", resp.Status)
+	}
 
-    // Путь /ping
-    // Params nil
-    err := c.get(ctx, "/ping", nil, &resp)
-    if err != nil {
-        return nil, fmt.Errorf("ping failed: %w", err)
-    }
-
-    if resp.Status != "OK" {
-        return nil, fmt.Errorf("ping status not OK: %s", resp.Status)
-    }
-
-    return &resp, nil
+	return &resp, nil
 }

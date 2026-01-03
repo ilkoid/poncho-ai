@@ -14,33 +14,41 @@ type Dictionaries struct {
 	Vats    []string // <--- Добавили НДС
 }
 
-// LoadDictionaries загружает все необходимые справочники параллельно
-func (c *Client) LoadDictionaries(ctx context.Context) (*Dictionaries, error) {
-    // В будущем лучше переделать на errgroup.Group для параллелизма, 
-    // чтобы загрузка 3 справочников занимала время самого медленного, а не сумму.
-    
-    colors, err := c.GetColors(ctx)
-    if err != nil { return nil, err }
+// LoadDictionaries загружает все необходимые справочники.
+// Параметры baseURL, rateLimit, burst передаются из конфигурации.
+func (c *Client) LoadDictionaries(ctx context.Context, baseURL string, rateLimit int, burst int) (*Dictionaries, error) {
+	colors, err := c.GetColors(ctx, baseURL, rateLimit, burst)
+	if err != nil {
+		return nil, err
+	}
 
-    genders, err := c.GetGenders(ctx)
-    if err != nil { return nil, err }
+	genders, err := c.GetGenders(ctx, baseURL, rateLimit, burst)
+	if err != nil {
+		return nil, err
+	}
 
-    seasons, err := c.GetSeasons(ctx) // <--- Добавили
-    if err != nil { return nil, err }
+	seasons, err := c.GetSeasons(ctx, baseURL, rateLimit, burst)
+	if err != nil {
+		return nil, err
+	}
 
-    vats, err := c.GetVats(ctx) // <--- Загружаем
-    if err != nil { return nil, err }
+	vats, err := c.GetVats(ctx, baseURL, rateLimit, burst)
+	if err != nil {
+		return nil, err
+	}
 
-	countries, err := c.GetCountries(ctx) // <--- Загружаем
-    if err != nil { return nil, err }
+	countries, err := c.GetCountries(ctx, baseURL, rateLimit, burst)
+	if err != nil {
+		return nil, err
+	}
 
-    return &Dictionaries{
-        Colors:  colors,
-        Genders: genders,
-        Seasons: seasons,
-		Vats:    vats,
+	return &Dictionaries{
+		Colors:    colors,
+		Genders:   genders,
+		Seasons:   seasons,
+		Vats:      vats,
 		Countries: countries,
-    }, nil
+	}, nil
 }
 
 /* 

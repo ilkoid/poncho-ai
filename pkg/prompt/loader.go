@@ -60,3 +60,24 @@ func (pf *PromptFile) RenderMessages(data interface{}) ([]Message, error) {
 
 	return rendered, nil
 }
+
+// LoadVisionSystemPrompt загружает системный промпт для Vision LLM.
+//
+// TODO: Реализовать загрузку из файла prompts/vision_system_prompt.yaml
+// Сейчас возвращает дефолтный промпт.
+func LoadVisionSystemPrompt(cfg interface{}) (string, error) {
+	// STUB: Возвращаем дефолтный промпт для vision-анализа
+	defaultPrompt := `Ты эксперт по анализу fashion-эскизов.
+
+Твоя задача - проанализировать изображение и описать:
+1. Тип изделия (куртка, брюки, платье и т.д.)
+2. Силуэт (приталенный, прямой, свободный)
+3. Детали (карманы, воротник, манжеты)
+4. Цвет и материалы
+5. Стиль (casual, business, sport)
+
+Отвечай кратко и по делу, на русском языке.`
+
+	return defaultPrompt, nil
+}
+

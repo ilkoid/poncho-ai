@@ -253,7 +253,7 @@ func longestLineLength(s string) int {
 //   - ping: Проверка работоспособности системы
 //
 // Возвращает tea.Cmd для асинхронного выполнения, чтобы UI не зависал.
-func performCommand(input string, state *app.GlobalState) tea.Cmd {
+func performCommand(input string, state *app.AppState) tea.Cmd {
 	return func() tea.Msg {
 		// Создаем контекст с таймаутом (увеличен для сложных запросов)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

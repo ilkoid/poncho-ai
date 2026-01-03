@@ -41,6 +41,15 @@ app:
   debug: true
   prompts_dir: "./prompts"
 
+  # Debug Logs Configuration (JSON трейсы выполнения)
+  debug_logs:
+    enabled: true           # Включить запись отладочных логов
+    save_logs: true         # Сохранять логи в файлы
+    logs_dir: "./debug_logs" # Директория для логов
+    include_tool_args: true  # Включать аргументы инструментов
+    include_tool_results: true # Включать результаты инструментов
+    max_result_size: 5000   # Максимальный размер результата (символов)
+
 # Классификация файлов в бакете
 file_rules:
   - tag: "sketch"
@@ -63,11 +72,9 @@ file_rules:
 # Wildberries API (используется для дефолтных значений)
 wb:
   api_key: "${WB_API_KEY}"
-  # Rate limiting параметры (опционально, есть дефолтные значения)
-# это теперь в tools:
-#  base_url: "https://content-api.wildberries.ru"  # Default
-#  rate_limit: 100      # Default: запросов в минуту
-#  burst_limit: 5       # Default: burst capacity
+  base_url: "https://content-api.wildberries.ru"  # Default для всех WB tools
+  rate_limit: 100      # Default: запросов в минуту
+  burst_limit: 5       # Default: burst capacity
   retry_attempts: 3    # Default: retry attempts
   timeout: "30s"       # Default: HTTP timeout
 
@@ -113,6 +120,35 @@ tools:
     rate_limit: 100
     burst: 5
     post_prompt: "subjects_analysis.yaml"
+
+  get_wb_subjects_by_name:
+    enabled: false
+    description: "Ищет предметы (подкатегории) Wildberries по подстроке в названии. Возвращает список подходящих предметов с их ID и родительскими категориями."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+
+  get_wb_characteristics:
+    enabled: false
+    description: "Возвращает список характеристик для указанного предмета (subjectID). Включает информацию о том, является ли характеристика обязательной, тип данных, единицы измерения."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+
+  get_wb_tnved:
+    enabled: false
+    description: "Возвращает список кодов ТНВЭД для указанного предмета. Коды ТНВЭД нужны для создания карточки товара и маркировки Честный ЗНАК (isKiz=true)."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+
+  get_wb_brands:
+    enabled: false
+    description: "Возвращает список брендов для указанного предмета. Бренды отсортированы по популярности. Используй это для выбора бренда при создании карточки товара."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+    default_take: 500
 
   ping_wb_api:
     enabled: false
@@ -251,7 +287,28 @@ tools:
     enabled: true
     description: "Анализирует изображения из текущего артикула с помощью Vision LLM. Обрабатывает картинки параллельно в горутинах. Опционально фильтрует по тегу (sketch, plm_data, marketing). Используй это после classify_and_download_s3_files для анализа эскизов."
     post_prompt: "sketch_description_prompt.yaml"
-  read_s3_image:
-    enabled: true
-    description: "Анализирует выбранное изображение из текущего артикула с помощью Vision LLM. Используй это после classify_and_download_s3_files для анализа эскизов."
-    post_prompt: "sketch_description_prompt.yaml"
+
+# Chain Configuration (Chain Pattern)
+# Rule 2: Конфигурация цепочек через YAML
+chains:
+  default:
+    type: "react"
+    description: "Стандартная ReAct цепочка для общих запросов"
+    system_prompt: "You are a helpful AI assistant with access to tools."
+    model: "glm-4.6"
+    temperature: 0.5
+    max_tokens: 2000
+    max_iterations: 10
+    timeout: "5m"
+    prompts_dir: "./prompts"
+    debug:
+      enabled: false
+      save_logs: true
+      logs_dir: "./logs"
+      include_tool_args: true
+      include_tool_results: true
+      max_result_size: 5000
+    tool_post_prompts:
+      get_wb_parent_categories: "wb/parent_categories_analysis.yaml"
+      get_wb_subjects: "wb/subjects_analysis.yaml"
+      ping_wb_api: "wb/api_health_report.yaml"

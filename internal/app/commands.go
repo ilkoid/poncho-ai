@@ -14,9 +14,9 @@ import (
 
 // CommandHandler — тип функции-обработчика команды.
 //
-// Принимает GlobalState и аргументы команды, возвращает tea.Cmd
+// Принимает AppState и аргументы команды, возвращает tea.Cmd
 // для асинхронного выполнения в Bubble Tea.
-type CommandHandler func(state *GlobalState, args []string) tea.Cmd
+type CommandHandler func(state *AppState, args []string) tea.Cmd
 
 // CommandRegistry — реестр зарегистрированных команд TUI.
 //
@@ -48,7 +48,7 @@ func (r *CommandRegistry) Register(name string, handler CommandHandler) {
 // Парсит ввод на имя команды и аргументы, находит соответствующий handler
 // и возвращает tea.Cmd для выполнения в Bubble Tea.
 // Если команда не найдена, возвращает команду с ошибкой.
-func (r *CommandRegistry) Execute(input string, state *GlobalState) tea.Cmd {
+func (r *CommandRegistry) Execute(input string, state *AppState) tea.Cmd {
 	parts := strings.Fields(input)
 	if len(parts) == 0 {
 		return nil
@@ -93,12 +93,12 @@ func (r *CommandRegistry) GetCommands() []string {
 //   - todo help               — показать справку
 //
 // Также регистрирует псевдоним "t" для быстрого доступа.
-func SetupTodoCommands(registry *CommandRegistry, state *GlobalState) {
-	registry.Register("todo", func(state *GlobalState, args []string) tea.Cmd {
+func SetupTodoCommands(registry *CommandRegistry, state *AppState) {
+	registry.Register("todo", func(state *AppState, args []string) tea.Cmd {
 		return func() tea.Msg {
 			if len(args) == 0 {
 				// Показать текущий план
-				return CommandResultMsg{Output: state.Todo.String()}
+				return CommandResultMsg{Output: state.GetTodoString()}
 			}
 
 			subcommand := args[0]
@@ -140,7 +140,7 @@ func SetupTodoCommands(registry *CommandRegistry, state *GlobalState) {
 				return CommandResultMsg{Output: fmt.Sprintf("❌ Задача %d провалена: %s", id, reason)}
 
 			case "clear":
-				state.Todo.Clear()
+				state.ClearTodo()
 				return CommandResultMsg{Output: "🗑️ План очищен"}
 
 			case "help":
@@ -160,7 +160,7 @@ func SetupTodoCommands(registry *CommandRegistry, state *GlobalState) {
 	})
 
 	// Регистрируем короткие псевдонимы для удобства
-	registry.Register("t", func(state *GlobalState, args []string) tea.Cmd {
+	registry.Register("t", func(state *AppState, args []string) tea.Cmd {
 		return registry.Execute("todo "+strings.Join(args, " "), state)
 	})
 }

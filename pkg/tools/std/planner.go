@@ -44,13 +44,9 @@ func NewPlanAddTaskTool(manager *todo.Manager, cfg config.ToolConfig) *PlanAddTa
 //
 // Соответствует Tool interface (Rule 1).
 func (t *PlanAddTaskTool) Definition() tools.ToolDefinition {
-	desc := t.description
-	if desc == "" {
-		desc = "Добавляет новую задачу в план действий"
-	}
 	return tools.ToolDefinition{
 		Name:        "plan_add_task",
-		Description: desc,
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -105,13 +101,9 @@ func NewPlanMarkDoneTool(manager *todo.Manager, cfg config.ToolConfig) *PlanMark
 
 // Definition возвращает определение инструмента для function calling.
 func (t *PlanMarkDoneTool) Definition() tools.ToolDefinition {
-	desc := t.description
-	if desc == "" {
-		desc = "Отмечает задачу как выполненную"
-	}
 	return tools.ToolDefinition{
 		Name:        "plan_mark_done",
-		Description: desc,
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -157,13 +149,9 @@ func NewPlanMarkFailedTool(manager *todo.Manager, cfg config.ToolConfig) *PlanMa
 
 // Definition возвращает определение инструмента для function calling.
 func (t *PlanMarkFailedTool) Definition() tools.ToolDefinition {
-	desc := t.description
-	if desc == "" {
-		desc = "Отмечает задачу как проваленную с указанием причины"
-	}
 	return tools.ToolDefinition{
 		Name:        "plan_mark_failed",
-		Description: desc,
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -214,13 +202,9 @@ func NewPlanClearTool(manager *todo.Manager, cfg config.ToolConfig) *PlanClearTo
 
 // Definition возвращает определение инструмента для function calling.
 func (t *PlanClearTool) Definition() tools.ToolDefinition {
-	desc := t.description
-	if desc == "" {
-		desc = "Очищает весь план действий"
-	}
 	return tools.ToolDefinition{
 		Name:        "plan_clear",
-		Description: desc,
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},

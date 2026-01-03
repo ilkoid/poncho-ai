@@ -1,0 +1,52 @@
+{
+  "run_id": "debug_20260101_235337",
+  "timestamp": "2026-01-01T23:53:37.727906+03:00",
+  "user_query": "покажи родительские категории Wildberries",
+  "duration_ms": 7509,
+  "iterations": [
+    {
+      "iteration": 1,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "max_tokens": 2000,
+        "system_prompt_used": "default",
+        "messages_count": 2
+      },
+      "llm_response": {
+        "content": "\nПолучу для вас список родительских категорий Wildberries.\n",
+        "tool_calls": [
+          {
+            "id": "call_-8021418771072047811",
+            "name": "get_wb_parent_categories",
+            "args": "{}"
+          }
+        ],
+        "duration_ms": 2896
+      }
+    },
+    {
+      "iteration": 2,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "max_tokens": 2000,
+        "system_prompt_used": "default",
+        "messages_count": 4
+      },
+      "llm_response": {
+        "content": "\nВот список родительских категорий Wildberries:\n\n1. **Женщинам** (ID: 1541)\n2. **Мужчинам** (ID: 1542) \n3. **Детям** (ID: 1543)\n4. **Обувь** (ID: 1544)\n5. **Аксессуары** (ID: 1545)\n6. **Белье** (ID: 1546)\n7. **Красота** (ID: 1547)\n8. **Дом** (ID: 1525)\n9. **Электроника** (ID: 1534)\n\nВсе категории активны и доступны на платформе. Если вам нужно посмотреть подкатегории для какой-то конкретной родительской категории, просто укажите её название или ID.",
+        "duration_ms": 4613
+      }
+    }
+  ],
+  "summary": {
+    "total_llm_calls": 2,
+    "total_tools_executed": 0,
+    "total_llm_duration_ms": 7509,
+    "total_tool_duration_ms": 0
+  },
+  "final_result": "\nВот список родительских категорий Wildberries:\n\n1. **Женщинам** (ID: 1541)\n2. **Мужчинам** (ID: 1542) \n3. **Детям** (ID: 1543)\n4. **Обувь** (ID: 1544)\n5. **Аксессуары** (ID: 1545)\n6. **Белье** (ID: 1546)\n7. **Красота** (ID: 1547)\n8. **Дом** (ID: 1525)\n9. **Электроника** (ID: 1534)\n\nВсе категории активны и доступны на платформе. Если вам нужно посмотреть подкатегории для какой-то конкретной родительской категории, просто укажите её название или ID."
+}

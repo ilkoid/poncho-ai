@@ -1,0 +1,96 @@
+{
+  "run_id": "debug_20260101_224928",
+  "timestamp": "2026-01-01T22:49:28.189732+03:00",
+  "user_query": "найди все товары в категории Верхняя одежда",
+  "duration_ms": 205393875,
+  "iterations": [
+    {
+      "iteration": 1,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "max_tokens": 2000,
+        "system_prompt_used": "default",
+        "messages_count": 3
+      },
+      "llm_response": {
+        "content": "Нужно найти категории на WB",
+        "tool_calls": [
+          {
+            "id": "call_abc123",
+            "name": "get_wb_parent_categories",
+            "args": "{}"
+          }
+        ],
+        "duration_ms": 50000000
+      },
+      "tools_executed": [
+        {
+          "name": "get_wb_parent_categories",
+          "args": "{}",
+          "result": "{\"categories\":[{\"id\":1541,\"name\":\"Верхняя одежда\",\"parent_id\":0},{\"id\":1542,\"name\":\"Брюки\",\"parent_id\":0},{\"id\":1543,\"name\":\"Обувь\",\"parent_id\":0}]}",
+          "duration_ms": 112625,
+          "success": true
+        }
+      ]
+    },
+    {
+      "iteration": 2,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "max_tokens": 2000,
+        "system_prompt_used": "default",
+        "messages_count": 5
+      },
+      "llm_response": {
+        "content": "Получаю подкатегории для ID=1541",
+        "tool_calls": [
+          {
+            "id": "call_def456",
+            "name": "get_wb_subjects",
+            "args": "{\"parent\": 1541}"
+          }
+        ],
+        "duration_ms": 40000000
+      },
+      "tools_executed": [
+        {
+          "name": "get_wb_subjects",
+          "args": "{\"parent\": 1541}",
+          "result": "{\"subjects\":[{\"count\":450,\"id\":1001,\"name\":\"Куртки\",\"parent_id\":1541},{\"count\":320,\"id\":1002,\"name\":\"Пуховики\",\"parent_id\":1541},{\"count\":280,\"id\":1003,\"name\":\"Пальто\",\"parent_id\":1541},{\"count\":190,\"id\":1004,\"name\":\"Кардиганы\",\"parent_id\":1541}],\"total\":1240}",
+          "duration_ms": 42,
+          "success": true
+        }
+      ]
+    },
+    {
+      "iteration": 3,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.7,
+        "max_tokens": 2000,
+        "system_prompt_used": "wb/subject_analysis.yaml",
+        "messages_count": 7
+      },
+      "llm_response": {
+        "content": "В категории Верхняя одежда найдено 1240 товаров в 12 подкатегориях.",
+        "duration_ms": 60000000
+      }
+    }
+  ],
+  "summary": {
+    "total_llm_calls": 3,
+    "total_tools_executed": 2,
+    "total_llm_duration_ms": 150000000,
+    "total_tool_duration_ms": 112667,
+    "visited_tools": [
+      "get_wb_parent_categories",
+      "get_wb_subjects"
+    ]
+  },
+  "final_result": "В категории Верхняя одежда найдено 1240 товаров в 12 подкатегориях."
+}

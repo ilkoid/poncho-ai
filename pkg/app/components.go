@@ -18,11 +18,13 @@ import (
 
 	"github.com/ilkoid/poncho-ai/internal/agent"
 	"github.com/ilkoid/poncho-ai/internal/app"
+	"github.com/ilkoid/poncho-ai/pkg/chain"
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/factory"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
+	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 	"github.com/ilkoid/poncho-ai/pkg/tools/std"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
@@ -35,7 +37,7 @@ import (
 // кода инициализации между CLI и GUI версиями.
 type Components struct {
 	Config       *config.AppConfig
-	State        *app.GlobalState
+	State        *app.AppState
 	LLM          llm.Provider      // Chat модель (для ReAct loop)
 	VisionLLM    llm.Provider      // Vision модель (для batch image analysis)
 	WBClient     *wb.Client
@@ -72,61 +74,40 @@ type ConfigPathFinder interface {
 
 // DefaultConfigPathFinder реализует стандартную стратегию поиска config.yaml.
 //
-// Порядок поиска:
-// 1. Флаг -config (если указан)
-// 2. Текущая директория (./config.yaml)
-// 3. Директория бинарника
-// 4. Директория утилиты (cmd/orchestrator-test/)
-// 5. Родительская директория (для запуска из cmd/)
+// Правило 11: автономные приложения хранят ресурсы рядом с бинарником.
+//
+// Упрощенный порядок поиска:
+// 1. Флаг -config (явное указание)
+// 2. Директория бинарника (autonomous deployment)
+// 3. Ошибка при загрузке (если config не найден)
 type DefaultConfigPathFinder struct {
 	// ConfigFlag - значение флага -config, если указан
 	ConfigFlag string
 }
 
 // FindConfigPath находит путь к config.yaml.
+//
+// Правило 11: автономные приложения хранят ресурсы рядом.
+// Логика поиска (в порядке приоритета):
+//   1. Явно указанный флаг --config
+//   2. Директория бинарника (autonomous deployment)
+//   3. Ошибка (неудача - config не найден)
 func (f *DefaultConfigPathFinder) FindConfigPath() string {
-	var cfgPath string
-
-	// 1. Флаг имеет приоритет
+	// 1. Флаг имеет наивысший приоритет
 	if f.ConfigFlag != "" {
-		cfgPath = f.ConfigFlag
-		return resolveAbsPath(cfgPath)
+		return resolveAbsPath(f.ConfigFlag)
 	}
 
-	// 2. Текущая директория
-	cfgPath = "config.yaml"
-	if _, err := os.Stat(cfgPath); err == nil {
-		return resolveAbsPath(cfgPath)
-	}
-
-	// 3. Директория бинарника
+	// 2. Директория бинарника (autonomous deployment)
 	if execPath, err := os.Executable(); err == nil {
 		binDir := filepath.Dir(execPath)
-		cfgPath = filepath.Join(binDir, "config.yaml")
+		cfgPath := filepath.Join(binDir, "config.yaml")
 		if _, err := os.Stat(cfgPath); err == nil {
 			return cfgPath
 		}
 	}
 
-	// 4. Директория утилиты (относительно текущей)
-	cfgPath = filepath.Join("cmd", "orchestrator-test", "config.yaml")
-	if _, err := os.Stat(cfgPath); err == nil {
-		return resolveAbsPath(cfgPath)
-	}
-
-	// 5. Родительская директория (для запуска из cmd/orchestrator-test/)
-	cfgPath = filepath.Join("..", "..", "config.yaml")
-	if _, err := os.Stat(cfgPath); err == nil {
-		return resolveAbsPath(cfgPath)
-	}
-
-	// 6. Родительская директория напрямую
-	cfgPath = filepath.Join("..", "config.yaml")
-	if _, err := os.Stat(cfgPath); err == nil {
-		return resolveAbsPath(cfgPath)
-	}
-
-	// Возвращаем дефолтный путь (даже если не существует)
+	// 3. Config не найден - возвращаем дефолтный путь, ошибка будет при загрузке
 	return resolveAbsPath("config.yaml")
 }
 
@@ -176,8 +157,10 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 			utils.Error("WB client creation failed", "error", err)
 			return nil, fmt.Errorf("failed to create WB client: %w", err)
 		}
+		// Ping с параметрами из конфига
+		wbCfg := cfg.WB.GetDefaults()
 		ctx := context.Background()
-		if _, err := wbClient.Ping(ctx); err != nil {
+		if _, err := wbClient.Ping(ctx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit); err != nil {
 			log.Printf("Warning: WB API ping failed: %v", err)
 			utils.Error("WB API ping failed", "error", err)
 		} else {
@@ -197,7 +180,9 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 	var dicts *wb.Dictionaries
 	if wbClient != nil {
 		ctx := context.Background()
-		dicts, err = wbClient.LoadDictionaries(ctx)
+		// Применяем defaults для WB секции
+		wbCfg := cfg.WB.GetDefaults()
+		dicts, err = wbClient.LoadDictionaries(ctx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit)
 		if err != nil {
 			log.Printf("Warning: failed to load WB dictionaries: %v", err)
 			utils.Error("WB dictionaries loading failed", "error", err)
@@ -212,9 +197,9 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 		}
 	}
 
-	// 4. Создаём глобальное состояние (thread-safe)
-	state := app.NewState(cfg, s3Client)
-	state.Dictionaries = dicts // Сохраняем справочники в state
+	// 4. СоздаёмAppState (thread-safe)
+	state := app.NewAppState(cfg, s3Client)
+	state.SetDictionaries(dicts) // Сохраняем справочники в CoreState
 
 	// 5. Регистрируем Todo команды
 	app.SetupTodoCommands(state.CommandRegistry, state)
@@ -278,7 +263,8 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 	}
 
 	// 7. Регистрируем инструменты из YAML конфигурации
-	if err := SetupTools(state, wbClient, visionLLM, cfg); err != nil {
+	// Передаем CoreState для регистрации инструментов (Rule 6: framework logic)
+	if err := SetupTools(state.CoreState, wbClient, visionLLM, cfg); err != nil {
 		utils.Error("Tools registration failed", "error", err)
 		return nil, fmt.Errorf("failed to register tools: %w", err)
 	}
@@ -315,6 +301,15 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 		ToolPostPrompts:  toolPostPrompts,
 		ReasoningConfig:  reasoningConfig,
 		ChatConfig:       chatConfig,
+		DebugConfig: chain.DebugConfig{
+			Enabled:             cfg.App.DebugLogs.Enabled,
+			SaveLogs:            cfg.App.DebugLogs.SaveLogs,
+			LogsDir:             cfg.App.DebugLogs.LogsDir,
+			IncludeToolArgs:     cfg.App.DebugLogs.IncludeToolArgs,
+			IncludeToolResults:  cfg.App.DebugLogs.IncludeToolResults,
+			MaxResultSize:       cfg.App.DebugLogs.MaxResultSize,
+		},
+		PromptsDir: cfg.App.PromptsDir,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create orchestrator: %w", err)
@@ -361,13 +356,13 @@ func Execute(c *Components, query string, timeout time.Duration) (*ExecutionResu
 	// Собираем результаты
 	result := &ExecutionResult{
 		Response:   response,
-		TodoString: c.State.Todo.String(),
+		TodoString: c.State.GetTodoString(),
 		History:    c.Orchestrator.GetHistory(),
 		Duration:   time.Since(startTime),
 	}
 
 	// Получаем статистику задач
-	pending, done, failed := c.State.Todo.GetStats()
+	pending, done, failed := c.State.GetTodoStats()
 	result.TodoStats = TodoStats{
 		Pending: pending,
 		Done:    done,
@@ -380,13 +375,14 @@ func Execute(c *Components, query string, timeout time.Duration) (*ExecutionResu
 
 // ClearTodos очищает todo лист после выполнения.
 func (c *Components) ClearTodos() {
-	c.State.Todo.Clear()
+	c.State.ClearTodo()
 }
 
 // SetupTools регистрирует инструменты из YAML конфигурации.
 //
 // Правило 3: все инструменты регистрируются через Registry.Register().
 // Правило 1: инструменты реализуют Tool интерфейс.
+// Правило 6: Принимает *state.CoreState (framework core) вместо *app.AppState.
 //
 // Конфигурация читается из cfg.Tools, где ключом является имя tool.
 // Инструмент регистрируется только если cfg.Tools[toolName].Enabled == true.
@@ -394,7 +390,7 @@ func (c *Components) ClearTodos() {
 // Возвращает ошибку если:
 //   - инструмент не найден в коде (unknown tool)
 //   - валидация схемы инструмента не прошла
-func SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provider, cfg *config.AppConfig) error {
+func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provider, cfg *config.AppConfig) error {
 	registry := state.GetToolsRegistry()
 	var registered []string
 
@@ -419,25 +415,25 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provi
 
 	// === WB Content API Tools ===
 	if toolCfg, exists := getToolCfg("search_wb_products"); exists && toolCfg.Enabled {
-		if err := register("search_wb_products", std.NewWbProductSearchTool(wbClient, toolCfg)); err != nil {
+		if err := register("search_wb_products", std.NewWbProductSearchTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("get_wb_parent_categories"); exists && toolCfg.Enabled {
-		if err := register("get_wb_parent_categories", std.NewWbParentCategoriesTool(wbClient, toolCfg)); err != nil {
+		if err := register("get_wb_parent_categories", std.NewWbParentCategoriesTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("get_wb_subjects"); exists && toolCfg.Enabled {
-		if err := register("get_wb_subjects", std.NewWbSubjectsTool(wbClient, toolCfg)); err != nil {
+		if err := register("get_wb_subjects", std.NewWbSubjectsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("ping_wb_api"); exists && toolCfg.Enabled {
-		if err := register("ping_wb_api", std.NewWbPingTool(wbClient, toolCfg)); err != nil {
+		if err := register("ping_wb_api", std.NewWbPingTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
@@ -474,35 +470,60 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provi
 	}
 
 	// === WB Dictionary Tools ===
-	if state.Dictionaries != nil {
+	if state.GetDictionaries() != nil {
 		if toolCfg, exists := getToolCfg("wb_colors"); exists && toolCfg.Enabled {
-			if err := register("wb_colors", std.NewWbColorsTool(state.Dictionaries, toolCfg)); err != nil {
+			if err := register("wb_colors", std.NewWbColorsTool(state.GetDictionaries(), toolCfg)); err != nil {
 				return err
 			}
 		}
 
 		if toolCfg, exists := getToolCfg("wb_countries"); exists && toolCfg.Enabled {
-			if err := register("wb_countries", std.NewWbCountriesTool(state.Dictionaries, toolCfg)); err != nil {
+			if err := register("wb_countries", std.NewWbCountriesTool(state.GetDictionaries(), toolCfg)); err != nil {
 				return err
 			}
 		}
 
 		if toolCfg, exists := getToolCfg("wb_genders"); exists && toolCfg.Enabled {
-			if err := register("wb_genders", std.NewWbGendersTool(state.Dictionaries, toolCfg)); err != nil {
+			if err := register("wb_genders", std.NewWbGendersTool(state.GetDictionaries(), toolCfg)); err != nil {
 				return err
 			}
 		}
 
 		if toolCfg, exists := getToolCfg("wb_seasons"); exists && toolCfg.Enabled {
-			if err := register("wb_seasons", std.NewWbSeasonsTool(state.Dictionaries, toolCfg)); err != nil {
+			if err := register("wb_seasons", std.NewWbSeasonsTool(state.GetDictionaries(), toolCfg)); err != nil {
 				return err
 			}
 		}
 
 		if toolCfg, exists := getToolCfg("wb_vat_rates"); exists && toolCfg.Enabled {
-			if err := register("wb_vat_rates", std.NewWbVatRatesTool(state.Dictionaries, toolCfg)); err != nil {
+			if err := register("wb_vat_rates", std.NewWbVatRatesTool(state.GetDictionaries(), toolCfg)); err != nil {
 				return err
 			}
+		}
+	}
+
+	// === WB Characteristics Tools ===
+	if toolCfg, exists := getToolCfg("get_wb_subjects_by_name"); exists && toolCfg.Enabled {
+		if err := register("get_wb_subjects_by_name", std.NewWbSubjectsByNameTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_characteristics"); exists && toolCfg.Enabled {
+		if err := register("get_wb_characteristics", std.NewWbCharacteristicsTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_tnved"); exists && toolCfg.Enabled {
+		if err := register("get_wb_tnved", std.NewWbTnvedTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_brands"); exists && toolCfg.Enabled {
+		if err := register("get_wb_brands", std.NewWbBrandsTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
 		}
 	}
 
@@ -515,19 +536,19 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provi
 
 	// === S3 Basic Tools ===
 	if toolCfg, exists := getToolCfg("list_s3_files"); exists && toolCfg.Enabled {
-		if err := register("list_s3_files", std.NewS3ListTool(state.S3)); err != nil {
+		if err := register("list_s3_files", std.NewS3ListTool(state.GetS3())); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("read_s3_object"); exists && toolCfg.Enabled {
-		if err := register("read_s3_object", std.NewS3ReadTool(state.S3)); err != nil {
+		if err := register("read_s3_object", std.NewS3ReadTool(state.GetS3())); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("read_s3_image"); exists && toolCfg.Enabled {
-		tool := std.NewS3ReadImageTool(state.S3, cfg.ImageProcessing)
+		tool := std.NewS3ReadImageTool(state.GetS3(), cfg.ImageProcessing)
 		if err := register("read_s3_image", tool); err != nil {
 			return err
 		}
@@ -536,7 +557,7 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provi
 	// === S3 Batch Tools ===
 	if toolCfg, exists := getToolCfg("classify_and_download_s3_files"); exists && toolCfg.Enabled {
 		tool := std.NewClassifyAndDownloadS3Files(
-			state.S3,
+			state.GetS3(),
 			state,
 			cfg.ImageProcessing,
 			cfg.FileRules,
@@ -561,7 +582,7 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provi
 
 		tool := std.NewAnalyzeArticleImagesBatch(
 			state,
-			state.S3, // S3 клиент для скачивания изображений
+			state.GetS3(), // S3 клиент для скачивания изображений
 			visionLLM,
 			visionPrompt,
 			cfg.ImageProcessing,
@@ -574,25 +595,25 @@ func SetupTools(state *app.GlobalState, wbClient *wb.Client, visionLLM llm.Provi
 
 	// === Planner Tools ===
 	if toolCfg, exists := getToolCfg("plan_add_task"); exists && toolCfg.Enabled {
-		if err := register("plan_add_task", std.NewPlanAddTaskTool(state.Todo, toolCfg)); err != nil {
+		if err := register("plan_add_task", std.NewPlanAddTaskTool(state.GetTodo(), toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_mark_done"); exists && toolCfg.Enabled {
-		if err := register("plan_mark_done", std.NewPlanMarkDoneTool(state.Todo, toolCfg)); err != nil {
+		if err := register("plan_mark_done", std.NewPlanMarkDoneTool(state.GetTodo(), toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_mark_failed"); exists && toolCfg.Enabled {
-		if err := register("plan_mark_failed", std.NewPlanMarkFailedTool(state.Todo, toolCfg)); err != nil {
+		if err := register("plan_mark_failed", std.NewPlanMarkFailedTool(state.GetTodo(), toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_clear"); exists && toolCfg.Enabled {
-		if err := register("plan_clear", std.NewPlanClearTool(state.Todo, toolCfg)); err != nil {
+		if err := register("plan_clear", std.NewPlanClearTool(state.GetTodo(), toolCfg)); err != nil {
 			return err
 		}
 	}
@@ -641,6 +662,11 @@ func getAllKnownToolNames() []string {
 		"wb_genders",
 		"wb_seasons",
 		"wb_vat_rates",
+		// WB Characteristics Tools
+		"get_wb_subjects_by_name",
+		"get_wb_characteristics",
+		"get_wb_tnved",
+		"get_wb_brands",
 		// WB Service Tools
 		"reload_wb_dictionaries",
 		// S3 Basic Tools

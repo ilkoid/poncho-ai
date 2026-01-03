@@ -1,19 +1,16 @@
 // Package agent реализует оркестрацию AI-агента с инструментами (tools).
 //
-// Orchestrator координирует взаимодействие между LLM и зарегистрированными
-// инструментами, реализуя ReAct (Reasoning + Acting) паттерн:
-//   1. Формирует контекст из истории, системного промпта и данных состояния
-//   2. Вызывает LLM с доступными tools definitions
-//   3. Если LLM возвращает tool calls — выполняет их через Registry
-//   4. Передаёт результаты выполнения обратно в LLM
-//   5. Повторяет пока LLM не даст финальный ответ
+// Orchestrator является тонкой обёрткой над Chain Pattern:
+//   - Создаёт и конфигурирует ReActChain
+//   - Делегирует выполнение ReAct цикла Chain
+//   - Обрабатывает agent-specific логику (UserChoiceRequest, planner logging)
 //
 // Соблюдение правил из dev_manifest.md:
 //   - Работает только через llm.Provider (Правило 4)
-//   - Использует tools.Registry для получения инструментов (Правило 3)
-//   - Thread-safe работа с app.GlobalState (Правило 5)
+//   - Использует tools.Registry для инструментов (Правило 3)
+//   - Thread-safe работа с app.AppState (Правило 5)
 //   - Никаких panic — все ошибки возвращаются (Правило 7)
-//   - Инструменты вызываются по контракту "Raw In, String Out" (Правило 1)
+//   - Делегирует бизнес-логику Chain Pattern (Правило 0)
 package agent
 
 import (
@@ -24,6 +21,7 @@ import (
 
 	agentInterface "github.com/ilkoid/poncho-ai/pkg/agent"
 	"github.com/ilkoid/poncho-ai/internal/app"
+	"github.com/ilkoid/poncho-ai/pkg/chain"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
@@ -34,42 +32,30 @@ import (
 var _ agentInterface.Agent = (*Orchestrator)(nil)
 
 // DefaultMaxIterations — максимальное число итераций ReAct цикла.
-// Защита от бесконечных циклов при ошибочном поведении LLM.
 const DefaultMaxIterations = 10
 
 // UserChoiceRequest — специальный маркер для передачи управления пользователю.
-// Когда tool возвращает этот маркер, orchestrator должен прервать цикл
-// и вернуть управление в main loop для обработки выбора пользователя.
 const UserChoiceRequest = "__USER_CHOICE_REQUIRED__"
 
-// Orchestrator координирует взаимодействие между LLM и Tools.
+// Orchestrator — тонкая обёртка над ReActChain.
 //
-// Является потокобезопасным — может использоваться из разных горутин.
-// Все состояния хранятся в app.GlobalState (thread-safe по правилу 5).
+// После рефакторинга с Chain Pattern:
+//   - Создаёт и конфигурирует ReActChain
+//   - Делегирует выполнение ReAct цикла Chain
+//   - Обрабатывает только agent-specific логику
+//
+// Thread-safe через sync.Mutex.
 type Orchestrator struct {
-	llm          llm.Provider    // LLM провайдер (абстракция, правило 4)
-	registry     *tools.Registry // Реестр инструментов (правило 3)
-	state        *app.GlobalState // Глобальное состояние (thread-safe)
-	maxIters     int              // Максимум итераций (защита от циклов)
-	systemPrompt string           // Системный промпт агента
+	// Chain — главная цепочка выполнения (ReAct)
+	chain *chain.ReActChain
 
-	// toolPostPrompts — конфигурация post-prompts для tools
-	toolPostPrompts *prompt.ToolPostPromptConfig
+	// Dependencies
+	llm          llm.Provider
+	state        *app.AppState
+	registry     *tools.Registry
 
-	// activePostPrompt — текущий активный post-prompt (действует одну итерацию)
-	activePostPrompt string
-
-	// reasoningConfig — дефолтные параметры для reasoning модели (из config.yaml)
-	// Используется по умолчанию в orchestrator для планирования и tool selection
-	reasoningConfig llm.GenerateOptions
-
-	// chatConfig — дефолтные параметры для chat модели (из config.yaml)
-	// Используется когда post-prompt переопределяет параметры
-	chatConfig llm.GenerateOptions
-
-	// activePromptConfig — параметры модели из активного post-prompt
-	// Переопределяет reasoningConfig на одну итерацию
-	activePromptConfig *prompt.PromptConfig
+	// Agent-specific логика
+	maxIters int
 
 	// mu защищает одновременные вызовы Run
 	mu sync.Mutex
@@ -83,30 +69,35 @@ type Config struct {
 	// Registry — реестр зарегистрированных инструментов (обязательный)
 	Registry *tools.Registry
 
-	// State — глобальное состояние приложения (обязательный)
-	State *app.GlobalState
+	// State — состояние приложения (обязательный)
+	// Rule 6: AppState вместо GlobalState после рефакторинга
+	State *app.AppState
 
-	// MaxIters — максимальное число итераций ReAct цикла.
-	// Если 0, используется DefaultMaxIterations.
+	// MaxIters — максимальное число итераций ReAct цикла
 	MaxIters int
 
-	// SystemPrompt — системный промпт, определяющий поведение агента.
-	// Если пуст, будет использован дефолтный промпт.
+	// SystemPrompt — системный промпт агента
 	SystemPrompt string
 
-	// ToolPostPrompts — конфигурация post-prompts для tools (опционально)
+	// ToolPostPrompts — конфигурация post-prompts для tools
 	ToolPostPrompts *prompt.ToolPostPromptConfig
 
-	// ReasoningConfig — дефолтные параметры для reasoning модели (из config.yaml)
+	// ReasoningConfig — параметры для reasoning модели
 	ReasoningConfig llm.GenerateOptions
 
-	// ChatConfig — дефолтные параметры для chat модели (из config.yaml)
+	// ChatConfig — параметры для chat модели
 	ChatConfig llm.GenerateOptions
+
+	// DebugConfig — конфигурация debug логирования
+	DebugConfig chain.DebugConfig
+
+	// PromptsDir — директория с post-prompts
+	PromptsDir string
 }
 
-// New создает новый Orchestrator с заданной конфигурацией.
+// New создаёт новый Orchestrator с заданной конфигурацией.
 //
-// Возвращает ошибку если обязательные поля конфигурации не заполнены.
+// Rule 10: Godoc на public API.
 func New(cfg Config) (*Orchestrator, error) {
 	// Валидация обязательных полей
 	if cfg.LLM == nil {
@@ -127,291 +118,122 @@ func New(cfg Config) (*Orchestrator, error) {
 		cfg.SystemPrompt = defaultSystemPrompt()
 	}
 
+	// Создаём ReActChain конфигурацию
+	chainConfig := chain.ReActChainConfig{
+		SystemPrompt:     cfg.SystemPrompt,
+		ReasoningConfig:  cfg.ReasoningConfig,
+		ChatConfig:       cfg.ChatConfig,
+		ToolPostPrompts:  cfg.ToolPostPrompts,
+		PromptsDir:       cfg.PromptsDir,
+		MaxIterations:    cfg.MaxIters,
+		Timeout:          5 * time.Minute,
+	}
+
+	// Создаём ReActChain
+	reactChain := chain.NewReActChain(chainConfig)
+	reactChain.SetLLM(cfg.LLM)
+	reactChain.SetRegistry(cfg.Registry)
+	// Rule 6: Передаем CoreState в chain (framework logic)
+	reactChain.SetState(cfg.State.CoreState)
+
+	// Создаём debug recorder если включён
+	debugRecorder, err := chain.NewChainDebugRecorder(cfg.DebugConfig)
+	if err != nil {
+		utils.Error("Failed to create debug recorder", "error", err)
+	} else if debugRecorder.Enabled() {
+		reactChain.AttachDebug(debugRecorder)
+	}
+
 	return &Orchestrator{
-		llm:               cfg.LLM,
-		registry:          cfg.Registry,
-		state:             cfg.State,
-		maxIters:          cfg.MaxIters,
-		systemPrompt:      cfg.SystemPrompt,
-		toolPostPrompts:   cfg.ToolPostPrompts,
-		reasoningConfig:   cfg.ReasoningConfig,
-		chatConfig:        cfg.ChatConfig,
+		chain:    reactChain,
+		llm:      cfg.LLM,
+		state:    cfg.State,
+		registry: cfg.Registry,
+		maxIters: cfg.MaxIters,
 	}, nil
 }
 
 // Run выполняет полный цикл агента для обработки пользовательского запроса.
 //
-// Метод является потокобезопасным — может вызываться одновременно из разных горутин.
+// Делегирует выполнение ReAct цикла Chain, обрабатывая только agent-specific логику:
+//   - UserChoiceRequest для прерывания цикла
+//   - Planner tool логирование
 //
-// Алгоритм:
-//  1. Добавляет запрос пользователя в историю
-//  2. Запускает ReAct цикл:
-//     a. Формирует контекст (системный промпт + история + файлы + todos)
-//     b. Вызывает LLM с definitions всех зарегистрированных tools
-//     c. Если LLM вернул tool calls — выполняет их через Registry
-//     d. Добавляет результаты выполнения в историю
-//     e. Повторяет пока есть tool calls или не достигнут лимит итераций
-//  3. Возвращает финальный ответ LLM
+// Thread-safe — может вызываться одновременно из разных горутин.
 //
-// Возвращает ошибку если:
-//   - LLM провайдер вернул ошибку
-//   - Превышен лимит итераций (возможный цикл)
-//   - Контекст отменён (ctx.Done())
-//
-// Правило 7: Никаких panic — все ошибки возвращаются.
+// Rule 7: Все ошибки возвращаются, нет panic.
 func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, error) {
-	startTime := time.Now()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	utils.Info("=== Orchestrator.Run STARTED ===", "query", userQuery, "maxIters", o.maxIters)
+	utils.Info("=== Orchestrator.Run STARTED ===", "query", userQuery)
 
-	// 1. Добавляем запрос пользователя в историю (thread-safe)
+	// 1. Добавляем user query в историю (thread-safe)
 	o.state.AppendMessage(llm.Message{
 		Role:    llm.RoleUser,
 		Content: userQuery,
 	})
 
-	// 2. Получаем определения всех инструментов для Function Calling
-	toolDefs := o.registry.GetDefinitions()
-
-	// 3. ReAct цикл
-	var iterCount int
-	for iterCount < o.maxIters {
-		iterCount++
-		utils.Debug("Agent iteration", "num", iterCount, "max", o.maxIters)
-
-		// Проверка отмены контекста
-		select {
-		case <-ctx.Done():
-			utils.Error("Context canceled", "error", ctx.Err(), "iterations", iterCount)
-			return "", fmt.Errorf("context canceled: %w", ctx.Err())
-		default:
-		}
-
-		// 3.1. Формируем контекст для LLM
-		// BuildAgentContext thread-safe (правило 5)
-		// Если есть активный post-prompt — используем его вместо базового system prompt
-		systemPrompt := o.systemPrompt
-		if o.activePostPrompt != "" {
-			systemPrompt = o.activePostPrompt
-		}
-		messages := o.state.BuildAgentContext(systemPrompt)
-
-		// 3.2. Определяем параметры для этого вызова LLM
-		// Приоритет: activePromptConfig (из post-prompt) → reasoningConfig (дефолт)
-		var opts []any
-		if o.activePromptConfig != nil {
-			// Промпт переопределяет параметры модели
-			cfg := o.activePromptConfig
-			if cfg.Model != "" {
-				opts = append(opts, llm.WithModel(cfg.Model))
-			}
-			if cfg.Temperature != 0 {
-				opts = append(opts, llm.WithTemperature(cfg.Temperature))
-			}
-			if cfg.MaxTokens != 0 {
-				opts = append(opts, llm.WithMaxTokens(cfg.MaxTokens))
-			}
-			if cfg.Format != "" {
-				opts = append(opts, llm.WithFormat(cfg.Format))
-			}
-		} else {
-			// Используем reasoning параметры из config.yaml
-			if o.reasoningConfig.Model != "" {
-				opts = append(opts, llm.WithModel(o.reasoningConfig.Model))
-			}
-			if o.reasoningConfig.Temperature != 0 {
-				opts = append(opts, llm.WithTemperature(o.reasoningConfig.Temperature))
-			}
-			if o.reasoningConfig.MaxTokens != 0 {
-				opts = append(opts, llm.WithMaxTokens(o.reasoningConfig.MaxTokens))
-			}
-			if o.reasoningConfig.Format != "" {
-				opts = append(opts, llm.WithFormat(o.reasoningConfig.Format))
-			}
-		}
-
-		// Добавляем tools definitions
-		opts = append(opts, toolDefs)
-
-		// 3.3. Вызываем LLM с tools definitions и opts
-		// Generate работает через интерфейс Provider (правило 4)
-		response, err := o.llm.Generate(ctx, messages, opts...)
-		if err != nil {
-			utils.Error("LLM generation failed", "error", err, "iteration", iterCount)
-			return "", fmt.Errorf("llm generation failed (iter %d): %w", iterCount, err)
-		}
-
-		// 3.3. Санитизируем ответ LLM (удаляем markdown обёртку)
-		response.Content = utils.SanitizeLLMOutput(response.Content)
-
-		// 3.4. Добавляем ответ ассистента в историю
-		o.state.AppendMessage(response)
-
-		// 3.5. Если есть tool calls — выполняем их
-		if len(response.ToolCalls) > 0 {
-			utils.Info("Tool calls received", "count", len(response.ToolCalls), "iteration", iterCount)
-			hasUserChoiceRequest := false
-			for _, tc := range response.ToolCalls {
-				// Выполняем инструмент и получаем результат
-				// executeTool обрабатывает ошибки согласно правилу 7
-				result := o.executeTool(ctx, tc)
-
-				// Проверяем на специальный маркер UserChoiceRequest
-				if result == UserChoiceRequest {
-					hasUserChoiceRequest = true
-				}
-
-				// Добавляем результат в историю как RoleTool сообщение
-				o.state.AppendMessage(llm.Message{
-					Role:       llm.RoleTool,
-					ToolCallID: tc.ID,
-					Content:    result,
-				})
-			}
-
-			// Если был запрос выбора пользователя — прерываем цикл
-			if hasUserChoiceRequest {
-				return UserChoiceRequest, nil
-			}
-
-			// Продолжаем цикл — передаём результаты в LLM для анализа
-			continue
-		}
-
-		// 3.6. Нет tool calls — это финальный ответ
-		// Сбрасываем active post-prompt и config после завершения
-		o.activePostPrompt = ""
-		o.activePromptConfig = nil
-
-		// Выводим финальный todo list для визуализации
-		todoString := o.state.Todo.String()
-		if todoString != "" && todoString != "Нет активных задач" {
-			utils.Info("Final todo list", "plan", todoString)
-		}
-
-		utils.Info("Agent completed", "iterations", iterCount, "duration_ms", time.Since(startTime).Milliseconds())
-		return response.Content, nil
+	// 2. Формируем ChainInput
+	// Rule 6: Передаем CoreState в chain (framework logic)
+	input := chain.ChainInput{
+		UserQuery: userQuery,
+		State:     o.state.CoreState,
+		LLM:       o.llm,
+		Registry:  o.registry,
+		Config:    chain.ChainConfig{},
 	}
 
-	// Превышен лимит итераций — возможный бесконечный цикл
-	utils.Error("Max iterations exceeded", "max", o.maxIters, "duration_ms", time.Since(startTime).Milliseconds())
-	return "", fmt.Errorf("max iterations (%d) exceeded - possible LLM loop", o.maxIters)
+	// 3. Выполняем Chain (ReAct цикл)
+	output, err := o.chain.Execute(ctx, input)
+	if err != nil {
+		utils.Error("Chain execution failed", "error", err)
+		return "", err
+	}
+
+	// 4. Проверяем на UserChoiceRequest
+	if output.Result == UserChoiceRequest {
+		utils.Info("User choice requested", "iterations", output.Iterations)
+		return UserChoiceRequest, nil
+	}
+
+	// 5. Логируем planner tools (agent-specific логика)
+	// TODO: добавить planner detection в chain или оставить здесь
+
+	utils.Info("=== Orchestrator.Run COMPLETED ===",
+		"iterations", output.Iterations,
+		"duration_ms", output.Duration.Milliseconds(),
+	)
+
+	if output.DebugPath != "" {
+		utils.Info("Debug log saved", "file", output.DebugPath)
+	}
+
+	return output.Result, nil
 }
 
-// executeTool выполняет отдельный инструмент по запросу от LLM.
+// ClearHistory очищает историю диалога в AppState.
 //
-// Соблюдает правило 3: работает только через Registry.
-// Соблюдает правило 1: Raw In (JSON строка) → String Out.
-// Соблюдает правило 7: ошибки не паничат, а возвращаются как строка.
-//
-// Возвращает результат выполнения или описание ошибки в виде строки.
-func (o *Orchestrator) executeTool(ctx context.Context, tc llm.ToolCall) string {
-	startTime := time.Now()
-
-	// 1. Находим инструмент по имени через Registry (правило 3)
-	tool, err := o.registry.Get(tc.Name)
-	if err != nil {
-		// Ошибка поиска инструмента — возвращаем её в LLM для анализа
-		utils.Error("Tool not found", "tool", tc.Name, "error", err)
-		return fmt.Sprintf("Tool not found error: %v", err)
-	}
-
-	utils.Info("Executing tool", "name", tc.Name, "args_length", len(tc.Args))
-
-	// 2. Санитизируем JSON аргументы от markdown обёртки
-	// LLM может вернуть ```json {...}``` вместо чистого JSON
-	cleanArgs := utils.CleanJsonBlock(tc.Args)
-
-	// Debug: логируем аргументы инструмента
-	argsPreview := cleanArgs
-	if len(argsPreview) > 300 {
-		argsPreview = argsPreview[:300] + "..."
-	}
-	utils.Debug("Tool execution args",
-		"tool", tc.Name,
-		"args_preview", argsPreview)
-
-	// 3. Выполняем инструмент (Raw In, String Out — правило 1)
-	result, err := tool.Execute(ctx, cleanArgs)
-	if err != nil {
-		// Ошибка выполнения — оборачиваем с контекстом для дебаггинга
-		duration := time.Since(startTime).Milliseconds()
-		wrappedErr := fmt.Errorf("tool %s: %w", tc.Name, err)
-
-		utils.Error("Tool execution failed",
-			"tool", tc.Name,
-			"error", err,
-			"wrapped_error", wrappedErr,
-			"duration_ms", duration)
-
-		// Возвращаем форматированную ошибку для LLM
-		return fmt.Sprintf("Tool execution error: %v", wrappedErr)
-	}
-
-	// 4. Возвращаем результат (String Out — правило 1)
-	duration := time.Since(startTime).Milliseconds()
-	utils.Info("Tool executed successfully",
-		"tool", tc.Name,
-		"result_length", len(result),
-		"duration_ms", duration)
-
-	// Debug: логируем результат инструмента
-	resultPreview := result
-	if len(resultPreview) > 500 {
-		resultPreview = resultPreview[:500] + "..."
-	}
-	utils.Debug("Tool execution result",
-		"tool", tc.Name,
-		"result_preview", resultPreview)
-
-	// 4.5. Для planner tools выводим результат отдельно (для визуализации todo list)
-	if isPlannerTool(tc.Name) {
-		utils.Info("Plan updated", "action", tc.Name, "result", result)
-	}
-
-	// 5. Проверяем есть ли post-prompt для этого tool
-	if o.toolPostPrompts != nil {
-		promptFile, err := o.toolPostPrompts.GetToolPromptFile(tc.Name, o.state.Config.App.PromptsDir)
-		if err != nil {
-			// Логируем ошибку, но не прерываем выполнение
-			utils.Error("Failed to get post-prompt file", "tool", tc.Name, "error", err)
-		} else if promptFile != nil {
-			// Устанавливаем активный post-prompt для следующей итерации
-			if len(promptFile.Messages) > 0 && promptFile.Messages[0].Role == "system" {
-				o.activePostPrompt = promptFile.Messages[0].Content
-			}
-			// Сохраняем Config для переопределения параметров модели
-			o.activePromptConfig = &promptFile.Config
-			utils.Info("Post-prompt activated", "tool", tc.Name, "has_config", promptFile.Config.Model != "")
-		}
-	}
-
-	return result
-}
-
-// ClearHistory очищает историю диалога в GlobalState.
-//
-// Метод thread-safe.
+// Thread-safe: делегирует в CoreState.ClearHistory().
 func (o *Orchestrator) ClearHistory() {
 	o.state.ClearHistory()
 }
 
 // GetHistory возвращает копию истории диалога.
 //
-// Метод thread-safe — возвращает копию, чтобы избежать race conditions.
+// Thread-safe.
 func (o *Orchestrator) GetHistory() []llm.Message {
 	return o.state.GetHistory()
 }
 
 // SetSystemPrompt обновляет системный промпт агента.
 //
-// Метод thread-safe.
+// Thread-safe.
 func (o *Orchestrator) SetSystemPrompt(prompt string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.systemPrompt = prompt
+	// TODO: обновить system prompt в chain
+	_ = prompt // Временно
 }
 
 // defaultSystemPrompt возвращает дефолтный системный промпт агента.
@@ -440,72 +262,17 @@ func defaultSystemPrompt() string {
 ### Когда создавать план:
 - Запрос требует 2+ шагов для выполнения
 - Нужна последовательность действий
-- Запрос сложный или многосоставный
+- Запрос сложный или многосоставной
 
 ### Как работать с планом:
 
 1. **plan_add_task** — добавь задачу в план
-   - Используй для каждого шага отдельную задачу
-   - Описание должно быть чётким и кратким
-   - Пример: "Получить ID категории Женщинам"
-
 2. **plan_mark_done** — отметь задачу как выполненную
-   - Вызывай после успешного завершения каждого шага
-
 3. **plan_mark_failed** — отметь задачу как проваленную
-   - Используй если шаг не удался
-   - Укажи причину провала
-
 4. **plan_clear** — очисти весь план
-   - Используй после завершения всей работы
-
-## Примеры
-
-### Простой запрос (без плана):
-Запрос: "покажи родительские категории товаров"
-Действие: Вызвать get_wb_parent_categories и оформить ответ
-
-### Сложный запрос (с планом):
-Запрос: "найди все товары в категории Верхняя одежда и покажи их количество"
-
-Действия:
-1. plan_add_task "Найти ID категории Верхняя одежда через родительские категории"
-2. get_wb_parent_categories → найти ID
-3. plan_mark_done 1
-4. plan_add_task "Получить список подкатегорий для Верхняя одежда"
-5. get_wb_subjects с найденным ID
-6. plan_mark_done 2
-7. plan_add_task "Посчитать общее количество товаров"
-8. Анализировать результаты и подсчитать
-9. plan_mark_done 3
-10. Оформить ответ пользователю
-11. plan_clear (опционально)
-
-### Ещё пример:
-Запрос: "какие товары в категории Женщинам?"
-Действие:
-  1. plan_add_task "Найти ID категории Женщинам"
-  2. get_wb_parent_categories → найти ID
-  3. plan_mark_done 1
-  4. plan_add_task "Получить подкатегории Женщинам"
-  5. get_wb_subjects с этим ID
-  6. plan_mark_done 2
-  7. Оформить ответ пользователю
 
 ## Запомни:
-
 - Для ПРОСТЫХ запросов (1 действие) → отвечай сразу, план не нужен
 - Для СЛОЖНЫХ запросов (2+ действий) → сначала создай план через plan_add_task
-- Пользователь видит план в правой панели — это помогает понимать прогресс
 `
-}
-
-// isPlannerTool проверяет, является ли tool инструментом планировщика.
-func isPlannerTool(toolName string) bool {
-	switch toolName {
-	case "plan_add_task", "plan_mark_done", "plan_mark_failed", "plan_clear":
-		return true
-	default:
-		return false
-	}
 }

@@ -39,10 +39,29 @@ type StoredObject struct {
 	LastModified time.Time
 }
 
+// FileMeta хранит метаданные файла с тегом классификации.
+// Type может быть заполнен позже vision-моделью (например, "Платье красное").
 type FileMeta struct {
-    Key  string
-    Size int64
-    Type string
+	Tag               string   // Тег классификации (sketch, techpack, etc.)
+	Key               string   // Полный путь в S3 (alias OriginalKey для совместимости)
+	OriginalKey       string   // Оригинальный ключ в S3
+	Size              int64    // Размер файла в байтах
+	Type              string   // Описание типа (опционально, заполняется vision)
+	Filename          string   // Имя файла без пути
+	VisionDescription string   // Результат анализа vision-модели (Working Memory)
+	Tags              []string // Дополнительные теги (для расширенной классификации)
+}
+
+// NewFileMeta создает новый FileMeta с базовыми метаданными.
+func NewFileMeta(tag, key string, size int64, filename string) *FileMeta {
+	return &FileMeta{
+		Tag:         tag,
+		Key:         key,
+		OriginalKey: key, // Изначально Key и OriginalKey совпадают
+		Size:        size,
+		Filename:    filename,
+		Tags:        []string{}, // Инициализируем пустой срез
+	}
 }
 
 // New создает клиент, используя наш конфиг

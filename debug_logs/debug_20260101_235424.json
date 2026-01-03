@@ -1,0 +1,52 @@
+{
+  "run_id": "debug_20260101_235424",
+  "timestamp": "2026-01-01T23:54:24.737026+03:00",
+  "user_query": "проверь доступность Wildberries API",
+  "duration_ms": 6166,
+  "iterations": [
+    {
+      "iteration": 1,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "max_tokens": 2000,
+        "system_prompt_used": "default",
+        "messages_count": 2
+      },
+      "llm_response": {
+        "content": "\nПроверю доступность Wildberries API для вас.\n",
+        "tool_calls": [
+          {
+            "id": "call_-8021414854061826504",
+            "name": "ping_wb_api",
+            "args": "{}"
+          }
+        ],
+        "duration_ms": 2793
+      }
+    },
+    {
+      "iteration": 2,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "max_tokens": 2000,
+        "system_prompt_used": "default",
+        "messages_count": 4
+      },
+      "llm_response": {
+        "content": "\n✅ **Wildberries Content API доступен**\n\n**Статус:** OK  \n**Время проверки:** 2026-01-01T12:00:00Z  \n**Режим:** Demo\n\nAPI работает корректно, но находится в демо-режиме. Для выполнения реальных запросов к Wildberries потребуется установить переменную окружения `WB_API_KEY` с вашим API ключом.\n\nВсе основные функции API готовы к использованию:\n- Получение категорий и подкатегорий\n- Работа с контентом товаров\n- Доступ к S3 хранилищу\n\nХотите выполнить какие-то конкретные операции с API?",
+        "duration_ms": 3372
+      }
+    }
+  ],
+  "summary": {
+    "total_llm_calls": 2,
+    "total_tools_executed": 0,
+    "total_llm_duration_ms": 6165,
+    "total_tool_duration_ms": 0
+  },
+  "final_result": "\n✅ **Wildberries Content API доступен**\n\n**Статус:** OK  \n**Время проверки:** 2026-01-01T12:00:00Z  \n**Режим:** Demo\n\nAPI работает корректно, но находится в демо-режиме. Для выполнения реальных запросов к Wildberries потребуется установить переменную окружения `WB_API_KEY` с вашим API ключом.\n\nВсе основные функции API готовы к использованию:\n- Получение категорий и подкатегорий\n- Работа с контентом товаров\n- Доступ к S3 хранилищу\n\nХотите выполнить какие-то конкретные операции с API?"
+}

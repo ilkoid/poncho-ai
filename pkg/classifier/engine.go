@@ -6,12 +6,11 @@ import (
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
-	"github.com/ilkoid/poncho-ai/pkg/state"
 )
 
-// Deprecated: используйте state.FileMeta напрямую.
+// Deprecated: используйте s3storage.FileMeta напрямую.
 // Оставлен для обратной совместимости.
-type ClassifiedFile = state.FileMeta
+type ClassifiedFile = s3storage.FileMeta
 
 // Engine выполняет классификацию
 type Engine struct {
@@ -24,11 +23,11 @@ func New(rules []config.FileRule) *Engine {
 
 // Process принимает список сырых объектов и возвращает карту [Tag] -> Список файлов.
 //
-// Возвращает map[string][]*state.FileMeta - классифицированные файлы
+// Возвращает map[string][]*s3storage.FileMeta - классифицированные файлы
 // с базовыми метаданными. Vision описание заполняется позже через
 // state.Writer.UpdateFileAnalysis().
-func (e *Engine) Process(objects []s3storage.StoredObject) (map[string][]*state.FileMeta, error) {
-	result := make(map[string][]*state.FileMeta)
+func (e *Engine) Process(objects []s3storage.StoredObject) (map[string][]*s3storage.FileMeta, error) {
+	result := make(map[string][]*s3storage.FileMeta)
 
 	for _, obj := range objects {
 		filename := filepath.Base(obj.Key) // Смотрим только на имя файла, не на путь
@@ -59,7 +58,7 @@ func (e *Engine) Process(objects []s3storage.StoredObject) (map[string][]*state.
 		}
 
 		// Создаём FileMeta через конструктор
-		fileMeta := state.NewFileMeta(tag, obj.Key, obj.Size, filename)
+		fileMeta := s3storage.NewFileMeta(tag, obj.Key, obj.Size, filename)
 		result[tag] = append(result[tag], fileMeta)
 	}
 

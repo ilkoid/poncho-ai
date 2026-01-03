@@ -1,0 +1,74 @@
+{
+  "run_id": "debug_20260101_235357",
+  "timestamp": "2026-01-01T23:53:57.123137+03:00",
+  "user_query": "покажи подкатегории для категории Женщинам",
+  "duration_ms": 18757,
+  "iterations": [
+    {
+      "iteration": 1,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "max_tokens": 2000,
+        "system_prompt_used": "default",
+        "messages_count": 2
+      },
+      "llm_response": {
+        "content": "\nСначала получу список родительских категорий, чтобы найти ID категории \"Женщинам\", а затем покажу ее подкатегории.\n",
+        "tool_calls": [
+          {
+            "id": "call_-8021320227341140060",
+            "name": "get_wb_parent_categories",
+            "args": "{}"
+          }
+        ],
+        "duration_ms": 2958
+      }
+    },
+    {
+      "iteration": 2,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "max_tokens": 2000,
+        "system_prompt_used": "default",
+        "messages_count": 4
+      },
+      "llm_response": {
+        "content": "\n",
+        "tool_calls": [
+          {
+            "id": "call_-8021269890323386273",
+            "name": "get_wb_subjects",
+            "args": "{\"parentID\":1541}"
+          }
+        ],
+        "duration_ms": 9012
+      }
+    },
+    {
+      "iteration": 3,
+      "duration_ms": 0,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "max_tokens": 2000,
+        "system_prompt_used": "default",
+        "messages_count": 6
+      },
+      "llm_response": {
+        "content": "\nВот подкатегории для категории \"Женщинам\" на Wildberries:\n\n1. **Платья** (ID: 685)\n2. **Блузки и рубашки** (ID: 1031) \n3. **Брюки и джинсы** (ID: 1571)\n4. **Юбки** (ID: 1727)\n5. **Костюмы** (ID: 1335)\n\nВсе эти подкатегории относятся к родительской категории \"Женщинам\" (ID: 1541). Если вам нужно получить более подробную информацию о какой-то конкретной подкатегории или посмотреть товары в ней, дайте мне знать!",
+        "duration_ms": 6786
+      }
+    }
+  ],
+  "summary": {
+    "total_llm_calls": 3,
+    "total_tools_executed": 0,
+    "total_llm_duration_ms": 18756,
+    "total_tool_duration_ms": 0
+  },
+  "final_result": "\nВот подкатегории для категории \"Женщинам\" на Wildberries:\n\n1. **Платья** (ID: 685)\n2. **Блузки и рубашки** (ID: 1031) \n3. **Брюки и джинсы** (ID: 1571)\n4. **Юбки** (ID: 1727)\n5. **Костюмы** (ID: 1335)\n\nВсе эти подкатегории относятся к родительской категории \"Женщинам\" (ID: 1541). Если вам нужно получить более подробную информацию о какой-то конкретной подкатегории или посмотреть товары в ней, дайте мне знать!"
+}

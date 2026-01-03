@@ -10,6 +10,11 @@ Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI
 
 **Key Philosophy**: "Raw In, String Out" - tools receive raw JSON from LLM and return strings, ensuring maximum flexibility and minimal dependencies.
 
+**Architecture (Refactored 2026-01-04)**:
+- **Framework Core**: `pkg/state/CoreState` - reusable e-commerce logic (WB, S3, tools)
+- **Application Layer**: `internal/app/AppState` - TUI-specific logic (embeds CoreState)
+- **Rule 6 Compliant**: `pkg/` no longer imports `internal/` (except `pkg/app/components`)
+
 ---
 
 ## Architecture Overview
@@ -22,20 +27,25 @@ poncho-ai/
 │   ├── poncho/            # Main TUI application (primary interface)
 │   ├── maxiponcho/        # Fashion PLM analyzer (TUI)
 │   ├── vision-cli/        # CLI utility for vision analysis
+│   ├── chain-cli/         # CLI utility for testing Chain Pattern
+│   ├── debug-test/        # CLI utility for testing debug logs
 │   └── wb-tools-test/     # CLI utility for testing WB tools
 ├── internal/              # Application-specific logic
 │   ├── agent/            # Orchestrator implementation (ReAct loop)
-│   ├── app/              # Global state, command registry, types
+│   ├── app/              # Application state (AppState with embedded CoreState)
 │   └── ui/               # Bubble Tea TUI (Model-View-Update)
 ├── pkg/                   # Reusable library packages
 │   ├── agent/            # Agent interface (avoids circular imports)
 │   ├── app/              # Component initialization (shared across entry points)
+│   ├── chain/            # Chain Pattern implementation (modular agent execution)
+│   ├── classifier/       # File classification engine
 │   ├── config/           # YAML configuration with ENV support
+│   ├── debug/            # JSON debug logging system
 │   ├── factory/          # LLM provider factory
 │   ├── llm/              # LLM abstraction layer + options pattern
 │   ├── prompt/           # Prompt loading and rendering + post-prompts
 │   ├── s3storage/        # S3-compatible storage client
-│   ├── state/            # State types (avoid circular imports)
+│   ├── state/            # Framework core state (CoreState) - NEW
 │   ├── todo/             # Thread-safe task manager
 │   ├── tools/            # Tool system (registry + std tools)
 │   ├── utils/            # JSON sanitization utilities
@@ -43,23 +53,24 @@ poncho-ai/
 └── config.yaml           # Main configuration file
 ```
 
-### Component Dependency Graph
+### Component Dependency Graph (Refactored 2026-01-04)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           LAYER ARCHITECTURE                                │
+│                    LAYER ARCHITECTURE (Rule 6 Compliant)                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐       │
-│  │   cmd/poncho    │───▶│  GlobalState     │◀───│ CommandRegistry │       │
-│  │  (Entry Point)  │    │  (internal/app)  │    │                 │       │
+│  │   cmd/poncho    │───▶│  AppState        │◀───│ CommandRegistry │       │
+│  │  (Entry Point)  │    │ (internal/app)   │    │  (App-specific)  │       │
 │  └─────────────────┘    └──────────────────┘    └─────────────────┘       │
-│           │                       │                       │                │
-│           ▼                       ▼                       ▼                │
-│  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐       │
-│  │ Orchestrator    │◀───│ ToolsRegistry    │    │   UI (Bubble)   │       │
-│  │ (internal/agent)│    │ (pkg/tools)      │    │                 │       │
-│  └─────────────────┘    └──────────────────┘    └─────────────────┘       │
+│           │                       │▲                                        │
+│           │                       ││ Embeds                                 │
+│           ▼                       ││                                        │
+│  ┌─────────────────┐    ┌─────────┴───────────────┐    ┌─────────────────┐   │
+│  │ Orchestrator    │◀───│   CoreState          │    │   UI (Bubble)   │   │
+│  │ (internal/agent)│    │   (pkg/state)        │    │                 │   │
+│  └─────────────────┘    └──────────────────────┘    └─────────────────┘   │
 │           │                       │                                        │
 │           ▼                       ▼                                        │
 │  ┌─────────────────┐    ┌──────────────────┐                              │
@@ -69,6 +80,12 @@ poncho-ai/
 │  └─────────────────┘    └──────────────────┘                              │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
+
+Key Changes:
+  - pkg/state/CoreState: Framework core (no internal/ imports) ✅
+  - internal/app/AppState: Application-specific (embeds CoreState)
+  - pkg/chain: Works with CoreState (Rule 6 compliant) ✅
+  - pkg/app/components: Component initialization (acceptable internal/ import)
 ```
 
 ---
@@ -102,7 +119,20 @@ Work with AI models **only** through `Provider` interface. No direct API calls.
 **Important**: Single Provider with Options Pattern - NOT multiple clients.
 
 ### Rule 5: State Management
-Use `GlobalState` with thread-safe access. No global variables.
+Use layered architecture with thread-safe access. No global variables.
+
+**Architecture (Refactored 2026-01-04)**:
+- **`pkg/state/CoreState`**: Framework core (reusable e-commerce logic)
+  - Config, S3, Dictionaries, Todo, ToolsRegistry
+  - Thread-safe: History, Files (Working Memory)
+  - Methods: BuildAgentContext, todo management
+
+- **`internal/app/AppState`**: Application-specific (TUI logic)
+  - Embeds `*state.CoreState` via composition
+  - CommandRegistry, Orchestrator, UserChoice
+  - CurrentArticleID, CurrentModel, IsProcessing
+
+**Thread-Safety**: All runtime fields protected by `sync.RWMutex`. No ad-hoc global variables.
 
 ### Rule 6: Package Structure
 - `pkg/` - Library code ready for reuse
@@ -215,7 +245,7 @@ llm.Generate(ctx, messages, toolDefs, llm.WithTemperature(0.5))
 type Orchestrator struct {
     llm                llm.Provider           // Single provider (Rule 4)
     registry           *tools.Registry
-    state              *app.GlobalState
+    state              *app.AppState          // Changed: GlobalState → AppState
     systemPrompt       string
     toolPostPrompts    *prompt.ToolPostPromptConfig
 
@@ -278,33 +308,236 @@ messages:
 
 **Flow**: Post-prompts are active for **one iteration** only.
 
-### 5. Global State Management (`internal/app/state.go`)
+### 5. State Management (Architecture Refactored 2026-01-04)
 
-**Purpose**: Thread-safe centralized state for the entire application.
+**Purpose**: Thread-safe centralized state with clear separation between framework core and application-specific logic.
+
+#### Framework Core: `pkg/state/CoreState`
+
+**Location**: [`pkg/state/core.go`](pkg/state/core.go)
+
+**Purpose**: Reusable framework core for e-commerce automation (WB, S3, tools).
 
 **Components**:
 ```go
-type GlobalState struct {
+type CoreState struct {
     Config          *config.AppConfig
     S3              *s3storage.Client
-    Dictionaries    *wb.Dictionaries
+    Dictionaries    *wb.Dictionaries         // E-commerce data (WB, Ozon)
     Todo            *todo.Manager
-    CommandRegistry *CommandRegistry
     ToolsRegistry   *tools.Registry
-    Orchestrator    agent.Agent
 
-    mu              sync.RWMutex     // Protects fields below
+    mu              sync.RWMutex             // Protects fields below
     History         []llm.Message
-    Files           map[string][]*state.FileMeta  // "Working Memory"
-    CurrentArticleID string
-    CurrentModel    string
-    IsProcessing    bool
+    Files           map[string][]*s3storage.FileMeta  // "Working Memory"
 }
 ```
 
-**"Working Memory" Pattern**: Vision model results are stored in `FileMeta.VisionDescription` and injected into prompts without re-sending images.
+**Thread-Safe Methods**:
+- `AppendMessage()`, `GetHistory()`, `ClearHistory()`
+- `UpdateFileAnalysis()`, `SetFiles()`, `GetFiles()`
+- `BuildAgentContext()` - Assembles full context for LLM
+- `AddTodoTask()`, `CompleteTodoTask()`, `FailTodoTask()`
+- `GetDictionaries()`, `GetS3()`, `GetTodo()`, `GetToolsRegistry()` - Getters
 
-### 6. Configuration (`config.yaml`)
+**"Working Memory" Pattern**: Vision model results stored in `FileMeta.VisionDescription` and injected into prompts.
+
+**Rule 6 Compliance**: `pkg/state` has NO imports from `internal/` - fully reusable.
+
+#### Application State: `internal/app/AppState`
+
+**Location**: [`internal/app/state.go`](internal/app/state.go)
+
+**Purpose**: Application-specific logic (TUI commands, orchestrator, UI state).
+
+**Components**:
+```go
+type AppState struct {
+    *state.CoreState                      // Embedded framework core
+
+    CommandRegistry *CommandRegistry       // TUI commands
+    Orchestrator     agent.Agent             // Agent implementation
+    UserChoice       *userChoiceData         // Interactive UI
+
+    mu               sync.RWMutex            // Protects fields below
+    CurrentArticleID string                  // WB workflow
+    CurrentModel     string                  // UI display
+    IsProcessing     bool                    // UI spinner
+}
+```
+
+**Application-Specific Methods**:
+- `SetOrchestrator()`, `GetOrchestrator()`
+- `SetProcessing()`, `GetProcessing()`
+- `SetCurrentArticle()`, `GetCurrentArticle()`
+- `SetUserChoice()`, `GetUserChoice()`, `ClearUserChoice()`
+
+**Framework Methods Available via Composition**:
+- All `CoreState` methods accessible directly (e.g., `state.AppendMessage()`)
+
+#### Architecture Benefits
+
+1. **Rule 6 Compliance**: `pkg/` no longer imports `internal/`
+2. **Modularity**: Framework core can be used independently (HTTP API, gRPC, etc.)
+3. **Reusability**: CoreState works across CLI, TUI, and future interfaces
+4. **Testability**: Framework logic testable without application dependencies
+
+### 6. Chain Pattern (`pkg/chain/`)
+
+**Purpose**: Modular, composable architecture for agent execution using Chain of Responsibility pattern.
+
+**Key Concepts**:
+- **Step Interface**: Atomic execution units that can be composed into chains
+- **ReActChain**: ReAct pattern implementation using composable steps
+- **ChainContext**: Thread-safe execution context shared across steps
+
+**Core Interfaces**:
+```go
+type Chain interface {
+    Execute(ctx context.Context, input ChainInput) (ChainOutput, error)
+}
+
+type Step interface {
+    Name() string
+    Execute(ctx context.Context, chainCtx *ChainContext) (NextAction, error)
+}
+
+type NextAction int
+const (
+    ActionContinue  // Continue to next step/iteration
+    ActionBreak     // Terminate chain and return result
+    ActionError     // Terminate with error
+    ActionBranch    // Jump to different step (future)
+)
+```
+
+**ReActChain Implementation**:
+```go
+type ReActChain struct {
+    // Dependencies (set via setters)
+    llm        llm.Provider
+    registry   *tools.Registry
+    state      *state.CoreState  // Framework state only (Rule 6)
+
+    // Steps (created once, reused)
+    llmStep    *LLMInvocationStep
+    toolStep   *ToolExecutionStep
+
+    // Debug support
+    debugRecorder *ChainDebugRecorder
+}
+```
+
+**Execution Flow**:
+```
+1. Create ReActChain with config
+2. Set dependencies via Setters (SetLLM, SetRegistry, SetState)
+3. Attach debug recorder (optional)
+4. Execute with input:
+   a. Append user message to ChainContext
+   b. Loop MaxIterations:
+      - LLMInvocationStep: Call LLM with context
+      - If tool calls → ToolExecutionStep: Execute tools via registry
+      - If no tool calls → Break (final answer)
+   c. Return ChainOutput with result, stats, debug path
+```
+
+**Benefits**:
+- **Modularity**: Steps are isolated, testable, reusable
+- **Composability**: Easy to create new chain types (Sequential, Conditional, Graph)
+- **Debug Support**: Built-in JSON trace recording via `ChainDebugRecorder`
+- **Thread-Safe**: All operations protected by mutexes
+
+### 7. Debug System (`pkg/debug/`)
+
+**Purpose**: JSON-based execution trace recording for debugging, analysis, and optimization.
+
+**Core Components**:
+```go
+type Recorder struct {
+    config      RecorderConfig
+    log         DebugLog
+    currentIteration *Iteration
+    visitedTools map[string]struct{}
+    errors      []string
+}
+```
+
+**Recording Flow**:
+```
+1. Create Recorder with config (logs dir, what to include)
+2. Start(userQuery) - Begin session
+3. For each iteration:
+   a. StartIteration(num)
+   b. RecordLLMRequest(req)
+   c. RecordLLMResponse(resp)
+   d. RecordToolExecution(exec) - for each tool
+   e. EndIteration()
+4. Finalize(result, duration) - Save to JSON file
+```
+
+**DebugLog Structure**:
+```json
+{
+  "run_id": "debug_20260101_120000",
+  "timestamp": "2026-01-01T12:00:00Z",
+  "user_query": "show categories",
+  "duration_ms": 1500,
+  "iterations": [
+    {
+      "iteration": 1,
+      "llm_request": {
+        "model": "glm-4.6",
+        "temperature": 0.5,
+        "messages_count": 3
+      },
+      "llm_response": {
+        "tool_calls": [{"name": "get_wb_parent_categories"}],
+        "duration_ms": 500
+      },
+      "tools_executed": [
+        {
+          "name": "get_wb_parent_categories",
+          "success": true,
+          "duration_ms": 100
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_llm_calls": 2,
+    "total_tools_executed": 1,
+    "visited_tools": ["get_wb_parent_categories"]
+  },
+  "final_result": "Found 3 categories..."
+}
+```
+
+**Configuration** (`config.yaml`):
+```yaml
+app:
+  debug_logs:
+    enabled: true
+    save_logs: true
+    logs_dir: "./debug_logs"
+    include_tool_args: true
+    include_tool_results: true
+    max_result_size: 1000  # Truncate large results
+```
+
+**Usage**:
+```go
+// In chain-cli
+debugRecorder := chain.NewChainDebugRecorder(debugCfg)
+reactChain.AttachDebug(debugRecorder)
+
+output := reactChain.Execute(ctx, input)
+// output.DebugPath contains path to JSON log
+```
+
+**Testing**: Use `cmd/debug-test/main.go` to verify debug system without full agent.
+
+### 8. Configuration (`config.yaml`)
 
 **Structure** with reasoning/chat separation:
 
@@ -441,6 +674,9 @@ cfg.GetVisionModel(name)     // Returns ModelDef for vision
 | **Adapter** | `pkg/llm/openai/` | OpenAI-compatible API adapter |
 | **Model-View-Update** | `internal/ui/` | Bubble Tea TUI architecture |
 | **ReAct** | `internal/agent/orchestrator.go` | Agent reasoning and acting loop |
+| **Chain of Responsibility** | `pkg/chain/` | Modular step-based execution |
+| **Recorder** | `pkg/debug/` | JSON trace recording |
+| **Step** | `pkg/chain/step.go` | Atomic execution units |
 
 ---
 
@@ -450,6 +686,14 @@ cfg.GetVisionModel(name)     // Returns ModelDef for vision
 # Main TUI application (primary interface)
 go run cmd/poncho/main.go
 go build -o poncho cmd/poncho/main.go
+
+# Chain CLI (modular agent execution with debug support)
+go run cmd/chain-cli/main.go "show categories"
+go build -o chain-cli cmd/chain-cli/main.go
+./chain-cli -debug "show categories"
+
+# Debug Test (test debug logging system)
+go run cmd/debug-test/main.go
 
 # WB Tools Test CLI
 go run cmd/wb-tools-test/main.go -query "show categories"
@@ -575,7 +819,8 @@ This allows:
 ### Thread-Safety Guarantees
 
 The following components are thread-safe:
-- `GlobalState` - all fields protected by `sync.RWMutex`
+- `CoreState` (pkg/state) - all fields (History, Files, Dictionaries, ToolsRegistry) protected by `sync.RWMutex`
+- `AppState` (internal/app) - application-specific fields (UserChoice, CurrentArticleID, CurrentModel, IsProcessing) protected by `sync.RWMutex`
 - `ToolsRegistry` - concurrent tool registration and lookup
 - `TodoManager` - atomic task operations
 - `CommandRegistry` - safe command registration
@@ -598,3 +843,38 @@ return "", fmt.Errorf("llm generation failed: %w", err)
 ```
 
 **Benefit**: Framework is resilient against LLM hallucinations.
+
+### Architecture Evolution
+
+The codebase demonstrates architectural evolution from monolithic to modular:
+
+**Phase 1: Monolithic Orchestrator** (`internal/agent/orchestrator.go`)
+- Single file containing all ReAct loop logic
+- Direct coupling between LLM calls and tool execution
+- Hard to test individual components
+
+**Phase 2: Chain Pattern** (`pkg/chain/`)
+- Separation into composable steps (LLMInvocationStep, ToolExecutionStep)
+- Each step is independently testable
+- Easy to create new chain types (Sequential, Conditional, Graph)
+
+**Phase 3: Debug Support** (`pkg/debug/`)
+- JSON trace recording for all executions
+- Aggregate statistics and performance metrics
+- Post-mortem analysis capabilities
+
+**Migration Path**: Both orchestrators coexist. New code should use Chain Pattern.
+
+### Dual Architecture: Orchestrator vs Chain
+
+The framework maintains two agent implementations:
+
+| Aspect | Orchestrator (`internal/agent/`) | Chain (`pkg/chain/`) |
+|--------|----------------------------------|----------------------|
+| **Architecture** | Monolithic ReAct loop | Modular step-based |
+| **Testing** | Integration testing only | Unit testable steps |
+| **Debug** | Basic logging | Full JSON traces |
+| **Extensibility** | Modify orchestrator | Add new steps/chains |
+| **Use Case** | Production TUI | CLI utilities, testing |
+
+**Recommendation**: Use Chain Pattern for new development.

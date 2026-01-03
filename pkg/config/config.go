@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -11,13 +12,14 @@ import (
 // AppConfig — корневая структура конфигурации.
 // Она зеркалит структуру твоего config.yaml.
 type AppConfig struct {
-	Models          ModelsConfig          `yaml:"models"`
+	Models          ModelsConfig      `yaml:"models"`
 	Tools           map[string]ToolConfig `yaml:"tools"`
-	S3              S3Config              `yaml:"s3"`
-	ImageProcessing ImageProcConfig       `yaml:"image_processing"`
-	App             AppSpecific           `yaml:"app"`
-    FileRules 		[]FileRule            `yaml:"file_rules"` // Новая секция
-	WB				 WBConfig             `yaml:"wb"`
+	S3              S3Config          `yaml:"s3"`
+	ImageProcessing ImageProcConfig   `yaml:"image_processing"`
+	App             AppSpecific       `yaml:"app"`
+	FileRules       []FileRule        `yaml:"file_rules"`
+	WB              WBConfig          `yaml:"wb"`
+	// Chains config загружается отдельно через pkg/chain чтобы избежать циклического импорта
 }
 
 type WBConfig struct {
@@ -116,8 +118,69 @@ type ImageProcConfig struct {
 
 // AppSpecific — общие настройки приложения.
 type AppSpecific struct {
-	Debug      bool   `yaml:"debug"`
-	PromptsDir string `yaml:"prompts_dir"`
+	Debug      bool        `yaml:"debug"`
+	PromptsDir string      `yaml:"prompts_dir"`
+	DebugLogs  DebugConfig `yaml:"debug_logs"`
+}
+
+// DebugConfig — настройки отладочных логов (JSON трейсы выполнения).
+type DebugConfig struct {
+	// Enabled — включена ли запись отладочных логов
+	Enabled bool `yaml:"enabled"`
+
+	// SaveLogs — сохранять ли логи в файлы
+	SaveLogs bool `yaml:"save_logs"`
+
+	// LogsDir — директория для сохранения логов
+	LogsDir string `yaml:"logs_dir"`
+
+	// IncludeToolArgs — включать аргументы инструментов в лог
+	IncludeToolArgs bool `yaml:"include_tool_args"`
+
+	// IncludeToolResults — включать результаты инструментов в лог
+	IncludeToolResults bool `yaml:"include_tool_results"`
+
+	// MaxResultSize — максимальный размер результата (символов)
+	// Превышение обрезается с суффиксом "... (truncated)"
+	// 0 означает без ограничений
+	MaxResultSize int `yaml:"max_result_size"`
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+//
+// Rule 11: Автономные приложения хранят ресурсы рядом с бинарником.
+func (c *DebugConfig) GetDefaults() DebugConfig {
+	result := *c
+
+	if !result.Enabled {
+		return result
+	}
+
+	// Rule 11: Если включено, но нет директории - используем абсолютный путь рядом с бинарником
+	if result.LogsDir == "" {
+		if exePath, err := os.Executable(); err == nil {
+			exeDir := filepath.Dir(exePath)
+			result.LogsDir = filepath.Join(exeDir, "debug_logs")
+		} else {
+			// Fallback: если не удалось получить путь к бинарнику, используем относительный
+			result.LogsDir = "./debug_logs"
+		}
+	}
+
+	// Дефолтно включаем логирование args и results
+	if result.SaveLogs && !result.IncludeToolArgs {
+		result.IncludeToolArgs = true
+	}
+	if result.SaveLogs && !result.IncludeToolResults {
+		result.IncludeToolResults = true
+	}
+
+	// Дефолтный лимит размера результата
+	if result.MaxResultSize == 0 {
+		result.MaxResultSize = 5000 // 5KB
+	}
+
+	return result
 }
 
 // Load читает YAML файл, подставляет ENV переменные и возвращает готовую структуру.

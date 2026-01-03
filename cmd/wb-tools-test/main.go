@@ -96,7 +96,7 @@ func runMenu(c *appcomp.Components) {
 
 		choice, err := strconv.Atoi(input)
 		if err != nil || choice < 1 || choice > len(menuTools) {
-			fmt.Println("Неверный выбор. Попробуй ещё раз.\n")
+			fmt.Println("Неверный выбор. Попробуй ещё раз.")
 			continue
 		}
 

@@ -86,7 +86,7 @@ type MainModel struct {
 	viewport viewport.Model
 	textarea textarea.Model
 
-	appState *app.GlobalState
+	appState *app.AppState
 
 	// err хранит ошибку запуска, если была.
 	// Используем atomic.Value для thread-safe доступа.
@@ -123,8 +123,9 @@ func (m *MainModel) setErr(err error) {
 //   - Поле ввода с placeholder'ом
 //   - Вьюпорт для лога с приветственным сообщением
 //
-// Принимает GlobalState для доступа к данным приложения.
-func InitialModel(state *app.GlobalState) MainModel {
+// Принимает AppState для доступа к данным приложения.
+// Rule 6: AppState вместо GlobalState после рефакторинга.
+func InitialModel(state *app.AppState) MainModel {
 	// 1. Настройка поля ввода
 	ta := textarea.New()
 	ta.Placeholder = "Введите команду (например: load 123)..."

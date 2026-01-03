@@ -41,13 +41,9 @@ func NewWbColorsTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbColorsToo
 }
 
 func (t *WbColorsTool) Definition() tools.ToolDefinition {
-	desc := t.description
-	if desc == "" {
-		desc = "Ищет цвета в справочнике Wildberries по подстроке. Возвращает топ-N подходящих цветов с названиями и базовыми цветами (parentName). Используй для точного определения цвета товара из описания или анализа изображения."
-	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_colors",
-		Description: desc,
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -129,13 +125,9 @@ func NewWbCountriesTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbCountr
 }
 
 func (t *WbCountriesTool) Definition() tools.ToolDefinition {
-	desc := t.description
-	if desc == "" {
-		desc = "Возвращает справочник стран производства для Wildberries. Используй для выбора страны происхождения товара при создании карточки."
-	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_countries",
-		Description: desc,
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -171,13 +163,9 @@ func NewWbGendersTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbGendersT
 }
 
 func (t *WbGendersTool) Definition() tools.ToolDefinition {
-	desc := t.description
-	if desc == "" {
-		desc = "Возвращает справочник значений пола (gender/kind) для Wildberries. Используй для выбора пола товара при создании карточки."
-	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_genders",
-		Description: desc,
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -213,13 +201,9 @@ func NewWbSeasonsTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbSeasonsT
 }
 
 func (t *WbSeasonsTool) Definition() tools.ToolDefinition {
-	desc := t.description
-	if desc == "" {
-		desc = "Возвращает справочник сезонов для Wildberries. Используй для выбора сезона товара при создании карточки."
-	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_seasons",
-		Description: desc,
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -255,13 +239,9 @@ func NewWbVatRatesTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbVatRate
 }
 
 func (t *WbVatRatesTool) Definition() tools.ToolDefinition {
-	desc := t.description
-	if desc == "" {
-		desc = "Возвращает справочник ставок НДС (VAT) для Wildberries. Используй для выбора ставки НДС товара при создании карточки."
-	}
 	return tools.ToolDefinition{
 		Name:        "get_wb_vat_rates",
-		Description: desc,
+		Description: t.description, // Должен быть задан в config.yaml
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -277,3 +257,50 @@ func (t *WbVatRatesTool) Execute(ctx context.Context, argsJSON string) (string, 
 	}
 	return string(data), nil
 }
+
+// ReloadWbDictionariesTool — заглушка для перезагрузки справочников из API.
+//
+// TODO: Реализовать полную перезагрузку справочников через WB API.
+type ReloadWbDictionariesTool struct {
+	client *wb.Client
+	dicts  *wb.Dictionaries
+}
+
+// NewReloadWbDictionariesTool создает заглушку для инструмента перезагрузки справочников.
+func NewReloadWbDictionariesTool(client *wb.Client, cfg config.ToolConfig) *ReloadWbDictionariesTool {
+	// dicts передается через компоненты, здесь заглушка
+	return &ReloadWbDictionariesTool{
+		client: client,
+		dicts:  nil, // Будет установлен при инициализации
+	}
+}
+
+func (t *ReloadWbDictionariesTool) Definition() tools.ToolDefinition {
+	return tools.ToolDefinition{
+		Name:        "reload_wb_dictionaries",
+		Description: "Перезагружает справочники Wildberries из API. Возвращает количество записей в каждом справочнике. Используй для проверки доступности API или после изменения данных. ВНИМАНИЕ: не обновляет состояние агента, только возвращает данные. [STUB - НЕ РЕАЛИЗОВАНО]",
+		Parameters: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{},
+		},
+	}
+}
+
+func (t *ReloadWbDictionariesTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	// STUB: Возврат заглушки с информацией о текущих справочниках
+	stub := map[string]interface{}{
+		"error":   "not_implemented",
+		"message": "reload_wb_dictionaries tool is not implemented yet. Dictionaries are loaded at startup.",
+		"current_counts": map[string]interface{}{
+			"colors":    0,
+			"countries": 0,
+			"genders":   0,
+			"seasons":   0,
+			"vat_rates": 0,
+		},
+	}
+	result, _ := json.Marshal(stub)
+	return string(result), nil
+}
+
