@@ -146,10 +146,13 @@ func (c *ReActChain) Execute(ctx context.Context, input ChainInput) (ChainOutput
 	chainCtx := NewChainContext(input)
 
 	// 3. Добавляем user message в историю
-	chainCtx.AppendMessage(llm.Message{
+	// REFACTORED 2026-01-04: AppendMessage теперь возвращает ошибку
+	if err := chainCtx.AppendMessage(llm.Message{
 		Role:    llm.RoleUser,
 		Content: input.UserQuery,
-	})
+	}); err != nil {
+		return ChainOutput{}, fmt.Errorf("failed to append user message: %w", err)
+	}
 
 	// 4. Начинаем debug запись
 	if c.debugRecorder != nil && c.debugRecorder.Enabled() {

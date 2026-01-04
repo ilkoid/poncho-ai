@@ -584,40 +584,138 @@ Iteration N+1:
 - Separation of concerns: tools return data, prompts define presentation
 - Easy to customize per-tool behavior via YAML
 
-### 3.4 State Management (Architecture Refactored 2026-01-04)
+### 3.4 State Management (Repository Pattern + Optimization, 2026-01-04)
 
-**Purpose**: Thread-safe centralized state with clear separation between framework core and application-specific logic.
+**Purpose**: Thread-safe centralized state with clear separation between framework core and application-specific logic using Repository Pattern.
+
+#### Architecture: Repository Pattern
+
+The state management system uses a layered repository architecture for clean separation of concerns:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Repository Architecture                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────┐ │
+│  │ UnifiedStore    │◀───│ MessageRepo     │    │ AppState    │ │
+│  │ (Base Interface)│    │ (History API)   │    │             │ │
+│  └─────────────────┘    └─────────────────┘    └─────────────┘ │
+│         │                        ▲                        ▲      │
+│         │                        │                        │      │
+│         ▼                        │                        │      │
+│  ┌─────────────────┐             │                   ┌────┴──────┐│
+│  │ FileRepository  │─────────────┘                   │CoreState ││
+│  │ (Files API)     │             │                   │          ││
+│  └─────────────────┘             │                   └─────────┘│
+│                                   │                              │
+│  ┌─────────────────┐             │                              │
+│  │ TodoRepository  │─────────────┘                              │
+│  │ (Plan API)      │                                           │
+│  └─────────────────┘                                           │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Repository Interfaces** ([`pkg/state/repository.go`](pkg/state/repository.go)):
+
+```go
+// UnifiedStore - базовый интерфейс для всех репозиториев
+type UnifiedStore interface {
+    Get(key string) (any, bool)
+    Set(key string, value any) error
+    Update(key string, fn func(any) any) error
+    Delete(key string) error
+    Exists(key string) bool
+    List() []string
+}
+
+// MessageRepository - управление историей диалога
+type MessageRepository interface {
+    UnifiedStore
+    Append(msg llm.Message) error
+    GetHistory() []llm.Message
+}
+
+// FileRepository - управление файлами (Working Memory)
+type FileRepository interface {
+    UnifiedStore
+    UpdateFileAnalysis(tag string, file *s3storage.FileMeta) error
+    GetFiles() map[string][]*s3storage.FileMeta
+}
+
+// TodoRepository - управление планом действий
+type TodoRepository interface {
+    UnifiedStore
+    AddTask(description string) (int, error)
+    CompleteTask(id int) error
+    FailTask(id int, reason string) error
+    GetTodoString() string
+}
+
+// DictionaryRepository - доступ к справочникам
+type DictionaryRepository interface {
+    UnifiedStore
+    GetDictionaries() *wb.Dictionaries
+}
+
+// StorageRepository - доступ к S3
+type StorageRepository interface {
+    UnifiedStore
+    GetS3() *s3storage.Client
+}
+```
 
 #### Framework Core: `pkg/state/CoreState`
 
 **Location**: [`pkg/state/core.go`](pkg/state/core.go)
 
-**Purpose**: Reusable framework core for e-commerce automation (WB, S3, tools).
+**Purpose**: Reusable framework core implementing all repository interfaces.
 
-**Components**:
+**Architecture**:
 
 ```go
 type CoreState struct {
+    // Dependencies (read-only after creation)
     Config          *config.AppConfig
     S3              *s3storage.Client
-    Dictionaries    *wb.Dictionaries         // E-commerce data (WB, Ozon)
-    Todo            *todo.Manager            // Task planner
-    ToolsRegistry   *tools.Registry          // Agent tools
+    Dictionaries    *wb.Dictionaries
+    Todo            *todo.Manager
+    ToolsRegistry   *tools.Registry
 
-    mu              sync.RWMutex             // Thread-safety
-    History         []llm.Message            // Dialog history
-    Files           map[string][]*s3storage.FileMeta   // "Working Memory"
+    // Thread-safe storage
+    mu    sync.RWMutex
+    store map[string]any  // Unified storage for all data
 }
 ```
 
-**Thread-Safe Methods**:
-- `AppendMessage()` - Add message to history
-- `GetHistory()` - Return copy of history
-- `UpdateFileAnalysis()` - Store vision analysis results
-- `SetFiles()`, `GetFiles()` - File management
-- `BuildAgentContext()` - Assemble full context for LLM
-- `AddTodoTask()`, `CompleteTodoTask()`, `FailTodoTask()` - Todo management
-- `GetDictionaries()`, `GetS3()`, `GetTodo()`, `GetToolsRegistry()` - Getters
+**Thread-Safe Methods** (post-optimization, 2026-01-04):
+
+**UnifiedStore operations**:
+- `Get(key) (any, bool)` - Retrieve value by key
+- `Set(key, value) error` - Store value
+- `Update(key, fn) error` - Atomic update with function
+- `Delete(key) error` - Remove key
+- `Exists(key) bool` - Check existence
+- `List() []string` - List all keys
+
+**MessageRepository operations**:
+- `Append(msg llm.Message) error` - Add message to history
+- `GetHistory() []llm.Message` - Get message history
+
+**FileRepository operations**:
+- `UpdateFileAnalysis(tag, file) error` - Add/update file analysis
+- `GetFiles() map[string][]*FileMeta` - Get all files
+
+**TodoRepository operations**:
+- `AddTask(desc) (int, error)` - Add new task
+- `CompleteTask(id) error` - Mark task done
+- `FailTask(id, reason) error` - Mark task failed
+- `GetTodoString() string` - Format plan as string
+
+**Helper operations**:
+- `BuildAgentContext(systemPrompt) []Message` - Assemble full LLM context
+- `Get/SetDictionaries()`, `Get/SetS3()`, `Get/SetTodo()`, `Get/SetToolsRegistry()`
 
 **"Working Memory" Pattern**: Vision model results are stored in `FileMeta.VisionDescription` and injected into prompts without re-sending images.
 
@@ -636,9 +734,10 @@ type AppState struct {
     *state.CoreState           // Embedded framework core
 
     CommandRegistry *CommandRegistry  // TUI commands
-    Orchestrator     agent.Agent       // Agent implementation
+    Orchestrator     agent.Agent       // Agent interface (simplified)
     UserChoice       *userChoiceData   // Interactive UI
 
+    mu               sync.RWMutex      // Protects fields below
     CurrentArticleID string            // WB workflow state
     CurrentModel     string            // UI state
     IsProcessing     bool              // UI spinner
@@ -652,7 +751,47 @@ type AppState struct {
 - `SetUserChoice()`, `GetUserChoice()`, `ClearUserChoice()` - Interactive UI
 
 **Framework Methods Available via Composition**:
-- All `CoreState` methods accessible directly (e.g., `state.AppendMessage()`)
+- All `CoreState` methods accessible directly (e.g., `state.Append()`, `state.AddTask()`)
+
+#### Code Optimization (2026-01-04)
+
+**Removed Unused Methods** (~300 lines eliminated):
+
+| Removed Method | Location | Reason |
+|----------------|----------|--------|
+| `Clear()` | UnifiedStore | 0 usages - use `Set(key, nil)` |
+| `GetRange(from, to)` | MessageRepository | 0 usages - unnecessary complexity |
+| `GetLast(n)` | MessageRepository | 0 usages - use `GetHistory()` |
+| `Trim(n)` | MessageRepository | 0 usages - unnecessary complexity |
+| `ClearHistory()` | MessageRepository | 0 usages - use `Set(KeyHistory, [])` |
+| `GetFilesByTag(tag)` | FileRepository | 0 usages - use `GetFiles()` |
+| `ClearFiles()` | FileRepository | 0 usages - use `Set(KeyFiles, {})` |
+| `ClearTodo()` | TodoRepository | 0 usages - use `Set(KeyTodo, NewManager())` |
+| `ClearDictionaries()` | DictionaryRepository | 0 usages - dictionaries never cleared |
+| `String()` | ChainContext | 0 usages - debugging only |
+| `ClearHistory()` | Agent interface | 0 usages - unnecessary requirement |
+| `ClearTodos()` | Components | 0 usages - replaced with direct Set() |
+
+**Optimization Results**:
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Methods in CoreState | ~40 | ~31 | **-9 methods** |
+| Methods in ChainContext | 18 | 17 | **-1 method** |
+| Agent interface methods | 3 | 2 | **-1 method** |
+| Approx. lines of code | ~2800 | ~2500 | **-300 lines** |
+| Unused methods | 13 | 0 | **-100%** |
+| Compilation status | ✅ | ✅ | **no errors** |
+
+**Updated Agent Interface** ([`pkg/agent/types.go`](pkg/agent/types.go)):
+
+```go
+// REFACTORED 2026-01-04: Removed ClearHistory() - not used
+type Agent interface {
+    Run(ctx context.Context, query string) (string, error)
+    GetHistory() []llm.Message
+}
+```
 
 #### Architecture Benefits
 
@@ -660,6 +799,8 @@ type AppState struct {
 2. **Modularity**: Framework core can be used independently (HTTP API, gRPC, etc.)
 3. **Reusability**: CoreState works across CLI, TUI, and future interfaces
 4. **Testability**: Framework logic testable without application dependencies
+5. **Interface Segregation**: Each repository provides only relevant methods
+6. **Single Source of Truth**: Unified storage prevents data duplication
 
 ### 3.5 Command Registry (`internal/app/commands.go`)
 
@@ -955,7 +1096,68 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) { ... }
 
 ## 4. Architecture Patterns
 
-### 4.1 ReAct Pattern (Reasoning + Acting)
+### 4.1 Repository Pattern
+
+**Location**: [`pkg/state/repository.go`](pkg/state/repository.go)
+
+**Purpose**: Unified storage with domain-specific interfaces for clean separation of concerns.
+
+**Architecture**:
+
+```go
+// UnifiedStore - Base interface for CRUD operations
+type UnifiedStore interface {
+    Get(key string) (any, bool)
+    Set(key string, value any) error
+    Update(key string, fn func(any) any) error
+    Delete(key string) error
+    Exists(key string) bool
+    List() []string
+}
+
+// Domain-specific repositories extend UnifiedStore
+type MessageRepository interface {
+    UnifiedStore
+    Append(msg llm.Message) error
+    GetHistory() []llm.Message
+}
+
+type FileRepository interface {
+    UnifiedStore
+    UpdateFileAnalysis(tag string, file *s3storage.FileMeta) error
+    GetFiles() map[string][]*s3storage.FileMeta
+}
+
+type TodoRepository interface {
+    UnifiedStore
+    AddTask(description string) (int, error)
+    CompleteTask(id int) error
+    FailTask(id int, reason string) error
+    GetTodoString() string
+}
+```
+
+**Benefits**:
+- Clean separation of concerns
+- Easy to mock for testing
+- No duplicate data storage
+- Thread-safe by design (sync.RWMutex)
+- Interface segregation - each interface exposes only relevant methods
+- Single implementation ([`CoreState`](pkg/state/core.go)) implements all repositories
+
+**Single Implementation**:
+
+```go
+type CoreState struct {
+    mu    sync.RWMutex
+    store map[string]any  // Unified storage for all data
+}
+
+// CoreState implements: UnifiedStore, MessageRepository,
+// FileRepository, TodoRepository, DictionaryRepository, StorageRepository
+```
+
+### 4.2 ReAct Pattern (Reasoning + Acting)
 
 **Location**: [`internal/agent/orchestrator.go`](internal/agent/orchestrator.go)
 
@@ -987,7 +1189,7 @@ for i := 0; i < maxIters; i++ {
 }
 ```
 
-### 4.2 Chain of Responsibility Pattern
+### 4.3 Chain of Responsibility Pattern
 
 **Location**: [`pkg/chain/`](pkg/chain/)
 
@@ -1012,7 +1214,7 @@ chain := chain.NewReActChain(chain.ReActChainConfig{
 output, err := chain.Execute(ctx, input)
 ```
 
-### 4.3 Dependency Inversion Principle
+### 4.4 Dependency Inversion Principle
 
 **Problem**: Circular import between [`internal/agent`](internal/agent/) (implementation) and [`internal/app`](internal/app/) (usage).
 
@@ -1020,7 +1222,7 @@ output, err := chain.Execute(ctx, input)
 - [`internal/app`](internal/app/) imports [`pkg/agent`](pkg/agent/) (interface only)
 - [`internal/agent`](internal/agent/) imports [`internal/app`](internal/app/) (concrete implementation)
 
-### 4.4 Context Injection Pattern
+### 4.5 Context Injection Pattern
 
 **Purpose**: Automatically include Todo and File context in prompts.
 
@@ -1032,7 +1234,7 @@ output, err := chain.Execute(ctx, input)
 
 **Benefit**: AI always sees current state without tool calls, saving tokens.
 
-### 4.5 Registry Pattern
+### 4.6 Registry Pattern
 
 **Used In**:
 - [`ToolsRegistry`](pkg/tools/registry.go) - Tool registration and discovery
@@ -1056,7 +1258,7 @@ tool, err := registry.Get("get_wb_parent_categories")
 result, err := tool.Execute(ctx, argsJSON)
 ```
 
-### 4.6 Factory Pattern
+### 4.7 Factory Pattern
 
 **Location**: [`pkg/factory/llm_factory.go`](pkg/factory/llm_factory.go)
 
@@ -1073,7 +1275,7 @@ result, err := tool.Execute(ctx, argsJSON)
 provider, err := factory.CreateProvider(cfg.Models.Definitions["glm-4.6"])
 ```
 
-### 4.7 Model-View-Update (TEA)
+### 4.8 Model-View-Update (TEA)
 
 **Location**: [`internal/ui/`](internal/ui/) (Bubble Tea framework)
 
@@ -1087,7 +1289,7 @@ provider, err := factory.CreateProvider(cfg.Models.Definitions["glm-4.6"])
 - Predictable state management
 - Easy to test
 
-### 4.8 Strategy Pattern
+### 4.9 Strategy Pattern
 
 **Location**: [`pkg/classifier/`](pkg/classifier/)
 
@@ -1098,7 +1300,7 @@ provider, err := factory.CreateProvider(cfg.Models.Definitions["glm-4.6"])
 - Easy to add new rules
 - Configuration-driven
 
-### 4.9 Adapter Pattern
+### 4.10 Adapter Pattern
 
 **Location**: [`pkg/llm/openai/`](pkg/llm/openai/)
 
@@ -1109,7 +1311,7 @@ provider, err := factory.CreateProvider(cfg.Models.Definitions["glm-4.6"])
 - Single adapter covers 99% of providers
 - Easy to add new adapters if needed
 
-### 4.10 Template Method Pattern
+### 4.11 Template Method Pattern
 
 **Location**: [`pkg/prompt/`](pkg/prompt/)
 
@@ -1120,7 +1322,7 @@ provider, err := factory.CreateProvider(cfg.Models.Definitions["glm-4.6"])
 - Dynamic content injection
 - YAML-based configuration
 
-### 4.11 Command Pattern
+### 4.12 Command Pattern
 
 **Location**: [`internal/app/commands.go`](internal/app/commands.go)
 
@@ -1347,12 +1549,25 @@ type Tool interface {
 **Architecture (2026-01-04 Refactoring)**:
 - **`pkg/state/CoreState`**: Framework core (reusable e-commerce logic)
 - **`internal/app/AppState`**: Application-specific state (embeds CoreState)
+- **Repository Pattern**: Domain-specific interfaces with unified storage
+
+**Repository Interfaces** ([`pkg/state/repository.go`](pkg/state/repository.go)):
+- `UnifiedStore` - Base CRUD operations (Get, Set, Update, Delete, Exists, List)
+- `MessageRepository` - Dialog history management (Append, GetHistory)
+- `FileRepository` - Working memory (UpdateFileAnalysis, GetFiles)
+- `TodoRepository` - Task plan management (AddTask, CompleteTask, FailTask, GetTodoString)
+- `DictionaryRepository` - E-commerce data access (GetDictionaries)
+- `StorageRepository` - S3 client access (GetS3)
+
+**Single Implementation**: [`CoreState`](pkg/state/core.go) implements all repositories with unified storage (`map[string]any`).
 
 **Implication**:
 - Framework logic uses `CoreState` (no `internal/` imports)
 - Application logic uses `AppState` (embeds `CoreState` via composition)
 - All runtime state protected by mutexes
 - No ad-hoc global variables for conversational/session state
+- Interface segregation - each repository exposes only relevant methods
+- Single source of truth - unified storage prevents data duplication
 
 ### Rule 6: Package Structure
 
@@ -2029,8 +2244,24 @@ export WB_API_KEY="your-wb-api-key"
 
 ---
 
-**Last Updated**: 2026-01-04 (Architecture Refactored: CoreState + AppState)
+**Last Updated**: 2026-01-04 (Repository Pattern + Code Optimization: -300 lines)
 
-**Version**: 2.0
+**Version**: 2.1
 
 **Maintainer**: Poncho AI Development Team
+
+---
+
+## Architecture Evolution History
+
+| Phase | Date | Changes |
+|-------|------|---------|
+| **Phase 1** | 2025-12-XX | Monolithic Orchestrator implementation |
+| **Phase 2** | 2025-12-XX | Chain Pattern introduction |
+| **Phase 3** | 2025-12-XX | Debug System integration |
+| **Phase 4** | 2026-01-04 | **Repository Pattern + Optimization** |
+| | | - Unified storage architecture (`map[string]any`) |
+| | | - Domain-specific repository interfaces |
+| | | - Removed ~300 lines of unused code |
+| | | - Simplified Agent interface (removed ClearHistory) |
+| | | - Single source of truth for state management |

@@ -115,11 +115,14 @@ func (s *ToolExecutionStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		}
 
 		// 3. Добавляем tool result message в историю (thread-safe)
-		chainCtx.AppendMessage(llm.Message{
+		// REFACTORED 2026-01-04: AppendMessage теперь возвращает ошибку
+		if err := chainCtx.AppendMessage(llm.Message{
 			Role:       llm.RoleTool,
 			ToolCallID: tc.ID,
 			Content:    result.Result,
-		})
+		}); err != nil {
+			return ActionError, fmt.Errorf("failed to append tool result message: %w", err)
+		}
 	}
 
 	// 4. Если был выполнен только один инструмент, загружаем его post-prompt

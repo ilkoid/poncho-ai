@@ -1,23 +1,22 @@
 // Package state предоставляет thread-safe core состояние для AI-агента.
 //
-// CoreState содержит переиспользуемую бизнес-логику фреймворка:
-// - Конфигурацию приложения
-// - S3 клиент для хранения данных
-// - Справочники маркетплейсов (WB, future Ozon)
-// - Реестр инструментов (tools registry)
-// - Менеджер задач (todo manager)
-// - Историю диалога
-// - "Рабочую память" (файлы и результаты их анализа)
+// Новая CoreState реализует интерфейсы репозиториев с унифицированным хранилищем
+// map[string]any, что позволяет:
+// - Хранить любые данные без изменения структуры
+// - Иметь единый source of truth для всего состояния
+// - Быть независимой от конкретных типов зависимостей
+// - Переиспользоваться в различных приложениях
 //
-// Package state следует правилам из dev_manifest.md:
-//   - Rule 5: Thread-safe доступ через sync.RWMutex, никаких глобальных переменных
-//   - Rule 6: Library code готовый к переиспользованию, без зависимостей от internal/
+// Соблюдение правил из dev_manifest.md:
+//   - Rule 5: Thread-safe доступ через sync.RWMutex
+//   - Rule 6: Library код готовый к переиспользованию, без зависимостей от internal/
 //   - Rule 7: Все ошибки возвращаются, никаких panic в бизнес-логике
 //   - Rule 10: Все public API имеют godoc комментарии
 package state
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
@@ -29,109 +28,409 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
-// CoreState представляет thread-safe core состояние AI-агента.
+// CoreState представляет thread-safe core состояние AI-агента с унифицированным хранилищем.
 //
-// Содержит переиспользуемую бизнес-логику e-commerce фреймворка.
-// Может использоваться в различных приложениях: CLI, TUI, HTTP API, gRPC.
+// ARCHITECTURE (Refactored 2026-01-04):
 //
-// Rule 5: Все изменения runtime полей (History, Files) защищены мьютексом.
+// Использует map[string]any как единое хранилище для всех данных.
+// Реализует 6 интерфейсов репозиториев для domain-specific операций.
+//
+// Преимущества:
+// - Нет жестких зависимостей (S3, Dictionaries, etc — опциональны)
+// - Унифицированный CRUD через UnifiedStore интерфейс
+// - Type-safe методы через domain-specific интерфейсы
+// - Thread-safe доступ к всем данным
+// - Готов к переиспользованию в любых приложениях (Rule 6)
+//
+// Rule 5: Все изменения runtime полей защищены sync.RWMutex.
 // Rule 6: Не зависит от internal/, готов к переиспользованию.
 type CoreState struct {
 	// Config - конфигурация приложения (Rule 2: YAML with ENV support)
 	Config *config.AppConfig
 
-	// S3 - S3-совместимый клиент для хранения данных
-	// Используется для загрузки PLM данных, эскизов, изображений
-	S3 *s3storage.Client
-
-	// Dictionaries - справочники маркетплейсов
-	// Содержит данные WB (цвета, страны, полы, сезоны, НДС)
-	// Framework: e-commerce бизнес-логика, переиспользуемая
-	Dictionaries *wb.Dictionaries
-
-	// Todo - менеджер задач для планирования
-	// Используется агентом для отслеживания многошаговых задач
-	Todo *todo.Manager
-
-	// ToolsRegistry - реестр инструментов (Rule 3)
-	// Все инструменты регистрируются через Registry.Register()
-	ToolsRegistry *tools.Registry
-
-	// mu защищает доступ к History и Files (Rule 5: Thread-safe)
+	// mu защищает доступ к store (Rule 5: Thread-safe)
 	mu sync.RWMutex
 
-	// History - хронология диалога (User <-> Agent)
-	// Сюда НЕ попадают тяжелые base64, только текст и tool calls
-	History []llm.Message
-
-	// Files - "Рабочая память" (Working Memory)
-	// Хранит файлы текущего артикула и результаты их анализа
-	// Ключ: тег (например, "sketch", "plm_data")
-	// Использует s3storage.FileMeta как единый тип для метаданных
-	Files map[string][]*s3storage.FileMeta
+	// store - унифицированное хранилище данных
+	// Ключи определены как константы в keys.go
+	// Значения могут быть любого типа: []llm.Message, map[string][]*FileMeta, etc
+	store map[string]any
 }
 
 // NewCoreState создает новое thread-safe core состояние.
 //
-// Инициализирует базовую структуру с пустой историей и файлами.
-// Dictionaries и ToolsRegistry должны быть установлены после создания.
+// БЕЗ зависимостей — S3, Dictionaries и другие компоненты устанавливаются
+// через соответствующие интерфейсы AFTER создания.
 //
 // Rule 5: Возвращает готовую к использованию thread-safe структуру.
 // Rule 7: Никаких panic при nil конфигурации - валидация делегируется вызывающему.
-func NewCoreState(cfg *config.AppConfig, s3Client *s3storage.Client) *CoreState {
+func NewCoreState(cfg *config.AppConfig) *CoreState {
 	return &CoreState{
 		Config: cfg,
-		S3:     s3Client,
-		Todo:   todo.NewManager(),
-		// ToolsRegistry и Dictionaries устанавливаются после создания
-		Files:   make(map[string][]*s3storage.FileMeta),
-		History: make([]llm.Message, 0),
+		store:  make(map[string]any),
 	}
 }
 
-// SetDictionaries устанавливает справочники маркетплейсов.
+// ============================================================
+// UnifiedStore Interface Implementation
+// ============================================================
+
+// Get возвращает значение по ключу.
 //
-// Thread-safe метод для инициализации словарей после загрузки из API.
+// Возвращает (value, true) если ключ существует, (nil, false) иначе.
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) Get(key string) (any, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	val, ok := s.store[key]
+	return val, ok
+}
+
+// Set сохраняет значение по ключу.
 //
-// Rule 5: Thread-safe доступ к полям структуры.
-func (s *CoreState) SetDictionaries(dicts *wb.Dictionaries) {
+// Перезаписывает существующее значение или создает новое.
+// Thread-safe: запись защищена мьютексом.
+func (s *CoreState) Set(key string, value any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Dictionaries = dicts
+	s.store[key] = value
+	return nil
+}
+
+// Update атомарно обновляет значение по ключу.
+//
+// fn получает текущее значение (или nil если ключ не существует)
+// и должен вернуть новое значение.
+//
+// Thread-safe: вся операция атомарна под мьютексом.
+func (s *CoreState) Update(key string, fn func(any) any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current := s.store[key]
+	newValue := fn(current)
+
+	if newValue == nil {
+		// Если fn вернул nil - удаляем ключ
+		delete(s.store, key)
+	} else {
+		s.store[key] = newValue
+	}
+
+	return nil
+}
+
+// Delete удаляет значение по ключу.
+//
+// Если ключ не существует — возвращает ошибку.
+// Thread-safe: удаление защищено мьютексом.
+func (s *CoreState) Delete(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.store[key]; !ok {
+		return fmt.Errorf("key not found: %s", key)
+	}
+
+	delete(s.store, key)
+	return nil
+}
+
+// Exists проверяет существование ключа.
+//
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) Exists(key string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.store[key]
+	return ok
+}
+
+// List возвращает все ключи в хранилище.
+//
+// Порядок ключей не гарантирован.
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) List() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	keys := make([]string, 0, len(s.store))
+	for k := range s.store {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// ============================================================
+// MessageRepository Interface Implementation
+// ============================================================
+
+// Append добавляет сообщение в историю.
+//
+// Thread-safe: добавление защищено мьютексом.
+func (s *CoreState) Append(msg llm.Message) error {
+	return s.Update(KeyHistory, func(val any) any {
+		if val == nil {
+			return []llm.Message{msg}
+		}
+		history := val.([]llm.Message)
+		return append(history, msg)
+	})
+}
+
+// GetHistory возвращает копию всей истории диалога.
+//
+// Возвращает копию слайса для избежания race condition при изменении.
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) GetHistory() []llm.Message {
+	val, ok := s.Get(KeyHistory)
+	if !ok {
+		return []llm.Message{}
+	}
+
+	history := val.([]llm.Message)
+	dst := make([]llm.Message, len(history))
+	copy(dst, history)
+	return dst
+}
+
+// ============================================================
+// FileRepository Interface Implementation
+// ============================================================
+
+// SetFiles сохраняет файлы для текущей сессии.
+//
+// Принимает map[string][]*s3storage.FileMeta и сохраняет напрямую.
+// VisionDescription заполняется позже через UpdateFileAnalysis().
+//
+// Thread-safe: атомарная замена всей map файлов.
+func (s *CoreState) SetFiles(files map[string][]*s3storage.FileMeta) error {
+	return s.Set(KeyFiles, files)
+}
+
+// GetFiles возвращает копию текущих файлов.
+//
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) GetFiles() map[string][]*s3storage.FileMeta {
+	val, ok := s.Get(KeyFiles)
+	if !ok {
+		return make(map[string][]*s3storage.FileMeta)
+	}
+
+	files := val.(map[string][]*s3storage.FileMeta)
+	result := make(map[string][]*s3storage.FileMeta, len(files))
+	for k, v := range files {
+		result[k] = append([]*s3storage.FileMeta{}, v...)
+	}
+	return result
+}
+
+// UpdateFileAnalysis сохраняет результат работы Vision модели.
+//
+// Параметры:
+//   - tag: тег файла (ключ в map, например "sketch", "plm_data")
+//   - filename: имя файла для поиска в слайсе
+//   - description: результат анализа (текст от vision модели)
+//
+// Thread-safe: атомарно заменяет объект в слайсе под мьютексом.
+func (s *CoreState) UpdateFileAnalysis(tag string, filename string, description string) error {
+	return s.Update(KeyFiles, func(val any) any {
+		if val == nil {
+			utils.Error("UpdateFileAnalysis: files not found", "tag", tag, "filename", filename)
+			return val
+		}
+
+		files := val.(map[string][]*s3storage.FileMeta)
+		filesList, ok := files[tag]
+		if !ok {
+			utils.Error("UpdateFileAnalysis: tag not found", "tag", tag, "filename", filename)
+			return val
+		}
+
+		// Находим индекс файла и атомарно заменяем объект
+		for i := range filesList {
+			if filesList[i].Filename == filename {
+				// Создаем новый объект для thread-safety
+				updated := &s3storage.FileMeta{
+					Tag:               filesList[i].Tag,
+					OriginalKey:       filesList[i].OriginalKey,
+					Size:              filesList[i].Size,
+					Filename:          filesList[i].Filename,
+					VisionDescription: description,
+					Tags:              filesList[i].Tags,
+				}
+				filesList[i] = updated
+				utils.Debug("File analysis updated", "tag", tag, "filename", filename, "desc_length", len(description))
+				return files
+			}
+		}
+
+		utils.Warn("UpdateFileAnalysis: file not found", "tag", tag, "filename", filename)
+		return val
+	})
+}
+
+// ============================================================
+// TodoRepository Interface Implementation
+// ============================================================
+
+// AddTask добавляет новую задачу в план.
+//
+// Параметры:
+//   - description: описание задачи
+//   - metadata: опциональные метаданные (ключ-значение)
+//
+// Возвращает ID созданной задачи.
+// Thread-safe: делегирует thread-safe Manager.Add.
+func (s *CoreState) AddTask(description string, metadata ...map[string]interface{}) (int, error) {
+	manager := s.getTodoManager()
+	if manager == nil {
+		// Создаем новый менеджер если не существует
+		manager = todo.NewManager()
+		if err := s.Set(KeyTodo, manager); err != nil {
+			return 0, fmt.Errorf("failed to create todo manager: %w", err)
+		}
+	}
+
+	id := manager.Add(description, metadata...)
+	return id, nil
+}
+
+// CompleteTask отмечает задачу как выполненную.
+//
+// Возвращает ошибку если задача не найдена или уже завершена.
+// Thread-safe: делегирует thread-safe Manager.Complete.
+func (s *CoreState) CompleteTask(id int) error {
+	manager := s.getTodoManager()
+	if manager == nil {
+		return fmt.Errorf("todo manager not initialized")
+	}
+	return manager.Complete(id)
+}
+
+// FailTask отмечает задачу как проваленную.
+//
+// Параметры:
+//   - id: ID задачи
+//   - reason: причина неудачи
+//
+// Возвращает ошибку если задача не найдена или уже завершена.
+// Thread-safe: делегирует thread-safe Manager.Fail.
+func (s *CoreState) FailTask(id int, reason string) error {
+	manager := s.getTodoManager()
+	if manager == nil {
+		return fmt.Errorf("todo manager not initialized")
+	}
+	return manager.Fail(id, reason)
+}
+
+// GetTodoString возвращает строковое представление плана.
+//
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) GetTodoString() string {
+	manager := s.getTodoManager()
+	if manager == nil {
+		return ""
+	}
+	return manager.String()
+}
+
+// GetTodoStats возвращает статистику по задачам.
+//
+// Возвращает количество pending, done, failed задач.
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) GetTodoStats() (pending, done, failed int) {
+	manager := s.getTodoManager()
+	if manager == nil {
+		return 0, 0, 0
+	}
+	return manager.GetStats()
+}
+
+// GetTodoManager возвращает todo.Manager для использования в tools.
+//
+// ВНИМАНИЕ: Это метод для backward compatibility с tools которые
+// требуют *todo.Manager. Предпочтительно использовать TodoRepository методы.
+//
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) GetTodoManager() *todo.Manager {
+	val, ok := s.Get(KeyTodo)
+	if !ok {
+		return nil
+	}
+	return val.(*todo.Manager)
+}
+
+// getTodoManager — вспомогательный метод для получения todo.Manager.
+//
+// Возвращает nil если менеджер не инициализирован.
+func (s *CoreState) getTodoManager() *todo.Manager {
+	val, ok := s.Get(KeyTodo)
+	if !ok {
+		return nil
+	}
+	return val.(*todo.Manager)
+}
+
+// ============================================================
+// DictionaryRepository Interface Implementation
+// ============================================================
+
+// SetDictionaries устанавливает справочники маркетплейсов.
+//
+// Thread-safe: изменение защищено мьютексом.
+func (s *CoreState) SetDictionaries(dicts *wb.Dictionaries) error {
+	return s.Set(KeyDictionaries, dicts)
 }
 
 // GetDictionaries возвращает справочники маркетплейсов.
 //
-// Thread-safe метод для чтения словарей.
-//
-// Rule 5: Thread-safe доступ к полям структуры.
+// Thread-safe: чтение защищено мьютексом.
 func (s *CoreState) GetDictionaries() *wb.Dictionaries {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.Dictionaries
+	val, ok := s.Get(KeyDictionaries)
+	if !ok {
+		return nil
+	}
+	return val.(*wb.Dictionaries)
 }
 
-// GetS3 возвращает S3 клиент.
+// ============================================================
+// StorageRepository Interface Implementation
+// ============================================================
+
+// SetStorage устанавливает S3 клиент.
 //
-// Thread-safe метод для чтения S3 клиента.
-//
-// Rule 5: Thread-safe доступ к полям структуры.
-func (s *CoreState) GetS3() *s3storage.Client {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.S3
+// Если client == nil — очищает S3 из состояния.
+// Thread-safe: изменение защищено мьютексом.
+func (s *CoreState) SetStorage(client *s3storage.Client) error {
+	if client == nil {
+		return s.Delete(KeyStorage)
+	}
+	return s.Set(KeyStorage, client)
 }
 
-// GetTodo возвращает менеджер задач.
+// GetStorage возвращает S3 клиент.
 //
-// Thread-safe метод для чтения Todo менеджера.
-//
-// Rule 5: Thread-safe доступ к полям структуры.
-func (s *CoreState) GetTodo() *todo.Manager {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.Todo
+// Возвращает nil если S3 не установлен.
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) GetStorage() *s3storage.Client {
+	val, ok := s.Get(KeyStorage)
+	if !ok {
+		return nil
+	}
+	return val.(*s3storage.Client)
 }
+
+// HasStorage проверяет наличие S3 клиента.
+//
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) HasStorage() bool {
+	return s.Exists(KeyStorage)
+}
+
+// ============================================================
+// Helper Methods (backward compatibility)
+// ============================================================
 
 // SetToolsRegistry устанавливает реестр инструментов.
 //
@@ -139,10 +438,8 @@ func (s *CoreState) GetTodo() *todo.Manager {
 //
 // Rule 3: Все инструменты регистрируются через Registry.Register().
 // Rule 5: Thread-safe доступ к полям структуры.
-func (s *CoreState) SetToolsRegistry(registry *tools.Registry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ToolsRegistry = registry
+func (s *CoreState) SetToolsRegistry(registry *tools.Registry) error {
+	return s.Set(KeyToolsRegistry, registry)
 }
 
 // GetToolsRegistry возвращает реестр инструментов.
@@ -152,145 +449,16 @@ func (s *CoreState) SetToolsRegistry(registry *tools.Registry) {
 // Rule 3: Все инструменты вызываются через Registry.
 // Rule 5: Thread-safe доступ к полям структуры.
 func (s *CoreState) GetToolsRegistry() *tools.Registry {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.ToolsRegistry
-}
-
-// --- Thread-Safe History Methods (Rule 5) ---
-
-// AppendMessage безопасно добавляет сообщение в историю диалога.
-//
-// Thread-safe: защищен мьютексом от конкурентной записи.
-// Используется агентом для сохранения вопросов пользователя и ответов.
-//
-// Rule 5: Thread-safe доступ к History.
-// Rule 7: Никаких panic при некорректных данных.
-func (s *CoreState) AppendMessage(msg llm.Message) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.History = append(s.History, msg)
-}
-
-// GetHistory возвращает копию истории диалога.
-//
-// Thread-safe: защищен мьютексом от конкурентного чтения/записи.
-// Возвращает копию слайса, чтобы избежать race condition при изменении.
-//
-// Используется для:
-// - Рендера в UI
-// - Отправки в LLM
-// - Отладки и логирования
-//
-// Rule 5: Thread-safe доступ к History.
-func (s *CoreState) GetHistory() []llm.Message {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Возвращаем копию, чтобы избежать race condition
-	dst := make([]llm.Message, len(s.History))
-	copy(dst, s.History)
-	return dst
-}
-
-// ClearHistory очищает историю диалога.
-//
-// Thread-safe метод для сброса истории сообщений.
-// Используется для начала новой сессии или сброса контекста.
-//
-// Rule 5: Thread-safe доступ к History.
-func (s *CoreState) ClearHistory() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.History = make([]llm.Message, 0)
-}
-
-// --- Thread-Safe File Management (Working Memory Pattern) ---
-
-// UpdateFileAnalysis сохраняет результат работы Vision модели в "память" файла.
-//
-// Параметры:
-//   - tag: тег файла (ключ в map Files, например "sketch", "plm_data")
-//   - filename: имя файла для поиска в слайсе
-//   - description: результат анализа (текстовое описание от vision модели)
-//
-// Thread-safe: атомарно заменяет объект в слайсе под мьютексом.
-//
-// "Working Memory" паттерн: Vision модель анализирует изображение один раз,
-// результат сохраняется в FileMeta.VisionDescription и переиспользуется
-// в последующих вызовах LLM без повторной отправки изображения.
-//
-// Rule 5: Thread-safe доступ к Files.
-// Rule 7: Возвращает ошибку вместо panic при проблеме с поиском файла.
-func (s *CoreState) UpdateFileAnalysis(tag string, filename string, description string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	files, ok := s.Files[tag]
+	val, ok := s.Get(KeyToolsRegistry)
 	if !ok {
-		utils.Error("UpdateFileAnalysis: tag not found", "tag", tag, "filename", filename)
-		return
+		return nil
 	}
-
-	// Находим индекс файла и атомарно заменяем объект (thread-safe)
-	for i := range files {
-		if files[i].Filename == filename {
-			// Создаем новый объект для thread-safety
-			updated := &s3storage.FileMeta{
-				Tag:               files[i].Tag,
-				OriginalKey:       files[i].OriginalKey,
-				Size:              files[i].Size,
-				Filename:          files[i].Filename,
-				VisionDescription: description,
-				Tags:              files[i].Tags,
-			}
-			files[i] = updated
-			utils.Debug("File analysis updated", "tag", tag, "filename", filename, "desc_length", len(description))
-			return
-		}
-	}
-
-	// Файл не найден - логируем предупреждение
-	utils.Warn("UpdateFileAnalysis: file not found in state",
-		"tag", tag,
-		"filename", filename,
-		"available_files", len(files))
+	return val.(*tools.Registry)
 }
 
-// SetFiles устанавливает файлы для текущей сессии.
-//
-// Принимает map[string][]*s3storage.FileMeta и сохраняет напрямую.
-// VisionDescription заполняется позже через UpdateFileAnalysis().
-//
-// Thread-safe: атомарная замена всей map Files.
-//
-// Используется при смене артикула или начале новой сессии анализа.
-//
-// Rule 5: Thread-safe доступ к Files.
-func (s *CoreState) SetFiles(files map[string][]*s3storage.FileMeta) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Files = files
-}
-
-// GetFiles возвращает копию текущих файлов.
-//
-// Thread-safe метод для чтения файлов.
-//
-// Rule 5: Thread-safe доступ к Files.
-func (s *CoreState) GetFiles() map[string][]*s3storage.FileMeta {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Возвращаем копию map для thread-safety
-	result := make(map[string][]*s3storage.FileMeta, len(s.Files))
-	for k, v := range s.Files {
-		result[k] = append([]*s3storage.FileMeta{}, v...)
-	}
-	return result
-}
-
-// --- Context Building ---
+// ============================================================
+// Context Building
+// ============================================================
 
 // BuildAgentContext собирает полный контекст для генеративного запроса (ReAct).
 //
@@ -316,10 +484,14 @@ func (s *CoreState) BuildAgentContext(systemPrompt string) []llm.Message {
 
 	// 1. Формируем блок знаний из проанализированных файлов
 	var visualContext string
-	for tag, files := range s.Files {
-		for _, f := range files {
-			if f.VisionDescription != "" {
-				visualContext += fmt.Sprintf("- Файл [%s] %s: %s\n", tag, f.Filename, f.VisionDescription)
+	files, hasFiles := s.store[KeyFiles]
+	if hasFiles {
+		filesMap := files.(map[string][]*s3storage.FileMeta)
+		for tag, filesList := range filesMap {
+			for _, f := range filesList {
+				if f.VisionDescription != "" {
+					visualContext += fmt.Sprintf("- Файл [%s] %s: %s\n", tag, f.Filename, f.VisionDescription)
+				}
 			}
 		}
 	}
@@ -330,10 +502,24 @@ func (s *CoreState) BuildAgentContext(systemPrompt string) []llm.Message {
 	}
 
 	// 2. Формируем контекст плана
-	todoContext := s.Todo.String()
+	var todoContext string
+	todoVal, hasTodo := s.store[KeyTodo]
+	if hasTodo {
+		manager := todoVal.(*todo.Manager)
+		todoContext = manager.String()
+	}
 
-	// 3. Собираем итоговый массив сообщений
-	messages := make([]llm.Message, 0, len(s.History)+3)
+	// 3. Получаем историю
+	var history []llm.Message
+	historyVal, hasHistory := s.store[KeyHistory]
+	if hasHistory {
+		history = historyVal.([]llm.Message)
+	} else {
+		history = make([]llm.Message, 0)
+	}
+
+	// 4. Собираем итоговый массив сообщений
+	messages := make([]llm.Message, 0, len(history)+3)
 
 	// Системное сообщение с инъекцией знаний
 	messages = append(messages, llm.Message{
@@ -342,102 +528,31 @@ func (s *CoreState) BuildAgentContext(systemPrompt string) []llm.Message {
 	})
 
 	// Добавляем контекст плана
-	messages = append(messages, llm.Message{
-		Role:    llm.RoleSystem,
-		Content: todoContext,
-	})
+	if todoContext != "" && !strings.Contains(todoContext, "Нет активных задач") {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleSystem,
+			Content: todoContext,
+		})
+	}
 
 	// Добавляем историю переписки
-	messages = append(messages, s.History...)
+	messages = append(messages, history...)
 
 	return messages
 }
 
-// --- Todo Management (delegates to todo.Manager) ---
+// ============================================================
+// Compile-time Interface Compliance Checks
+// ============================================================
 
-// AddTodoTask безопасно добавляет новую задачу в план.
+// Проверки вызовут ошибку компиляции если CoreState не реализует интерфейсы.
 //
-// Параметры:
-//   - description: описание задачи
-//   - metadata: опциональные метаданные (ключ-значение)
-//
-// Возвращает ID созданной задачи.
-//
-// Thread-safe: делегирует thread-safe Manager.Add под защитой мьютекса.
-//
-// Rule 5: Thread-safe доступ к Todo.
-func (s *CoreState) AddTodoTask(description string, metadata ...map[string]interface{}) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.Todo.Add(description, metadata...)
-}
-
-// CompleteTodoTask безопасно отмечает задачу как выполненную.
-//
-// Параметры:
-//   - id: ID задачи для завершения
-//
-// Возвращает ошибку если задача не найдена или уже завершена.
-//
-// Thread-safe: делегирует thread-safe Manager.Complete под защитой мьютекса.
-//
-// Rule 5: Thread-safe доступ к Todo.
-// Rule 7: Возвращает ошибку вместо panic.
-func (s *CoreState) CompleteTodoTask(id int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.Todo.Complete(id)
-}
-
-// FailTodoTask безопасно отмечает задачу как проваленную.
-//
-// Параметры:
-//   - id: ID задачи
-//   - reason: причина неудачи
-//
-// Возвращает ошибку если задача не найдена или уже завершена.
-//
-// Thread-safe: делегирует thread-safe Manager.Fail под защитой мьютекса.
-//
-// Rule 5: Thread-safe доступ к Todo.
-// Rule 7: Возвращает ошибку вместо panic.
-func (s *CoreState) FailTodoTask(id int, reason string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.Todo.Fail(id, reason)
-}
-
-// GetTodoString возвращает строковое представление плана задач.
-//
-// Thread-safe метод для чтения состояния todo листа.
-//
-// Rule 5: Thread-safe доступ к Todo.
-func (s *CoreState) GetTodoString() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.Todo.String()
-}
-
-// GetTodoStats возвращает статистику по задачам.
-//
-// Возвращает количество pending, done, failed задач.
-//
-// Thread-safe метод для чтения статистики.
-//
-// Rule 5: Thread-safe доступ к Todo.
-func (s *CoreState) GetTodoStats() (pending, done, failed int) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.Todo.GetStats()
-}
-
-// ClearTodo очищает все задачи.
-//
-// Thread-safe метод для сброса todo листа.
-//
-// Rule 5: Thread-safe доступ к Todo.
-func (s *CoreState) ClearTodo() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Todo.Clear()
-}
+// Rule 10: Interface compliance проверки должны быть в коде.
+var (
+	_ UnifiedStore        = (*CoreState)(nil) // ✅ CoreState implements UnifiedStore
+	_ MessageRepository   = (*CoreState)(nil) // ✅ CoreState implements MessageRepository
+	_ FileRepository      = (*CoreState)(nil) // ✅ CoreState implements FileRepository
+	_ TodoRepository      = (*CoreState)(nil) // ✅ CoreState implements TodoRepository
+	_ DictionaryRepository = (*CoreState)(nil) // ✅ CoreState implements DictionaryRepository
+	_ StorageRepository   = (*CoreState)(nil) // ✅ CoreState implements StorageRepository
+)

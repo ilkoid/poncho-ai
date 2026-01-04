@@ -278,12 +278,13 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 			articleID := args[0]
 
 			// 1. Получаем "сырой" список файлов из S3
-			// (Предполагаем, что state.S3 уже инициализирован в main.go)
-			if state.S3 == nil {
+			// REFACTORED 2026-01-04: state.S3 → state.GetStorage()
+			s3Client := state.GetStorage()
+			if s3Client == nil {
 				return app.CommandResultMsg{Err: fmt.Errorf("s3 client is not initialized")}
 			}
 
-			rawObjects, err := state.S3.ListFiles(ctx, articleID)
+			rawObjects, err := s3Client.ListFiles(ctx, articleID)
 			if err != nil {
 				return app.CommandResultMsg{Err: fmt.Errorf("s3 error: %w", err)}
 			}
@@ -377,12 +378,17 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 		// === КОМАНДА 3: DEMO ===
 		// Добавляет тестовые задачи для проверки отображения todo панели
 		case "demo":
-			state.Todo.Add("Проверить API Wildberries")
-			state.Todo.Add("Загрузить эскизы из S3")
-			state.Todo.Add("Сгенерировать описание товара")
-			taskID := state.Todo.Add("Провалить эту задачу для теста")
-			state.Todo.Complete(2)
-			state.Todo.Fail(taskID, "Тестовая ошибка")
+			// REFACTORED 2026-01-04: state.Todo → state.GetTodoManager()
+			todoManager := state.GetTodoManager()
+			if todoManager == nil {
+				return app.CommandResultMsg{Err: fmt.Errorf("todo manager not initialized")}
+			}
+			todoManager.Add("Проверить API Wildberries")
+			todoManager.Add("Загрузить эскизы из S3")
+			todoManager.Add("Сгенерировать описание товара")
+			taskID := todoManager.Add("Провалить эту задачу для теста")
+			todoManager.Complete(2)
+			todoManager.Fail(taskID, "Тестовая ошибка")
 			return app.CommandResultMsg{Output: "✅ Added 4 demo todos (1 done, 1 failed, 2 pending)"}
 
 		// === КОМАНДА 4: PING ===

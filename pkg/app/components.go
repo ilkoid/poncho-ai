@@ -140,13 +140,17 @@ func InitializeConfig(finder ConfigPathFinder) (*config.AppConfig, string, error
 func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Components, error) {
 	utils.Info("Initializing components", "maxIters", maxIters)
 
-	// 1. Инициализируем S3 клиент
+	// 1. Инициализируем S3 клиент (ОПЦИОНАЛЬНО)
+	// REFACTORED 2026-01-04: S3 теперь опционален, ошибка не прерывает инициализацию
+	var s3Client *s3storage.Client
 	s3Client, err := s3storage.New(cfg.S3)
 	if err != nil {
-		utils.Error("S3 client creation failed", "error", err)
-		return nil, fmt.Errorf("failed to create S3 client: %w", err)
+		utils.Warn("S3 client creation failed, continuing without S3", "error", err)
+		// НЕ прерываем инициализацию - S3 опционален
+		s3Client = nil
+	} else {
+		utils.Info("S3 client initialized", "bucket", cfg.S3.Bucket)
 	}
-	utils.Info("S3 client initialized", "bucket", cfg.S3.Bucket)
 
 	// 2. Инициализируем WB клиент из конфигурации
 	var wbClient *wb.Client
@@ -197,9 +201,19 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 		}
 	}
 
-	// 4. СоздаёмAppState (thread-safe)
-	state := app.NewAppState(cfg, s3Client)
+	// 4. Создаём AppState (thread-safe)
+	// REFACTORED 2026-01-04: NewAppState больше не требует s3Client
+	state := app.NewAppState(cfg)
 	state.SetDictionaries(dicts) // Сохраняем справочники в CoreState
+
+	// Устанавливаем S3 клиент опционально
+	if s3Client != nil {
+		if err := state.SetStorage(s3Client); err != nil {
+			utils.Warn("Failed to set S3 client in state", "error", err)
+		} else {
+			utils.Info("S3 client set in CoreState")
+		}
+	}
 
 	// 5. Регистрируем Todo команды
 	app.SetupTodoCommands(state.CommandRegistry, state)
@@ -373,11 +387,6 @@ func Execute(c *Components, query string, timeout time.Duration) (*ExecutionResu
 	return result, nil
 }
 
-// ClearTodos очищает todo лист после выполнения.
-func (c *Components) ClearTodos() {
-	c.State.ClearTodo()
-}
-
 // SetupTools регистрирует инструменты из YAML конфигурации.
 //
 // Правило 3: все инструменты регистрируются через Registry.Register().
@@ -536,19 +545,19 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 
 	// === S3 Basic Tools ===
 	if toolCfg, exists := getToolCfg("list_s3_files"); exists && toolCfg.Enabled {
-		if err := register("list_s3_files", std.NewS3ListTool(state.GetS3())); err != nil {
+		if err := register("list_s3_files", std.NewS3ListTool(state.GetStorage())); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("read_s3_object"); exists && toolCfg.Enabled {
-		if err := register("read_s3_object", std.NewS3ReadTool(state.GetS3())); err != nil {
+		if err := register("read_s3_object", std.NewS3ReadTool(state.GetStorage())); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("read_s3_image"); exists && toolCfg.Enabled {
-		tool := std.NewS3ReadImageTool(state.GetS3(), cfg.ImageProcessing)
+		tool := std.NewS3ReadImageTool(state.GetStorage(), cfg.ImageProcessing)
 		if err := register("read_s3_image", tool); err != nil {
 			return err
 		}
@@ -557,7 +566,7 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 	// === S3 Batch Tools ===
 	if toolCfg, exists := getToolCfg("classify_and_download_s3_files"); exists && toolCfg.Enabled {
 		tool := std.NewClassifyAndDownloadS3Files(
-			state.GetS3(),
+			state.GetStorage(),
 			state,
 			cfg.ImageProcessing,
 			cfg.FileRules,
@@ -582,7 +591,7 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 
 		tool := std.NewAnalyzeArticleImagesBatch(
 			state,
-			state.GetS3(), // S3 клиент для скачивания изображений
+			state.GetStorage(), // S3 клиент для скачивания изображений
 			visionLLM,
 			visionPrompt,
 			cfg.ImageProcessing,
@@ -595,25 +604,25 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 
 	// === Planner Tools ===
 	if toolCfg, exists := getToolCfg("plan_add_task"); exists && toolCfg.Enabled {
-		if err := register("plan_add_task", std.NewPlanAddTaskTool(state.GetTodo(), toolCfg)); err != nil {
+		if err := register("plan_add_task", std.NewPlanAddTaskTool(state.GetTodoManager(), toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_mark_done"); exists && toolCfg.Enabled {
-		if err := register("plan_mark_done", std.NewPlanMarkDoneTool(state.GetTodo(), toolCfg)); err != nil {
+		if err := register("plan_mark_done", std.NewPlanMarkDoneTool(state.GetTodoManager(), toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_mark_failed"); exists && toolCfg.Enabled {
-		if err := register("plan_mark_failed", std.NewPlanMarkFailedTool(state.GetTodo(), toolCfg)); err != nil {
+		if err := register("plan_mark_failed", std.NewPlanMarkFailedTool(state.GetTodoManager(), toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_clear"); exists && toolCfg.Enabled {
-		if err := register("plan_clear", std.NewPlanClearTool(state.GetTodo(), toolCfg)); err != nil {
+		if err := register("plan_clear", std.NewPlanClearTool(state.GetTodoManager(), toolCfg)); err != nil {
 			return err
 		}
 	}

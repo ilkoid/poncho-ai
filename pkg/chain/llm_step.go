@@ -136,11 +136,14 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 	}
 
 	// 7. Добавляем assistant message в историю (thread-safe)
-	chainCtx.AppendMessage(llm.Message{
-		Role:       llm.RoleAssistant,
-		Content:    response.Content,
-		ToolCalls:  response.ToolCalls,
-	})
+	// REFACTORED 2026-01-04: AppendMessage теперь возвращает ошибку
+	if err := chainCtx.AppendMessage(llm.Message{
+		Role:      llm.RoleAssistant,
+		Content:   response.Content,
+		ToolCalls: response.ToolCalls,
+	}); err != nil {
+		return ActionError, fmt.Errorf("failed to append assistant message: %w", err)
+	}
 
 	// 8. Сохраняем фактические параметры модели в контексте
 	chainCtx.SetActualModel(opts.Model)

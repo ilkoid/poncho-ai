@@ -3,43 +3,52 @@ package chain
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
+	"github.com/ilkoid/poncho-ai/pkg/state"
 )
 
 // ChainContext содержит состояние выполнения цепочки.
 //
 // Thread-safe через sync.RWMutex (Rule 5).
 // Все изменения состояния должны проходить через методы этого типа.
+//
+// REFACTORED 2026-01-04: Удалено дублирующее поле messages.
+// Теперь используется state.CoreState как единый source of truth для истории.
 type ChainContext struct {
 	mu sync.RWMutex
 
 	// Входные данные (неизменяемые после создания)
 	Input *ChainInput
 
+	// Ссылка на CoreState (единый source of truth для истории)
+	// Rule 6: Используем pkg/state.CoreState вместо дублирования
+	State *state.CoreState
+
 	// Текущее состояние
 	currentIteration int
-	messages          []llm.Message
 
 	// Post-prompt состояние
-	activePostPrompt     string
-	activePromptConfig   *prompt.PromptConfig
+	activePostPrompt   string
+	activePromptConfig *prompt.PromptConfig
 
 	// LLM параметры текущей итерации (определяются в runtime)
-	actualModel       string
-	actualTemperature  float64
-	actualMaxTokens   int
+	actualModel      string
+	actualTemperature float64
+	actualMaxTokens  int
 }
 
 // NewChainContext создаёт новый контекст выполнения цепочки.
+//
+// REFACTORED 2026-01-04: Теперь требует state.CoreState как обязательный параметр.
+// История сообщений хранится в CoreState, ChainContext не дублирует данные.
 func NewChainContext(input ChainInput) *ChainContext {
 	return &ChainContext{
 		Input:            &input,
+		State:            input.State, // CoreState из ChainInput
 		currentIteration: 0,
-		messages:         make([]llm.Message, 0, 10),
 	}
 }
 
@@ -65,47 +74,63 @@ func (c *ChainContext) IncrementIteration() int {
 	return c.currentIteration
 }
 
-// GetMessages возвращает копию сообщений (thread-safe).
-func (c *ChainContext) GetMessages() []llm.Message {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+// ============================================================
+// Message Methods (делегируют в CoreState)
+// ============================================================
 
-	// Возвращаем копию для избежания race conditions
-	result := make([]llm.Message, len(c.messages))
-	copy(result, c.messages)
-	return result
+// GetMessages возвращает копию сообщений из CoreState (thread-safe).
+//
+// REFACTORED 2026-01-04: Теперь делегирует в CoreState.GetHistory().
+// Раньше дублировало историю в c.messages.
+func (c *ChainContext) GetMessages() []llm.Message {
+	return c.State.GetHistory()
 }
 
-// GetLastMessage возвращает последнее сообщение (thread-safe).
+// GetLastMessage возвращает последнее сообщение из CoreState (thread-safe).
+//
+// REFACTORED 2026-01-04: Теперь использует CoreState.GetHistory().
 func (c *ChainContext) GetLastMessage() *llm.Message {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if len(c.messages) == 0 {
+	history := c.State.GetHistory()
+	if len(history) == 0 {
 		return nil
 	}
 	// Возвращаем копию
-	msg := c.messages[len(c.messages)-1]
+	msg := history[len(history)-1]
 	return &msg
 }
 
-// AppendMessage добавляет сообщение в историю (thread-safe).
-func (c *ChainContext) AppendMessage(msg llm.Message) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.messages = append(c.messages, msg)
+// AppendMessage добавляет сообщение в историю CoreState (thread-safe).
+//
+// REFACTORED 2026-01-04: Теперь делегирует в CoreState.Append().
+// Раньше дублировало историю в c.messages.
+func (c *ChainContext) AppendMessage(msg llm.Message) error {
+	return c.State.Append(msg)
 }
 
-// SetMessages заменяет список сообщений (thread-safe).
+// SetMessages заменяет список сообщений в CoreState (thread-safe).
+//
+// REFACTORED 2026-01-04: Теперь очищает историю в CoreState и добавляет новые сообщения.
 // Используется для восстановления состояния.
-func (c *ChainContext) SetMessages(msgs []llm.Message) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *ChainContext) SetMessages(msgs []llm.Message) error {
+	// Очищаем текущую историю через Update с возвратом пустого слайса
+	// REFACTORED 2026-01-04: ClearHistory() удален, используем Set напрямую
+	if err := c.State.Set(state.KeyHistory, []llm.Message{}); err != nil {
+		return fmt.Errorf("failed to clear history: %w", err)
+	}
 
-	c.messages = make([]llm.Message, len(msgs))
-	copy(c.messages, msgs)
+	// Добавляем все сообщения
+	for _, msg := range msgs {
+		if err := c.State.Append(msg); err != nil {
+			return fmt.Errorf("failed to append message: %w", err)
+		}
+	}
+
+	return nil
 }
+
+// ============================================================
+// Post-prompt Methods
+// ============================================================
 
 // GetActivePostPrompt возвращает активный post-prompt (thread-safe).
 func (c *ChainContext) GetActivePostPrompt() string {
@@ -140,6 +165,10 @@ func (c *ChainContext) ClearActivePostPrompt() {
 	c.activePostPrompt = ""
 	c.activePromptConfig = nil
 }
+
+// ============================================================
+// LLM Parameters Methods
+// ============================================================
 
 // GetActualModel возвращает модель для текущей итерации (thread-safe).
 func (c *ChainContext) GetActualModel() string {
@@ -183,51 +212,31 @@ func (c *ChainContext) SetActualMaxTokens(tokens int) {
 	c.actualMaxTokens = tokens
 }
 
+// ============================================================
+// Context Building
+// ============================================================
+
 // BuildContextMessages формирует сообщения для LLM на основе текущего состояния (thread-safe).
+//
+// REFACTORED 2026-01-04: Теперь использует CoreState.BuildAgentContext()
+// который собирает полный контекст (системный промпт, рабочая память,
+// контекст плана, история диалога).
 //
 // Использует активный post-prompt если установлен.
 func (c *ChainContext) BuildContextMessages(systemPrompt string) []llm.Message {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
+	activePostPrompt := c.activePostPrompt
+	c.mu.RUnlock()
 
 	// Определяем системный промпт
 	actualSystemPrompt := systemPrompt
-	if c.activePostPrompt != "" {
-		actualSystemPrompt = c.activePostPrompt
+	if activePostPrompt != "" {
+		actualSystemPrompt = activePostPrompt
 	}
 
-	// Формируем сообщения
-	messages := make([]llm.Message, 0, len(c.messages)+2)
-
-	// Системный промпт
-	if actualSystemPrompt != "" {
-		messages = append(messages, llm.Message{
-			Role:    llm.RoleSystem,
-			Content: actualSystemPrompt,
-		})
-	}
-
-	// История диалога
-	messages = append(messages, c.messages...)
+	// Используем CoreState.BuildAgentContext для сборки полного контекста
+	// REFACTORED: Раньше использовали c.messages (дублирование)
+	messages := c.State.BuildAgentContext(actualSystemPrompt)
 
 	return messages
-}
-
-// String возвращает строковое представление контекста (для дебага).
-func (c *ChainContext) String() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	var sb strings.Builder
-	sb.WriteString("ChainContext{")
-	sb.WriteString(fmt.Sprintf("Iteration: %d, ", c.currentIteration))
-	sb.WriteString(fmt.Sprintf("Messages: %d, ", len(c.messages)))
-	sb.WriteString(fmt.Sprintf("Model: %s, ", c.actualModel))
-	sb.WriteString(fmt.Sprintf("Temp: %.2f", c.actualTemperature))
-	if c.activePostPrompt != "" {
-		sb.WriteString(fmt.Sprintf(", PostPrompt: %s", c.activePostPrompt))
-	}
-	sb.WriteString("}")
-
-	return sb.String()
 }

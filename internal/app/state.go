@@ -68,18 +68,22 @@ type userChoiceData struct {
 
 // NewAppState создает новое состояние приложения.
 //
+// REFACTORED 2026-01-04: Конструктор больше не требует s3Client.
+// S3 client может быть установлен позже через CoreState.SetStorage() если нужен.
+//
 // Инициализирует CoreState через state.NewCoreState() и
 // устанавливает application-specific значения по умолчанию.
 //
 // Rule 5: Thread-safe структура с инициализированными мьютексами.
 // Rule 6: Использует framework core через pkg/state.
-func NewAppState(cfg *config.AppConfig, s3Client *s3storage.Client) *AppState {
-	coreState := state.NewCoreState(cfg, s3Client)
+func NewAppState(cfg *config.AppConfig) *AppState {
+	coreState := state.NewCoreState(cfg)
 
 	return &AppState{
 		CoreState:       coreState,
 		CommandRegistry: NewCommandRegistry(),
 		// ToolsRegistry будет установлен позже через pkg/app/components.Initialize()
+		// S3 client может быть установлен позже через CoreState.SetStorage()
 		// Orchestrator будет установлен позже
 		CurrentArticleID: "NONE",
 		CurrentModel:     cfg.Models.DefaultVision,

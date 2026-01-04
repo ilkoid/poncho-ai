@@ -132,7 +132,8 @@ func (m MainModel) View() string {
 	)
 
 	// Добавляем Todo панель справа
-	todoPanel := RenderTodoPanel(m.appState.Todo, 40)
+	// REFACTORED 2026-01-04: m.appState.Todo → m.appState.GetTodoManager()
+	todoPanel := RenderTodoPanel(m.appState.GetTodoManager(), 40)
 
 	// Комбинируем основной контент с Todo панелью
 	return lipgloss.JoinHorizontal(lipgloss.Top,

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ilkoid/poncho-ai/pkg/todo"
 )
 
 // CommandHandler — тип функции-обработчика команды.
@@ -109,7 +110,11 @@ func SetupTodoCommands(registry *CommandRegistry, state *AppState) {
 					return CommandResultMsg{Err: fmt.Errorf("использование: todo add <description>")}
 				}
 				description := strings.Join(args[1:], " ")
-				id := state.AddTodoTask(description)
+				// REFACTORED 2026-01-04: AddTodoTask → AddTask, теперь возвращает (int, error)
+				id, err := state.AddTask(description)
+				if err != nil {
+					return CommandResultMsg{Err: fmt.Errorf("ошибка добавления задачи: %w", err)}
+				}
 				return CommandResultMsg{Output: fmt.Sprintf("✅ Добавлена задача %d: %s", id, description)}
 
 			case "done":
@@ -120,7 +125,8 @@ func SetupTodoCommands(registry *CommandRegistry, state *AppState) {
 				if err != nil {
 					return CommandResultMsg{Err: fmt.Errorf("неверный ID задачи: %w", err)}
 				}
-				if err := state.CompleteTodoTask(id); err != nil {
+				// REFACTORED 2026-01-04: CompleteTodoTask → CompleteTask
+				if err := state.CompleteTask(id); err != nil {
 					return CommandResultMsg{Err: err}
 				}
 				return CommandResultMsg{Output: fmt.Sprintf("✅ Задача %d выполнена", id)}
@@ -134,13 +140,17 @@ func SetupTodoCommands(registry *CommandRegistry, state *AppState) {
 					return CommandResultMsg{Err: fmt.Errorf("неверный ID задачи: %w", err)}
 				}
 				reason := strings.Join(args[2:], " ")
-				if err := state.FailTodoTask(id, reason); err != nil {
+				// REFACTORED 2026-01-04: FailTodoTask → FailTask
+				if err := state.FailTask(id, reason); err != nil {
 					return CommandResultMsg{Err: err}
 				}
 				return CommandResultMsg{Output: fmt.Sprintf("❌ Задача %d провалена: %s", id, reason)}
 
 			case "clear":
-				state.ClearTodo()
+				// REFACTORED 2026-01-04: ClearTodo() удален, используем Set напрямую
+				if err := state.Set("todo", todo.NewManager()); err != nil {
+					return CommandResultMsg{Err: err}
+				}
 				return CommandResultMsg{Output: "🗑️ План очищен"}
 
 			case "help":

@@ -169,10 +169,13 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, error
 	utils.Info("=== Orchestrator.Run STARTED ===", "query", userQuery)
 
 	// 1. Добавляем user query в историю (thread-safe)
-	o.state.AppendMessage(llm.Message{
+	// REFACTORED 2026-01-04: AppendMessage → Append, теперь возвращает ошибку
+	if err := o.state.Append(llm.Message{
 		Role:    llm.RoleUser,
 		Content: userQuery,
-	})
+	}); err != nil {
+		return "", fmt.Errorf("failed to append user message: %w", err)
+	}
 
 	// 2. Формируем ChainInput
 	// Rule 6: Передаем CoreState в chain (framework logic)
@@ -198,7 +201,7 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, error
 	}
 
 	// 5. Логируем planner tools (agent-specific логика)
-	// TODO: добавить planner detection в chain или оставить здесь
+	// Planner detection пока не реализовано - tools выполняются без дополнительной обработки
 
 	utils.Info("=== Orchestrator.Run COMPLETED ===",
 		"iterations", output.Iterations,
@@ -210,13 +213,6 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, error
 	}
 
 	return output.Result, nil
-}
-
-// ClearHistory очищает историю диалога в AppState.
-//
-// Thread-safe: делегирует в CoreState.ClearHistory().
-func (o *Orchestrator) ClearHistory() {
-	o.state.ClearHistory()
 }
 
 // GetHistory возвращает копию истории диалога.
