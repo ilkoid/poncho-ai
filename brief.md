@@ -269,6 +269,76 @@ output, err := reactChain.Execute(ctx, chain.ChainInput{
 - Dual pattern support
 - YAML-configurable
 
+### 3.3.1 Simple Agent API (`pkg/agent/`)
+
+**NEW (2026-01-08)**: Ultra-simple facade for creating AI agents in **2 lines**.
+
+**Problem Solved**: Original API required 50+ lines of boilerplate code.
+
+**Comparison**:
+
+| Aspect | Old API | New API |
+|--------|---------|---------|
+| Lines of code | 50+ | 2 |
+| Concepts | Config, Components, ReActCycle, ChainInput | Client |
+| Imports | 8+ packages | 1 package |
+
+**Usage Examples**:
+
+**Basic (80% use cases)**:
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/ilkoid/poncho-ai/pkg/agent"
+)
+
+func main() {
+    client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+    result, _ := client.Run(context.Background(), "Find products under 1000₽")
+    fmt.Println(result)
+}
+```
+
+**With Custom Tool**:
+```go
+client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+client.RegisterTool(&MyPriceCheckerTool{})
+result, _ := client.Run(ctx, "Check price of SKU123")
+```
+
+**Advanced Access** (when needed):
+```go
+registry := client.GetModelRegistry()  // Direct model access
+tools := client.GetToolsRegistry()     // Direct tool access
+state := client.GetState()             // Direct CoreState access
+cfg := client.GetConfig()              // Direct config access
+```
+
+**What `agent.New()` does automatically**:
+1. Loads `config.yaml`
+2. Creates S3 client (optional)
+3. Creates WB client
+4. Loads WB dictionaries
+5. Creates CoreState
+6. Creates ModelRegistry
+7. Creates ToolsRegistry
+8. Registers tools (only `enabled: true`)
+9. Loads system prompt and post-prompts
+10. Creates ReActCycle with debug recorder
+
+**Architecture**:
+- Facade pattern over `ReActCycle`
+- No circular imports (Agent interface in `pkg/chain/agent.go`)
+- Thread-safe
+- Compatible with both TUI and CLI
+
+**Examples**:
+- `cmd/simple-agent/main.go` - Basic usage
+- `cmd/wb-ping-util-v2/main.go` - Comparison with old API
+
 ### 3.4 State Management (Repository Pattern)
 
 **Architecture**: Layered repository with unified storage.
@@ -777,7 +847,7 @@ The framework follows **"Convention over Configuration"** - developers follow si
 
 ---
 
-**Last Updated**: 2026-01-07
-**Version**: 3.2 (Rule 6 Refactor: pkg/app independent from internal/)
+**Last Updated**: 2026-01-08
+**Version**: 3.3 (Simple Agent API: pkg/agent with 2-line usage)
 
 **Maintainer**: Poncho AI Development Team

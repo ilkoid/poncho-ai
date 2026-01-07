@@ -134,11 +134,68 @@ Implements both **Chain** and **Agent** interfaces:
 output, err := reactChain.Execute(ctx, chain.ChainInput{...})
 
 // Agent - simple
-result, err := reactChain.Run(ctx, query)
-history := reactChain.GetHistory()
+result, err := reactCycle.Run(ctx, query)
+history := reactCycle.GetHistory()
 ```
 
 **Note**: `internal/agent/orchestrator.go` was DELETED. Use ReActCycle instead.
+
+### Simple Agent API (`pkg/agent/`)
+
+**NEW (2026-01-08)**: Ultra-simple API for creating AI agents in **2 lines**.
+
+```go
+// Before (50+ lines of boilerplate):
+cfg, _ := config.Load(path)
+comps, _ := app.Initialize(cfg, 10, "")
+cycleConfig := chain.ReActCycleConfig{...}
+reactCycle := chain.NewReActCycle(cycleConfig)
+reactCycle.SetModelRegistry(...)
+reactCycle.SetRegistry(...)
+reactCycle.SetState(...)
+input := chain.ChainInput{...}
+output, _ := reactCycle.Execute(ctx, input)
+
+// After (2 lines):
+client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+result, _ := client.Run(ctx, query)
+```
+
+**Basic Usage**:
+```go
+import "github.com/ilkoid/poncho-ai/pkg/agent"
+
+func main() {
+    client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+    result, _ := client.Run(context.Background(), "Find products under 1000₽")
+    fmt.Println(result)
+}
+```
+
+**With Custom Tool**:
+```go
+client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+client.RegisterTool(&MyPriceChecker{})
+result, _ := client.Run(ctx, "Check price of SKU123")
+```
+
+**Advanced Access** (when needed):
+```go
+registry := client.GetModelRegistry()  // Direct model access
+tools := client.GetToolsRegistry()     // Direct tool access
+state := client.GetState()             // Direct CoreState access
+cfg := client.GetConfig()              // Direct config access
+```
+
+**Features**:
+- ✅ Auto-loads config.yaml
+- ✅ Auto-registers tools (only `enabled: true`)
+- ✅ Creates ModelRegistry, ToolsRegistry, CoreState automatically
+- ✅ Thread-safe
+- ✅ Compatible with both TUI and CLI
+- ✅ No circular imports (Agent interface in `pkg/chain`)
+
+**Architecture**: Facade pattern over `ReActCycle`. See `cmd/simple-agent/` and `cmd/wb-ping-util-v2/` for examples.
 
 ### Tool Post-Prompts
 
