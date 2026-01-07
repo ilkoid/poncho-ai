@@ -30,13 +30,13 @@ type UnifiedStore interface {
 	//
 	// Возвращает (value, true) если ключ существует, (nil, false) иначе.
 	// Thread-safe: чтение защищено мьютексом.
-	Get(key string) (any, bool)
+	Get(key Key) (any, bool)
 
 	// Set сохраняет значение по ключу.
 	//
 	// Перезаписывает существующее значение или создает новое.
 	// Thread-safe: запись защищена мьютексом.
-	Set(key string, value any) error
+	Set(key Key, value any) error
 
 	// Update атомарно обновляет значение по ключу.
 	//
@@ -44,30 +44,30 @@ type UnifiedStore interface {
 	// и должен вернуть новое значение. Если fn возвращает nil — ключ удаляется.
 	//
 	// Пример:
-	//   state.Update("counter", func(val any) any {
+	//   state.Update(state.Key("counter"), func(val any) any {
 	//       if val == nil { return 1 }
 	//       return val.(int) + 1
 	//   })
 	//
 	// Thread-safe: вся операция атомарна под мьютексом.
-	Update(key string, fn func(any) any) error
+	Update(key Key, fn func(any) any) error
 
 	// Delete удаляет значение по ключу.
 	//
 	// Если ключ не существует — возвращает ошибку.
 	// Thread-safe: удаление защищено мьютексом.
-	Delete(key string) error
+	Delete(key Key) error
 
 	// Exists проверяет существование ключа.
 	//
 	// Thread-safe: чтение защищено мьютексом.
-	Exists(key string) bool
+	Exists(key Key) bool
 
 	// List возвращает все ключи в хранилище.
 	//
 	// Порядок ключей не гарантирован.
 	// Thread-safe: чтение защищено мьютексом.
-	List() []string
+	List() []Key
 }
 
 // MessageRepository — репозиторий для истории диалога (User <-> Agent).

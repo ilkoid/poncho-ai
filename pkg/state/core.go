@@ -79,10 +79,10 @@ func NewCoreState(cfg *config.AppConfig) *CoreState {
 //
 // Возвращает (value, true) если ключ существует, (nil, false) иначе.
 // Thread-safe: чтение защищено мьютексом.
-func (s *CoreState) Get(key string) (any, bool) {
+func (s *CoreState) Get(key Key) (any, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	val, ok := s.store[key]
+	val, ok := s.store[string(key)]
 	return val, ok
 }
 
@@ -90,10 +90,83 @@ func (s *CoreState) Get(key string) (any, bool) {
 //
 // Перезаписывает существующее значение или создает новое.
 // Thread-safe: запись защищена мьютексом.
-func (s *CoreState) Set(key string, value any) error {
+func (s *CoreState) Set(key Key, value any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.store[key] = value
+	s.store[string(key)] = value
+	return nil
+}
+
+// ============================================================
+// Generic Type-Safe Helper Functions (Go 1.18+)
+// ============================================================
+
+// GetType обеспечивает type-safe доступ к значениям CoreState.
+//
+// Generic параметр T - тип возвращаемого значения.
+// Возвращает (value, true) если ключ существует и тип совпадает, (zero, false) иначе.
+// Thread-safe: чтение защищено мьютексом.
+//
+// Пример:
+//   dicts, ok := state.GetType[*wb.Dictionaries](coreState, state.KeyDictionaries)
+func GetType[T any](s *CoreState, key Key) (T, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	val, ok := s.store[string(key)]
+	if !ok {
+		var zero T
+		return zero, false
+	}
+
+	typed, ok := val.(T)
+	if !ok {
+		var zero T
+		return zero, false
+	}
+
+	return typed, true
+}
+
+// SetType обеспечивает type-safe сохранение значений в CoreState.
+//
+// Generic параметр T - тип сохраняемого значения.
+// Перезаписывает существующее значение или создает новое.
+// Thread-safe: запись защищена мьютексом.
+//
+// Пример:
+//   state.SetType[*wb.Dictionaries](coreState, state.KeyDictionaries, dicts)
+func SetType[T any](s *CoreState, key Key, value T) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.store[string(key)] = value
+	return nil
+}
+
+// UpdateType атомарно обновляет значение в CoreState с типизацией.
+//
+// Generic параметр T - тип значения.
+// fn получает текущее значение (или zero если ключ не существует)
+// и должен вернуть новое значение.
+// Thread-safe: вся операция атомарна под мьютексом.
+//
+// Пример:
+//   state.UpdateType[*todo.Manager](coreState, state.KeyTodo, func(m *todo.Manager) *todo.Manager {
+//       m.Add("new task")
+//       return m
+//   })
+func UpdateType[T any](s *CoreState, key Key, fn func(T) T) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, ok := s.store[string(key)]
+	var currentTyped T
+	if ok {
+		currentTyped = current.(T)
+	}
+
+	newValue := fn(currentTyped)
+	s.store[string(key)] = newValue
 	return nil
 }
 
@@ -103,18 +176,19 @@ func (s *CoreState) Set(key string, value any) error {
 // и должен вернуть новое значение.
 //
 // Thread-safe: вся операция атомарна под мьютексом.
-func (s *CoreState) Update(key string, fn func(any) any) error {
+func (s *CoreState) Update(key Key, fn func(any) any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	current := s.store[key]
+	keyStr := string(key)
+	current := s.store[keyStr]
 	newValue := fn(current)
 
 	if newValue == nil {
 		// Если fn вернул nil - удаляем ключ
-		delete(s.store, key)
+		delete(s.store, keyStr)
 	} else {
-		s.store[key] = newValue
+		s.store[keyStr] = newValue
 	}
 
 	return nil
@@ -124,25 +198,26 @@ func (s *CoreState) Update(key string, fn func(any) any) error {
 //
 // Если ключ не существует — возвращает ошибку.
 // Thread-safe: удаление защищено мьютексом.
-func (s *CoreState) Delete(key string) error {
+func (s *CoreState) Delete(key Key) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.store[key]; !ok {
-		return fmt.Errorf("key not found: %s", key)
+	keyStr := string(key)
+	if _, ok := s.store[keyStr]; !ok {
+		return fmt.Errorf("key not found: %s", keyStr)
 	}
 
-	delete(s.store, key)
+	delete(s.store, keyStr)
 	return nil
 }
 
 // Exists проверяет существование ключа.
 //
 // Thread-safe: чтение защищено мьютексом.
-func (s *CoreState) Exists(key string) bool {
+func (s *CoreState) Exists(key Key) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	_, ok := s.store[key]
+	_, ok := s.store[string(key)]
 	return ok
 }
 
@@ -150,13 +225,13 @@ func (s *CoreState) Exists(key string) bool {
 //
 // Порядок ключей не гарантирован.
 // Thread-safe: чтение защищено мьютексом.
-func (s *CoreState) List() []string {
+func (s *CoreState) List() []Key {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	keys := make([]string, 0, len(s.store))
+	keys := make([]Key, 0, len(s.store))
 	for k := range s.store {
-		keys = append(keys, k)
+		keys = append(keys, Key(k))
 	}
 	return keys
 }
@@ -354,22 +429,16 @@ func (s *CoreState) GetTodoStats() (pending, done, failed int) {
 //
 // Thread-safe: чтение защищено мьютексом.
 func (s *CoreState) GetTodoManager() *todo.Manager {
-	val, ok := s.Get(KeyTodo)
-	if !ok {
-		return nil
-	}
-	return val.(*todo.Manager)
+	val, _ := GetType[*todo.Manager](s, KeyTodo)
+	return val
 }
 
 // getTodoManager — вспомогательный метод для получения todo.Manager.
 //
 // Возвращает nil если менеджер не инициализирован.
 func (s *CoreState) getTodoManager() *todo.Manager {
-	val, ok := s.Get(KeyTodo)
-	if !ok {
-		return nil
-	}
-	return val.(*todo.Manager)
+	val, _ := GetType[*todo.Manager](s, KeyTodo)
+	return val
 }
 
 // ============================================================
@@ -387,11 +456,8 @@ func (s *CoreState) SetDictionaries(dicts *wb.Dictionaries) error {
 //
 // Thread-safe: чтение защищено мьютексом.
 func (s *CoreState) GetDictionaries() *wb.Dictionaries {
-	val, ok := s.Get(KeyDictionaries)
-	if !ok {
-		return nil
-	}
-	return val.(*wb.Dictionaries)
+	val, _ := GetType[*wb.Dictionaries](s, KeyDictionaries)
+	return val
 }
 
 // ============================================================
@@ -414,11 +480,8 @@ func (s *CoreState) SetStorage(client *s3storage.Client) error {
 // Возвращает nil если S3 не установлен.
 // Thread-safe: чтение защищено мьютексом.
 func (s *CoreState) GetStorage() *s3storage.Client {
-	val, ok := s.Get(KeyStorage)
-	if !ok {
-		return nil
-	}
-	return val.(*s3storage.Client)
+	val, _ := GetType[*s3storage.Client](s, KeyStorage)
+	return val
 }
 
 // HasStorage проверяет наличие S3 клиента.
@@ -449,11 +512,8 @@ func (s *CoreState) SetToolsRegistry(registry *tools.Registry) error {
 // Rule 3: Все инструменты вызываются через Registry.
 // Rule 5: Thread-safe доступ к полям структуры.
 func (s *CoreState) GetToolsRegistry() *tools.Registry {
-	val, ok := s.Get(KeyToolsRegistry)
-	if !ok {
-		return nil
-	}
-	return val.(*tools.Registry)
+	val, _ := GetType[*tools.Registry](s, KeyToolsRegistry)
+	return val
 }
 
 // ============================================================
@@ -484,7 +544,7 @@ func (s *CoreState) BuildAgentContext(systemPrompt string) []llm.Message {
 
 	// 1. Формируем блок знаний из проанализированных файлов
 	var visualContext string
-	files, hasFiles := s.store[KeyFiles]
+	files, hasFiles := s.store[string(KeyFiles)]
 	if hasFiles {
 		filesMap := files.(map[string][]*s3storage.FileMeta)
 		for tag, filesList := range filesMap {
@@ -503,7 +563,7 @@ func (s *CoreState) BuildAgentContext(systemPrompt string) []llm.Message {
 
 	// 2. Формируем контекст плана
 	var todoContext string
-	todoVal, hasTodo := s.store[KeyTodo]
+	todoVal, hasTodo := s.store[string(KeyTodo)]
 	if hasTodo {
 		manager := todoVal.(*todo.Manager)
 		todoContext = manager.String()
@@ -511,7 +571,7 @@ func (s *CoreState) BuildAgentContext(systemPrompt string) []llm.Message {
 
 	// 3. Получаем историю
 	var history []llm.Message
-	historyVal, hasHistory := s.store[KeyHistory]
+	historyVal, hasHistory := s.store[string(KeyHistory)]
 	if hasHistory {
 		history = historyVal.([]llm.Message)
 	} else {

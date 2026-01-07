@@ -96,7 +96,7 @@ func NewAppState(cfg *config.AppConfig) *AppState {
 // SetOrchestrator устанавливает реализацию AI-агента.
 //
 // Application-specific: выбор между internal/agent.Orchestrator
-// или pkg/chain.ReActChain (или других реализаций).
+// или pkg/chain.ReActCycle (или других реализаций).
 //
 // Rule 4: Работает через agent.Agent интерфейс.
 func (s *AppState) SetOrchestrator(orch agent.Agent) {

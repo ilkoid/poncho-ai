@@ -19,7 +19,6 @@ import (
 
 	"github.com/ilkoid/poncho-ai/pkg/chain"
 	"github.com/ilkoid/poncho-ai/pkg/config"
-	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
@@ -79,11 +78,26 @@ func main() {
 	}
 
 	// Извлекаем компоненты для удобства
-	llmProvider := comps.LLM
+	modelRegistry := comps.ModelRegistry
 	registry := comps.State.GetToolsRegistry()
 	state := comps.State
 
-	// 5. Загружаем post-prompts
+	// 5. Определяем дефолтную модель
+	defaultModel := cfg.Models.DefaultReasoning
+	if defaultModel == "" {
+		defaultModel = cfg.Models.DefaultChat
+	}
+	if defaultModel == "" {
+		fmt.Fprintln(os.Stderr, "Error: neither default_reasoning nor default_chat configured")
+		os.Exit(1)
+	}
+
+	// Override model если указан в флаге
+	if *modelName != "" {
+		defaultModel = *modelName
+	}
+
+	// 6. Загружаем post-prompts
 	toolPostPrompts, err := prompt.LoadToolPostPrompts(cfg)
 	if err != nil {
 		utils.Error("Failed to load tool post-prompts", "error", err)
@@ -91,39 +105,20 @@ func main() {
 		toolPostPrompts = nil
 	}
 
-	// 6. Создаём ReActChain
-	reasoningConfig := llm.GenerateOptions{
-		Model:       cfg.Models.DefaultReasoning,
-		Temperature: 0.5,
-		MaxTokens:   2000,
-	}
-	chatConfig := llm.GenerateOptions{
-		Model:       cfg.Models.DefaultChat,
-		Temperature: 0.7,
-		MaxTokens:   2000,
-	}
-
-	// Override model если указан в флаге
-	if *modelName != "" {
-		reasoningConfig.Model = *modelName
-		chatConfig.Model = *modelName
-	}
-
-	chainConfig := chain.ReActChainConfig{
+	// 7. Создаём ReActCycle
+	cycleConfig := chain.ReActCycleConfig{
 		SystemPrompt:    defaultSystemPrompt(),
-		ReasoningConfig: reasoningConfig,
-		ChatConfig:      chatConfig,
-		ToolPostPrompts: toolPostPrompts,
+		ToolPostPrompts:  toolPostPrompts,
 		PromptsDir:      cfg.App.PromptsDir,
 		MaxIterations:   10,
 		Timeout:         5 * time.Minute,
 	}
 
-	reactChain := chain.NewReActChain(chainConfig)
-	reactChain.SetLLM(llmProvider)
-	reactChain.SetRegistry(registry)
-	// Rule 6: Передаем CoreState в chain (framework logic)
-	reactChain.SetState(state.CoreState)
+	reactCycle := chain.NewReActCycle(cycleConfig)
+	reactCycle.SetModelRegistry(modelRegistry, defaultModel)
+	reactCycle.SetRegistry(registry)
+	// Rule 6: Передаем CoreState в cycle (framework logic)
+	reactCycle.SetState(state.CoreState)
 
 	// 7. Подключаем debug если включен
 	if *debugFlag || cfg.App.DebugLogs.Enabled {
@@ -139,24 +134,23 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to create debug recorder: %v\n", err)
 		} else {
-			reactChain.AttachDebug(debugRecorder)
+			reactCycle.AttachDebug(debugRecorder)
 		}
 	}
 
-	// 8. Выполняем Chain
+	// 8. Выполняем Cycle
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Rule 6: Передаем CoreState в chain (framework logic)
+	// Rule 6: Передаем CoreState в cycle (framework logic)
 	input := chain.ChainInput{
 		UserQuery: userQuery,
 		State:     state.CoreState,
-		LLM:       llmProvider,
 		Registry:  registry,
 		Config:    chain.ChainConfig{},
 	}
 
-	output, err := reactChain.Execute(ctx, input)
+	output, err := reactCycle.Execute(ctx, input)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

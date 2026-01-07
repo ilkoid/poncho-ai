@@ -16,12 +16,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ilkoid/poncho-ai/internal/agent"
+	agentInterface "github.com/ilkoid/poncho-ai/pkg/agent"
 	"github.com/ilkoid/poncho-ai/internal/app"
 	"github.com/ilkoid/poncho-ai/pkg/chain"
 	"github.com/ilkoid/poncho-ai/pkg/config"
-	"github.com/ilkoid/poncho-ai/pkg/factory"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
+	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
 	"github.com/ilkoid/poncho-ai/pkg/state"
@@ -36,12 +36,13 @@ import (
 // Эта структура может быть использована в TUI для избежания дублирования
 // кода инициализации между CLI и GUI версиями.
 type Components struct {
-	Config       *config.AppConfig
-	State        *app.AppState
-	LLM          llm.Provider      // Chat модель (для ReAct loop)
-	VisionLLM    llm.Provider      // Vision модель (для batch image analysis)
-	WBClient     *wb.Client
-	Orchestrator *agent.Orchestrator
+	Config        *config.AppConfig
+	State         *app.AppState
+	ModelRegistry *models.Registry // Registry всех LLM провайдеров
+	LLM           llm.Provider     // DEPRECATED: Используйте ModelRegistry
+	VisionLLM     llm.Provider     // Vision модель (для batch image analysis)
+	WBClient      *wb.Client
+	Orchestrator  agentInterface.Agent // ReActCycle implements Agent interface
 }
 
 // ExecutionResult содержит результаты выполнения запроса.
@@ -218,72 +219,55 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 	// 5. Регистрируем Todo команды
 	app.SetupTodoCommands(state.CommandRegistry, state)
 
-	// 6. Создаём LLM провайдер (ОДИН для reasoning и chat, правило 4)
-	// Получаем reasoning модель (или fallback на chat если не указана)
-	reasoningModelDef, ok := cfg.GetReasoningModel("")
-	if !ok {
-		utils.Error("Reasoning model not found", "model", cfg.Models.DefaultReasoning)
-		return nil, fmt.Errorf("reasoning model not found - configure default_reasoning or default_chat in config.yaml")
-	}
-
-	llmProvider, err := factory.NewLLMProvider(reasoningModelDef)
+	// 6. Создаём Model Registry со всеми моделями из config.yaml
+	// Rule 3: Registry pattern для централизованного управления моделями
+	modelRegistry, err := models.NewRegistryFromConfig(cfg)
 	if err != nil {
-		utils.Error("LLM provider creation failed", "error", err)
-		return nil, fmt.Errorf("failed to create LLM provider: %w", err)
+		utils.Error("Model registry creation failed", "error", err)
+		return nil, fmt.Errorf("failed to create model registry: %w", err)
 	}
-	utils.Info("LLM provider created", "provider", reasoningModelDef.Provider, "model", reasoningModelDef.ModelName)
+	utils.Info("Model registry created", "models", modelRegistry.ListNames())
 
-	// Формируем reasoningConfig из config.yaml
-	reasoningConfig := llm.GenerateOptions{
-		Model:       reasoningModelDef.ModelName,
-		Temperature: reasoningModelDef.Temperature,
-		MaxTokens:   reasoningModelDef.MaxTokens,
-		Format:      "",
+	// Определяем дефолтную модель для reasoning
+	defaultReasoning := cfg.Models.DefaultReasoning
+	if defaultReasoning == "" {
+		defaultReasoning = cfg.Models.DefaultChat
 	}
-
-	// Формируем chatConfig из config.yaml (используется как fallback для post-prompts)
-	chatConfig := llm.GenerateOptions{}
-	if chatModelDef, ok := cfg.GetChatModel(""); ok {
-		chatConfig = llm.GenerateOptions{
-			Model:       chatModelDef.ModelName,
-			Temperature: chatModelDef.Temperature,
-			MaxTokens:   chatModelDef.MaxTokens,
-			Format:      "",
-		}
-		utils.Info("Chat config loaded", "model", chatModelDef.ModelName)
-	} else {
-		// Fallback на reasoning config если chat не настроен
-		chatConfig = reasoningConfig
-		utils.Info("Chat config not set, using reasoning config as fallback")
+	if defaultReasoning == "" {
+		return nil, fmt.Errorf("neither default_reasoning nor default_chat configured")
 	}
 
-	// Vision LLM (для batch image analysis) - отдельный провайдер
+	// Валидируем что дефолтная модель существует
+	if _, _, err := modelRegistry.Get(defaultReasoning); err != nil {
+		return nil, fmt.Errorf("default reasoning model '%s' not found: %w", defaultReasoning, err)
+	}
+
+	// Vision LLM (для batch image analysis) - получаем из registry
 	var visionLLM llm.Provider
 	if cfg.Models.DefaultVision != "" {
-		visionModelDef, ok := cfg.Models.Definitions[cfg.Models.DefaultVision]
-		if !ok {
-			utils.Error("Default vision model not found", "model", cfg.Models.DefaultVision)
-			return nil, fmt.Errorf("default_vision model '%s' not found in definitions", cfg.Models.DefaultVision)
-		}
-
-		visionLLM, err = factory.NewLLMProvider(visionModelDef)
+		visionLLM, _, err = modelRegistry.Get(cfg.Models.DefaultVision)
 		if err != nil {
-			utils.Error("Vision LLM provider creation failed", "error", err)
-			return nil, fmt.Errorf("failed to create vision LLM provider: %w", err)
+			utils.Warn("Vision model not found in registry", "model", cfg.Models.DefaultVision, "error", err)
+		} else {
+			utils.Info("Vision LLM retrieved from registry", "model", cfg.Models.DefaultVision)
 		}
-		utils.Info("Vision LLM provider created", "provider", visionModelDef.Provider, "model", visionModelDef.ModelName)
-	} else {
-		utils.Info("No vision model configured, batch image analysis will be unavailable")
 	}
 
-	// 7. Регистрируем инструменты из YAML конфигурации
+	// 7. Создаём Tools Registry и сохраняем в CoreState
+	// Rule 3: Registry pattern для управления инструментами
+	toolsRegistry := tools.NewRegistry()
+	if err := state.CoreState.SetToolsRegistry(toolsRegistry); err != nil {
+		return nil, fmt.Errorf("failed to set tools registry: %w", err)
+	}
+
+	// 8. Регистрируем инструменты из YAML конфигурации
 	// Передаем CoreState для регистрации инструментов (Rule 6: framework logic)
 	if err := SetupTools(state.CoreState, wbClient, visionLLM, cfg); err != nil {
 		utils.Error("Tools registration failed", "error", err)
 		return nil, fmt.Errorf("failed to register tools: %w", err)
 	}
 
-	// 8. Загружаем системный промпт
+	// 9. Загружаем системный промпт
 	agentSystemPrompt := systemPrompt
 	if agentSystemPrompt == "" {
 		agentPrompt, err := prompt.LoadAgentSystemPrompt(cfg)
@@ -295,7 +279,7 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 		}
 	}
 
-	// 9. Загружаем post-prompts для tools
+	// 10. Загружаем post-prompts для tools
 	toolPostPrompts, err := prompt.LoadToolPostPrompts(cfg)
 	if err != nil {
 		utils.Error("Failed to load tool post-prompts", "error", err)
@@ -305,37 +289,43 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 		utils.Info("Tool post-prompts loaded", "count", len(toolPostPrompts.Tools))
 	}
 
-	// 10. Создаём Orchestrator
-	orchestrator, err := agent.New(agent.Config{
-		LLM:              llmProvider,
-		Registry:         state.GetToolsRegistry(),
-		State:            state,
-		MaxIters:         maxIters,
-		SystemPrompt:     agentSystemPrompt,
-		ToolPostPrompts:  toolPostPrompts,
-		ReasoningConfig:  reasoningConfig,
-		ChatConfig:       chatConfig,
-		DebugConfig: chain.DebugConfig{
-			Enabled:             cfg.App.DebugLogs.Enabled,
-			SaveLogs:            cfg.App.DebugLogs.SaveLogs,
-			LogsDir:             cfg.App.DebugLogs.LogsDir,
-			IncludeToolArgs:     cfg.App.DebugLogs.IncludeToolArgs,
-			IncludeToolResults:  cfg.App.DebugLogs.IncludeToolResults,
-			MaxResultSize:       cfg.App.DebugLogs.MaxResultSize,
-		},
-		PromptsDir: cfg.App.PromptsDir,
+	// 11. Создаём ReActCycle напрямую (Rule 6 compliance)
+	cycleConfig := chain.ReActCycleConfig{
+		SystemPrompt:    agentSystemPrompt,
+		ToolPostPrompts: toolPostPrompts,
+		PromptsDir:      cfg.App.PromptsDir,
+		MaxIterations:   maxIters,
+		Timeout:         chain.DefaultChainTimeout,
+	}
+
+	reactCycle := chain.NewReActCycle(cycleConfig)
+	reactCycle.SetModelRegistry(modelRegistry, defaultReasoning)
+	reactCycle.SetRegistry(state.GetToolsRegistry())
+	reactCycle.SetState(state.CoreState)
+
+	// Создаём debug recorder если включён
+	debugRecorder, err := chain.NewChainDebugRecorder(chain.DebugConfig{
+		Enabled:             cfg.App.DebugLogs.Enabled,
+		SaveLogs:            cfg.App.DebugLogs.SaveLogs,
+		LogsDir:             cfg.App.DebugLogs.LogsDir,
+		IncludeToolArgs:     cfg.App.DebugLogs.IncludeToolArgs,
+		IncludeToolResults:  cfg.App.DebugLogs.IncludeToolResults,
+		MaxResultSize:       cfg.App.DebugLogs.MaxResultSize,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create orchestrator: %w", err)
+		utils.Error("Failed to create debug recorder", "error", err)
+	} else if debugRecorder.Enabled() {
+		reactCycle.AttachDebug(debugRecorder)
 	}
 
 	return &Components{
-		Config:       cfg,
-		State:        state,
-		LLM:          llmProvider,
-		VisionLLM:    visionLLM,
-		WBClient:     wbClient,
-		Orchestrator: orchestrator,
+		Config:        cfg,
+		State:         state,
+		ModelRegistry: modelRegistry,
+		LLM:           nil, // DEPRECATED: Используйте ModelRegistry
+		VisionLLM:     visionLLM,
+		WBClient:      wbClient,
+		Orchestrator:  reactCycle,
 	}, nil
 }
 

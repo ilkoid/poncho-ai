@@ -5,15 +5,19 @@
 package openai
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
-	openai "github.com/sashabaranov/go-openai"
+	openaisdk "github.com/sashabaranov/go-openai"
 )
 
 // Client реализует интерфейс llm.Provider для OpenAI-совместимых API.
@@ -23,12 +27,17 @@ import (
 //   - Function Calling (tools)
 //   - Vision запросы (изображения)
 //   - Runtime переопределение параметров через GenerateOption
+//   - Thinking mode для Zai GLM (параметр thinking)
 //
 // Правило 4 ("Тупой клиент"): Не хранит состояние между вызовами.
 // Все параметры передаются при каждом Generate() вызове.
 type Client struct {
-	api        *openai.Client
+	api        *openaisdk.Client
+	apiKey     string               // API Key для кастомных HTTP запросов с thinking
 	baseConfig llm.GenerateOptions // Дефолтные параметры из config.yaml
+	thinking   string               // Thinking parameter для Zai GLM: "enabled", "disabled" или ""
+	httpClient *http.Client         // Для кастомных запросов с thinking
+	baseURL    string               // Base URL для HTTP запросов
 }
 
 // NewClient создает OpenAI клиент на основе конфигурации модели.
@@ -39,12 +48,18 @@ type Client struct {
 // Правило 2: Все настройки из конфигурации, никакого хардкода.
 func NewClient(modelDef config.ModelDef) *Client {
 	// Поддержка custom BaseURL для non-OpenAI провайдеров (Zai, DeepSeek и т.д.)
-	cfg := openai.DefaultConfig(modelDef.APIKey)
-	if modelDef.BaseURL != "" {
-		cfg.BaseURL = modelDef.BaseURL
+	cfg := openaisdk.DefaultConfig(modelDef.APIKey)
+	baseURL := modelDef.BaseURL
+	if baseURL != "" {
+		cfg.BaseURL = baseURL
 	}
 
-	client := openai.NewClientWithConfig(cfg)
+	client := openaisdk.NewClientWithConfig(cfg)
+
+	// Если baseURL не задан, используем дефолтный OpenAI
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
 
 	// Заполняем baseConfig из ModelDef для использования как дефолты
 	baseConfig := llm.GenerateOptions{
@@ -56,7 +71,11 @@ func NewClient(modelDef config.ModelDef) *Client {
 
 	return &Client{
 		api:        client,
+		apiKey:     modelDef.APIKey,
 		baseConfig: baseConfig,
+		thinking:   modelDef.Thinking,
+		baseURL:    baseURL,
+		httpClient: &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -65,13 +84,14 @@ func NewClient(modelDef config.ModelDef) *Client {
 // Поддерживает:
 //   - Function Calling (tools): []tools.ToolDefinition
 //   - Runtime переопределение параметров: GenerateOption
+//   - Thinking mode для Zai GLM
 //
 // Алгоритм:
 //   1. Разделяет opts на tools и GenerateOptions
 //   2. Применяет GenerateOptions к baseConfig (runtime override)
 //   3. Конвертирует сообщения в формат OpenAI SDK
-//   4. Если переданы tools — добавляет их в запрос
-//   5. Вызывает API с итоговыми параметрами
+//   4. Если thinking включен — использует кастомный HTTP запрос
+//   5. Иначе — использует стандартный go-openai клиент
 //   6. Конвертирует ответ обратно в наш формат
 //
 // Правило 7: Все ошибки возвращаются, никаких panic.
@@ -99,6 +119,7 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...a
 
 	utils.Debug("LLM request started",
 		"model", options.Model,
+		"thinking", c.thinking,
 		"temperature", options.Temperature,
 		"max_tokens", options.MaxTokens,
 		"messages_count", len(messages),
@@ -126,34 +147,45 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...a
 			"description", tool.Description)
 	}
 
-	// 3. Конвертируем наши сообщения в формат OpenAI SDK
-	openaiMsgs := make([]openai.ChatCompletionMessage, len(messages))
+	// 3. Если thinking включен - используем кастомный HTTP запрос
+	if c.thinking != "" && c.thinking != "disabled" {
+		return c.generateWithThinking(ctx, messages, options, toolDefs, startTime)
+	}
+
+	// 4. Иначе - стандартный путь через go-openai SDK
+	return c.generateStandard(ctx, messages, options, toolDefs, startTime)
+}
+
+// generateStandard выполняет запрос через стандартный go-openai SDK.
+func (c *Client) generateStandard(ctx context.Context, messages []llm.Message, options llm.GenerateOptions, toolDefs []tools.ToolDefinition, startTime time.Time) (llm.Message, error) {
+	// Конвертируем наши сообщения в формат OpenAI SDK
+	openaiMsgs := make([]openaisdk.ChatCompletionMessage, len(messages))
 	for i, m := range messages {
 		openaiMsgs[i] = mapToOpenAI(m)
 	}
 
-	// 4. Создаём запрос с итоговыми параметрами (baseConfig + runtime override)
-	req := openai.ChatCompletionRequest{
+	// Создаём запрос с итоговыми параметрами
+	req := openaisdk.ChatCompletionRequest{
 		Model:       options.Model,
 		Temperature: float32(options.Temperature),
 		MaxTokens:   options.MaxTokens,
 		Messages:    openaiMsgs,
 	}
 
-	// 5. ResponseFormat если указан
+	// ResponseFormat если указан
 	if options.Format == "json_object" {
-		req.ResponseFormat = &openai.ChatCompletionResponseFormat{
-			Type: openai.ChatCompletionResponseFormatTypeJSONObject,
+		req.ResponseFormat = &openaisdk.ChatCompletionResponseFormat{
+			Type: openaisdk.ChatCompletionResponseFormatTypeJSONObject,
 		}
 	}
 
-	// 6. Добавляем tools если переданы
+	// Добавляем tools если переданы
 	if len(toolDefs) > 0 {
 		req.Tools = convertToolsToOpenAI(toolDefs)
 		req.ToolChoice = "auto"
 	}
 
-	// 7. Вызываем API
+	// Вызываем API
 	resp, err := c.api.CreateChatCompletion(ctx, req)
 	if err != nil {
 		utils.Error("LLM API request failed",
@@ -163,12 +195,151 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...a
 		return llm.Message{}, fmt.Errorf("openai api error: %w", err)
 	}
 
-	// 8. Проверяем что есть хотя бы один выбор
+	return c.parseResponse(resp, startTime, options.Model)
+}
+
+// generateWithThinking выполняет запрос с thinking параметром через кастомный HTTP.
+func (c *Client) generateWithThinking(ctx context.Context, messages []llm.Message, options llm.GenerateOptions, toolDefs []tools.ToolDefinition, startTime time.Time) (llm.Message, error) {
+	// Конвертируем сообщения
+	openaiMsgs := make([]openaisdk.ChatCompletionMessage, len(messages))
+	for i, m := range messages {
+		openaiMsgs[i] = mapToOpenAI(m)
+	}
+
+	// Строим запрос body
+	reqBody := map[string]interface{}{
+		"model":       options.Model,
+		"temperature": options.Temperature,
+		"max_tokens":  options.MaxTokens,
+		"messages":    openaiMsgs,
+		"thinking": map[string]string{
+			"type": c.thinking,
+		},
+	}
+
+	// ResponseFormat если указан
+	if options.Format == "json_object" {
+		reqBody["response_format"] = map[string]string{
+			"type": "json_object",
+		}
+	}
+
+	// Добавляем tools если переданы
+	if len(toolDefs) > 0 {
+		reqBody["tools"] = convertToolsToOpenAI(toolDefs)
+		reqBody["tool_choice"] = "auto"
+	}
+
+	// Marshal в JSON
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Создаём HTTP запрос
+	url := c.baseURL + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Устанавливаем заголовки
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	utils.Debug("Sending custom HTTP request with thinking",
+		"url", url,
+		"thinking", c.thinking,
+		"body_size", len(jsonBody))
+
+	// Выполняем запрос
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		utils.Error("HTTP request failed",
+			"error", err,
+			"url", url,
+			"duration_ms", time.Since(startTime).Milliseconds())
+		return llm.Message{}, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Читаем тело ответа
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		utils.Error("HTTP request returned error",
+			"status", resp.StatusCode,
+			"body", string(body),
+			"duration_ms", time.Since(startTime).Milliseconds())
+		return llm.Message{}, fmt.Errorf("api returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Парсим ответ
+	var apiResp struct {
+		Choices []struct {
+			Message struct {
+				Role            string                   `json:"role"`
+				Content         string                   `json:"content"`
+				ToolCalls       []openaisdk.ToolCall     `json:"tool_calls,omitempty"`
+				ReasoningContent string                   `json:"reasoning_content,omitempty"` // Thinking контент
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return llm.Message{}, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if len(apiResp.Choices) == 0 {
+		return llm.Message{}, fmt.Errorf("no choices in response")
+	}
+
+	choice := apiResp.Choices[0].Message
+	result := llm.Message{
+		Role:    llm.Role(choice.Role),
+		Content: choice.Content,
+	}
+
+	// Если есть reasoning_content от thinking mode, добавляем к контенту
+	if choice.ReasoningContent != "" {
+		result.Content = choice.ReasoningContent + "\n\n" + choice.Content
+		utils.Debug("Thinking content extracted",
+			"reasoning_length", len(choice.ReasoningContent),
+			"content_length", len(choice.Content))
+	}
+
+	// Извлекаем ToolCalls
+	if len(choice.ToolCalls) > 0 {
+		result.ToolCalls = make([]llm.ToolCall, len(choice.ToolCalls))
+		for i, tc := range choice.ToolCalls {
+			result.ToolCalls[i] = llm.ToolCall{
+				ID:   tc.ID,
+				Name: tc.Function.Name,
+				Args: tc.Function.Arguments,
+			}
+		}
+	}
+
+	utils.Info("LLM response received (with thinking)",
+		"model", options.Model,
+		"tool_calls_count", len(result.ToolCalls),
+		"content_length", len(result.Content),
+		"duration_ms", time.Since(startTime).Milliseconds())
+
+	return result, nil
+}
+
+// parseResponse парсит ответ от go-openai SDK.
+func (c *Client) parseResponse(resp openaisdk.ChatCompletionResponse, startTime time.Time, modelName string) (llm.Message, error) {
+	// Проверяем что есть хотя бы один выбор
 	if len(resp.Choices) == 0 {
 		return llm.Message{}, fmt.Errorf("no choices in response")
 	}
 
-	// 9. Маппим ответ обратно в наш формат
+	// Маппим ответ обратно в наш формат
 	choice := resp.Choices[0].Message
 
 	result := llm.Message{
@@ -176,7 +347,7 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...a
 		Content: choice.Content,
 	}
 
-	// 10. Извлекаем ToolCalls если модель решила вызвать функции
+	// Извлекаем ToolCalls если модель решила вызвать функции
 	if len(choice.ToolCalls) > 0 {
 		result.ToolCalls = make([]llm.ToolCall, len(choice.ToolCalls))
 		for i, tc := range choice.ToolCalls {
@@ -202,7 +373,7 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...a
 	}
 
 	utils.Info("LLM response received",
-		"model", options.Model,
+		"model", modelName,
 		"tool_calls_count", len(result.ToolCalls),
 		"content_length", len(result.Content),
 		"duration_ms", time.Since(startTime).Milliseconds())
@@ -212,8 +383,8 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...a
 
 // mapToOpenAI конвертирует наше внутреннее сообщение в формат SDK.
 // Здесь происходит магия Vision: если есть картинки, создаем MultiContent.
-func mapToOpenAI(m llm.Message) openai.ChatCompletionMessage {
-	msg := openai.ChatCompletionMessage{
+func mapToOpenAI(m llm.Message) openaisdk.ChatCompletionMessage {
+	msg := openaisdk.ChatCompletionMessage{
 		Role: string(m.Role),
 	}
 
@@ -224,19 +395,19 @@ func mapToOpenAI(m llm.Message) openai.ChatCompletionMessage {
 	}
 
 	// Если есть картинки (Vision запрос)
-	parts := []openai.ChatMessagePart{
+	parts := []openaisdk.ChatMessagePart{
 		{
-			Type: openai.ChatMessagePartTypeText,
+			Type: openaisdk.ChatMessagePartTypeText,
 			Text: m.Content,
 		},
 	}
 
 	for _, imgURL := range m.Images {
-		parts = append(parts, openai.ChatMessagePart{
-			Type: openai.ChatMessagePartTypeImageURL,
-			ImageURL: &openai.ChatMessageImageURL{
+		parts = append(parts, openaisdk.ChatMessagePart{
+			Type: openaisdk.ChatMessagePartTypeImageURL,
+			ImageURL: &openaisdk.ChatMessageImageURL{
 				URL:    imgURL, // Ожидается base64 data-uri или http ссылка
-				Detail: openai.ImageURLDetailAuto,
+				Detail: openaisdk.ImageURLDetailAuto,
 			},
 		})
 	}
@@ -249,18 +420,18 @@ func mapToOpenAI(m llm.Message) openai.ChatCompletionMessage {
 // в формат OpenAI Function Calling.
 //
 // Соответствие структур:
-//   tools.ToolDefinition → openai.Tool (type=function)
-//   Parameters (interface{}) → openai.FunctionDefinition.Parameters
+//   tools.ToolDefinition → openaisdk.Tool (type=function)
+//   Parameters (interface{}) → openaisdk.FunctionDefinition.Parameters
 //
 // Поскольку ToolDefinition.Parameters уже является JSON Schema объектом
 // (map[string]interface{}), он напрямую передаётся в OpenAI SDK.
-func convertToolsToOpenAI(defs []tools.ToolDefinition) []openai.Tool {
-	result := make([]openai.Tool, len(defs))
+func convertToolsToOpenAI(defs []tools.ToolDefinition) []openaisdk.Tool {
+	result := make([]openaisdk.Tool, len(defs))
 
 	for i, def := range defs {
-		result[i] = openai.Tool{
+		result[i] = openaisdk.Tool{
 			Type: "function",
-			Function: &openai.FunctionDefinition{
+			Function: &openaisdk.FunctionDefinition{
 				Name:        def.Name,
 				Description: def.Description,
 				Parameters:  def.Parameters,

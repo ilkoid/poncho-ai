@@ -5,26 +5,17 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"gopkg.in/yaml.v3"
 )
 
-// ReActChainConfig — конфигурация ReAct цепочки.
+// ReActCycleConfig — конфигурация ReAct цикла.
 //
-// Используется при создании ReActChain через NewReActChain.
+// Используется при создании ReActCycle через NewReActCycle.
 // Конфигурация может быть загружена из YAML или создана программно.
-type ReActChainConfig struct {
+type ReActCycleConfig struct {
 	// SystemPrompt — базовый системный промпт для ReAct агента.
 	SystemPrompt string
-
-	// ReasoningConfig — параметры модели для reasoning фазы.
-	// Используется когда LLM выбирает инструменты.
-	ReasoningConfig llm.GenerateOptions
-
-	// ChatConfig — параметры модели для финального ответа.
-	// Используется когда LLM генерирует ответ без инструментов.
-	ChatConfig llm.GenerateOptions
 
 	// ToolPostPrompts — конфигурация post-prompts для инструментов.
 	// Опционально: может быть nil.
@@ -43,20 +34,12 @@ type ReActChainConfig struct {
 	Timeout time.Duration
 }
 
-// NewReActChainConfig создаёт конфигурацию ReAct цепочки с дефолтными значениями.
+// NewReActCycleConfig создаёт конфигурацию ReAct цикла с дефолтными значениями.
 //
 // Rule 10: Godoc на public API.
-func NewReActChainConfig() ReActChainConfig {
-	return ReActChainConfig{
-		SystemPrompt:   DefaultSystemPrompt,
-		ReasoningConfig: llm.GenerateOptions{
-			Temperature: 0.5,
-			MaxTokens:   2000,
-		},
-		ChatConfig: llm.GenerateOptions{
-			Temperature: 0.7,
-			MaxTokens:   2000,
-		},
+func NewReActCycleConfig() ReActCycleConfig {
+	return ReActCycleConfig{
+		SystemPrompt:  DefaultSystemPrompt,
 		MaxIterations: 10,
 		Timeout:       5 * time.Minute,
 	}
@@ -65,7 +48,7 @@ func NewReActChainConfig() ReActChainConfig {
 // Validate проверяет конфигурацию на валидность.
 //
 // Rule 7: Возвращает ошибку вместо panic.
-func (c *ReActChainConfig) Validate() error {
+func (c *ReActCycleConfig) Validate() error {
 	if c.SystemPrompt == "" {
 		return fmt.Errorf("system_prompt is required")
 	}
@@ -77,6 +60,16 @@ func (c *ReActChainConfig) Validate() error {
 	}
 	return nil
 }
+
+// DefaultMaxIterations — стандартный лимит итераций ReAct цикла.
+const DefaultMaxIterations = 10
+
+// DefaultChainTimeout — стандартный таймаут для выполнения chain.
+const DefaultChainTimeout = 5 * time.Minute
+
+// UserChoiceRequest — маркер для передачи управления UI.
+// Используется для прерывания ReAct цикла и запроса пользовательского ввода.
+const UserChoiceRequest = "__USER_CHOICE_REQUIRED__"
 
 // DefaultSystemPrompt — базовый системный промпт по умолчанию.
 const DefaultSystemPrompt = `You are a helpful AI assistant with access to tools.
@@ -131,27 +124,15 @@ type ChainYAMLConfig struct {
 	ToolPostPrompts map[string]string `yaml:"tool_post_prompts,omitempty"`
 }
 
-// ToReActConfig конвертирует YAML конфигурацию в ReActChainConfig.
+// ToReActConfig конвертирует YAML конфигурацию в ReActCycleConfig.
 //
 // Rule 2: Конфигурация через YAML с дефолтными значениями.
-func (y *ChainYAMLConfig) ToReActConfig() (ReActChainConfig, error) {
-	cfg := NewReActChainConfig()
+func (y *ChainYAMLConfig) ToReActConfig() (ReActCycleConfig, error) {
+	cfg := NewReActCycleConfig()
 
 	// Override с YAML значений
 	if y.SystemPrompt != "" {
 		cfg.SystemPrompt = y.SystemPrompt
-	}
-	if y.Model != "" {
-		cfg.ReasoningConfig.Model = y.Model
-		cfg.ChatConfig.Model = y.Model
-	}
-	if y.Temperature > 0 {
-		cfg.ReasoningConfig.Temperature = y.Temperature
-		cfg.ChatConfig.Temperature = y.Temperature
-	}
-	if y.MaxTokens > 0 {
-		cfg.ReasoningConfig.MaxTokens = y.MaxTokens
-		cfg.ChatConfig.MaxTokens = y.MaxTokens
 	}
 	if y.MaxIterations > 0 {
 		cfg.MaxIterations = y.MaxIterations
@@ -162,7 +143,7 @@ func (y *ChainYAMLConfig) ToReActConfig() (ReActChainConfig, error) {
 	if y.Timeout != "" {
 		timeout, err := time.ParseDuration(y.Timeout)
 		if err != nil {
-			return ReActChainConfig{}, fmt.Errorf("invalid timeout format: %w", err)
+			return ReActCycleConfig{}, fmt.Errorf("invalid timeout format: %w", err)
 		}
 		cfg.Timeout = timeout
 	}

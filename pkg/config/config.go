@@ -80,7 +80,8 @@ type ModelDef struct {
 	MaxTokens   int           `yaml:"max_tokens"`
 	Temperature float64       `yaml:"temperature"`
 	Timeout     time.Duration `yaml:"timeout"` // Go умеет парсить строки вида "60s", "1m"
-    BaseURL string `yaml:"base_url"` // <--- Добавить
+	BaseURL     string        `yaml:"base_url"`
+	Thinking    string        `yaml:"thinking"` // "enabled", "disabled" или пусто (для Zai GLM)
 }
 
 // ToolConfig — настройки инструментов.

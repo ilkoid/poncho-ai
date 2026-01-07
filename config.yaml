@@ -243,50 +243,41 @@ tools:
   # === S3 Basic Tools ===
   list_s3_files:
     enabled: true
-    description: "Возвращает список файлов в S3 хранилище по указанному пути (префиксу). Используй это, чтобы найти артикулы или проверить наличие файлов."
-    post_prompt: "agent_system.yaml"
+    description: "Возвращает список файлов в S3 хранилище по указанному пути (префиксу). Используй это, чтобы найти артикулов или проверить наличие файлов."
 
   read_s3_object:
     enabled: true
     description: "Читает содержимое файла из S3. Поддерживает текстовые файлы (JSON, TXT, MD). Не используй для картинок."
-    post_prompt: "agent_system.yaml"
 
   read_s3_image:
     enabled: true
     description: "Скачивает изображение из S3, оптимизирует его (resize) и возвращает в формате Base64. Используй это для Vision-анализа."
-    post_prompt: "agent_system.yaml"
 
   # === Planner Tools ===
   plan_add_task:
     enabled: true
     description: "Добавляет новую задачу в план действий. Указывай четкое описание того, что нужно выполнить."
-    post_prompt: "agent_system.yaml"
 
   plan_mark_done:
     enabled: true
     description: "Отмечает задачу как выполненную. Используй когда задача успешно завершена."
-    post_prompt: "agent_system.yaml"
 
   plan_mark_failed:
     enabled: true
     description: "Отмечает задачу как проваленную с указанием причины. Используй когда задачу невозможно выполнить по независимым причинам."
-    post_prompt: "agent_system.yaml"
 
   plan_clear:
     enabled: true
     description: "Очищает весь план действий. Используй для удаления всех задач из списка."
-    post_prompt: "agent_system.yaml"
 
   # === S3 Batch Tools ===
   classify_and_download_s3_files:
     enabled: true
     description: "Загружает все файлы артикула из S3 хранилища, классифицирует их по тегам (sketch, plm_data, marketing) и сохраняет в состояние. Выполняет ресайз изображений если включено в конфиге. Используй это для загрузки артикула перед анализом изображений."
-    post_prompt: "agent_system.yaml"
 
   analyze_article_images_batch:
     enabled: true
     description: "Анализирует изображения из текущего артикула с помощью Vision LLM. Обрабатывает картинки параллельно в горутинах. Опционально фильтрует по тегу (sketch, plm_data, marketing). Используй это после classify_and_download_s3_files для анализа эскизов."
-    post_prompt: "sketch_description_prompt.yaml"
 
 # Chain Configuration (Chain Pattern)
 # Rule 2: Конфигурация цепочек через YAML

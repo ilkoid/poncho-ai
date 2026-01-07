@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -228,28 +227,6 @@ func (r *Recorder) getFilePath() string {
 		return filepath.Join(r.config.LogsDir, r.log.RunID+".json")
 	}
 	return r.log.RunID + ".json"
-}
-
-// Helper функция для обрезки строки с сохранением суффикса.
-func truncateString(s string, maxSize int) string {
-	if maxSize <= 0 || len(s) <= maxSize {
-		return s
-	}
-
-	// Обрезаем и добавляем индикатор обрезки
-	if len(s) > maxSize {
-		return s[:maxSize] + "... (truncated)"
-	}
-	return s
-}
-
-// Helper функция для очистки строки от лишних пробелов и переносов.
-func cleanString(s string) string {
-	// Удаляем лишние пробелы и переносы
-	cleaned := strings.TrimSpace(s)
-	// Заменяем множественные пробелы на одиночные
-	cleaned = strings.Join(strings.Fields(cleaned), " ")
-	return cleaned
 }
 
 // GetRunID возвращает идентификатор текущей сессии.

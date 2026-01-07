@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
+	stpkg "github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/todo"
 )
 
@@ -148,7 +149,7 @@ func SetupTodoCommands(registry *CommandRegistry, state *AppState) {
 
 			case "clear":
 				// REFACTORED 2026-01-04: ClearTodo() удален, используем Set напрямую
-				if err := state.Set("todo", todo.NewManager()); err != nil {
+				if err := state.Set(stpkg.KeyTodo, todo.NewManager()); err != nil {
 					return CommandResultMsg{Err: err}
 				}
 				return CommandResultMsg{Output: "🗑️ План очищен"}

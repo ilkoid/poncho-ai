@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
+	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 )
 
@@ -19,17 +21,14 @@ import (
 // Rule 5: Thread-safe через ChainContext.
 // Rule 7: Возвращает ошибку вместо panic.
 type LLMInvocationStep struct {
-	// llm — провайдер языковой модели (Rule 4)
-	llm llm.Provider
+	// modelRegistry — реестр LLM провайдеров (Rule 3)
+	modelRegistry *models.Registry
+
+	// defaultModel — имя модели по умолчанию для fallback
+	defaultModel string
 
 	// registry — реестр инструментов для получения определений (Rule 3)
 	registry *tools.Registry
-
-	// reasoningConfig — параметры модели для reasoning фазы
-	reasoningConfig llm.GenerateOptions
-
-	// chatConfig — параметры модели для финального ответа
-	chatConfig llm.GenerateOptions
 
 	// systemPrompt — базовый системный промпт
 	systemPrompt string
@@ -43,21 +42,19 @@ type LLMInvocationStep struct {
 
 // NewLLMInvocationStep создаёт новый LLMInvocationStep.
 //
+// DEPRECATED: Используйте прямое создание &LLMInvocationStep{}
+// Model registry и default model должны быть установлены через Setters.
+//
 // Rule 10: Godoc на public API.
 func NewLLMInvocationStep(
-	llmProvider llm.Provider,
 	registry *tools.Registry,
-	reasoningConfig, chatConfig llm.GenerateOptions,
 	systemPrompt string,
 	debugRecorder *ChainDebugRecorder,
 ) *LLMInvocationStep {
 	return &LLMInvocationStep{
-		llm:             llmProvider,
-		registry:        registry,
-		reasoningConfig: reasoningConfig,
-		chatConfig:      chatConfig,
-		systemPrompt:    systemPrompt,
-		debugRecorder:   debugRecorder,
+		registry:      registry,
+		systemPrompt:  systemPrompt,
+		debugRecorder: debugRecorder,
 	}
 }
 
@@ -76,24 +73,33 @@ func (s *LLMInvocationStep) Name() string {
 func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
 	s.startTime = time.Now()
 
-	// 1. Определяем параметры LLM (Rule 4 - runtime overrides)
-	opts := s.determineLLMOptions(chainCtx)
+	// 1. Определяем какую модель использовать
+	modelName := s.determineModelName(chainCtx)
 
-	// 2. Формируем сообщения для LLM
+	// 2. Получаем провайдер и конфигурацию из реестра
+	provider, modelDef, actualModel, err := s.modelRegistry.GetWithFallback(modelName, s.defaultModel)
+	if err != nil {
+		return ActionError, fmt.Errorf("failed to get model provider: %w", err)
+	}
+
+	// 3. Определяем параметры LLM (defaults + post-prompt overrides)
+	opts := s.determineLLMOptions(chainCtx, modelDef)
+
+	// 4. Формируем сообщения для LLM
 	messages := chainCtx.BuildContextMessages(s.systemPrompt)
 	messagesCount := len(messages)
 
-	// 3. Получаем определения инструментов
+	// 5. Получаем определения инструментов
 	toolDefs := s.registry.GetDefinitions()
 
-	// 4. Записываем LLM request в debug
+	// 6. Записываем LLM request в debug
 	if s.debugRecorder != nil && s.debugRecorder.Enabled() {
 		systemPromptUsed := "default"
 		if chainCtx.GetActivePostPrompt() != "" {
 			systemPromptUsed = "post_prompt"
 		}
 		s.debugRecorder.RecordLLMRequest(
-			opts.Model,
+			actualModel,
 			opts.Temperature,
 			opts.MaxTokens,
 			systemPromptUsed,
@@ -101,7 +107,7 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		)
 	}
 
-	// 5. Подготавливаем opts для Generate (конвертируем в слайс any)
+	// 7. Подготавливаем opts для Generate (конвертируем в слайс any)
 	generateOpts := []any{toolDefs}
 	if opts.Model != "" {
 		generateOpts = append(generateOpts, llm.WithModel(opts.Model))
@@ -116,9 +122,9 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		generateOpts = append(generateOpts, llm.WithFormat(opts.Format))
 	}
 
-	// 6. Вызываем LLM (Rule 4)
+	// 8. Вызываем LLM (Rule 4)
 	llmStart := time.Now()
-	response, err := s.llm.Generate(ctx, messages, generateOpts...)
+	response, err := provider.Generate(ctx, messages, generateOpts...)
 	llmDuration := time.Since(llmStart).Milliseconds()
 
 	if err != nil {
@@ -126,7 +132,7 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		return ActionError, fmt.Errorf("LLM generation failed: %w", err)
 	}
 
-	// 6. Записываем LLM response в debug
+	// 9. Записываем LLM response в debug
 	if s.debugRecorder != nil && s.debugRecorder.Enabled() {
 		s.debugRecorder.RecordLLMResponse(
 			response.Content,
@@ -135,8 +141,7 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		)
 	}
 
-	// 7. Добавляем assistant message в историю (thread-safe)
-	// REFACTORED 2026-01-04: AppendMessage теперь возвращает ошибку
+	// 10. Добавляем assistant message в историю (thread-safe)
 	if err := chainCtx.AppendMessage(llm.Message{
 		Role:      llm.RoleAssistant,
 		Content:   response.Content,
@@ -145,37 +150,63 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		return ActionError, fmt.Errorf("failed to append assistant message: %w", err)
 	}
 
-	// 8. Сохраняем фактические параметры модели в контексте
-	chainCtx.SetActualModel(opts.Model)
+	// 11. Сохраняем фактические параметры модели в контексте
+	chainCtx.SetActualModel(actualModel)
 	chainCtx.SetActualTemperature(opts.Temperature)
 	chainCtx.SetActualMaxTokens(opts.MaxTokens)
 
-	// 9. Продолжаем выполнение (ReAct цикл определит что делать дальше)
+	// 12. Продолжаем выполнение (ReAct цикл определит что делать дальше)
 	return ActionContinue, nil
+}
+
+// determineModelName определяет какую модель использовать для текущей итерации.
+//
+// Приоритет:
+// 1. Post-prompt config.Model (если указан)
+// 2. defaultModel (fallback)
+func (s *LLMInvocationStep) determineModelName(chainCtx *ChainContext) string {
+	if promptConfig := chainCtx.GetActivePromptConfig(); promptConfig != nil {
+		if promptConfig.Model != "" {
+			return promptConfig.Model
+		}
+	}
+	return s.defaultModel
 }
 
 // determineLLMOptions определяет параметры LLM для текущей итерации.
 //
+// Комбинирует дефолтные значения из modelDef с overrides из post-prompt.
+//
 // Приоритет параметров:
-// 1. activePromptConfig (из post-prompt) — высший приоритет
-// 2. reasoningConfig — для итераций с tool calls
-// 3. chatConfig — для финального ответа
+// 1. Post-prompt config (из activePromptConfig) — высший приоритет
+// 2. Model defaults (из config.Models.Definitions[name])
 //
 // Rule 4: Runtime parameter overrides через options pattern.
-func (s *LLMInvocationStep) determineLLMOptions(chainCtx *ChainContext) llm.GenerateOptions {
-	// Проверяем есть ли активный post-prompt с конфигурацией
+func (s *LLMInvocationStep) determineLLMOptions(chainCtx *ChainContext, modelDef config.ModelDef) llm.GenerateOptions {
+	// Начинаем с дефолтных значений из конфигурации модели
+	opts := llm.GenerateOptions{
+		Model:       modelDef.ModelName,
+		Temperature: modelDef.Temperature,
+		MaxTokens:   modelDef.MaxTokens,
+	}
+
+	// Overrides из post-prompt если есть
 	if promptConfig := chainCtx.GetActivePromptConfig(); promptConfig != nil {
-		// Post-prompt имеет высший приоритет
-		return llm.GenerateOptions{
-			Model:       promptConfig.Model,
-			Temperature: promptConfig.Temperature,
-			MaxTokens:   promptConfig.MaxTokens,
-			Format:      promptConfig.Format,
+		if promptConfig.Model != "" {
+			opts.Model = promptConfig.Model
+		}
+		if promptConfig.Temperature != 0 {
+			opts.Temperature = promptConfig.Temperature
+		}
+		if promptConfig.MaxTokens != 0 {
+			opts.MaxTokens = promptConfig.MaxTokens
+		}
+		if promptConfig.Format != "" {
+			opts.Format = promptConfig.Format
 		}
 	}
 
-	// Иначе используем reasoningConfig (будет переопределён в ReAct при необходимости)
-	return s.reasoningConfig
+	return opts
 }
 
 // GetDuration возвращает длительность выполнения step.

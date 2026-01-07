@@ -7,15 +7,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/agent"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
+	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 )
 
-// ReActChain — реализация ReAct (Reasoning + Acting) паттерна.
+// ReActCycle — реализация ReAct (Reasoning + Acting) паттерна.
 //
-// ReActChain выполняет цикл:
+// ReActCycle выполняет цикл:
 // 1. LLM анализирует контекст и решает что делать (Reasoning)
 // 2. Если нужны инструменты — выполняет их (Acting)
 // 3. Повторяет пока не получен финальный ответ или не достигнут лимит
@@ -27,71 +29,75 @@ import (
 // Rule 5: Thread-safe через sync.Mutex
 // Rule 7: Все ошибки возвращаются, нет panic
 // Rule 10: Godoc на всех public API
-type ReActChain struct {
+type ReActCycle struct {
 	// Dependencies
-	llm        llm.Provider
-	registry   *tools.Registry
-	state      *state.CoreState
+	modelRegistry *models.Registry // Registry всех LLM провайдеров
+	registry      *tools.Registry
+	state         *state.CoreState
+
+	// Default model name для fallback
+	defaultModel string
 
 	// Configuration
-	config     ReActChainConfig
+	config ReActCycleConfig
 
 	// Runtime state (thread-safe)
 	mu            sync.Mutex
 	debugRecorder *ChainDebugRecorder
 
 	// Steps (создаются один раз при конструировании)
-	llmStep    *LLMInvocationStep
-	toolStep   *ToolExecutionStep
+	llmStep  *LLMInvocationStep
+	toolStep *ToolExecutionStep
 
 	// Prompts directory
 	promptsDir string
 }
 
-// NewReActChain создаёт новый ReActChain.
+// NewReActCycle создаёт новый ReActCycle.
 //
 // Rule 10: Godoc на public API.
-func NewReActChain(config ReActChainConfig) *ReActChain {
+func NewReActCycle(config ReActCycleConfig) *ReActCycle {
 	// Валидируем конфигурацию
 	if err := config.Validate(); err != nil {
 		// Rule 7: возвращаем ошибку вместо panic
 		// Но в конструкторе не можем вернуть ошибку, поэтому логируем и используем дефолты
-		config = NewReActChainConfig()
+		config = NewReActCycleConfig()
 	}
 
-	chain := &ReActChain{
+	cycle := &ReActCycle{
 		config:     config,
 		promptsDir: config.PromptsDir,
 	}
 
 	// Создаём шаги (без dependencies - они будут установлены через Setters)
-	chain.llmStep = &LLMInvocationStep{
-		reasoningConfig: config.ReasoningConfig,
-		chatConfig:      config.ChatConfig,
-		systemPrompt:    config.SystemPrompt,
+	cycle.llmStep = &LLMInvocationStep{
+		systemPrompt: config.SystemPrompt,
 	}
 
-	chain.toolStep = &ToolExecutionStep{
-		promptLoader: chain, // ReActChain реализует PromptLoader
+	cycle.toolStep = &ToolExecutionStep{
+		promptLoader: cycle, // ReActCycle реализует PromptLoader
 	}
 
-	return chain
+	return cycle
 }
 
-// SetLLM устанавливает LLM провайдер.
+// SetModelRegistry устанавливает реестр моделей и дефолтную модель.
 //
-// Rule 4: Работает через llm.Provider интерфейс.
-func (c *ReActChain) SetLLM(llmProvider llm.Provider) {
+// Rule 3: Registry pattern для моделей.
+// Rule 4: Работает через models.Registry интерфейс.
+func (c *ReActCycle) SetModelRegistry(registry *models.Registry, defaultModel string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.llm = llmProvider
-	c.llmStep.llm = llmProvider
+	c.modelRegistry = registry
+	c.defaultModel = defaultModel
+	c.llmStep.modelRegistry = registry
+	c.llmStep.defaultModel = defaultModel
 }
 
 // SetRegistry устанавливает реестр инструментов.
 //
 // Rule 3: Tools вызываются через Registry.
-func (c *ReActChain) SetRegistry(registry *tools.Registry) {
+func (c *ReActCycle) SetRegistry(registry *tools.Registry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.registry = registry
@@ -102,7 +108,7 @@ func (c *ReActChain) SetRegistry(registry *tools.Registry) {
 // SetState устанавливает framework core состояние.
 //
 // Rule 6: Использует pkg/state.CoreState вместо internal/app.
-func (c *ReActChain) SetState(state *state.CoreState) {
+func (c *ReActCycle) SetState(state *state.CoreState) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.state = state
@@ -111,7 +117,7 @@ func (c *ReActChain) SetState(state *state.CoreState) {
 // AttachDebug присоединяет debug recorder.
 //
 // Реализует интерфейс DebuggableChain.
-func (c *ReActChain) AttachDebug(recorder *ChainDebugRecorder) {
+func (c *ReActCycle) AttachDebug(recorder *ChainDebugRecorder) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.debugRecorder = recorder
@@ -119,7 +125,7 @@ func (c *ReActChain) AttachDebug(recorder *ChainDebugRecorder) {
 	c.toolStep.debugRecorder = recorder
 }
 
-// Execute выполняет ReAct цепочку.
+// Execute выполняет ReAct цикл.
 //
 // ReAct цикл:
 // 1. Добавляем user message в историю
@@ -130,7 +136,7 @@ func (c *ReActChain) AttachDebug(recorder *ChainDebugRecorder) {
 // 3. Возвращаем финальный ответ
 //
 // Rule 7: Возвращает ошибку вместо panic.
-func (c *ReActChain) Execute(ctx context.Context, input ChainInput) (ChainOutput, error) {
+func (c *ReActCycle) Execute(ctx context.Context, input ChainInput) (ChainOutput, error) {
 	startTime := time.Now()
 
 	// Thread-safety: блокируем на время выполнения
@@ -209,7 +215,7 @@ func (c *ReActChain) Execute(ctx context.Context, input ChainInput) (ChainOutput
 }
 
 // executeLLMStep выполняет LLM шаг с debug записью.
-func (c *ReActChain) executeLLMStep(ctx context.Context, chainCtx *ChainContext, iteration int) (NextAction, error) {
+func (c *ReActCycle) executeLLMStep(ctx context.Context, chainCtx *ChainContext, iteration int) (NextAction, error) {
 	// Start debug iteration
 	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
 		c.debugRecorder.StartIteration(iteration + 1)
@@ -227,12 +233,12 @@ func (c *ReActChain) executeLLMStep(ctx context.Context, chainCtx *ChainContext,
 }
 
 // executeToolStep выполняет Tool шаг.
-func (c *ReActChain) executeToolStep(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
+func (c *ReActCycle) executeToolStep(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
 	return c.toolStep.Execute(ctx, chainCtx)
 }
 
 // finalizeWithError завершает выполнение с ошибкой.
-func (c *ReActChain) finalizeWithError(chainCtx *ChainContext, startTime time.Time, err error) (ChainOutput, error) {
+func (c *ReActCycle) finalizeWithError(chainCtx *ChainContext, startTime time.Time, err error) (ChainOutput, error) {
 	// Финализируем debug с ошибкой
 	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
 		c.debugRecorder.Finalize("", time.Since(startTime))
@@ -244,12 +250,15 @@ func (c *ReActChain) finalizeWithError(chainCtx *ChainContext, startTime time.Ti
 // validateDependencies проверяет что все зависимости установлены.
 //
 // Rule 7: Возвращает ошибку вместо panic.
-func (c *ReActChain) validateDependencies() error {
-	if c.llm == nil {
-		return fmt.Errorf("LLM provider is not set (call SetLLM)")
+func (c *ReActCycle) validateDependencies() error {
+	if c.modelRegistry == nil {
+		return fmt.Errorf("model registry is not set (call SetModelRegistry)")
+	}
+	if c.defaultModel == "" {
+		return fmt.Errorf("default model is not set")
 	}
 	if c.registry == nil {
-		return fmt.Errorf("registry is not set (call SetRegistry)")
+		return fmt.Errorf("tools registry is not set (call SetRegistry)")
 	}
 	// state опционален
 	return nil
@@ -258,7 +267,7 @@ func (c *ReActChain) validateDependencies() error {
 // LoadToolPostPrompt загружает post-prompt для инструмента.
 //
 // Реализует интерфейс PromptLoader для ToolExecutionStep.
-func (c *ReActChain) LoadToolPostPrompt(toolName string) (string, *prompt.PromptConfig, error) {
+func (c *ReActCycle) LoadToolPostPrompt(toolName string) (string, *prompt.PromptConfig, error) {
 	// Проверяем есть ли post-prompt конфигурация
 	if c.config.ToolPostPrompts == nil {
 		return "", nil, fmt.Errorf("no post-prompts configured")
@@ -275,17 +284,77 @@ func (c *ReActChain) LoadToolPostPrompt(toolName string) (string, *prompt.Prompt
 		return "", nil, fmt.Errorf("failed to load prompt file: %w", err)
 	}
 
+	// Post-prompt опционален — если не настроен, возвращаем nil
+	if promptFile == nil {
+		return "", nil, nil
+	}
+
 	// Формируем текст системного промпта
+	if len(promptFile.Messages) == 0 {
+		return "", nil, fmt.Errorf("prompt file has no messages: %s", toolName)
+	}
 	systemPrompt := promptFile.Messages[0].Content
 
 	return systemPrompt, &promptFile.Config, nil
 }
 
-// Ensure ReActChain implements DebuggableChain
-var _ DebuggableChain = (*ReActChain)(nil)
+// Ensure ReActCycle implements DebuggableChain
+var _ DebuggableChain = (*ReActCycle)(nil)
 
-// Ensure ReActChain implements Chain
-var _ Chain = (*ReActChain)(nil)
+// Ensure ReActCycle implements Chain
+var _ Chain = (*ReActCycle)(nil)
 
-// Ensure ReActChain implements PromptLoader
-var _ PromptLoader = (*ReActChain)(nil)
+// Run выполняет ReAct цикл для запроса пользователя.
+//
+// Реализует Agent interface для прямого использования агента.
+// Удобно для простых случаев когда не нужен полный контроль ChainInput.
+//
+// Thread-safe.
+func (c *ReActCycle) Run(ctx context.Context, query string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Проверяем зависимости
+	if err := c.validateDependencies(); err != nil {
+		return "", err
+	}
+
+	// Создаем ChainInput из текущей конфигурации
+	input := ChainInput{
+		UserQuery: query,
+		State:     c.state,
+		Registry:  c.registry,
+	}
+
+	// Выполняем Chain и возвращаем результат
+	output, err := c.Execute(ctx, input)
+	if err != nil {
+		return "", err
+	}
+
+	// Проверяем на UserChoiceRequest
+	if output.Result == UserChoiceRequest {
+		return UserChoiceRequest, nil
+	}
+
+	return output.Result, nil
+}
+
+// GetHistory возвращает историю диалога.
+//
+// Реализует Agent interface.
+func (c *ReActCycle) GetHistory() []llm.Message {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.state == nil {
+		return []llm.Message{}
+	}
+	return c.state.GetHistory()
+}
+
+// Ensure ReActCycle implements PromptLoader
+var _ PromptLoader = (*ReActCycle)(nil)
+
+// Ensure ReActCycle implements Agent
+var _ agent.Agent = (*ReActCycle)(nil)

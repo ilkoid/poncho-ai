@@ -39,9 +39,6 @@ type ChainInput struct {
 	// Rule 6: Использует pkg/state.CoreState вместо internal/app
 	State *state.CoreState
 
-	// LLM — провайдер языковой модели (Rule 4)
-	LLM llm.Provider
-
 	// Registry — реестр инструментов (Rule 3)
 	Registry *tools.Registry
 

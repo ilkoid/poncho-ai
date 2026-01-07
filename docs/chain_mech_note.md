@@ -27,7 +27,7 @@ classDiagram
         +Execute(ctx, input) ChainOutput
     }
     
-    class ReActChain {
+    class ReActCycle {
         -llm Provider
         -registry Registry
         -state GlobalState
@@ -66,22 +66,22 @@ classDiagram
         +SetActivePostPrompt()
     }
     
-    Chain <|.. ReActChain
+    Chain <|.. ReActCycle
     Step <|.. LLMInvocationStep
     Step <|.. ToolExecutionStep
-    ReActChain *-- LLMInvocationStep
-    ReActChain *-- ToolExecutionStep
-    ReActChain --> ChainContext
+    ReActCycle *-- LLMInvocationStep
+    ReActCycle *-- ToolExecutionStep
+    ReActCycle --> ChainContext
 ```
 
-## 3. Как работает ReActChain
+## 3. Как работает ReActCycle
 
 ### ReAct (Reasoning + Acting) Цикл
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant Chain as ReActChain
+    participant Chain as ReActCycle
     participant LLMStep as LLMInvocationStep
     participant ToolStep as ToolExecutionStep
     participant LLM as LLM Provider
@@ -214,7 +214,7 @@ config:
 
 ```go
 // Агент для работы с Wildberries
-reactChain := chain.NewReActChain(chain.ReActChainConfig{
+reactChain := chain.NewReActCycle(chain.ReActCycleConfig{
     SystemPrompt: `Ты помощник для работы с Wildberries.`,
     ReasoningConfig: llm.GenerateOptions{
         Model:       "glm-4.6",
@@ -386,7 +386,7 @@ func (s *ParallelToolStep) Execute(ctx context.Context, chainCtx *ChainContext) 
 
 ```go
 // Агент для анализа продуктов
-analysisChain := chain.NewReActChain(config)
+analysisChain := chain.NewReActCycle(config)
 analysisChain.SetRegistry(createAnalysisTools())
 
 // Шаги:

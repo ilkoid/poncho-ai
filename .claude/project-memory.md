@@ -2,13 +2,14 @@
 
 ## Project Overview
 
-**Poncho AI** - это LLM-agnostic, Tool-centric framework на Go для создания AI-агентов с упором на автоматизацию работы с маркетплейсами (Wildberries, Ozon) и обработкой мультимодальных данных.
+**Poncho AI** - Go-based LLM-agnostic, tool-centric framework для AI-агентов с ReAct pattern. Основной use case: автоматизация e-commerce (Wildberries) с мультимодальными возможностями.
 
 ### Key Value Proposition
-- **Raw In, String Out** - инструменты принимают JSON и возвращают строки
-- **TUI-first подход** на базе Bubble Tea для высокопроизводительного интерфейса
-- **Реестр инструментов** - модульное расширение функциональности
-- **Context Injection** - автоматическая инъекция контекста в промпты для экономии токенов
+- **Raw In, String Out** - инструменты принимают JSON, возвращают строки
+- **Repository Pattern** - `CoreState` (pkg/) + `AppState` (internal/)
+- **Chain Pattern** - модульная архитектура с composable steps
+- **Tool Post-Prompts** - специализированные промпты + параметр override
+- **Context Injection** - автоматическая инъекция контекста
 
 ## Architecture
 
@@ -16,212 +17,242 @@
 
 ```
 poncho-ai/
-├── cmd/                    # Entry points (приложения)
-├── internal/               # Application-specific logic
-│   ├── app/               # GlobalState, CommandRegistry
-│   └── ui/                # Bubble Tea UI (model, view, update)
-├── pkg/                    # Reusable library packages
-│   ├── classifier/        # File classification engine
-│   ├── config/            # YAML configuration with ENV support
-│   ├── factory/           # LLM provider factory
-│   ├── llm/               # LLM abstraction layer
-│   │   └── openai/        # OpenAI-compatible adapter
-│   ├── prompt/            # Prompt template system
-│   ├── s3storage/         # S3-compatible storage client
-│   ├── todo/              # Todo manager for agent planning
-│   ├── tools/             # Tool registry and types
-│   │   ├── std/           # Standard tools (s3, wb_catalog, planner)
-│   │   └── types.go       # Tool interface
-│   └── wb/                # Wildberries API client
-├── prompts/                # YAML prompt templates
-├── cfg/                    # Configuration files
-├── _docs/                  # Documentation
-└── _input/                 # External inputs (API docs, etc.)
+├── cmd/                    # Entry points (autonomous utilities)
+│   ├── poncho/            # Main TUI application
+│   ├── chain-cli/         # Chain Pattern CLI
+│   ├── debug-test/        # Debug logging test
+│   ├── wb-tools-test/     # WB tools test
+│   ├── vision-cli/        # Vision analysis CLI
+│   └── maxiponcho/        # Fashion PLM analyzer
+├── internal/              # Application-specific logic
+│   ├── agent/            # Orchestrator (ReAct loop)
+│   ├── app/              # AppState (embeds CoreState)
+│   └── ui/               # Bubble Tea TUI
+├── pkg/                   # Reusable library (Rule 6: no internal/ imports)
+│   ├── agent/            # Agent interface
+│   ├── app/              # Component initialization
+│   ├── chain/            # Chain Pattern (modular execution)
+│   ├── classifier/       # File classification
+│   ├── config/           # YAML + ENV configuration
+│   ├── debug/            # JSON trace recording
+│   ├── factory/          # LLM provider factory
+│   ├── llm/              # LLM abstraction + Options Pattern
+│   ├── prompt/           # Prompt loading + post-prompts
+│   ├── s3storage/        # S3-compatible storage
+│   ├── state/            # CoreState (Repository Pattern)
+│   ├── todo/             # Thread-safe task manager
+│   ├── tools/            # Tool registry + std tools
+│   ├── utils/            # JSON sanitization
+│   └── wb/               # Wildberries API client
+├── config.yaml           # Main configuration
+└── prompts/              # YAML prompt templates
 ```
 
 ### Core Interfaces
 
-#### Tool Interface (pkg/tools/types.go)
+#### Tool Interface (pkg/tools/types.go) - Rule 1
 ```go
 type Tool interface {
     Definition() ToolDefinition
     Execute(ctx context.Context, argsJSON string) (string, error)
 }
 ```
-**Never change this interface** - it's the foundation of the framework.
 
-#### LLM Provider (pkg/llm/provider.go)
+#### LLM Provider with Options Pattern (pkg/llm/)
 ```go
 type Provider interface {
-    Generate(ctx context.Context, messages []Message, tools ...any) (Message, error)
+    Generate(ctx context.Context, messages []Message, opts ...any) (Message, error)
 }
+
+// Runtime overrides: WithModel, WithTemperature, WithMaxTokens, WithFormat
+```
+
+#### Agent Interface (pkg/agent/types.go)
+```go
+type Agent interface {
+    Run(ctx context.Context, query string) (string, error)
+    GetHistory() []llm.Message
+}
+```
+
+#### Repository Interfaces (pkg/state/repository.go)
+```go
+type UnifiedStore interface { Get/Set/Update/Delete/Exists/List }
+type MessageRepository interface { UnifiedStore + Append/GetHistory }
+type FileRepository interface { UnifiedStore + UpdateFileAnalysis/GetFiles }
+type TodoRepository interface { UnifiedStore + AddTask/CompleteTask/FailTask }
 ```
 
 ## Key Components
 
-### GlobalState (internal/app/state.go)
-Thread-safe central store with:
-- `History []llm.Message` - Conversation history
-- `Files map[string][]*FileMeta` - Working memory (file analysis results)
-- `Todo *todo.Manager` - Task planner
-- `CommandRegistry *CommandRegistry` - TUI commands
-- `ToolsRegistry *tools.Registry` - Agent tools
-- `Config *config.AppConfig` - App configuration
-- `S3 *s3storage.Client` - Storage client
-- `Dictionaries *wb.Dictionaries` - WB reference data
+### State Management (Repository Pattern)
 
-Key method: `BuildAgentContext(systemPrompt string) []llm.Message` - aggregates system prompt, file analysis, todo context, and history.
+**CoreState** (pkg/state/core.go) - Framework core, reusable:
+- Config, S3, Dictionaries, Todo, ToolsRegistry
+- Thread-safe: History, Files (UnifiedStore with sync.RWMutex)
+- Methods: BuildAgentContext, all repository operations
+
+**AppState** (internal/app/state.go) - Application-specific:
+- Embeds *CoreState via composition
+- CommandRegistry, Orchestrator, UserChoice
+- CurrentArticleID, CurrentModel, IsProcessing
 
 ### Tool Registry (pkg/tools/registry.go)
-Thread-safe service locator pattern:
-- `Register(tool Tool)` - Register a tool
-- `Get(name string) (Tool, error)` - Retrieve by name
-- `GetDefinitions() []ToolDefinition` - Get all for LLM
-
-### Todo Manager (pkg/todo/manager.go)
-Thread-safe task planner with:
-- Task statuses: PENDING, DONE, FAILED
-- Metadata support for each task
-- `String()` method for context injection
-- Methods: Add, Complete, Fail, Clear
+Thread-safe: Register(name, tool), Get(name), GetDefinitions()
 
 ### Standard Tools (pkg/tools/std/)
-- **s3_tools.go** - S3 operations (list, upload, download images)
-- **wb_catalog.go** - Wildberries catalog operations
-- **planner.go** - Todo management (plan_add_task, plan_mark_done, plan_mark_failed, plan_clear)
+**WB Content API**: search_wb_products, get_wb_parent_categories, get_wb_subjects, ping_wb_api
+**WB Feedbacks API**: get_wb_feedbacks, get_wb_questions, get_wb_unanswered_*_counts
+**WB Dictionaries**: wb_colors, wb_countries, wb_genders, wb_seasons, wb_vat_rates
+**S3**: list_s3_files, read_s3_object, read_s3_image, classify_and_download_s3_files
+**Planner**: plan_add_task, plan_mark_done, plan_mark_failed, plan_clear
 
-### LLM Factory (pkg/factory/llm_factory.go)
-Creates providers based on config:
-- Supports: "zai", "openai", "deepseek" (all via OpenAI-compatible adapter)
-- Dynamic provider creation from YAML config
+### Chain Pattern (pkg/chain/)
+Modular step-based execution:
+- **ReActCycle**: LLMInvocationStep + ToolExecutionStep
+- **ChainContext**: Thread-safe execution context
+- **ChainDebugRecorder**: JSON trace recording
 
-## Configuration (pkg/config/config.go)
+### Tool Post-Prompts (pkg/prompts/)
+Specialized prompts activated after tool execution:
+- Override model parameters (model, temperature, max_tokens)
+- Active for one iteration only
+- Configured in config.yaml: `post_prompt: "wb/analysis.yaml"`
 
-YAML-based with ENV variable support (`${VAR}` syntax):
+## Configuration (config.yaml)
+
+YAML + ENV support (`${VAR}`):
 
 ```yaml
 models:
-  default_vision: "glm-4.6v-flash"
-  default_chat: "glm-4.5"
+  default_reasoning: "glm-4.6"    # Orchestrator (planning)
+  default_chat: "glm-4.6"          # Chat responses
+  default_vision: "glm-4.6v-flash" # Vision analysis
   definitions:
-    glm-4.6v-flash:
+    glm-4.6:
       provider: "zai"
-      model_name: "glm-4v-flash"
       api_key: "${ZAI_API_KEY}"
-      base_url: "https://api.zai.ai/v1"
-      max_tokens: 4096
-      temperature: 0.7
-      timeout: 60s
+      base_url: "https://api.z.ai/api/paas/v4"
+      max_tokens: 2000
+      temperature: 0.5
+
+tools:
+  get_wb_parent_categories:
+    enabled: true
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+    post_prompt: "wb/parent_categories_analysis.yaml"  # Override params
 
 s3:
-  endpoint: "${S3_ENDPOINT}"
-  bucket: "${S3_BUCKET}"
+  endpoint: "storage.yandexcloud.net"
+  bucket: "plm-ai"
   access_key: "${S3_ACCESS_KEY}"
   secret_key: "${S3_SECRET_KEY}"
-
-file_rules:
-  - tag: "sketch"
-    patterns: ["*.jpg", "*.png"]
-    required: true
-  - tag: "plm"
-    patterns: ["*_spec.json"]
-    required: false
-
-wb:
-  api_key: "${WB_API_KEY}"
 ```
 
-## Design Patterns Used
+## Design Patterns
 
-1. **Registry Pattern** - Tool registration and discovery
-2. **Factory Pattern** - LLM provider creation
-3. **Strategy Pattern** - File classification strategies
-4. **Command Pattern** - TUI command registry
-5. **Adapter Pattern** - OpenAI API compatibility
-6. **Template Method** - Prompt rendering
-7. **TEA (Model-View-Update)** - UI architecture
+| Pattern | Location | Purpose |
+|---------|----------|---------|
+| Repository | `pkg/state/` | Unified storage with domain interfaces |
+| Registry | `pkg/tools/` | Tool registration/discovery |
+| Factory | `pkg/factory/` | LLM provider creation |
+| Options | `pkg/llm/` | Runtime parameter overrides |
+| Strategy | `pkg/classifier/` | File classification |
+| Command | `internal/app/` | TUI commands |
+| Adapter | `pkg/llm/openai/` | OpenAI compatibility |
+| Chain of Responsibility | `pkg/chain/` | Modular step execution |
+| Template Method | `pkg/prompt/` | Prompt rendering |
+| Composition | `internal/app/` | AppState embeds CoreState |
+| TEA (MVU) | `internal/ui/` | Bubble Tea TUI |
 
-## Architectural Rules (from dev_manifest.md)
+## The 11 Immutable Rules (dev_manifest.md)
 
-1. **Tool Interface** - Never change `Tool` interface
-2. **Configuration** - All settings in YAML with ENV support, no hardcoded values
-3. **Registry** - All tools registered through `Registry.Register()`
-4. **LLM Abstraction** - Work with AI models only through `Provider` interface
-5. **State** - Use `GlobalState` with thread-safe access, no global variables
-6. **Package Structure**:
-   - `pkg/` - Library code ready for reuse
-   - `internal/` - Application-specific logic
-   - `cmd/` - Entry points and orchestration only
-7. **Error Handling** - Return errors up the stack, no `panic()` in business logic
-8. **Extensibility** - Add features through new tools, LLM adapters, or config extensions
+| Rule | Description |
+|------|-------------|
+| 0: Code Reuse | Use existing solutions first |
+| 1: Tool Interface | NEVER change Tool interface |
+| 2: Configuration | All settings in YAML + ENV |
+| 3: Registry | All tools via Registry.Register() |
+| 4: LLM Abstraction | Work only through Provider interface + Options Pattern |
+| 5: State Management | Repository Pattern, thread-safe, no globals |
+| 6: Package Structure | `pkg/` (reusable), `internal/` (app-specific), `cmd/` (entry points) |
+| 7: Error Handling | Return errors, NO panic() in business logic |
+| 8: Extensibility | Add through tools/LLM adapters/config |
+| 9: Testing | CLI utilities in `/cmd` for verification |
+| 10: Documentation | Public APIs must have godoc |
+| 11: Resource Localization | Each app autonomous, stores resources nearby |
 
-## Environment Variables Required
+## Environment Variables
 
-- `ZAI_API_KEY` - For ZAI AI provider
-- `S3_ACCESS_KEY` / `S3_SECRET_KEY` - S3 storage credentials
-- `WB_API_KEY` - Wildberries API key
+Required: `ZAI_API_KEY`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `WB_API_KEY`
 
 ## Key Dependencies
 
 ```
-github.com/charmbracelet/bubbletea v1.3.10    # TUI framework
-github.com/charmbracelet/lipgloss v1.1.0      # TUI styling
-github.com/minio/minio-go/v7 v7.0.97          # S3 client
-github.com/sashabaranov/go-openai v1.41.2     # OpenAI SDK
-gopkg.in/yaml.v3 v3.0.1                       # YAML parsing
-golang.org/x/time/rate v0.14.0                # Rate limiting
-github.com/nfnt/resize                        # Image processing
+github.com/charmbracelet/bubbletea v1.3.10   # TUI framework
+github.com/charmbracelet/lipgloss v1.1.0     # TUI styling
+github.com/minio/minio-go/v7 v7.0.97         # S3 client
+github.com/sashabaranov/go-openai v1.41.2    # OpenAI SDK
+gopkg.in/yaml.v3 v3.0.1                      # YAML parsing
+golang.org/x/time/rate v0.14.0               # Rate limiting
 ```
 
 ## Development Commands
 
 ```bash
-# Build main TUI app
+# Main TUI app
 go run cmd/poncho/main.go
 
-# Run tests
-go test ./...
+# Chain CLI (modular execution + debug)
+go run cmd/chain-cli/main.go "show categories"
+./chain-cli -debug "show categories"  # With JSON trace
 
-# Build all binaries
+# Other CLIs
+go run cmd/debug-test/main.go        # Test debug system
+go run cmd/wb-tools-test/main.go     # Test WB tools
+go run cmd/vision-cli/main.go -article 12345
+go run cmd/maxiponcho/main.go        # Fashion PLM analyzer
+
+# Build all
 go build ./cmd/...
 ```
 
 ## Important Notes
 
-### Context Injection Pattern
-- File analysis results are stored in `FileMeta.VisionDescription`
-- `BuildAgentContext()` injects these into system prompts
-- Avoids re-sending images to LLM (token savings)
-
-### Thread Safety
-- `GlobalState` uses `sync.RWMutex` for History, Files, IsProcessing
-- `Registry` uses `sync.RWMutex` for tools map
-- `Todo.Manager` uses `sync.RWMutex` for tasks slice
-
-### Agent Execution Loop
-1. Build context via `BuildAgentContext()`
-2. Call LLM via `Provider.Generate()`
-3. Sanitize response (clean JSON from markdown)
-4. Route to tool execution or return text
-5. Add result to history via `AppendMessage()`
+### Thread-Safety Guarantees
+- CoreState: All fields protected by sync.RWMutex
+- AppState: Application fields protected by sync.RWMutex
+- ToolsRegistry: Concurrent registration/lookup
+- TodoManager: Atomic task operations
+- wb.Client.limiters: Map protected by sync.RWMutex
 
 ### Tool Development
-Create new tools in `pkg/tools/std/`:
-1. Implement `Tool` interface
-2. Register in main.go via `registry.Register()`
-3. Follow "Raw In, String Out" principle
+1. Create file in `pkg/tools/std/`
+2. Implement `Tool` interface (Raw In, String Out)
+3. Add config to `config.yaml` under `tools:`
+4. Add tool name to `getAllKnownToolNames()` in `pkg/app/components.go`
+
+### Rule 6 Compliance (Package Structure)
+- `pkg/state/` has NO imports from `internal/` ✅
+- `pkg/chain/` works with CoreState only ✅
+- Framework core reusable across CLI, TUI, HTTP, gRPC
 
 ## Files to Reference
 
-- `CLAUDE.md` - Development guidance for Claude Code
-- `brief.md` - Comprehensive architecture documentation (Russian)
+- `CLAUDE.md` - Development guidance for Claude Code (comprehensive)
+- `brief.md` - Architecture documentation (Russian)
 - `dev_manifest.md` - Architectural rules (Russian)
-- `config.yaml` - Main configuration file
+- `config.yaml` - Main configuration
 
-## Recent Changes
+## Recent Changes (2026-01-04)
 
-Based on git history:
-- Cleaned up old command executables
-- Refactored with short implementation files
-- Added agentic todo list implementation
-- Updated .gitignore for security
+- ✅ **Repository Pattern** - Unified storage with domain interfaces
+- ✅ **Chain Pattern** - Modular step-based execution
+- ✅ **Tool Post-Prompts** - Specialized prompts with param override
+- ✅ **Debug System** - JSON trace recording
+- ✅ **Code Optimization** - Removed ~300 lines of unused methods
+- ✅ **Rule 6 Compliance** - `pkg/` no longer imports `internal/`
+- ✅ **Options Pattern** - Runtime LLM parameter overrides
+- ✅ **Dual Architecture** - Orchestrator (TUI) + Chain (CLI)

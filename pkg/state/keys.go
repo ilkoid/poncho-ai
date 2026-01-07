@@ -6,9 +6,25 @@
 // Rule 10: Все публичные константы имеют godoc комментарии.
 package state
 
+// Key — типизированный ключ для type-safe операций с CoreState.
+//
+// Используется с generic методами Get[T]/Set[T]/Update[T] для обеспечения
+// compile-time проверки типов.
+//
+// Пример:
+//   dicts, ok := coreState.Get[*wb.Dictionaries](state.KeyDictionaries)
+type Key string
+
+// String возвращает строковое представление ключа.
+//
+// Используется для обратной совместимости с кодом, ожидающим string.
+func (k Key) String() string {
+	return string(k)
+}
+
 // Ключи для унифицированного хранилища CoreState.store
 //
-// Используются в методах Get/Set/Update для доступа к конкретным данным.
+// Используются в методах Get[T]/Set[T]/Update[T] для доступа к конкретным данным.
 const (
 	// KeyHistory — ключ для хранения истории диалога ([]llm.Message)
 	//
@@ -16,8 +32,8 @@ const (
 	// Используется в MessageRepository интерфейсе.
 	//
 	// Пример:
-	//   history := state.Get(KeyHistory).([]llm.Message)
-	KeyHistory = "history"
+	//   history, ok := coreState.Get[[]llm.Message](state.KeyHistory)
+	KeyHistory Key = "history"
 
 	// KeyFiles — ключ для хранения файлов текущей сессии (map[string][]*FileMeta)
 	//
@@ -26,8 +42,8 @@ const (
 	// Используется в FileRepository интерфейсе.
 	//
 	// Пример:
-	//   files := state.Get(KeyFiles).(map[string][]*s3storage.FileMeta)
-	KeyFiles = "files"
+	//   files, ok := coreState.Get[map[string][]*s3storage.FileMeta](state.KeyFiles)
+	KeyFiles Key = "files"
 
 	// KeyTodo — ключ для хранения менеджера задач (*todo.Manager)
 	//
@@ -35,8 +51,8 @@ const (
 	// Используется в TodoRepository интерфейсе.
 	//
 	// Пример:
-	//   manager := state.Get(KeyTodo).(*todo.Manager)
-	KeyTodo = "todo"
+	//   manager, ok := coreState.Get[*todo.Manager](state.KeyTodo)
+	KeyTodo Key = "todo"
 
 	// KeyDictionaries — ключ для хранения справочников маркетплейсов (*wb.Dictionaries)
 	//
@@ -45,8 +61,8 @@ const (
 	// Используется в DictionaryRepository интерфейсе.
 	//
 	// Пример:
-	//   dicts := state.Get(KeyDictionaries).(*wb.Dictionaries)
-	KeyDictionaries = "dictionaries"
+	//   dicts, ok := coreState.Get[*wb.Dictionaries](state.KeyDictionaries)
+	KeyDictionaries Key = "dictionaries"
 
 	// KeyStorage — ключ для хранения S3 клиента (*s3storage.Client)
 	//
@@ -55,8 +71,8 @@ const (
 	// Используется в StorageRepository интерфейсе.
 	//
 	// Пример:
-	//   client := state.Get(KeyStorage).(*s3storage.Client)
-	KeyStorage = "storage"
+	//   client, ok := coreState.Get[*s3storage.Client](state.KeyStorage)
+	KeyStorage Key = "storage"
 
 	// KeyToolsRegistry — ключ для хранения реестра инструментов (*tools.Registry)
 	//
@@ -64,8 +80,8 @@ const (
 	// Используется для вызова инструментов через Registry.
 	//
 	// Пример:
-	//   registry := state.Get(KeyToolsRegistry).(*tools.Registry)
-	KeyToolsRegistry = "tools_registry"
+	//   registry, ok := coreState.Get[*tools.Registry](state.KeyToolsRegistry)
+	KeyToolsRegistry Key = "tools_registry"
 )
 
 // ReservedKeys возвращает список зарезервированных ключей.
@@ -77,8 +93,8 @@ const (
 //   if contains(ReservedKeys(), userKey) {
 //       return error("key is reserved")
 //   }
-func ReservedKeys() []string {
-	return []string{
+func ReservedKeys() []Key {
+	return []Key{
 		KeyHistory,
 		KeyFiles,
 		KeyTodo,
@@ -93,7 +109,7 @@ func ReservedKeys() []string {
 // Возвращает true если ключ используется системой.
 //
 // Rule 7: Возвращает bool вместо panic при несуществующем ключе.
-func IsReservedKey(key string) bool {
+func IsReservedKey(key Key) bool {
 	for _, reserved := range ReservedKeys() {
 		if key == reserved {
 			return true

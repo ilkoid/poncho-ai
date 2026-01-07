@@ -185,7 +185,7 @@ func AttachToChain(c Chain, recorder *ChainDebugRecorder) error {
 
 // DebuggableChain — интерфейс для Chain с поддержкой debug.
 //
-// ReActChain и другие реализации должны реализовывать этот интерфейс.
+// ReActCycle и другие реализации должны реализовывать этот интерфейс.
 type DebuggableChain interface {
 	Chain
 
