@@ -97,7 +97,7 @@ func main() {
 	reactCycle := chain.NewReActCycle(cycleConfig)
 	reactCycle.SetModelRegistry(comps.ModelRegistry, defaultModel)
 	reactCycle.SetRegistry(comps.State.GetToolsRegistry())
-	reactCycle.SetState(comps.State.CoreState)
+	reactCycle.SetState(comps.State)
 
 	// 8. Подключаем debug (всегда включен для диагностики)
 	debugCfg := chain.DebugConfig{
@@ -126,7 +126,7 @@ func main() {
 
 	input := chain.ChainInput{
 		UserQuery: userQuery,
-		State:     comps.State.CoreState,
+		State:     comps.State,
 		Registry:  comps.State.GetToolsRegistry(),
 		Config:    chain.ChainConfig{},
 	}

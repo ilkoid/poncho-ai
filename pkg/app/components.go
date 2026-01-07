@@ -16,8 +16,6 @@ import (
 	"path/filepath"
 	"time"
 
-	agentInterface "github.com/ilkoid/poncho-ai/pkg/agent"
-	"github.com/ilkoid/poncho-ai/internal/app"
 	"github.com/ilkoid/poncho-ai/pkg/chain"
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
@@ -35,14 +33,19 @@ import (
 //
 // Эта структура может быть использована в TUI для избежания дублирования
 // кода инициализации между CLI и GUI версиями.
+//
+// REFACTORED 2025-01-07: State теперь *state.CoreState (framework core).
+// UI-specific состояние (Orchestrator, CurrentModel и т.д.) хранится в TUI Model.
+// REFACTORED 2025-01-07: Orchestrator теперь *chain.ReActCycle (конкретный тип),
+// чтобы избежать циклического импорта pkg/app → pkg/agent → pkg/app.
 type Components struct {
 	Config        *config.AppConfig
-	State         *app.AppState
+	State         *state.CoreState // Framework core (без TUI-specific полей)
 	ModelRegistry *models.Registry // Registry всех LLM провайдеров
 	LLM           llm.Provider     // DEPRECATED: Используйте ModelRegistry
 	VisionLLM     llm.Provider     // Vision модель (для batch image analysis)
 	WBClient      *wb.Client
-	Orchestrator  agentInterface.Agent // ReActCycle implements Agent interface
+	Orchestrator  *chain.ReActCycle // ReActCycle implements Agent interface
 }
 
 // ExecutionResult содержит результаты выполнения запроса.
@@ -202,9 +205,9 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 		}
 	}
 
-	// 4. Создаём AppState (thread-safe)
-	// REFACTORED 2026-01-04: NewAppState больше не требует s3Client
-	state := app.NewAppState(cfg)
+	// 4. Создаём CoreState (thread-safe)
+	// REFACTORED 2025-01-07: Используем state.NewCoreState вместо app.NewAppState
+	state := state.NewCoreState(cfg)
 	state.SetDictionaries(dicts) // Сохраняем справочники в CoreState
 
 	// Устанавливаем S3 клиент опционально
@@ -215,9 +218,6 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 			utils.Info("S3 client set in CoreState")
 		}
 	}
-
-	// 5. Регистрируем Todo команды
-	app.SetupTodoCommands(state.CommandRegistry, state)
 
 	// 6. Создаём Model Registry со всеми моделями из config.yaml
 	// Rule 3: Registry pattern для централизованного управления моделями
@@ -256,13 +256,13 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 	// 7. Создаём Tools Registry и сохраняем в CoreState
 	// Rule 3: Registry pattern для управления инструментами
 	toolsRegistry := tools.NewRegistry()
-	if err := state.CoreState.SetToolsRegistry(toolsRegistry); err != nil {
+	if err := state.SetToolsRegistry(toolsRegistry); err != nil {
 		return nil, fmt.Errorf("failed to set tools registry: %w", err)
 	}
 
 	// 8. Регистрируем инструменты из YAML конфигурации
 	// Передаем CoreState для регистрации инструментов (Rule 6: framework logic)
-	if err := SetupTools(state.CoreState, wbClient, visionLLM, cfg); err != nil {
+	if err := SetupTools(state, wbClient, visionLLM, cfg); err != nil {
 		utils.Error("Tools registration failed", "error", err)
 		return nil, fmt.Errorf("failed to register tools: %w", err)
 	}
@@ -301,7 +301,7 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 	reactCycle := chain.NewReActCycle(cycleConfig)
 	reactCycle.SetModelRegistry(modelRegistry, defaultReasoning)
 	reactCycle.SetRegistry(state.GetToolsRegistry())
-	reactCycle.SetState(state.CoreState)
+	reactCycle.SetState(state)
 
 	// Создаём debug recorder если включён
 	debugRecorder, err := chain.NewChainDebugRecorder(chain.DebugConfig{

@@ -10,15 +10,15 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ilkoid/poncho-ai/internal/app"
 	"github.com/ilkoid/poncho-ai/pkg/classifier"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
+	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 // AgentFinishedMsg — сигнал что агент завершил выполнение.
 type AgentFinishedMsg struct {
-	Result app.CommandResultMsg
+	Result commandResultMsg
 }
 
 // AgentTickMsg — периодическое сообщение для проверки результата работы агента.
@@ -30,7 +30,7 @@ type AgentTickMsg time.Time
 // Обрабатывает:
 //   - tea.WindowSizeMsg: изменение размера терминала
 //   - tea.KeyMsg: нажатия клавиш
-//   - app.CommandResultMsg: результаты выполнения команд
+//   - commandResultMsg: результаты выполнения команд
 //   - AgentFinishedMsg: завершение выполнения агента
 //
 // Возвращает обновленную модель и команду для асинхронного выполнения.
@@ -150,36 +150,34 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, startAgent(&m, query)
 			}
 
-			// Проверяем CommandRegistry
-			cmdRegistry := m.appState.GetCommandRegistry()
-			isKnownCommand := false
-			if cmdRegistry != nil {
-				cmds := cmdRegistry.GetCommands()
-				for _, c := range cmds {
-					if c == cmd {
-						isKnownCommand = true
-						break
-					}
+			// REFACTORED 2025-01-07: Проверяем только встроенные команды
+			// Все неизвестные команды делегируются агенту
+			builtInCommands := []string{"load", "render", "demo", "ping", "help"}
+			isBuiltIn := false
+			for _, c := range builtInCommands {
+				if cmd == c {
+					isBuiltIn = true
+					break
 				}
 			}
 
-			if isKnownCommand {
-				// Известная команда - выполняем через performCommand
-				return m, performCommand(input, m.appState)
+			if isBuiltIn {
+				// Встроенная команда - выполняем через performCommand
+				return m, performCommand(input, m.coreState)
 			}
 
 			// Неизвестная команда - делегируем агенту
-			if m.appState.Orchestrator != nil {
+			if m.orchestrator != nil {
 				return m, startAgent(&m, input)
 			}
 
 			// Неизвестная команда и нет агента
-			return m, performCommand(input, m.appState)
+			return m, performCommand(input, m.coreState)
 		}
 
 	// 3. Результат выполнения команды (прилетел асинхронно)
 	//    NOTE: для agent-запросов используем AgentFinishedMsg для интерактивности
-	case app.CommandResultMsg:
+	case commandResultMsg:
 		// Если это не агентский запрос — обрабатываем как обычно
 		// (агентские запросы приходят через AgentFinishedMsg)
 		if msg.Err != nil {
@@ -253,7 +251,7 @@ func longestLineLength(s string) int {
 //   - ping: Проверка работоспособности системы
 //
 // Возвращает tea.Cmd для асинхронного выполнения, чтобы UI не зависал.
-func performCommand(input string, state *app.AppState) tea.Cmd {
+func performCommand(input string, state *state.CoreState) tea.Cmd {
 	return func() tea.Msg {
 		// Создаем контекст с таймаутом (увеличен для сложных запросов)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -273,7 +271,7 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 		// Загружает метаданные из S3 и раскладывает файлы по полочкам
 		case "load":
 			if len(args) < 1 {
-				return app.CommandResultMsg{Err: fmt.Errorf("usage: load <article_id>")}
+				return commandResultMsg{Err: fmt.Errorf("usage: load <article_id>")}
 			}
 			articleID := args[0]
 
@@ -281,23 +279,22 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 			// REFACTORED 2026-01-04: state.S3 → state.GetStorage()
 			s3Client := state.GetStorage()
 			if s3Client == nil {
-				return app.CommandResultMsg{Err: fmt.Errorf("s3 client is not initialized")}
+				return commandResultMsg{Err: fmt.Errorf("s3 client is not initialized")}
 			}
 
 			rawObjects, err := s3Client.ListFiles(ctx, articleID)
 			if err != nil {
-				return app.CommandResultMsg{Err: fmt.Errorf("s3 error: %w", err)}
+				return commandResultMsg{Err: fmt.Errorf("s3 error: %w", err)}
 			}
 
 			// 2. Классифицируем файлы согласно правилам из config.yaml
 			classifierEngine := classifier.New(state.Config.FileRules)
 			classifiedFiles, err := classifierEngine.Process(rawObjects)
 			if err != nil {
-				return app.CommandResultMsg{Err: fmt.Errorf("classification error: %w", err)}
+				return commandResultMsg{Err: fmt.Errorf("classification error: %w", err)}
 			}
 
-			// 3. Обновляем глобальный State потокобезопасно
-			// (SetCurrentArticle сам конвертирует в FileMeta внутренне)
+			// 3. Обновляем State и UI (thread-safe)
 			state.SetCurrentArticle(articleID, classifiedFiles)
 
 			// 4. Формируем красивый отчет для пользователя
@@ -315,19 +312,19 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 				report.WriteString("⚠️ WARNING: No sketches found!\n")
 			}
 
-			return app.CommandResultMsg{Output: report.String()}
+			return commandResultMsg{Output: report.String()}
 
 		// === КОМАНДА 2: RENDER <PROMPT_FILE> ===
 		// Тестирует промпт, подставляя данные из загруженного артикула
 		case "render":
 			if len(args) < 1 {
-				return app.CommandResultMsg{Err: fmt.Errorf("usage: render <prompt_file.yaml>")}
+				return commandResultMsg{Err: fmt.Errorf("usage: render <prompt_file.yaml>")}
 			}
 			filename := args[0]
 
 			// Проверяем, загружен ли вообще артикул (потокобезопасно)
 			if state.GetCurrentArticleID() == "NONE" {
-				return app.CommandResultMsg{Err: fmt.Errorf("no article loaded. use 'load <id>' first")}
+				return commandResultMsg{Err: fmt.Errorf("no article loaded. use 'load <id>' first")}
 			}
 
 			// 1. Загружаем сам файл промпта
@@ -335,7 +332,7 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 			fullPath := fmt.Sprintf("%s/%s", state.Config.App.PromptsDir, filename)
 			p, err := prompt.Load(fullPath)
 			if err != nil {
-				return app.CommandResultMsg{Err: fmt.Errorf("failed to load prompt '%s': %w", filename, err)}
+				return commandResultMsg{Err: fmt.Errorf("failed to load prompt '%s': %w", filename, err)}
 			}
 
 			// 2. Готовим данные для шаблона (Data Context)
@@ -356,7 +353,7 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 			// 3. Рендерим сообщения
 			messages, err := p.RenderMessages(templateData)
 			if err != nil {
-				return app.CommandResultMsg{Err: fmt.Errorf("render error: %w", err)}
+				return commandResultMsg{Err: fmt.Errorf("render error: %w", err)}
 			}
 
 			// 4. Выводим результат (симуляция отправки)
@@ -373,7 +370,7 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 				output.WriteString(fmt.Sprintf("[%s]: %s\n\n", strings.ToUpper(m.Role), contentPreview))
 			}
 
-			return app.CommandResultMsg{Output: output.String()}
+			return commandResultMsg{Output: output.String()}
 
 		// === КОМАНДА 3: DEMO ===
 		// Добавляет тестовые задачи для проверки отображения todo панели
@@ -381,7 +378,7 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 			// REFACTORED 2026-01-04: state.Todo → state.GetTodoManager()
 			todoManager := state.GetTodoManager()
 			if todoManager == nil {
-				return app.CommandResultMsg{Err: fmt.Errorf("todo manager not initialized")}
+				return commandResultMsg{Err: fmt.Errorf("todo manager not initialized")}
 			}
 			todoManager.Add("Проверить API Wildberries")
 			todoManager.Add("Загрузить эскизы из S3")
@@ -389,16 +386,16 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 			taskID := todoManager.Add("Провалить эту задачу для теста")
 			todoManager.Complete(2)
 			todoManager.Fail(taskID, "Тестовая ошибка")
-			return app.CommandResultMsg{Output: "✅ Added 4 demo todos (1 done, 1 failed, 2 pending)"}
+			return commandResultMsg{Output: "✅ Added 4 demo todos (1 done, 1 failed, 2 pending)"}
 
 		// === КОМАНДА 4: PING ===
 		case "ping":
-			return app.CommandResultMsg{Output: "Pong! System is alive."}
+			return commandResultMsg{Output: "Pong! System is alive."}
 
 		// === НЕИЗВЕСТНАЯ КОМАНДА ===
 		// NOTE: "ask" и делегирование агенту обрабатываются в Update напрямую
 		default:
-			return app.CommandResultMsg{Err: fmt.Errorf("unknown command: '%s'. Try 'load <id>', 'demo', 'render <file>', 'ask <query>' or 'todo help'", cmd)}
+			return commandResultMsg{Err: fmt.Errorf("unknown command: '%s'. Try 'load <id>', 'demo', 'render <file>', 'ask <query>' or 'todo help'", cmd)}
 		}
 	}
 }
@@ -408,13 +405,11 @@ func performCommand(input string, state *app.AppState) tea.Cmd {
 // Канал сохраняется в модели для последующей проверки в Update().
 // Возвращаемая команда только отправляет AgentTickMsg - чтение канала происходит в Update().
 func startAgent(m *MainModel, query string) tea.Cmd {
-	state := m.appState
-
 	// Проверяем что оркестратор инициализирован
-	if state.Orchestrator == nil {
+	if m.orchestrator == nil {
 		utils.Error("startAgent: Orchestrator is nil!", "query", query)
 		return func() tea.Msg {
-			return AgentFinishedMsg{Result: app.CommandResultMsg{Err: fmt.Errorf("orchestrator not initialized")}}
+			return AgentFinishedMsg{Result: commandResultMsg{Err: fmt.Errorf("orchestrator not initialized")}}
 		}
 	}
 
@@ -425,7 +420,7 @@ func startAgent(m *MainModel, query string) tea.Cmd {
 	if !m.agent.tryStart(resultCh) {
 		utils.Error("startAgent: Agent already running!", "query", query)
 		return func() tea.Msg {
-			return AgentFinishedMsg{Result: app.CommandResultMsg{Err: fmt.Errorf("agent already running")}}
+			return AgentFinishedMsg{Result: commandResultMsg{Err: fmt.Errorf("agent already running")}}
 		}
 	}
 
@@ -437,8 +432,8 @@ func startAgent(m *MainModel, query string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		answer, err := state.Orchestrator.Run(ctx, query)
-		result := app.CommandResultMsg{}
+		answer, err := m.orchestrator.Run(ctx, query)
+		result := commandResultMsg{}
 		if err != nil {
 			utils.Error("startAgent: Agent FAILED", "error", err)
 			result.Err = fmt.Errorf("agent error: %w", err)

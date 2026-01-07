@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ilkoid/poncho-ai/pkg/agent"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
@@ -309,12 +308,9 @@ var _ Chain = (*ReActCycle)(nil)
 // Реализует Agent interface для прямого использования агента.
 // Удобно для простых случаев когда не нужен полный контроль ChainInput.
 //
-// Thread-safe.
+// Thread-safe (делегирует блокировку в Execute).
 func (c *ReActCycle) Run(ctx context.Context, query string) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Проверяем зависимости
+	// Проверяем зависимости без блокировки (Execute заблокирует)
 	if err := c.validateDependencies(); err != nil {
 		return "", err
 	}
@@ -327,6 +323,7 @@ func (c *ReActCycle) Run(ctx context.Context, query string) (string, error) {
 	}
 
 	// Выполняем Chain и возвращаем результат
+	// Execute выполнит блокировку мьютекса
 	output, err := c.Execute(ctx, input)
 	if err != nil {
 		return "", err
@@ -356,5 +353,5 @@ func (c *ReActCycle) GetHistory() []llm.Message {
 // Ensure ReActCycle implements PromptLoader
 var _ PromptLoader = (*ReActCycle)(nil)
 
-// Ensure ReActCycle implements Agent
-var _ agent.Agent = (*ReActCycle)(nil)
+// Ensure ReActCycle implements Agent (local interface in chain package)
+var _ Agent = (*ReActCycle)(nil)

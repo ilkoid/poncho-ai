@@ -41,8 +41,7 @@ poncho-ai/
 │   ├── maxiponcho/        # Wildberries PLM analysis TUI
 │   └── */                 # CLI utilities (chain-cli, model-registry-test, vision, debug)
 ├── internal/              # Application-specific logic
-│   ├── app/              # AppState with embedded CoreState
-│   └── ui/               # Bubble Tea TUI
+│   └── ui/               # Bubble Tea TUI (UI state separate from CoreState)
 ├── pkg/                   # Reusable library packages
 │   ├── agent/            # Agent interface
 │   ├── chain/            # Chain Pattern + ReAct implementation
@@ -59,7 +58,7 @@ poncho-ai/
 └── config.yaml           # Main configuration
 ```
 
-### 1.2 Component Architecture (2026-01-05)
+### 1.2 Component Architecture (2026-01-07)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -67,34 +66,36 @@ poncho-ai/
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌─────────────────┐    ┌──────────────────┐    ┌────────────┐ │
-│  │   cmd/poncho    │───▶│  AppState        │◀───│ Commands   │ │
-│  │  (Entry Point)  │    │ (internal/app)   │    │ Registry   │ │
+│  │   cmd/poncho    │───▶│   CoreState      │◀───│   Tools    │ │
+│  │  (Entry Point)  │    │   (pkg/state)    │    │  Registry  │ │
 │  └─────────────────┘    └──────────────────┘    └────────────┘ │
 │           │                       │▲                            │
-│           │                       ││ Embeds                     │
+│           │                       ││                            │
 │           ▼                       ││                            │
 │  ┌─────────────────┐    ┌─────────┴───────────┐    ┌─────────┐│
 │  │  ReActCycle     │◀───│   CoreState        │    │   UI    ││
 │  │(pkg/chain)      │    │   (pkg/state)      │    │(Bubble) ││
 │  │                 │    │                    │    │         ││
-│  │ Implements:     │    └────────────────────┘    └─────────┘│
-│  │ - Chain         │              │                             │
-│  │ - Agent         │              ▼                             │
-│  └─────────────────┘    ┌──────────────────┐                    │
-│           │              │  Tool Interface  │                    │
-│           ▼              │  (pkg/tools)     │                    │
-│  ┌─────────────────┐    └──────────────────┘                    │
-│  │ LLM Provider    │
-│  │ (pkg/llm)       │
-│  └─────────────────┘
+│  │ Implements:     │    │ E-commerce helpers │    │ Separate ││
+│  │ - Chain         │    │ - SetCurrentArticle│    │  fields: ││
+│  │ - Agent         │    │ - GetCurrentArticle│    │ orch,   ││
+│  └─────────────────┘    └────────────────────┘    │ modelID ││
+│           │                                          └─────────┘│
+│           ▼                                                      │
+│  ┌─────────────────┐                                             │
+│  │ LLM Provider    │                                             │
+│  │ (pkg/llm)       │                                             │
+│  └─────────────────┘                                             │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 
-Key Points (2026-01-05):
-  - pkg/state/CoreState: Framework core (no internal/ imports)
+Key Points (2026-01-07):
+  - pkg/state/CoreState: Framework core (includes e-commerce helpers)
   - pkg/chain/ReActCycle: Implements both Chain and Agent interfaces
-  - internal/app/AppState: Application-specific (embeds CoreState)
+  - pkg/app/components: Returns *state.CoreState (Rule 6 compliant)
+  - internal/ui/: TUI stores UI state separately from CoreState
   - Rule 6 Compliance: pkg/ has ZERO imports from internal/
+  - internal/app/ is deprecated (no longer used)
 ```
 
 ### 1.3 Data Flow
@@ -318,28 +319,33 @@ type CoreState struct {
     mu    sync.RWMutex
     store map[string]any
 }
+
+// E-commerce helpers (moved from internal/app)
+func (s *CoreState) SetCurrentArticle(articleID string, files map[string][]*s3storage.FileMeta) error
+func (s *CoreState) GetCurrentArticleID() string
+func (s *CoreState) GetCurrentArticle() (articleID string, files map[string][]*s3storage.FileMeta)
 ```
 
-**AppState** (`internal/app/state.go`):
+**UI State** (`internal/ui/model.go`):
 ```go
-type AppState struct {
-    *state.CoreState  // Embedded framework core
+type MainModel struct {
+    // Framework core (library code)
+    coreState    *state.CoreState
 
-    CommandRegistry *CommandRegistry
-    Orchestrator     agent.Agent
-    UserChoice       *userChoiceData
-
+    // UI-specific state (TUI only)
+    orchestrator     agent.Agent
+    currentArticleID string
+    currentModel     string
+    isProcessing     bool
     mu               sync.RWMutex
-    CurrentArticleID string
-    CurrentModel     string
-    IsProcessing     bool
+    // ...
 }
 ```
 
 **Benefits**:
 - Rule 6 compliance (pkg/ has no internal/ imports)
+- TUI apps explicitly pass CoreState + UI fields
 - Single source of truth
-- Interface segregation
 - Thread-safe by design
 
 ### 3.5 Tool Post-Prompts
@@ -412,8 +418,8 @@ app:
 ```go
 type Components struct {
     Config        *config.AppConfig
-    State         *app.AppState
-    ModelRegistry *models.Registry  // Centralized model management
+    State         *state.CoreState  // Rule 6: no internal/ imports
+    ModelRegistry *models.Registry
     LLM           llm.Provider      // DEPRECATED: Use ModelRegistry
     VisionLLM     llm.Provider
     WBClient      *wb.Client
@@ -537,7 +543,7 @@ Layered architecture, thread-safe, no globals.
 - `internal/` - Application-specific
 - `cmd/` - Entry points only
 
-**Status (2026-01-05)**: ✅ Full compliance achieved. `pkg/` has ZERO imports from `internal/`.
+**Status (2026-01-07)**: ✅ Full compliance achieved. `pkg/` has ZERO imports from `internal/`. `pkg/app/components` now returns `*state.CoreState`.
 
 ### Rule 7: Error Handling
 No `panic()` in business logic. All errors returned up stack.
@@ -771,7 +777,7 @@ The framework follows **"Convention over Configuration"** - developers follow si
 
 ---
 
-**Last Updated**: 2026-01-06
-**Version**: 3.1 (Model Registry)
+**Last Updated**: 2026-01-07
+**Version**: 3.2 (Rule 6 Refactor: pkg/app independent from internal/)
 
 **Maintainer**: Poncho AI Development Team

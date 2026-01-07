@@ -8,7 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/ilkoid/poncho-ai/internal/app"
+	"github.com/ilkoid/poncho-ai/pkg/agent"
+	"github.com/ilkoid/poncho-ai/pkg/state"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -17,7 +18,13 @@ import (
 
 // agentResultMsg хранит результат работы агента для передачи через канал
 type agentResultMsg struct {
-	result app.CommandResultMsg
+	result commandResultMsg // Результат выполнения агента
+}
+
+// commandResultMsg - сообщение с результатом выполнения команды
+type commandResultMsg struct {
+	Output string
+	Err    error
 }
 
 // agentState хранит состояние агента, требующее синхронизации.
@@ -78,15 +85,26 @@ func (s *agentState) tryStart(resultCh chan agentResultMsg) bool {
 // Содержит все компоненты TUI:
 //   - viewport: область лога чата (только для чтения)
 //   - textarea: поле ввода пользователя
-//   - appState: ссылка на глобальное состояние приложения
+//   - coreState: ссылка на framework core состояние
+//   - orchestrator: ссылка на AI агента
 //   - err: ошибка инициализации (если была)
 //   - ready: флаг первой инициализации размеров окна
 //   - agent: указатель на agentState (не копируется при Update!)
+//
+// REFACTORED 2025-01-07: Хранит CoreState + UI-specific поля отдельно.
 type MainModel struct {
 	viewport viewport.Model
 	textarea textarea.Model
 
-	appState *app.AppState
+	// Framework core (library code)
+	coreState *state.CoreState
+
+	// UI-specific state (TUI only)
+	orchestrator     agent.Agent // AI Agent implementation
+	currentArticleID string      // Текущий артикул для отображения в UI
+	currentModel     string      // Текущая модель для отображения в UI
+	isProcessing     bool        // Флаг занятости для spinner
+	mu               sync.RWMutex // Защита UI-specific полей
 
 	// err хранит ошибку запуска, если была.
 	// Используем atomic.Value для thread-safe доступа.
@@ -123,9 +141,9 @@ func (m *MainModel) setErr(err error) {
 //   - Поле ввода с placeholder'ом
 //   - Вьюпорт для лога с приветственным сообщением
 //
-// Принимает AppState для доступа к данным приложения.
-// Rule 6: AppState вместо GlobalState после рефакторинга.
-func InitialModel(state *app.AppState) MainModel {
+// Принимает CoreState и Orchestrator для работы с агентом.
+// REFACTORED 2025-01-07: Не зависит от internal/app.
+func InitialModel(coreState *state.CoreState, orchestrator agent.Agent, currentModel string) MainModel {
 	// 1. Настройка поля ввода
 	ta := textarea.New()
 	ta.Placeholder = "Введите команду (например: load 123)..."
@@ -144,11 +162,15 @@ func InitialModel(state *app.AppState) MainModel {
 	))
 
 	return MainModel{
-		textarea: ta,
-		viewport: vp,
-		appState: state,
-		ready:    false,
-		agent:    &agentState{}, // Инициализация пустого состояния
+		textarea:         ta,
+		viewport:         vp,
+		coreState:        coreState,
+		orchestrator:     orchestrator,
+		currentArticleID: "NONE",
+		currentModel:     currentModel,
+		isProcessing:     false,
+		ready:            false,
+		agent:            &agentState{}, // Инициализация пустого состояния
 	}
 }
 

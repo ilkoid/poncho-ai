@@ -107,10 +107,12 @@ func (m MainModel) View() string {
 	}
 
 	// Формируем строку статуса (Header)
+	m.mu.RLock()
 	status := fmt.Sprintf(" ACT: %s | MODEL: %s ",
-		m.appState.CurrentArticleID,
-		m.appState.CurrentModel,
+		m.currentArticleID,
+		m.currentModel,
 	)
+	m.mu.RUnlock()
 
 	// Хедер на ширину вьюпорта (уже вычтена todo панель)
 	header := headerStyle.
@@ -132,8 +134,8 @@ func (m MainModel) View() string {
 	)
 
 	// Добавляем Todo панель справа
-	// REFACTORED 2026-01-04: m.appState.Todo → m.appState.GetTodoManager()
-	todoPanel := RenderTodoPanel(m.appState.GetTodoManager(), 40)
+	// REFACTORED 2026-01-04: m.coreState.Todo → m.coreState.GetTodoManager()
+	todoPanel := RenderTodoPanel(m.coreState.GetTodoManager(), 40)
 
 	// Комбинируем основной контент с Todo панелью
 	return lipgloss.JoinHorizontal(lipgloss.Top,

@@ -9,9 +9,10 @@ Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI
 **Key Philosophy**: "Raw In, String Out" - tools receive raw JSON from LLM and return strings.
 
 **Architecture**:
-- `pkg/state/CoreState` - Framework core (reusable)
-- `internal/app/AppState` - TUI-specific (embeds CoreState)
+- `pkg/state/CoreState` - Framework core (reusable, includes e-commerce helpers)
+- `internal/ui/` - TUI-specific (stores UI state separately from CoreState)
 - `pkg/chain/ReActCycle` - Implements both Chain and Agent interfaces
+- `pkg/app/components.go` - Returns `*state.CoreState` (Rule 6 compliant)
 - Rule 6 Compliant: `pkg/` has NO imports from `internal/`
 
 ---
@@ -30,7 +31,6 @@ poncho-ai/
 │   ├── debug-test/        # CLI utility for testing debug logs
 │   └── wb-tools-test/     # CLI utility for testing WB tools
 ├── internal/              # Application-specific logic
-│   ├── app/              # Application state (AppState with embedded CoreState)
 │   └── ui/               # Bubble Tea TUI (Model-View-Update)
 ├── pkg/                   # Reusable library packages
 │   ├── agent/            # Agent interface (avoids circular imports)
@@ -180,10 +180,7 @@ UpdateType[T any](s *CoreState, key Key, fn func(T) T) error
 - Dependencies: Config, S3, Dictionaries, Todo, ToolsRegistry
 - Thread-safe storage: `mu sync.RWMutex`, `store map[string]any`
 - Implements: MessageRepository, FileRepository, TodoRepository, DictionaryRepository, StorageRepository
-
-**AppState** (`internal/app/state.go`):
-- Embeds `*state.CoreState`
-- Adds: CommandRegistry, Orchestrator, UserChoice, CurrentArticleID, CurrentModel, IsProcessing
+- E-commerce helpers: `SetCurrentArticle()`, `GetCurrentArticleID()`, `GetCurrentArticle()`
 
 ### Chain Pattern (`pkg/chain/`)
 
@@ -244,7 +241,7 @@ s3:
 | Registry | `pkg/tools/`, `pkg/models/` | Tool and Model registration/discovery |
 | Factory | `pkg/factory/` | LLM provider creation |
 | Options | `pkg/llm/` | Runtime parameter overrides |
-| Command | `internal/app/` | TUI command handling |
+| Command | `internal/ui/` | TUI command handling (local, not in pkg/) |
 | ReAct | `pkg/chain/` | Agent reasoning loop |
 | Chain of Responsibility | `pkg/chain/` | Modular step-based execution |
 | Recorder | `pkg/debug/` | JSON trace recording |
@@ -304,7 +301,7 @@ func (t *MyTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 
 ## Thread-Safe Components
 
-CoreState, AppState, ToolsRegistry, ModelRegistry, TodoManager, CommandRegistry, wb.Client.limiters.
+CoreState, ToolsRegistry, ModelRegistry, TodoManager, wb.Client.limiters, TUI MainModel (sync.RWMutex).
 
 ---
 

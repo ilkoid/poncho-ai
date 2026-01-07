@@ -345,6 +345,40 @@ func (s *CoreState) UpdateFileAnalysis(tag string, filename string, description 
 	})
 }
 
+// SetCurrentArticle устанавливает текущий артикул и файлы.
+//
+// Параметры:
+//   - articleID: ID артикула
+//   - files: map файлов по тегам
+//
+// Thread-safe: атомарная замена файлов и articleID.
+func (s *CoreState) SetCurrentArticle(articleID string, files map[string][]*s3storage.FileMeta) error {
+	if err := s.SetFiles(files); err != nil {
+		return err
+	}
+	return s.Set(KeyCurrentArticle, articleID)
+}
+
+// GetCurrentArticleID возвращает ID текущего артикула.
+//
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) GetCurrentArticleID() string {
+	val, ok := s.Get(KeyCurrentArticle)
+	if !ok {
+		return "NONE"
+	}
+	return val.(string)
+}
+
+// GetCurrentArticle возвращает ID и файлы текущего артикула.
+//
+// Thread-safe: чтение защищено мьютексом.
+func (s *CoreState) GetCurrentArticle() (articleID string, files map[string][]*s3storage.FileMeta) {
+	articleID = s.GetCurrentArticleID()
+	files = s.GetFiles()
+	return
+}
+
 // ============================================================
 // TodoRepository Interface Implementation
 // ============================================================

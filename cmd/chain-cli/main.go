@@ -6,6 +6,25 @@
 //   ./chain-cli -json "запрос"
 //   ./chain-cli -model glm-4.6 "запрос"
 //
+// ПРИМЕР ПРОСТОГО API (новый pkg/agent):
+//
+//	package main
+//
+//	import (
+//		"context"
+//		"fmt"
+//		"github.com/ilkoid/poncho-ai/pkg/agent"
+//	)
+//
+//	func main() {
+//		client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+//		result, _ := client.Run(context.Background(), "покажи категории")
+//		fmt.Println(result)
+//	}
+//
+// Эта утилита (chain-cli) использует РАСШИРЕННЫЙ API для демонстрации
+// полной гибкости фреймворка (прямое создание ReActCycle, Chain.Execute()).
+//
 // Rule 11: config.yaml должен находиться рядом с бинарником.
 // Если config не найден — утилита падает с ошибкой.
 package main
@@ -118,7 +137,7 @@ func main() {
 	reactCycle.SetModelRegistry(modelRegistry, defaultModel)
 	reactCycle.SetRegistry(registry)
 	// Rule 6: Передаем CoreState в cycle (framework logic)
-	reactCycle.SetState(state.CoreState)
+	reactCycle.SetState(state)
 
 	// 7. Подключаем debug если включен
 	if *debugFlag || cfg.App.DebugLogs.Enabled {
@@ -145,7 +164,7 @@ func main() {
 	// Rule 6: Передаем CoreState в cycle (framework logic)
 	input := chain.ChainInput{
 		UserQuery: userQuery,
-		State:     state.CoreState,
+		State:     state,
 		Registry:  registry,
 		Config:    chain.ChainConfig{},
 	}

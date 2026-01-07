@@ -1,0 +1,218 @@
+// Package agent предоставляет простой API для создания и запуска AI агентов.
+//
+// Пакет реализует фасад над существующим ReActCycle, позволяя создавать
+// агентов с минимальным количеством кода. При этом сохраняется полная
+// совместимость с существующим API для продвинутых сценариев.
+//
+// Basic usage:
+//
+//	client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+//	result, _ := client.Run(ctx, "Find products under 1000₽")
+//
+// With custom tool:
+//
+//	client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+//	client.RegisterTool(&MyCustomTool{})
+//	result, _ := client.Run(ctx, "Check price of SKU123")
+package agent
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	"github.com/ilkoid/poncho-ai/pkg/app"
+	"github.com/ilkoid/poncho-ai/pkg/chain"
+	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/llm"
+	"github.com/ilkoid/poncho-ai/pkg/models"
+	"github.com/ilkoid/poncho-ai/pkg/state"
+	"github.com/ilkoid/poncho-ai/pkg/tools"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
+	"github.com/ilkoid/poncho-ai/pkg/wb"
+)
+
+// Client представляет AI агент с простым API для запуска запросов.
+//
+// Client является фасадом над ReActCycle, скрывая сложность инициализации
+// компонентов (Config, ModelRegistry, ToolsRegistry, CoreState).
+//
+// Thread-safe: все методы безопасны для параллельного вызова.
+type Client struct {
+	// Dependencies (инициализируются в New())
+	reactCycle     *chain.ReActCycle
+	modelRegistry  *models.Registry
+	toolsRegistry  *tools.Registry
+	state          *state.CoreState
+	config         *config.AppConfig
+
+	// Optional dependencies (могут быть nil)
+	wbClient *wb.Client
+}
+
+// Config определяет конфигурацию для создания агента.
+//
+// Все поля опциональны - при пустых значениях используются дефолты:
+//   - ConfigPath: auto-discovery (как в app.DefaultConfigPathFinder)
+//   - SystemPrompt: загружается из prompts/agent_system.yaml
+//   - MaxIterations: 10 (или из config.yaml)
+type Config struct {
+	// ConfigPath - путь к config.yaml. Если пустой - используется auto-discovery.
+	ConfigPath string
+
+	// SystemPrompt - опциональный override для системного промпта.
+	// Если пустой - загружается из конфигурации.
+	SystemPrompt string
+
+	// MaxIterations - максимальное количество итераций ReAct цикла.
+	// Если 0 - используется значение из config.yaml или дефолт (10).
+	MaxIterations int
+}
+
+// New создаёт новый агент с указанной конфигурацией.
+//
+// Функция выполняет полную инициализацию всех компонентов:
+//   - Загружает config.yaml
+//   - Создаёт S3 клиент (опционально)
+//   - Создаём WB клиент
+//   - Загружаем справочники WB
+//   - Создаём CoreState
+//   - Создаём ModelRegistry
+//   - Создаём ToolsRegistry и регистрируем tools (только enabled: true)
+//   - Загружаем системный промпт и post-prompts
+//   - Создаём ReActCycle
+//
+// Возвращает ошибку если:
+//   - config.yaml не найден или невалиден
+//   - обязательные зависимости не могут быть созданы
+//
+// Rule 2: конфигурация через YAML с ENV поддержкой.
+// Rule 3: tools регистрируются через Registry.
+// Rule 6: только pkg/ импорты, без internal/.
+func New(cfg Config) (*Client, error) {
+	utils.Info("Creating agent", "config_path", cfg.ConfigPath)
+
+	// 1. Загружаем конфигурацию
+	cfgPath := cfg.ConfigPath
+	if cfgPath == "" {
+		// Auto-discovery как в app.DefaultConfigPathFinder
+		if execPath, err := filepath.Abs(filepath.Dir(filepath.Join(".", "config.yaml"))); err == nil {
+			cfgPath = filepath.Join(execPath, "config.yaml")
+		} else {
+			cfgPath = "config.yaml"
+		}
+	}
+
+	appCfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config from %s: %w", cfgPath, err)
+	}
+	utils.Info("Config loaded", "path", cfgPath)
+
+	// 2. Определяем maxIterations
+	maxIters := cfg.MaxIterations
+	if maxIters == 0 {
+		maxIters = 10 // дефолт
+	}
+
+	// 3. Инициализируем компоненты (переиспользуем логику из app.Initialize)
+	// Это гарантирует что весь init код в одном месте
+	components, err := app.Initialize(appCfg, maxIters, cfg.SystemPrompt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize components: %w", err)
+	}
+
+	// 4. Создаём Agent фасад
+	return &Client{
+		reactCycle:     components.Orchestrator,
+		modelRegistry:  components.ModelRegistry,
+		toolsRegistry:  components.State.GetToolsRegistry(),
+		state:          components.State,
+		config:         components.Config,
+		wbClient:       components.WBClient,
+	}, nil
+}
+
+// RegisterTool регистрирует дополнительный инструмент в агенте.
+//
+// Используется для добавления кастомных tools поверх тех, что
+// были загружены из config.yaml.
+//
+// Rule 1: инструмент должен реализовывать tools.Tool interface.
+// Rule 3: регистрация через Registry.
+func (c *Client) RegisterTool(tool tools.Tool) error {
+	if c.toolsRegistry == nil {
+		return fmt.Errorf("tools registry is not initialized")
+	}
+
+	toolName := tool.Definition().Name
+	if err := c.toolsRegistry.Register(tool); err != nil {
+		return fmt.Errorf("failed to register tool '%s': %w", toolName, err)
+	}
+
+	utils.Info("Tool registered", "name", toolName)
+	return nil
+}
+
+// Run выполняет запрос пользователя через агента.
+//
+// Метод делегирует выполнение ReActCycle, который:
+//   1. Добавляет запрос в историю
+//   2. Выполняет ReAct цикл (LLM → Tools → LLM → ...)
+//   3. Возвращает финальный ответ
+//
+// Thread-safe.
+//
+// Rule 11: принимает context.Context для отмены операции.
+func (c *Client) Run(ctx context.Context, query string) (string, error) {
+	if c.reactCycle == nil {
+		return "", fmt.Errorf("agent is not properly initialized")
+	}
+
+	utils.Info("Running agent query", "query", query)
+	return c.reactCycle.Run(ctx, query)
+}
+
+// GetHistory возвращает историю диалога агента.
+//
+// История включает все сообщения: пользовательские, ассистента,
+// и результаты выполнения инструментов.
+//
+// Thread-safe.
+func (c *Client) GetHistory() []llm.Message {
+	if c.state == nil {
+		return []llm.Message{}
+	}
+	return c.state.GetHistory()
+}
+
+// GetModelRegistry возвращает реестр моделей для продвинутых сценариев.
+//
+// Позволяет напрямую работать с моделями (например, для переключения
+// модели в runtime).
+func (c *Client) GetModelRegistry() *models.Registry {
+	return c.modelRegistry
+}
+
+// GetToolsRegistry возвращает реестр инструментов.
+//
+// Позволяет напрямую работать с tools (например, для динамической
+// регистрации/удаления tools).
+func (c *Client) GetToolsRegistry() *tools.Registry {
+	return c.toolsRegistry
+}
+
+// GetState возвращает CoreState для продвинутых сценариев.
+//
+// Позволяет работать напрямую с состоянием (файлы, задачи, справочники).
+func (c *Client) GetState() *state.CoreState {
+	return c.state
+}
+
+// GetConfig возвращает конфигурацию приложения.
+func (c *Client) GetConfig() *config.AppConfig {
+	return c.config
+}
+
+// Ensure Client implements Agent interface
+var _ Agent = (*Client)(nil)

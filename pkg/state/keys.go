@@ -45,6 +45,15 @@ const (
 	//   files, ok := coreState.Get[map[string][]*s3storage.FileMeta](state.KeyFiles)
 	KeyFiles Key = "files"
 
+	// KeyCurrentArticle — ключ для хранения ID текущего артикула (string)
+	//
+	// ID текущего артикула для e-commerce workflow.
+	// Используется в tandem с KeyFiles для отслеживания контекста.
+	//
+	// Пример:
+	//   articleID, ok := coreState.Get[string](state.KeyCurrentArticle)
+	KeyCurrentArticle Key = "current_article"
+
 	// KeyTodo — ключ для хранения менеджера задач (*todo.Manager)
 	//
 	// Планировщик многошаговых задач агента.
@@ -97,6 +106,7 @@ func ReservedKeys() []Key {
 	return []Key{
 		KeyHistory,
 		KeyFiles,
+		KeyCurrentArticle,
 		KeyTodo,
 		KeyDictionaries,
 		KeyStorage,

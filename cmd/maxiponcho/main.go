@@ -60,14 +60,9 @@ func run() error {
 	log.Printf("LLM provider initialized: %s", cfg.Models.DefaultChat)
 	log.Printf("Agent orchestrator initialized")
 
-	// 3. Сохраняем orchestrator в GlobalState
-	components.State.Orchestrator = components.Orchestrator
-
-	// Устанавливаем модель для отображения в TUI
-	components.State.CurrentModel = cfg.Models.DefaultChat
-
-	// 4. Инициализируем TUI модель
-	tuiModel := ui.InitialModel(components.State)
+	// 3. Инициализируем TUI модель
+	// REFACTORED 2025-01-07: Передаем CoreState и Orchestrator напрямую
+	tuiModel := ui.InitialModel(components.State, components.Orchestrator, cfg.Models.DefaultChat)
 
 	// 5. Запускаем Bubble Tea программу
 	log.Println("Starting Maxiponcho TUI...")
