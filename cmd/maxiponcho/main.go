@@ -10,8 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ilkoid/poncho-ai/internal/ui"
+	"github.com/ilkoid/poncho-ai/pkg/agent"
 	appcomponents "github.com/ilkoid/poncho-ai/pkg/app"
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
@@ -44,27 +46,28 @@ func run() error {
 	// Логируем загруженные ключи (с маскированием для безопасности)
 	logKeysInfo(cfg)
 
-	// 2. Инициализируем компоненты
-	components, err := appcomponents.Initialize(
-		cfg,
-		10,    // max iterations
-		"",    // system prompt - загрузится из конфига
-	)
+	// 2. Создаём агент через pkg/agent (Port & Adapter паттерн)
+	// REFACTORED 2026-01-10: Используем agent.Client вместо прямого ReActCycle
+	client, err := agent.New(agent.Config{ConfigPath: cfgPath})
 	if err != nil {
-		utils.Error("Components initialization failed", "error", err)
-		return fmt.Errorf("initialization failed: %w", err)
+		utils.Error("Agent creation failed", "error", err)
+		return fmt.Errorf("agent creation failed: %w", err)
 	}
 
-	log.Printf("S3 client initialized (bucket: %s)", cfg.S3.Bucket)
-	log.Printf("WB client initialized")
-	log.Printf("LLM provider initialized: %s", cfg.Models.DefaultChat)
-	log.Printf("Agent orchestrator initialized")
+	// 3. Создаём emitter для событий агента (Port & Adapter)
+	emitter := events.NewChanEmitter(100)
+	client.SetEmitter(emitter)
 
-	// 3. Инициализируем TUI модель
-	// REFACTORED 2025-01-07: Передаем CoreState и Orchestrator напрямую
-	tuiModel := ui.InitialModel(components.State, components.Orchestrator, cfg.Models.DefaultChat)
+	log.Printf("Agent client initialized with event emitter")
 
-	// 5. Запускаем Bubble Tea программу
+	// 4. Получаем subscriber для TUI
+	sub := client.Subscribe()
+
+	// 5. Инициализируем TUI модель с subscriber
+	// REFACTORED 2026-01-10: Передаём events.Subscriber вместо прямого Orchestrator
+	tuiModel := ui.InitialModel(client.GetState(), client, cfg.Models.DefaultChat, sub)
+
+	// 6. Запускаем Bubble Tea программу
 	log.Println("Starting Maxiponcho TUI...")
 	utils.Info("Starting TUI")
 

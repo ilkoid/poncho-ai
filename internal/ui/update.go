@@ -11,18 +11,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ilkoid/poncho-ai/pkg/classifier"
+	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"github.com/ilkoid/poncho-ai/pkg/state"
+	"github.com/ilkoid/poncho-ai/pkg/tui"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
-
-// AgentFinishedMsg — сигнал что агент завершил выполнение.
-type AgentFinishedMsg struct {
-	Result commandResultMsg
-}
-
-// AgentTickMsg — периодическое сообщение для проверки результата работы агента.
-type AgentTickMsg time.Time
 
 // Update обрабатывает сообщения Bubble Tea и обновляет состояние модели.
 //
@@ -31,7 +25,7 @@ type AgentTickMsg time.Time
 //   - tea.WindowSizeMsg: изменение размера терминала
 //   - tea.KeyMsg: нажатия клавиш
 //   - commandResultMsg: результаты выполнения команд
-//   - AgentFinishedMsg: завершение выполнения агента
+//   - tui.EventMsg: события от агента (Port & Adapter)
 //
 // Возвращает обновленную модель и команду для асинхронного выполнения.
 func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -45,40 +39,51 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 
-	// 0. Агент завершил работу
-	case AgentFinishedMsg:
-		// Обрабатываем результат
-		if msg.Result.Err != nil {
-			m.appendLog(errorMsgStyle("ERROR: ") + msg.Result.Err.Error())
-		} else {
-			m.appendLog(systemMsgStyle("SYSTEM: ") + msg.Result.Output)
-		}
-		m.textarea.Focus()
-		return m, nil
+	// 0. События от агента (Port & Adapter)
+	case tui.EventMsg:
+		event := events.Event(msg)
+		switch event.Type {
+		case events.EventThinking:
+			// Агент начал думать - показываем spinner
+			m.mu.Lock()
+			m.isProcessing = true
+			m.mu.Unlock()
+			m.appendLog(systemMsgStyle("Thinking..."))
+			return m, tui.WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
+				return tui.EventMsg(e)
+			})
 
-	// 0a. Tick от агента - продолжаем опрос канала
-	case AgentTickMsg:
-		// Проверяем что агент запущен и получаем канал
-		if m.agent != nil && m.agent.isRunning() {
-			resultCh := m.agent.getChannel()
-			if resultCh != nil {
-				// Проверяем канал
-				select {
-				case agentMsg := <-resultCh:
-					// Результат получен - останавливаем агент
-					m.agent.stop()
-					return m, func() tea.Msg {
-						return AgentFinishedMsg{Result: agentMsg.result}
-					}
-				default:
-					// Продолжаем тикать
-					return m, tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
-						return AgentTickMsg(t)
-					})
-				}
+		case events.EventMessage:
+			// Промежуточное сообщение от агента
+			if content, ok := event.Data.(string); ok {
+				m.appendLog(systemMsgStyle("AI: ") + content)
 			}
+			return m, tui.WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
+				return tui.EventMsg(e)
+			})
+
+		case events.EventError:
+			// Ошибка агента
+			if err, ok := event.Data.(error); ok {
+				m.appendLog(errorMsgStyle("ERROR: ") + err.Error())
+			}
+			m.mu.Lock()
+			m.isProcessing = false
+			m.mu.Unlock()
+			m.textarea.Focus()
+			return m, nil
+
+		case events.EventDone:
+			// Агент завершил работу
+			if result, ok := event.Data.(string); ok {
+				m.appendLog(systemMsgStyle("AI: ") + result)
+			}
+			m.mu.Lock()
+			m.isProcessing = false
+			m.mu.Unlock()
+			m.textarea.Focus()
+			return m, nil
 		}
-		return m, nil
 
 	// 1. Изменение размера окна терминала
 	case tea.WindowSizeMsg:
@@ -400,28 +405,27 @@ func performCommand(input string, state *state.CoreState) tea.Cmd {
 	}
 }
 
-// startAgent запускает агента в отдельной горутине и возвращает tea.Tick для опроса результата.
+// startAgent запускает агента в отдельной горутине.
 //
-// Канал сохраняется в модели для последующей проверки в Update().
-// Возвращаемая команда только отправляет AgentTickMsg - чтение канала происходит в Update().
+// REFACTORED 2026-01-10: Агент отправляет события через events.Emitter,
+// которые обрабатываются в Update() через tui.EventMsg.
 func startAgent(m *MainModel, query string) tea.Cmd {
 	// Проверяем что оркестратор инициализирован
 	if m.orchestrator == nil {
 		utils.Error("startAgent: Orchestrator is nil!", "query", query)
-		return func() tea.Msg {
-			return AgentFinishedMsg{Result: commandResultMsg{Err: fmt.Errorf("orchestrator not initialized")}}
-		}
+		m.appendLog(errorMsgStyle("ERROR: Orchestrator not initialized"))
+		return nil
 	}
 
-	// Создаем канал для результата
-	resultCh := make(chan agentResultMsg, 1)
+	// Проверяем что агент не запущен
+	m.mu.RLock()
+	alreadyRunning := m.isProcessing
+	m.mu.RUnlock()
 
-	// Пытаемся запустить агент (thread-safe проверка)
-	if !m.agent.tryStart(resultCh) {
+	if alreadyRunning {
 		utils.Error("startAgent: Agent already running!", "query", query)
-		return func() tea.Msg {
-			return AgentFinishedMsg{Result: commandResultMsg{Err: fmt.Errorf("agent already running")}}
-		}
+		m.appendLog(errorMsgStyle("ERROR: Agent already running"))
+		return nil
 	}
 
 	// Запускаем агента в отдельной горутине
@@ -432,24 +436,14 @@ func startAgent(m *MainModel, query string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		answer, err := m.orchestrator.Run(ctx, query)
-		result := commandResultMsg{}
+		_, err := m.orchestrator.Run(ctx, query)
 		if err != nil {
 			utils.Error("startAgent: Agent FAILED", "error", err)
-			result.Err = fmt.Errorf("agent error: %w", err)
 		} else {
-			utils.Info("startAgent: Agent SUCCEEDED", "response_length", len(answer))
-			result.Output = answer
+			utils.Info("startAgent: Agent SUCCEEDED")
 		}
-
-		// Отправляем результат в канал (блокируется пока Update не прочитает)
-		resultCh <- agentResultMsg{result: result}
-		utils.Info("startAgent: Result sent to channel")
+		// События отправляются автоматически через emitter
 	}()
 
-	// Возвращаем команду которая просто тикает - чтение канала в Update()
-	// ИЗМЕНЕНО: убран select из этого места чтобы избежать двойного чтения
-	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
-		return AgentTickMsg(t)
-	})
+	return nil
 }

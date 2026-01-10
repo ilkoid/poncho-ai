@@ -9,7 +9,9 @@ import (
 	"sync/atomic"
 
 	"github.com/ilkoid/poncho-ai/pkg/agent"
+	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/state"
+	"github.com/ilkoid/poncho-ai/pkg/tui"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -92,6 +94,7 @@ func (s *agentState) tryStart(resultCh chan agentResultMsg) bool {
 //   - agent: указатель на agentState (не копируется при Update!)
 //
 // REFACTORED 2025-01-07: Хранит CoreState + UI-specific поля отдельно.
+// REFACTORED 2026-01-10: Использует events.Subscriber вместо agentState (Port & Adapter).
 type MainModel struct {
 	viewport viewport.Model
 	textarea textarea.Model
@@ -113,9 +116,9 @@ type MainModel struct {
 	// ready флаг для первой инициализации размеров
 	ready bool
 
-	// agent хранит состояние агента с мьютексом.
-	// УКАЗАТЕЛЬ - не копируется при Bubble Tea Update() value receiver!
-	agent *agentState
+	// Port & Adapter: подписчик на события агента
+	// Заменяет старый механизм agentState
+	eventSub events.Subscriber
 }
 
 // getErr возвращает ошибку thread-safe.
@@ -141,9 +144,10 @@ func (m *MainModel) setErr(err error) {
 //   - Поле ввода с placeholder'ом
 //   - Вьюпорт для лога с приветственным сообщением
 //
-// Принимает CoreState и Orchestrator для работы с агентом.
+// Принимает CoreState, Orchestrator и events.Subscriber для работы с агентом.
 // REFACTORED 2025-01-07: Не зависит от internal/app.
-func InitialModel(coreState *state.CoreState, orchestrator agent.Agent, currentModel string) MainModel {
+// REFACTORED 2026-01-10: Использует events.Subscriber (Port & Adapter).
+func InitialModel(coreState *state.CoreState, orchestrator agent.Agent, currentModel string, eventSub events.Subscriber) MainModel {
 	// 1. Настройка поля ввода
 	ta := textarea.New()
 	ta.Placeholder = "Введите команду (например: load 123)..."
@@ -170,13 +174,20 @@ func InitialModel(coreState *state.CoreState, orchestrator agent.Agent, currentM
 		currentModel:     currentModel,
 		isProcessing:     false,
 		ready:            false,
-		agent:            &agentState{}, // Инициализация пустого состояния
+		eventSub:         eventSub,
 	}
 }
 
 // Init запускается один раз при старте Bubble Tea программы.
 //
-// Возвращает команду для запуска мигания курсора в поле ввода.
+// Возвращает команду для:
+//   - Запуска мигания курсора в поле ввода
+//   - Чтения событий из агента (Port & Adapter)
 func (m MainModel) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(
+		textarea.Blink,
+		tui.ReceiveEventCmd(m.eventSub, func(event events.Event) tea.Msg {
+			return tui.EventMsg(event)
+		}),
+	)
 }

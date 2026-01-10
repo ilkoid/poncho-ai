@@ -31,20 +31,22 @@ poncho-ai/
 │   ├── debug-test/        # CLI utility for testing debug logs
 │   └── wb-tools-test/     # CLI utility for testing WB tools
 ├── internal/              # Application-specific logic
-│   └── ui/               # Bubble Tea TUI (Model-View-Update)
+│   └── ui/               # Bubble Tea TUI (app-specific implementation)
 ├── pkg/                   # Reusable library packages
-│   ├── agent/            # Agent interface (avoids circular imports)
+│   ├── agent/            # Agent Client facade (2-line agent API)
 │   ├── app/              # Component initialization (shared across entry points)
 │   ├── chain/            # Chain Pattern + ReAct implementation (modular agent execution)
 │   ├── classifier/       # File classification engine
 │   ├── config/           # YAML configuration with ENV support
 │   ├── debug/            # JSON debug logging system
+│   ├── events/           # Port & Adapter: Event interfaces (Emitter, Subscriber)
 │   ├── factory/          # LLM provider factory
 │   ├── llm/              # LLM abstraction layer + options pattern
 │   ├── models/           # Model Registry (centralized LLM provider management)
 │   ├── prompt/           # Prompt loading and rendering + post-prompts
 │   ├── s3storage/        # S3-compatible storage client
 │   ├── state/            # Framework core state (CoreState)
+│   ├── tui/              # Reusable TUI helpers (adapter for Bubble Tea)
 │   ├── todo/             # Thread-safe task manager
 │   ├── tools/            # Tool system (registry + std tools)
 │   ├── utils/            # JSON sanitization utilities
@@ -197,6 +199,107 @@ cfg := client.GetConfig()              // Direct config access
 
 **Architecture**: Facade pattern over `ReActCycle`. See `cmd/simple-agent/` and `cmd/wb-ping-util-v2/` for examples.
 
+**Events Support** (Port & Adapter):
+```go
+client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+
+// Set emitter for UI integration
+emitter := events.NewChanEmitter(100)
+client.SetEmitter(emitter)
+
+// Subscribe to agent events
+sub := client.Subscribe()
+for event := range sub.Events() {
+    switch event.Type {
+    case events.EventThinking:
+        ui.showSpinner()
+    case events.EventMessage:
+        ui.showMessage(event.Data.(string))
+    case events.EventDone:
+        ui.showResult(event.Data.(string))
+    }
+}
+```
+
+### Event System (`pkg/events/`)
+
+**NEW (2026-01-10)**: Port & Adapter pattern for agent events.
+
+**Purpose**: Decouple agent logic from UI implementation through event interfaces.
+
+**Interfaces**:
+```go
+// Emitter - Port for sending events (used by pkg/agent)
+type Emitter interface {
+    Emit(ctx context.Context, event Event)
+}
+
+// Subscriber - Port for receiving events (used by UI)
+type Subscriber interface {
+    Events() <-chan Event
+    Close()
+}
+```
+
+**Event Types**:
+- `EventThinking` - Agent starts thinking
+- `EventToolCall` - Tool execution started
+- `EventToolResult` - Tool execution completed
+- `EventMessage` - Agent generated message
+- `EventError` - Error occurred
+- `EventDone` - Agent finished
+
+**ChanEmitter** - Standard implementation:
+```go
+emitter := events.NewChanEmitter(100) // buffered
+sub := emitter.Subscribe()
+emitter.Emit(ctx, events.Event{Type: events.EventThinking, Data: "query"})
+```
+
+**Thread-safe**, respects `context.Context` (Rule 11).
+
+### TUI Package (`pkg/tui/`)
+
+**NEW (2026-01-10)**: Reusable TUI helpers for Bubble Tea integration.
+
+**Purpose**: Adapter layer between `pkg/events` and Bubble Tea framework.
+
+**Components**:
+- `adapter.go` - EventMsg type, ReceiveEventCmd, WaitForEvent
+- `model.go` - Base TUI Model with agent integration
+- `run.go` - Ready-to-use TUI runner
+
+**Basic Usage**:
+```go
+import "github.com/ilkoid/poncho-ai/pkg/tui"
+
+client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+
+// 1. Simple: use pre-built TUI
+if err := tui.Run(client); err != nil {
+    log.Fatal(err)
+}
+
+// 2. Advanced: customize
+err := tui.RunWithOpts(client,
+    tui.WithTitle("My AI App"),
+    tui.WithPrompt("> "),
+)
+
+// 3. Custom: integrate with existing TUI
+sub := client.Subscribe()
+cmd := tui.ReceiveEventCmd(sub, func(event events.Event) tea.Msg {
+    return tui.EventMsg(event)
+})
+```
+
+**Architecture**:
+- `pkg/events.*` - Port (interfaces)
+- `pkg/tui.*` - Adapter helpers (reusable utilities)
+- `internal/ui.*` - Concrete TUI implementation (app-specific)
+
+**Rule 6 Compliant**: Only reusable code in `pkg/tui`, no app-specific logic.
+
 ### Tool Post-Prompts
 
 Special prompts that activate after tool execution to guide LLM response AND override model parameters.
@@ -302,6 +405,8 @@ s3:
 | ReAct | `pkg/chain/` | Agent reasoning loop |
 | Chain of Responsibility | `pkg/chain/` | Modular step-based execution |
 | Recorder | `pkg/debug/` | JSON trace recording |
+| **Port & Adapter** | `pkg/events/`, `pkg/tui/` | Decouple agent from UI implementation |
+| Facade | `pkg/agent/` | Simple 2-line agent API |
 
 ---
 

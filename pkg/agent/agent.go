@@ -20,10 +20,12 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/app"
 	"github.com/ilkoid/poncho-ai/pkg/chain"
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/state"
@@ -48,6 +50,7 @@ type Client struct {
 
 	// Optional dependencies (могут быть nil)
 	wbClient *wb.Client
+	emitter  events.Emitter // Port & Adapter: Emitter для UI подписки
 }
 
 // Config определяет конфигурацию для создания агента.
@@ -154,6 +157,29 @@ func (c *Client) RegisterTool(tool tools.Tool) error {
 	return nil
 }
 
+// SetEmitter устанавливает emitter для отправки событий.
+//
+// Port & Adapter паттерн: Client зависит от абстракции (events.Emitter),
+// а не от конкретной реализации UI.
+//
+// Thread-safe.
+func (c *Client) SetEmitter(emitter events.Emitter) {
+	c.emitter = emitter
+}
+
+// Subscribe возвращает Subscriber для чтения событий.
+//
+// Если emitter не установлен, создаёт ChanEmitter с буфером 100.
+//
+// Thread-safe.
+func (c *Client) Subscribe() events.Subscriber {
+	if c.emitter == nil {
+		// Создаём дефолтный emitter если не установлен
+		c.emitter = events.NewChanEmitter(100)
+	}
+	return c.emitter.(*events.ChanEmitter).Subscribe()
+}
+
 // Run выполняет запрос пользователя через агента.
 //
 // Метод делегирует выполнение ReActCycle, который:
@@ -161,16 +187,67 @@ func (c *Client) RegisterTool(tool tools.Tool) error {
 //   2. Выполняет ReAct цикл (LLM → Tools → LLM → ...)
 //   3. Возвращает финальный ответ
 //
+// Отправляет события через emitter если установлен (Port & Adapter).
+//
 // Thread-safe.
 //
 // Rule 11: принимает context.Context для отмены операции.
 func (c *Client) Run(ctx context.Context, query string) (string, error) {
 	if c.reactCycle == nil {
+		c.emitEvent(ctx, events.Event{
+			Type:      events.EventError,
+			Data:      fmt.Errorf("agent is not properly initialized"),
+			Timestamp: time.Now(),
+		})
 		return "", fmt.Errorf("agent is not properly initialized")
 	}
 
+	// EventThinking: агент начинает думать
+	c.emitEvent(ctx, events.Event{
+		Type:      events.EventThinking,
+		Data:      query,
+		Timestamp: time.Now(),
+	})
+
 	utils.Info("Running agent query", "query", query)
-	return c.reactCycle.Run(ctx, query)
+
+	result, err := c.reactCycle.Run(ctx, query)
+	if err != nil {
+		// EventError: произошла ошибка
+		c.emitEvent(ctx, events.Event{
+			Type:      events.EventError,
+			Data:      err,
+			Timestamp: time.Now(),
+		})
+		return "", err
+	}
+
+	// EventMessage: финальный ответ
+	c.emitEvent(ctx, events.Event{
+		Type:      events.EventMessage,
+		Data:      result,
+		Timestamp: time.Now(),
+	})
+
+	// EventDone: агент завершил работу
+	c.emitEvent(ctx, events.Event{
+		Type:      events.EventDone,
+		Data:      result,
+		Timestamp: time.Now(),
+	})
+
+	return result, nil
+}
+
+// emitEvent отправляет событие через emitter если он установлен.
+//
+// Thread-safe.
+// Rule 11: уважает context.Context.
+func (c *Client) emitEvent(ctx context.Context, event events.Event) {
+	if c.emitter == nil {
+		return
+	}
+	c.emitter.Emit(ctx, event)
 }
 
 // GetHistory возвращает историю диалога агента.

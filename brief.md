@@ -41,68 +41,90 @@ poncho-ai/
 │   ├── maxiponcho/        # Wildberries PLM analysis TUI
 │   └── */                 # CLI utilities (chain-cli, model-registry-test, vision, debug)
 ├── internal/              # Application-specific logic
-│   └── ui/               # Bubble Tea TUI (UI state separate from CoreState)
+│   └── ui/               # Bubble Tea TUI (app-specific implementation)
 ├── pkg/                   # Reusable library packages
-│   ├── agent/            # Agent interface
+│   ├── agent/            # Agent Client facade (2-line agent API)
+│   ├── app/              # Component initialization
 │   ├── chain/            # Chain Pattern + ReAct implementation
 │   ├── config/           # YAML configuration
 │   ├── debug/            # Debug logging
+│   ├── events/           # Port & Adapter: Event interfaces (Emitter, Subscriber)
 │   ├── factory/          # LLM provider factory
 │   ├── llm/              # LLM abstraction layer
 │   ├── models/           # Model Registry (centralized LLM providers)
 │   ├── prompt/           # Prompt loading/rendering
 │   ├── state/            # Framework core (CoreState)
+│   ├── tui/              # Reusable TUI helpers (adapter for Bubble Tea)
 │   ├── tools/            # Tool system (registry + std tools)
 │   └── [other packages]  # S3, WB, classifier, utils, etc.
 ├── prompts/              # YAML prompt templates
 └── config.yaml           # Main configuration
 ```
 
-### 1.2 Component Architecture (2026-01-07)
+### 1.2 Component Architecture (2026-01-10)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    LAYER ARCHITECTURE (Rule 6)                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─────────────────┐    ┌──────────────────┐    ┌────────────┐ │
-│  │   cmd/poncho    │───▶│   CoreState      │◀───│   Tools    │ │
-│  │  (Entry Point)  │    │   (pkg/state)    │    │  Registry  │ │
-│  └─────────────────┘    └──────────────────┘    └────────────┘ │
-│           │                       │▲                            │
-│           │                       ││                            │
-│           ▼                       ││                            │
-│  ┌─────────────────┐    ┌─────────┴───────────┐    ┌─────────┐│
-│  │  ReActCycle     │◀───│   CoreState        │    │   UI    ││
-│  │(pkg/chain)      │    │   (pkg/state)      │    │(Bubble) ││
-│  │                 │    │                    │    │         ││
-│  │ Implements:     │    │ E-commerce helpers │    │ Separate ││
-│  │ - Chain         │    │ - SetCurrentArticle│    │  fields: ││
-│  │ - Agent         │    │ - GetCurrentArticle│    │ orch,   ││
-│  └─────────────────┘    └────────────────────┘    │ modelID ││
-│           │                                          └─────────┘│
-│           ▼                                                      │
-│  ┌─────────────────┐                                             │
-│  │ LLM Provider    │                                             │
-│  │ (pkg/llm)       │                                             │
-│  └─────────────────┘                                             │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                    LAYER ARCHITECTURE (Rule 6)                         │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  ┌─────────────────┐    ┌──────────────────┐    ┌────────────┐      │
+│  │   cmd/poncho    │───▶│   CoreState      │◀───│   Tools    │      │
+│  │  (Entry Point)  │    │   (pkg/state)    │    │  Registry  │      │
+│  └─────────────────┘    └──────────────────┘    └────────────┘      │
+│           │                       │▲                                 │
+│           │                       ││                                 │
+│           ▼                       ││                                 │
+│  ┌─────────────────┐    ┌─────────┴───────────┐    ┌─────────┐      │
+│  │  agent.Client   │◀───│   CoreState        │    │   UI    │      │
+│  │   (pkg/agent)   │    │   (pkg/state)      │    │(internal)│      │
+│  │                 │    │                    │    │         │      │
+│  │ Events:         │    │ E-commerce helpers │    │ Separate │      │
+│  │ - SetEmitter()  │    │ - SetCurrentArticle│    │  fields: │      │
+│  │ - Subscribe()   │    └────────────────────┘    │ orch,    │      │
+│  └─────────────────┘                              │ modelID  │      │
+│           │                                        └─────────┘      │
+│           ▼                                                          │
+│  ┌─────────────────┐                                                  │
+│  │  ReActCycle     │                                                  │
+│  │  (pkg/chain)    │                                                  │
+│  └─────────────────┘                                                  │
+│           │                                                          │
+│           ▼                                                          │
+│  ┌─────────────────────────────────────────────────┐                │
+│  │        Port & Adapter (pkg/events, pkg/tui)     │                │
+│  │  ┌──────────────┐         ┌──────────────┐     │                │
+│  │  │   Emitter    │────────▶│  Subscriber   │     │                │
+│  │  │   (Port)     │         │   (Port)      │     │                │
+│  │  └──────────────┘         └──────────────┘     │                │
+│  │         ▲                         ▲             │                │
+│  │         │                         │             │                │
+│  │  agent.Client                pkg/tui.*          │                │
+│  │  (sends events)             (Adapter)           │                │
+│  └─────────────────────────────────────────────────┘                │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
 
-Key Points (2026-01-07):
+Key Points (2026-01-10):
   - pkg/state/CoreState: Framework core (includes e-commerce helpers)
+  - pkg/agent/Client: Facade with 2-line API, event support
+  - pkg/events.*: Port interfaces (Emitter, Subscriber)
+  - pkg/tui.*: Adapter helpers for Bubble Tea
   - pkg/chain/ReActCycle: Implements both Chain and Agent interfaces
-  - pkg/app/components: Returns *state.CoreState (Rule 6 compliant)
-  - internal/ui/: TUI stores UI state separately from CoreState
+  - internal/ui/: App-specific TUI (extends pkg/tui)
   - Rule 6 Compliance: pkg/ has ZERO imports from internal/
-  - internal/app/ is deprecated (no longer used)
+  - Port & Adapter: Decouples agent from UI implementation
 ```
 
 ### 1.3 Data Flow
 
 ```
-User Input → Command Registry → Orchestrator (ReAct Loop) →
+User Input → Command Registry → Agent.Client → ReActCycle →
 Build Context → LLM Provider → Tool Execution → Update History
+
+Event Flow (Port & Adapter):
+  Agent.Client → Emitter.Emit(Event) → Channel → Subscriber.Events() →
+  pkg/tui.ReceiveEventCmd() → Bubble Tea Update() → UI Refresh
 ```
 
 ---
@@ -511,6 +533,109 @@ type ExecutionResult struct {
 - `Execute(components, query, timeout)` - Run agent query
 - `SetupTools(state, wbClient, toolSet)` - Register tools
 
+### 3.10 Port & Adapter Pattern (`pkg/events/`, `pkg/tui/`)
+
+**NEW (2026-01-10)**: Decouples agent logic from UI implementation.
+
+**Problem**: Without this pattern, agent code depends on specific UI framework (Bubble Tea), making:
+- Library code (pkg/) dependent on app-specific code (internal/)
+- Testing difficult (need to import UI framework)
+- Reuse in other contexts impossible (Web API, CLI, etc.)
+
+**Solution**: Port & Adapter pattern (Hexagonal Architecture).
+
+**Port** (`pkg/events/`): Interfaces for event communication.
+
+```go
+// Emitter - Port for sending events (used by pkg/agent)
+type Emitter interface {
+    Emit(ctx context.Context, event Event)
+}
+
+// Subscriber - Port for receiving events (used by UI)
+type Subscriber interface {
+    Events() <-chan Event
+    Close()
+}
+
+// Event types
+const (
+    EventThinking   EventType = "thinking"
+    EventToolCall   EventType = "tool_call"
+    EventToolResult EventType = "tool_result"
+    EventMessage    EventType = "message"
+    EventError      EventType = "error"
+    EventDone       EventType = "done"
+)
+```
+
+**Adapter** (`pkg/tui/`): Connects Port to Bubble Tea.
+
+```go
+// EventMsg converts events.Event to Bubble Tea message
+type EventMsg events.Event
+
+// ReceiveEventCmd returns Bubble Tea Cmd for reading events
+func ReceiveEventCmd(sub events.Subscriber, converter func(events.Event) tea.Msg) tea.Cmd
+
+// WaitForEvent continues reading events in Update()
+func WaitForEvent(sub events.Subscriber, converter func(events.Event) tea.Msg) tea.Cmd
+
+// Run - ready-to-use TUI
+func Run(client *agent.Client) error
+
+// RunWithOpts - customizable TUI
+func RunWithOpts(client *agent.Client, opts ...Option) error
+```
+
+**Usage** (in TUI):
+
+```go
+// cmd/poncho/main.go
+client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+
+// Create emitter
+emitter := events.NewChanEmitter(100)
+client.SetEmitter(emitter)
+
+// Subscribe to events
+sub := client.Subscribe()
+
+// Initialize TUI model with subscriber
+tuiModel := ui.InitialModel(client.GetState(), client, cfg.Models.DefaultChat, sub)
+
+// Bubble Tea automatically processes events via ReceiveEventCmd
+p := tea.NewProgram(tuiModel)
+p.Run()
+```
+
+**Usage** (in Bubble Tea Update):
+
+```go
+// internal/ui/update.go
+func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    switch msg := msg.(type) {
+    case tui.EventMsg:
+        event := events.Event(msg)
+        switch event.Type {
+        case events.EventThinking:
+            m.isProcessing = true
+            return m, tui.WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
+                return tui.EventMsg(e)
+            })
+        // ... handle other event types
+        }
+    }
+    return m, nil
+}
+```
+
+**Benefits**:
+- Rule 6 compliant: `pkg/` has no imports from `internal/`
+- Testable: Can mock Emitter/Subscriber for unit tests
+- Reusable: Same agent works with TUI, Web, CLI
+- Clean separation: Library code doesn't know about UI framework
+
 ---
 
 ## 4. Configuration System
@@ -613,7 +738,7 @@ Layered architecture, thread-safe, no globals.
 - `internal/` - Application-specific
 - `cmd/` - Entry points only
 
-**Status (2026-01-07)**: ✅ Full compliance achieved. `pkg/` has ZERO imports from `internal/`. `pkg/app/components` now returns `*state.CoreState`.
+**Status (2026-01-10)**: ✅ Full compliance achieved. `pkg/` has ZERO imports from `internal/`. `pkg/app/components` returns `*state.CoreState`. Port & Adapter pattern (`pkg/events`, `pkg/tui`) enables clean UI integration without breaking Rule 6.
 
 ### Rule 7: Error Handling
 No `panic()` in business logic. All errors returned up stack.
@@ -847,7 +972,7 @@ The framework follows **"Convention over Configuration"** - developers follow si
 
 ---
 
-**Last Updated**: 2026-01-08
-**Version**: 3.3 (Simple Agent API: pkg/agent with 2-line usage)
+**Last Updated**: 2026-01-10
+**Version**: 3.4 (Port & Adapter: pkg/events + pkg/tui)
 
 **Maintainer**: Poncho AI Development Team
