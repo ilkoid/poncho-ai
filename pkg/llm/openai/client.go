@@ -80,13 +80,29 @@ func NewClient(modelDef config.ModelDef) *Client {
 		httpTimeout = 120 * time.Second // дефолтный fallback
 	}
 
+	// Custom transport для решения timeout проблем в WSL2
+	transport := &http.Transport{
+		// Disable HTTP/2 для стабильности (может вызывать timeout в WSL2)
+		ForceAttemptHTTP2: false,
+		// Increase connection timeouts
+		TLSHandshakeTimeout:   30 * time.Second,
+		ResponseHeaderTimeout: httpTimeout,
+		// Keep-alive settings
+		MaxIdleConns:        100,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  false,
+	}
+
 	return &Client{
 		api:        client,
 		apiKey:     modelDef.APIKey,
 		baseConfig: baseConfig,
 		thinking:   modelDef.Thinking,
 		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: httpTimeout},
+		httpClient: &http.Client{
+			Timeout:   httpTimeout,
+			Transport: transport,
+		},
 	}
 }
 
