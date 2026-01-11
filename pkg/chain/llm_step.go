@@ -67,8 +67,8 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 	// 3. Определяем параметры LLM (defaults + post-prompt overrides)
 	opts := s.determineLLMOptions(chainCtx, modelDef)
 
-	// 4. Формируем сообщения для LLM
-	messages := chainCtx.BuildContextMessages(s.systemPrompt)
+	// 4. Формируем сообщения для LLM (с учетом типа модели)
+	messages := chainCtx.BuildContextMessagesForModel(s.systemPrompt)
 	messagesCount := len(messages)
 
 	// 5. Получаем определения инструментов

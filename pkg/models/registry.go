@@ -10,6 +10,7 @@ package models
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
@@ -137,4 +138,35 @@ func NewRegistryFromConfig(cfg *config.AppConfig) (*Registry, error) {
 	}
 
 	return registry, nil
+}
+
+// IsVisionModel проверяет, является ли модель vision-моделью.
+//
+// Thread-safe. Проверяет:
+//   1. Точное совпадение с defaultVisionModel
+//   2. Явный флаг IsVision в конфигурации модели
+//   3. Эвристику по названию (содержит "vision" или "v-")
+func (r *Registry) IsVisionModel(modelName string, defaultVisionModel string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// Точное совпадение с default_vision
+	if modelName == defaultVisionModel {
+		return true
+	}
+
+	// Проверяем наличие модели в реестре
+	if entry, ok := r.models[modelName]; ok {
+		// Приоритет явному флагу is_vision
+		if entry.Config.IsVision {
+			return true
+		}
+
+		// Fallback на эвристику по названию
+		return strings.Contains(strings.ToLower(modelName), "vision") ||
+			strings.Contains(strings.ToLower(modelName), "v-") ||
+			strings.Contains(strings.ToLower(entry.Config.ModelName), "vision")
+	}
+
+	return false
 }

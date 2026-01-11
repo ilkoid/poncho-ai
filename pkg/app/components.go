@@ -563,6 +563,13 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 		}
 	}
 
+	if toolCfg, exists := getToolCfg("get_plm_data"); exists && toolCfg.Enabled {
+		tool := std.NewGetPLMDataTool(state.GetStorage())
+		if err := register("get_plm_data", tool); err != nil {
+			return err
+		}
+	}
+
 	// === S3 Batch Tools ===
 	if toolCfg, exists := getToolCfg("classify_and_download_s3_files"); exists && toolCfg.Enabled {
 		tool := std.NewClassifyAndDownloadS3Files(
@@ -688,6 +695,7 @@ func getAllKnownToolNames() []string {
 		"list_s3_files",
 		"read_s3_object",
 		"read_s3_image",
+		"get_plm_data",
 		// S3 Batch Tools
 		"classify_and_download_s3_files",
 		"analyze_article_images_batch",

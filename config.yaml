@@ -14,6 +14,7 @@ models:
       timeout: "120s"
       thinking: "enabled"
       parallel_tool_calls: false
+      is_vision: false
     glm-4.6v-flash:
       provider: "zai"
       model_name: "glm-4.6v-flash"
@@ -23,6 +24,7 @@ models:
       temperature: 0.1
       timeout: "120s"
       parallel_tool_calls: false
+      is_vision: true
 
 # S3 Configuration
 s3:
@@ -105,7 +107,7 @@ tools:
     post_prompt: "agent_system.yaml"
 
   get_wb_parent_categories:
-    enabled: true
+    enabled: false
     description: "Возвращает список родительских категорий Wildberries (например: Женщинам, Электроника). Используй это, чтобы найти ID категории."
     endpoint: "https://content-api.wildberries.ru"
     path: "/content/v2/object/parent/all"
@@ -115,7 +117,7 @@ tools:
     post_prompt: "parent_categories_analysis.yaml"
 
   get_wb_subjects:
-    enabled: true
+    enabled: false
     description: "Возвращает список предметов (подкатегорий) для заданной родительской категории с пагинацией."
     endpoint: "https://content-api.wildberries.ru"
     path: "/content/v2/object/all"
@@ -153,7 +155,7 @@ tools:
     default_take: 500
 
   ping_wb_api:
-    enabled: true
+    enabled: false
     description: "Проверяет доступность Wildberries Content API. Возвращает статус сервиса, timestamp и информацию об ошибках (например, неверный API ключ, недоступность сети). Используй для диагностики перед другими операциями с WB."
     endpoint: "https://content-api.wildberries.ru"
     path: "/ping"
@@ -244,7 +246,7 @@ tools:
 
   # === S3 Basic Tools ===
   list_s3_files:
-    enabled: true
+    enabled: false
     description: "Возвращает список файлов в S3 хранилище по указанному пути (префиксу). Используй это, чтобы найти артикулов или проверить наличие файлов."
 
   read_s3_object:
@@ -255,34 +257,39 @@ tools:
     enabled: true
     description: "Скачивает изображение из S3, оптимизирует его (resize) и возвращает в формате Base64. Используй это для Vision-анализа."
 
+  get_plm_data:
+    enabled: true
+    description: "Загружает PLM данные (plm.json) артикула из S3 и возвращает очищенный JSON без технических полей, миниатюр и эскизов. Используй для получения информации о товаре: артикул, категория, сезон, цвета, материалы, размерный ряд."
+
   # === Planner Tools ===
   plan_add_task:
-    enabled: true
+    enabled: false
     description: "Добавляет новую задачу в план действий. Указывай четкое описание того, что нужно выполнить."
 
   plan_mark_done:
-    enabled: true
+    enabled: false
     description: "Отмечает задачу как выполненную. Используй когда задача успешно завершена."
 
   plan_mark_failed:
-    enabled: true
+    enabled: false
     description: "Отмечает задачу как проваленную с указанием причины. Используй когда задачу невозможно выполнить по независимым причинам."
 
   plan_clear:
-    enabled: true
+    enabled: false
     description: "Очищает весь план действий. Используй для удаления всех задач из списка."
 
   plan_set_tasks:
-    enabled: true
+    enabled: false
     description: "Создает или заменяет весь план задач за один вызов. Используй это когда нужно составить полный план действий с нуля или полностью пересмотреть существующий план. LLM видит текущий план через контекст и учитывает его при перезаписи."
 
   # === S3 Batch Tools ===
   classify_and_download_s3_files:
     enabled: true
-    description: "Загружает все файлы артикула из S3 хранилища, классифицирует их по тегам (sketch, plm_data, marketing) и сохраняет в состояние. Выполняет ресайз изображений если включено в конфиге. Используй это для загрузки артикула перед анализом изображений."
+    description: "Списывает и классифицирует файлы артикула из S3 по тегам (sketch, plm_data, marketing). JSON файлы скачивает сразу, изображения — только метаданные. Для vision-анализа используй read_s3_image."
+    post_prompt: "articles/product_description.yaml"
 
   analyze_article_images_batch:
-    enabled: true
+    enabled: false
     description: "Анализирует изображения из текущего артикула с помощью Vision LLM. Обрабатывает картинки параллельно в горутинах. Опционально фильтрует по тегу (sketch, plm_data, marketing). Используй это после classify_and_download_s3_files для анализа эскизов."
 
 # Chain Configuration (Chain Pattern)

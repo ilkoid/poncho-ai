@@ -137,11 +137,21 @@ func (t *S3ReadTool) Execute(ctx context.Context, argsJSON string) (string, erro
 	}
 
 	// Возвращаем как строку (предполагаем UTF-8)
-	// Если нужно вернуть JSON как есть — возвращаем.
-	// Ограничиваем длину, чтобы не забить контекст LLM (например, 20KB)
-	const maxTextSize = 20000 
+	// Для plm.json не обрезаем - сохраняем полный контент для последующей обработки
+	if strings.Contains(strings.ToLower(args.Key), "plm.json") {
+		return string(contentBytes), nil
+	}
+
+	// Для остальных файлов ограничиваем длину, чтобы не забить контекст LLM
+	const maxTextSize = 3000 // Снижено с 20KB до 3KB для экономии токенов
 	if len(contentBytes) > maxTextSize {
-		return string(contentBytes[:maxTextSize]) + "\n...[TRUNCATED]", nil
+		// Для JSON файлов добавляем предупреждение
+		truncated := string(contentBytes[:maxTextSize])
+		warning := "\n\n...[TRUNCATED - File too large for context. Use specific queries for partial data.]"
+		if ext == ".json" {
+			warning = "\n\n...[TRUNCATED - JSON file too large. Request specific fields you need.]"
+		}
+		return truncated + warning, nil
 	}
 
 	return string(contentBytes), nil
@@ -259,3 +269,64 @@ func isImageExt(ext string) bool {
 }
 
 // Регистрация в main.go: reg.Register(std.NewS3ReadImageTool(s3Client, cfg.ImageProcessing))
+
+// --- Tool: get_plm_data ---
+// Загружает plm.json из S3, очищает от лишних полей и возвращает sanitized JSON.
+// Использует utils.SanitizePLMJson для удаления:
+//   - Ответственные, Эскизы (загружаются отдельно)
+//   - НомерСтроки, ИдентификаторСтроки, Статус
+//   - Миниатюра_Файл (огромный base64)
+//   - Пустые значения и технические поля
+type GetPLMDataTool struct {
+	client *s3storage.Client
+}
+
+func NewGetPLMDataTool(c *s3storage.Client) *GetPLMDataTool {
+	return &GetPLMDataTool{client: c}
+}
+
+func (t *GetPLMDataTool) Definition() tools.ToolDefinition {
+	return tools.ToolDefinition{
+		Name: "get_plm_data",
+		Description: "Загружает PLM данные (plm.json) артикула из S3 и возвращает очищенный JSON без технических полей, миниатюр и эскизов. Используй для получения информации о товаре: артикул, категория, сезон, цвета, материалы, размерный ряд.",
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"article_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID артикула (например, '12611516'). Если не указан, используется текущий артикул из контекста.",
+				},
+			},
+		},
+	}
+}
+
+func (t *GetPLMDataTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	var args struct {
+		ArticleID string `json:"article_id"`
+	}
+	_ = json.Unmarshal([]byte(argsJSON), &args)
+
+	// Если article_id не указан, возвращаем ошибку
+	if args.ArticleID == "" {
+		return "", fmt.Errorf("article_id is required. Specify the article ID (e.g., '12611516')")
+	}
+
+	// Формируем путь к plm.json
+	key := fmt.Sprintf("%s/%s.json", args.ArticleID, args.ArticleID)
+
+	// Скачиваем файл
+	contentBytes, err := t.client.DownloadFile(ctx, key)
+	if err != nil {
+		return "", fmt.Errorf("failed to download plm.json: %w", err)
+	}
+
+	// Санитайзим JSON (удаляем лишние поля)
+	sanitized, err := utils.SanitizePLMJson(string(contentBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to sanitize PLM JSON: %w", err)
+	}
+
+	return sanitized, nil
+}
+

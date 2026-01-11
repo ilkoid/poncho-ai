@@ -91,6 +91,7 @@ type ModelDef struct {
 	BaseURL           string        `yaml:"base_url"`
 	Thinking          string        `yaml:"thinking"` // "enabled", "disabled" или пусто (для Zai GLM)
 	ParallelToolCalls *bool        `yaml:"parallel_tool_calls"` // false=один tool за раз, true=параллельные вызовы
+	IsVision          bool          `yaml:"is_vision"` // Явная метка vision-модели
 }
 
 // ToolConfig — настройки инструментов.

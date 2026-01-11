@@ -3,6 +3,7 @@ package chain
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/ilkoid/poncho-ai/pkg/llm"
@@ -239,4 +240,105 @@ func (c *ChainContext) BuildContextMessages(systemPrompt string) []llm.Message {
 	messages := c.State.BuildAgentContext(actualSystemPrompt)
 
 	return messages
+}
+
+// BuildContextMessagesForModel формирует сообщения для LLM с учетом типа модели.
+//
+// Фильтрует контекст в зависимости от того, является ли модель vision-моделью:
+//   - Vision модели: полный контекст (включая VisionDescription и Images)
+//   - Chat модели: контекст WITHOUT VisionDescription и без Images из истории
+//
+// Thread-safe. Определяет тип модели по actualModel из ChainContext.
+func (c *ChainContext) BuildContextMessagesForModel(systemPrompt string) []llm.Message {
+	c.mu.RLock()
+	actualModel := c.actualModel
+	activePostPrompt := c.activePostPrompt
+	c.mu.RUnlock()
+
+	// Определяем системный промпт
+	actualSystemPrompt := systemPrompt
+	if activePostPrompt != "" {
+		actualSystemPrompt = activePostPrompt
+	}
+
+	// Получаем базовый контекст
+	messages := c.State.BuildAgentContext(actualSystemPrompt)
+
+	// Если модель не vision - фильтруем контент
+	if !c.isModelVision(actualModel) {
+		messages = c.filterMessagesForChatModel(messages)
+	}
+
+	return messages
+}
+
+// isModelVision проверяет, является ли модель vision-моделью.
+// Использует эвристику по названию (TODO: использовать ModelRegistry).
+func (c *ChainContext) isModelVision(modelName string) bool {
+	if modelName == "" {
+		return false
+	}
+
+	// Эвристика по названию
+	return strings.Contains(strings.ToLower(modelName), "vision") ||
+		strings.Contains(strings.ToLower(modelName), "v-")
+}
+
+// filterMessagesForChatModel фильтрует сообщения для chat-модели.
+//
+// Удаляет:
+//   1. VisionDescription из системных промптов (блок "КОНТЕКСТ АРТИКУЛА")
+//   2. Images из всех сообщений истории
+//
+// Возвращает новый слайс, не модифицирует оригинал.
+func (c *ChainContext) filterMessagesForChatModel(messages []llm.Message) []llm.Message {
+	filtered := make([]llm.Message, 0, len(messages))
+
+	for _, msg := range messages {
+		filteredMsg := msg
+
+		// Если это системное сообщение - убираем блок КОНТЕКСТ АРТИКУЛА
+		if msg.Role == llm.RoleSystem {
+			filteredMsg.Content = c.removeVisionContextFromSystem(msg.Content)
+		}
+
+		// Убираем Images из всех сообщений
+		filteredMsg.Images = nil
+
+		filtered = append(filtered, filteredMsg)
+	}
+
+	return filtered
+}
+
+// removeVisionContextFromSystem удаляет блок с описаниями изображений из системного промпта.
+//
+// Ищет и удаляет текст вида:
+//   КОНТЕКСТ АРТИКУЛА (Результаты анализа файлов):
+//   - Файл [tag] filename: description
+//
+// Также удаляет пустую строку перед блоком, если она есть.
+func (c *ChainContext) removeVisionContextFromSystem(content string) string {
+	// Ищем начало блока
+	marker := "КОНТЕКСТ АРТИКУЛА"
+	idx := strings.Index(content, marker)
+
+	if idx == -1 {
+		return content // Блок не найден
+	}
+
+	// Ищем начало строки (новая строка перед маркером)
+	newlineBefore := strings.LastIndex(content[:idx], "\n")
+	if newlineBefore == -1 {
+		return "" // Блок в начале строки
+	}
+
+	// Проверяем, есть ли перед нами еще одна пустая строка
+	result := content[:newlineBefore]
+	// Удаляем завершающий \n если он есть
+	result = strings.TrimSuffix(result, "\n")
+	// Удаляем еще один \n если был двойной перенос
+	result = strings.TrimSuffix(result, "\n")
+
+	return result
 }
