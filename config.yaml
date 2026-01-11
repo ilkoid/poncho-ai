@@ -13,6 +13,7 @@ models:
       temperature: 0.5
       timeout: "120s"
       thinking: "enabled"
+      parallel_tool_calls: false
     glm-4.6v-flash:
       provider: "zai"
       model_name: "glm-4.6v-flash"
@@ -21,6 +22,7 @@ models:
       max_tokens: 4000
       temperature: 0.1
       timeout: "120s"
+      parallel_tool_calls: false
 
 # S3 Configuration
 s3:
@@ -103,7 +105,7 @@ tools:
     post_prompt: "agent_system.yaml"
 
   get_wb_parent_categories:
-    enabled: false
+    enabled: true
     description: "Возвращает список родительских категорий Wildberries (например: Женщинам, Электроника). Используй это, чтобы найти ID категории."
     endpoint: "https://content-api.wildberries.ru"
     path: "/content/v2/object/parent/all"
@@ -113,7 +115,7 @@ tools:
     post_prompt: "parent_categories_analysis.yaml"
 
   get_wb_subjects:
-    enabled: false
+    enabled: true
     description: "Возвращает список предметов (подкатегорий) для заданной родительской категории с пагинацией."
     endpoint: "https://content-api.wildberries.ru"
     path: "/content/v2/object/all"
@@ -151,7 +153,7 @@ tools:
     default_take: 500
 
   ping_wb_api:
-    enabled: false
+    enabled: true
     description: "Проверяет доступность Wildberries Content API. Возвращает статус сервиса, timestamp и информацию об ошибках (например, неверный API ключ, недоступность сети). Используй для диагностики перед другими операциями с WB."
     endpoint: "https://content-api.wildberries.ru"
     path: "/ping"
@@ -269,6 +271,10 @@ tools:
   plan_clear:
     enabled: true
     description: "Очищает весь план действий. Используй для удаления всех задач из списка."
+
+  plan_set_tasks:
+    enabled: true
+    description: "Создает или заменяет весь план задач за один вызов. Используй это когда нужно составить полный план действий с нуля или полностью пересмотреть существующий план. LLM видит текущий план через контекст и учитывает его при перезаписи."
 
   # === S3 Batch Tools ===
   classify_and_download_s3_files:

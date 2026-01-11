@@ -12,14 +12,22 @@ import (
 // AppConfig — корневая структура конфигурации.
 // Она зеркалит структуру твоего config.yaml.
 type AppConfig struct {
-	Models          ModelsConfig      `yaml:"models"`
+	Models          ModelsConfig         `yaml:"models"`
 	Tools           map[string]ToolConfig `yaml:"tools"`
-	S3              S3Config          `yaml:"s3"`
-	ImageProcessing ImageProcConfig   `yaml:"image_processing"`
-	App             AppSpecific       `yaml:"app"`
-	FileRules       []FileRule        `yaml:"file_rules"`
-	WB              WBConfig          `yaml:"wb"`
-	// Chains config загружается отдельно через pkg/chain чтобы избежать циклического импорта
+	S3              S3Config             `yaml:"s3"`
+	ImageProcessing ImageProcConfig      `yaml:"image_processing"`
+	App             AppSpecific          `yaml:"app"`
+	FileRules       []FileRule           `yaml:"file_rules"`
+	WB              WBConfig             `yaml:"wb"`
+	Chains          map[string]ChainConfig `yaml:"chains"`
+}
+
+// ChainConfig — базовая конфигурация цепочки.
+// Используется для чтения timeout из YAML без циклического импорта pkg/chain.
+type ChainConfig struct {
+	Type     string `yaml:"type"`
+	Timeout  string `yaml:"timeout"`
+	MaxIterations int `yaml:"max_iterations"`
 }
 
 type WBConfig struct {
@@ -74,14 +82,15 @@ type ModelsConfig struct {
 
 // ModelDef — параметры конкретной модели.
 type ModelDef struct {
-	Provider    string        `yaml:"provider"`   // "zai", "openai" и т.д.
-	ModelName   string        `yaml:"model_name"` // Реальное имя в API
-	APIKey      string        `yaml:"api_key"`    // Поддерживает ${VAR}
-	MaxTokens   int           `yaml:"max_tokens"`
-	Temperature float64       `yaml:"temperature"`
-	Timeout     time.Duration `yaml:"timeout"` // Go умеет парсить строки вида "60s", "1m"
-	BaseURL     string        `yaml:"base_url"`
-	Thinking    string        `yaml:"thinking"` // "enabled", "disabled" или пусто (для Zai GLM)
+	Provider          string        `yaml:"provider"`   // "zai", "openai" и т.д.
+	ModelName         string        `yaml:"model_name"` // Реальное имя в API
+	APIKey            string        `yaml:"api_key"`    // Поддерживает ${VAR}
+	MaxTokens         int           `yaml:"max_tokens"`
+	Temperature       float64       `yaml:"temperature"`
+	Timeout           time.Duration `yaml:"timeout"` // Go умеет парсить строки вида "60s", "1m"
+	BaseURL           string        `yaml:"base_url"`
+	Thinking          string        `yaml:"thinking"` // "enabled", "disabled" или пусто (для Zai GLM)
+	ParallelToolCalls *bool        `yaml:"parallel_tool_calls"` // false=один tool за раз, true=параллельные вызовы
 }
 
 // ToolConfig — настройки инструментов.
@@ -282,4 +291,39 @@ func (c *AppConfig) GetVisionModel(name string) (ModelDef, bool) {
 	}
 	m, ok := c.Models.Definitions[name]
 	return m, ok
+}
+
+// GetChainTimeout возвращает timeout для указанной цепочки из конфигурации.
+// Если цепочка не найдена или timeout не указан, возвращает дефолтный 5 минут.
+func (c *AppConfig) GetChainTimeout(chainName string) time.Duration {
+	if c.Chains == nil {
+		return 5 * time.Minute // дефолт
+	}
+
+	chainCfg, exists := c.Chains[chainName]
+	if !exists || chainCfg.Timeout == "" {
+		return 5 * time.Minute // дефолт
+	}
+
+	timeout, err := time.ParseDuration(chainCfg.Timeout)
+	if err != nil {
+		return 5 * time.Minute // fallback при ошибке парсинга
+	}
+
+	return timeout
+}
+
+// GetChainMaxIterations возвращает max_iterations для указанной цепочки из конфигурации.
+// Если цепочка не найдена или значение не указано, возвращает дефолт 10.
+func (c *AppConfig) GetChainMaxIterations(chainName string) int {
+	if c.Chains == nil {
+		return 10 // дефолт
+	}
+
+	chainCfg, exists := c.Chains[chainName]
+	if !exists || chainCfg.MaxIterations == 0 {
+		return 10 // дефолт
+	}
+
+	return chainCfg.MaxIterations
 }

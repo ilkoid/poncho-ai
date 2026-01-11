@@ -23,6 +23,7 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
 	"github.com/ilkoid/poncho-ai/pkg/state"
+	"github.com/ilkoid/poncho-ai/pkg/todo"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
 	"github.com/ilkoid/poncho-ai/pkg/tools/std"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
@@ -210,7 +211,15 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 	state := state.NewCoreState(cfg)
 	state.SetDictionaries(dicts) // Сохраняем справочники в CoreState
 
-	// Устанавливаем S3 клиент опционально
+	// 5. Создаём Todo Manager для управления задачами
+	// Rule 3: Registry pattern через TodoRepository interface
+	todoManager := todo.NewManager()
+	if err := state.SetTodoManager(todoManager); err != nil {
+		return nil, fmt.Errorf("failed to set todo manager: %w", err)
+	}
+	utils.Info("Todo manager initialized")
+
+	// 6. Устанавливаем S3 клиент опционально
 	if s3Client != nil {
 		if err := state.SetStorage(s3Client); err != nil {
 			utils.Warn("Failed to set S3 client in state", "error", err)
@@ -290,12 +299,13 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 	}
 
 	// 11. Создаём ReActCycle напрямую (Rule 6 compliance)
+	// Timeout берётся из конфигурации chains.default.timeout с fallback на дефолт
 	cycleConfig := chain.ReActCycleConfig{
 		SystemPrompt:    agentSystemPrompt,
 		ToolPostPrompts: toolPostPrompts,
 		PromptsDir:      cfg.App.PromptsDir,
 		MaxIterations:   maxIters,
-		Timeout:         chain.DefaultChainTimeout,
+		Timeout:         cfg.GetChainTimeout("default"),
 	}
 
 	reactCycle := chain.NewReActCycle(cycleConfig)
@@ -617,6 +627,12 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 		}
 	}
 
+	if toolCfg, exists := getToolCfg("plan_set_tasks"); exists && toolCfg.Enabled {
+		if err := register("plan_set_tasks", std.NewPlanSetTasksTool(state.GetTodoManager(), toolCfg)); err != nil {
+			return err
+		}
+	}
+
 	// === Валидация на неизвестные tools ===
 	for toolName := range cfg.Tools {
 		if !isKnownTool(toolName) {
@@ -680,6 +696,7 @@ func getAllKnownToolNames() []string {
 		"plan_mark_done",
 		"plan_mark_failed",
 		"plan_clear",
+		"plan_set_tasks",
 	}
 }
 

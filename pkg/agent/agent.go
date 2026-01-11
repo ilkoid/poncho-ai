@@ -165,6 +165,10 @@ func (c *Client) RegisterTool(tool tools.Tool) error {
 // Thread-safe.
 func (c *Client) SetEmitter(emitter events.Emitter) {
 	c.emitter = emitter
+	// Передаём emitter в ReActCycle для отправки событий во время выполнения
+	if c.reactCycle != nil {
+		c.reactCycle.SetEmitter(emitter)
+	}
 }
 
 // Subscribe возвращает Subscriber для чтения событий.

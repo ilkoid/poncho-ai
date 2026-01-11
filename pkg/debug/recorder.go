@@ -74,12 +74,23 @@ func NewRecorder(cfg RecorderConfig) (*Recorder, error) {
 }
 
 // Start начинает запись новой сессии с пользовательским запросом.
+//
+// Очищает предыдущие итерации, позволяя переиспользовать рекордер
+// в рамках одной TUI сессии для нескольких запросов.
 func (r *Recorder) Start(userQuery string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// Генерируем новый RunID для каждой сессии
+	r.log.RunID = fmt.Sprintf("debug_%s", time.Now().Format("20060102_150405"))
 	r.log.UserQuery = userQuery
 	r.log.Timestamp = time.Now()
+
+	// Очищаем предыдущие итерации и состояние
+	r.log.Iterations = nil
+	r.currentIteration = nil
+	r.visitedTools = make(map[string]struct{})
+	r.errors = make([]string, 0)
 }
 
 // StartIteration начинает запись новой итерации.

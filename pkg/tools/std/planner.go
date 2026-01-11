@@ -219,6 +219,86 @@ func (t *PlanClearTool) Execute(ctx context.Context, argsJSON string) (string, e
 	return "🗑️ План действий очищен", nil
 }
 
+// PlanSetTasksTool — инструмент для создания/замены всего плана задач.
+//
+// Позволяет агенту создать полный план за один вызов вместо множественных plan_add_task.
+type PlanSetTasksTool struct {
+	manager     *todo.Manager
+	description string
+}
+
+// NewPlanSetTasksTool создает инструмент для создания/замены плана.
+func NewPlanSetTasksTool(manager *todo.Manager, cfg config.ToolConfig) *PlanSetTasksTool {
+	return &PlanSetTasksTool{manager: manager, description: cfg.Description}
+}
+
+// Definition возвращает определение инструмента для function calling.
+//
+// Соответствует Tool interface (Rule 1).
+func (t *PlanSetTasksTool) Definition() tools.ToolDefinition {
+	return tools.ToolDefinition{
+		Name:        "plan_set_tasks",
+		Description: t.description, // Должен быть задан в config.yaml
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tasks": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Описание задачи",
+							},
+							"metadata": map[string]interface{}{
+								"type":        "object",
+								"description": "Дополнительные метаданные (опционально)",
+							},
+						},
+						"required": []string{"description"},
+					},
+				},
+			},
+			"required": []string{"tasks"},
+		},
+	}
+}
+
+// Execute выполняет инструмент согласно контракту "Raw In, String Out".
+//
+// Принимает JSON строку с аргументами от LLM, возвращает результат выполнения.
+// Очищает текущий план и создает новый из массива задач.
+// Соответствует Tool interface (Rule 1).
+func (t *PlanSetTasksTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	var args struct {
+		Tasks []struct {
+			Description string                 `json:"description"`
+			Metadata    map[string]interface{} `json:"metadata,omitempty"`
+		} `json:"tasks"`
+	}
+
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("ошибка парсинга аргументов: %w", err)
+	}
+
+	if len(args.Tasks) == 0 {
+		return "", fmt.Errorf("список задач не может быть пустым")
+	}
+
+	// Очищаем текущий план
+	t.manager.Clear()
+
+	// Добавляем все задачи
+	var addedIDs []int
+	for _, task := range args.Tasks {
+		id := t.manager.Add(task.Description, task.Metadata)
+		addedIDs = append(addedIDs, id)
+	}
+
+	return fmt.Sprintf("✅ План создан (%d задач, ID: %v)", len(addedIDs), addedIDs), nil
+}
+
 // NewPlannerTools создает карту всех инструментов планировщика.
 //
 // Удобная функция для массовой регистрации инструментов planner'а.
@@ -234,5 +314,6 @@ func NewPlannerTools(manager *todo.Manager, cfg config.ToolConfig) map[string]to
 		"plan_mark_done":   NewPlanMarkDoneTool(manager, cfg),
 		"plan_mark_failed": NewPlanMarkFailedTool(manager, cfg),
 		"plan_clear":       NewPlanClearTool(manager, cfg),
+		"plan_set_tasks":   NewPlanSetTasksTool(manager, cfg),
 	}
 }

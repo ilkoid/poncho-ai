@@ -69,13 +69,24 @@ func NewClient(modelDef config.ModelDef) *Client {
 		Format:      "",
 	}
 
+	// Устанавливаем parallel_tool_calls из конфигурации модели
+	if modelDef.ParallelToolCalls != nil {
+		baseConfig.ParallelToolCalls = modelDef.ParallelToolCalls
+	}
+
+	// Timeout из конфигурации модели с fallback на дефолт
+	httpTimeout := modelDef.Timeout
+	if httpTimeout == 0 {
+		httpTimeout = 120 * time.Second // дефолтный fallback
+	}
+
 	return &Client{
 		api:        client,
 		apiKey:     modelDef.APIKey,
 		baseConfig: baseConfig,
 		thinking:   modelDef.Thinking,
 		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 120 * time.Second},
+		httpClient: &http.Client{Timeout: httpTimeout},
 	}
 }
 
@@ -156,46 +167,129 @@ func (c *Client) Generate(ctx context.Context, messages []llm.Message, opts ...a
 	return c.generateStandard(ctx, messages, options, toolDefs, startTime)
 }
 
-// generateStandard выполняет запрос через стандартный go-openai SDK.
+// generateStandard выполняет запрос через кастомный HTTP для поддержки parallel_tool_calls.
+//
+// ПРИМЕЧАНИЕ: Используем map[string]interface{} вместо openaisdk.ChatCompletionRequest,
+// чтобы поддерживать параметр parallel_tool_calls который может отсутствовать в SDK.
 func (c *Client) generateStandard(ctx context.Context, messages []llm.Message, options llm.GenerateOptions, toolDefs []tools.ToolDefinition, startTime time.Time) (llm.Message, error) {
-	// Конвертируем наши сообщения в формат OpenAI SDK
+	// Конвертируем сообщения
 	openaiMsgs := make([]openaisdk.ChatCompletionMessage, len(messages))
 	for i, m := range messages {
 		openaiMsgs[i] = mapToOpenAI(m)
 	}
 
-	// Создаём запрос с итоговыми параметрами
-	req := openaisdk.ChatCompletionRequest{
-		Model:       options.Model,
-		Temperature: float32(options.Temperature),
-		MaxTokens:   options.MaxTokens,
-		Messages:    openaiMsgs,
+	// Строим запрос body
+	reqBody := map[string]interface{}{
+		"model":       options.Model,
+		"temperature": options.Temperature,
+		"max_tokens":  options.MaxTokens,
+		"messages":    openaiMsgs,
 	}
 
 	// ResponseFormat если указан
 	if options.Format == "json_object" {
-		req.ResponseFormat = &openaisdk.ChatCompletionResponseFormat{
-			Type: openaisdk.ChatCompletionResponseFormatTypeJSONObject,
+		reqBody["response_format"] = map[string]string{
+			"type": "json_object",
 		}
 	}
 
 	// Добавляем tools если переданы
 	if len(toolDefs) > 0 {
-		req.Tools = convertToolsToOpenAI(toolDefs)
-		req.ToolChoice = "auto"
+		reqBody["tools"] = convertToolsToOpenAI(toolDefs)
+		reqBody["tool_choice"] = "auto"
+
+		// Устанавливаем parallel_tool_calls если указан
+		if options.ParallelToolCalls != nil {
+			reqBody["parallel_tool_calls"] = *options.ParallelToolCalls
+		}
 	}
 
-	// Вызываем API
-	resp, err := c.api.CreateChatCompletion(ctx, req)
+	// Marshal в JSON
+	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		utils.Error("LLM API request failed",
-			"error", err,
-			"model", options.Model,
-			"duration_ms", time.Since(startTime).Milliseconds())
-		return llm.Message{}, fmt.Errorf("openai api error: %w", err)
+		return llm.Message{}, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	return c.parseResponse(resp, startTime, options.Model)
+	// Создаём HTTP запрос
+	url := c.baseURL + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Устанавливаем заголовки
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	utils.Debug("Sending standard HTTP request",
+		"url", url,
+		"body_size", len(jsonBody),
+		"parallel_tool_calls", fmt.Sprintf("%v", options.ParallelToolCalls))
+
+	// Выполняем запрос
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		utils.Error("HTTP request failed",
+			"error", err,
+			"url", url,
+			"duration_ms", time.Since(startTime).Milliseconds())
+		return llm.Message{}, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Читаем тело ответа
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		utils.Error("HTTP request returned error",
+			"status", resp.StatusCode,
+			"body", string(body),
+			"duration_ms", time.Since(startTime).Milliseconds())
+		return llm.Message{}, fmt.Errorf("api returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Парсим ответ
+	var apiResp struct {
+		Choices []struct {
+			Message struct {
+				Role      string             `json:"role"`
+				Content   string             `json:"content"`
+				ToolCalls []openaisdk.ToolCall `json:"tool_calls,omitempty"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return llm.Message{}, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if len(apiResp.Choices) == 0 {
+		return llm.Message{}, fmt.Errorf("no choices in response")
+	}
+
+	choice := apiResp.Choices[0]
+
+	// Конвертируем tool calls
+	var toolCalls []llm.ToolCall
+	if len(choice.Message.ToolCalls) > 0 {
+		toolCalls = make([]llm.ToolCall, len(choice.Message.ToolCalls))
+		for i, tc := range choice.Message.ToolCalls {
+			toolCalls[i] = llm.ToolCall{
+				ID:   tc.ID,
+				Name: tc.Function.Name,
+				Args: tc.Function.Arguments,
+			}
+		}
+	}
+
+	return llm.Message{
+		Role:      llm.RoleAssistant,
+		Content:   choice.Message.Content,
+		ToolCalls: toolCalls,
+	}, nil
 }
 
 // generateWithThinking выполняет запрос с thinking параметром через кастомный HTTP.
@@ -228,6 +322,11 @@ func (c *Client) generateWithThinking(ctx context.Context, messages []llm.Messag
 	if len(toolDefs) > 0 {
 		reqBody["tools"] = convertToolsToOpenAI(toolDefs)
 		reqBody["tool_choice"] = "auto"
+
+		// Устанавливаем parallel_tool_calls если указан
+		if options.ParallelToolCalls != nil {
+			reqBody["parallel_tool_calls"] = *options.ParallelToolCalls
+		}
 	}
 
 	// Marshal в JSON

@@ -58,10 +58,14 @@ func main() {
 	//   - Загружает справочники
 	//   - Регистрирует tools (только enabled: true)
 	//   - Создаёт ReActCycle с debug recorder
+	//
+	// Параметры из config.yaml (chains.default):
+	//   - max_iterations: 10 (можно переопределить в YAML)
+	//   - timeout: "5m" (можно переопределить в YAML)
 	utils.Info("Creating agent...")
 	client, err := agent.New(agent.Config{
-		ConfigPath:    "config.yaml",
-		MaxIterations: 3,
+		ConfigPath: "config.yaml",
+		// MaxIterations: 0 // <- используем значение из config.yaml chains.default.max_iterations
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating agent: %v\n", err)
@@ -69,17 +73,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Получаем конфигурацию для логирования
+	cfg := client.GetConfig()
+	maxIters := cfg.GetChainMaxIterations("default")
+	chainTimeout := cfg.GetChainTimeout("default")
+
 	utils.Info("Agent created successfully",
-		"s3_bucket", client.GetConfig().S3.Bucket,
-		"tools_registered", len(client.GetToolsRegistry().GetDefinitions()))
+		"s3_bucket", cfg.S3.Bucket,
+		"tools_registered", len(client.GetToolsRegistry().GetDefinitions()),
+		"max_iterations", maxIters,
+		"chain_timeout", chainTimeout)
 
 	// 3. Выполняем диагностику - ОДНА СТРОКА!
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Context timeout берётся из config.yaml chains.default.timeout
+	ctx, cancel := context.WithTimeout(context.Background(), chainTimeout)
 	defer cancel()
 
 	query := "Проверь доступность S3 хранилища и Wildberries Content API. Сформируй подробный отчет о состоянии обоих сервисов."
 
-	utils.Info("Running diagnostics", "timeout", "30s")
+	utils.Info("Running diagnostics", "timeout", chainTimeout)
 	startTime := time.Now()
 
 	result, err := client.Run(ctx, query)

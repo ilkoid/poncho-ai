@@ -91,14 +91,29 @@ func (c *Client) IsDemoKey() bool {
 // Параметры:
 //   - apiKey: API ключ для авторизации в Wildberries
 //
-// Возвращает настроенный клиент без лимитеров (создаются динамически).
+// Возвращает настроенный клиент с дефолтными значениями из WBConfig.GetDefaults().
 // Рекомендуется использовать NewFromConfig для конфигурируемого клиента.
+//
+// DEPRECATED: Используйте NewFromConfig для явного указания всех параметров.
 func New(apiKey string) *Client {
+	// Используем дефолтную конфигурацию для согласованности с NewFromConfig
+	defaultCfg := config.WBConfig{
+		APIKey:        apiKey,
+		RateLimit:     100,  // дефолтный rate limit
+		BurstLimit:    5,    // дефолтный burst
+		RetryAttempts: 3,    // дефолтный retry
+		Timeout:       "30s", // дефолтный timeout
+	}
+	cfg := defaultCfg.GetDefaults()
+
+	// Парсим timeout (заведомо валидный, но на всякий случай)
+	timeout, _ := time.ParseDuration(cfg.Timeout)
+
 	return &Client{
-		apiKey:        apiKey,
-		retryAttempts: 3, // дефолтное значение для обратной совместимости
+		apiKey:        cfg.APIKey,
+		retryAttempts: cfg.RetryAttempts,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: timeout,
 		},
 		limiters: make(map[string]*rate.Limiter),
 	}

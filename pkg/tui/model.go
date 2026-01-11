@@ -62,9 +62,10 @@ type Model struct {
 	mu           sync.RWMutex
 
 	// Опции
-	title      string // Заголовок приложения
-	prompt     string // Приглашение ввода
-	ready      bool   // Флаг первой инициализации
+	title   string // Заголовок приложения
+	prompt  string // Приглашение ввода
+	ready   bool   // Флаг первой инициализации
+	timeout time.Duration // Таймаут для agent execution
 }
 
 // NewModel создаёт новую TUI модель.
@@ -101,6 +102,7 @@ func NewModel(agent agent.Agent, eventSub events.Subscriber) Model {
 		title:        "AI Agent",
 		prompt:       "┃ ",
 		ready:        false,
+		timeout:      5 * time.Minute, // дефолтный timeout
 	}
 }
 
@@ -256,7 +258,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // startAgent запускает агента с заданным запросом.
 func (m Model) startAgent(query string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := contextWithTimeout()
+		ctx, cancel := m.contextWithTimeout()
 		defer cancel()
 
 		_, err := m.agent.Run(ctx, query)
@@ -288,9 +290,9 @@ func (m Model) View() string {
 	)
 }
 
-// contextWithTimeout создаёт контекст с таймаутом.
-func contextWithTimeout() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 5*time.Minute)
+// contextWithTimeout создаёт контекст с таймаутом из настроек модели.
+func (m Model) contextWithTimeout() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), m.timeout)
 }
 
 // ===== STYLES =====
