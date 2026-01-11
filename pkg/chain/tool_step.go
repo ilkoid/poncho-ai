@@ -60,22 +60,6 @@ type PromptLoader interface {
 	LoadToolPostPrompt(toolName string) (string, *prompt.PromptConfig, error)
 }
 
-// NewToolExecutionStep создаёт новый ToolExecutionStep.
-//
-// Rule 10: Godoc на public API.
-func NewToolExecutionStep(
-	registry *tools.Registry,
-	promptLoader PromptLoader,
-	debugRecorder *ChainDebugRecorder,
-) *ToolExecutionStep {
-	return &ToolExecutionStep{
-		registry:      registry,
-		promptLoader:  promptLoader,
-		debugRecorder: debugRecorder,
-		toolResults:   make([]ToolResult, 0),
-	}
-}
-
 // Name возвращает имя Step (для логирования).
 func (s *ToolExecutionStep) Name() string {
 	return "tool_execution"
@@ -125,13 +109,15 @@ func (s *ToolExecutionStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		}
 	}
 
-	// 4. Если был выполнен только один инструмент, загружаем его post-prompt
-	if len(lastMsg.ToolCalls) == 1 {
+	// 4. Загружаем post-prompt для выполненного инструмента
+	//
+	// NOTE: С включенным parallel_tool_calls=false LLM вызывает только один инструмент
+	// за раз, поэтому post-prompt всегда активируется после выполнения.
+	if len(lastMsg.ToolCalls) > 0 {
 		toolName := lastMsg.ToolCalls[0].Name
 		if err := s.loadAndActivatePostPrompt(toolName, chainCtx); err != nil {
 			// Non-critical ошибка - логируем но продолжаем
-			// В production можно добавить warning лог
-			_ = err // TODO: добавить логирование
+			_ = err // TODO: добавить warning лог
 		}
 	}
 

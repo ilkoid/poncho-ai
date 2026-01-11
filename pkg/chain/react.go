@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
@@ -43,6 +44,7 @@ type ReActCycle struct {
 	// Runtime state (thread-safe)
 	mu            sync.Mutex
 	debugRecorder *ChainDebugRecorder
+	emitter       events.Emitter // Port & Adapter: отправка событий в UI
 
 	// Steps (создаются один раз при конструировании)
 	llmStep  *LLMInvocationStep
@@ -113,15 +115,33 @@ func (c *ReActCycle) SetState(state *state.CoreState) {
 	c.state = state
 }
 
-// AttachDebug присоединяет debug recorder.
-//
-// Реализует интерфейс DebuggableChain.
+// AttachDebug присоединяет debug recorder к ReActCycle.
 func (c *ReActCycle) AttachDebug(recorder *ChainDebugRecorder) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.debugRecorder = recorder
 	c.llmStep.debugRecorder = recorder
 	c.toolStep.debugRecorder = recorder
+}
+
+// SetEmitter устанавливает emitter для отправки событий в UI.
+//
+// Port & Adapter pattern: ReActCycle зависит от абстракции events.Emitter.
+// Thread-safe.
+func (c *ReActCycle) SetEmitter(emitter events.Emitter) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.emitter = emitter
+}
+
+// emitEvent отправляет событие если emitter установлен.
+//
+// Thread-safe helper метод.
+func (c *ReActCycle) emitEvent(ctx context.Context, event events.Event) {
+	if c.emitter == nil {
+		return
+	}
+	c.emitter.Emit(ctx, event)
 }
 
 // Execute выполняет ReAct цикл.
@@ -167,30 +187,74 @@ func (c *ReActCycle) Execute(ctx context.Context, input ChainInput) (ChainOutput
 	// 5. ReAct цикл
 	iterations := 0
 	for iterations = 0; iterations < c.config.MaxIterations; iterations++ {
+		// Start debug iteration для всей итерации (LLM + Tools)
+		if c.debugRecorder != nil && c.debugRecorder.Enabled() {
+			c.debugRecorder.StartIteration(iterations + 1)
+		}
+
 		// 5a. LLM Invocation
-		action, err := c.executeLLMStep(ctx, chainCtx, iterations)
+		action, err := c.executeLLMStep(ctx, chainCtx)
 		if err != nil {
 			return c.finalizeWithError(chainCtx, startTime, err)
 		}
 		if action == ActionError {
+			c.endDebugIteration()
 			return c.finalizeWithError(chainCtx, startTime, fmt.Errorf("LLM step failed"))
 		}
 
-		// 5b. Проверяем есть ли tool calls
+		// Отправляем EventThinking с контентом LLM (рассуждения)
 		lastMsg := chainCtx.GetLastMessage()
+		c.emitEvent(ctx, events.Event{
+			Type:      events.EventThinking,
+			Data:      lastMsg.Content,
+			Timestamp: time.Now(),
+		})
+
+		// Отправляем EventToolCall для каждого tool call
+		for _, tc := range lastMsg.ToolCalls {
+			c.emitEvent(ctx, events.Event{
+				Type: events.EventToolCall,
+				Data: events.ToolCallData{
+					ToolName: tc.Name,
+					Args:     tc.Args,
+				},
+				Timestamp: time.Now(),
+			})
+		}
+
+		// 5b. Проверяем есть ли tool calls
 		if len(lastMsg.ToolCalls) == 0 {
 			// Финальный ответ - нет tool calls
+			c.endDebugIteration()
 			break
 		}
 
-		// 5c. Tool Execution
+		// 5c. Tool Execution (внутри той же итерации!)
 		action, err = c.executeToolStep(ctx, chainCtx)
 		if err != nil {
+			c.endDebugIteration()
 			return c.finalizeWithError(chainCtx, startTime, err)
 		}
 		if action == ActionError {
+			c.endDebugIteration()
 			return c.finalizeWithError(chainCtx, startTime, fmt.Errorf("tool execution failed"))
 		}
+
+		// Отправляем EventToolResult для каждого выполненного tool
+		for _, tr := range c.toolStep.GetToolResults() {
+			c.emitEvent(ctx, events.Event{
+				Type: events.EventToolResult,
+				Data: events.ToolResultData{
+					ToolName: tr.Name,
+					Result:   tr.Result,
+					Duration: time.Duration(tr.Duration) * time.Millisecond,
+				},
+				Timestamp: time.Now(),
+			})
+		}
+
+		// End debug iteration после LLM + Tools
+		c.endDebugIteration()
 	}
 
 	// 6. Формируем результат
@@ -213,27 +277,25 @@ func (c *ReActCycle) Execute(ctx context.Context, input ChainInput) (ChainOutput
 	}, nil
 }
 
-// executeLLMStep выполняет LLM шаг с debug записью.
-func (c *ReActCycle) executeLLMStep(ctx context.Context, chainCtx *ChainContext, iteration int) (NextAction, error) {
-	// Start debug iteration
-	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
-		c.debugRecorder.StartIteration(iteration + 1)
-	}
-
-	// Execute LLM step
-	action, err := c.llmStep.Execute(ctx, chainCtx)
-
-	// End debug iteration
-	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
-		c.debugRecorder.EndIteration()
-	}
-
-	return action, err
+// executeLLMStep выполняет LLM шаг.
+//
+// Debug iteration управляется в ReActCycle.Execute() (одна итерация = LLM + Tools).
+func (c *ReActCycle) executeLLMStep(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
+	return c.llmStep.Execute(ctx, chainCtx)
 }
 
 // executeToolStep выполняет Tool шаг.
 func (c *ReActCycle) executeToolStep(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
 	return c.toolStep.Execute(ctx, chainCtx)
+}
+
+// endDebugIteration завершает текущую debug итерацию.
+//
+// Helper метод для избежания дублирования кода.
+func (c *ReActCycle) endDebugIteration() {
+	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
+		c.debugRecorder.EndIteration()
+	}
 }
 
 // finalizeWithError завершает выполнение с ошибкой.
@@ -296,9 +358,6 @@ func (c *ReActCycle) LoadToolPostPrompt(toolName string) (string, *prompt.Prompt
 
 	return systemPrompt, &promptFile.Config, nil
 }
-
-// Ensure ReActCycle implements DebuggableChain
-var _ DebuggableChain = (*ReActCycle)(nil)
 
 // Ensure ReActCycle implements Chain
 var _ Chain = (*ReActCycle)(nil)

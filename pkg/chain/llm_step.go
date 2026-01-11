@@ -40,24 +40,6 @@ type LLMInvocationStep struct {
 	startTime time.Time
 }
 
-// NewLLMInvocationStep создаёт новый LLMInvocationStep.
-//
-// DEPRECATED: Используйте прямое создание &LLMInvocationStep{}
-// Model registry и default model должны быть установлены через Setters.
-//
-// Rule 10: Godoc на public API.
-func NewLLMInvocationStep(
-	registry *tools.Registry,
-	systemPrompt string,
-	debugRecorder *ChainDebugRecorder,
-) *LLMInvocationStep {
-	return &LLMInvocationStep{
-		registry:      registry,
-		systemPrompt:  systemPrompt,
-		debugRecorder: debugRecorder,
-	}
-}
-
 // Name возвращает имя Step (для логирования).
 func (s *LLMInvocationStep) Name() string {
 	return "llm_invocation"
@@ -188,6 +170,11 @@ func (s *LLMInvocationStep) determineLLMOptions(chainCtx *ChainContext, modelDef
 		Model:       modelDef.ModelName,
 		Temperature: modelDef.Temperature,
 		MaxTokens:   modelDef.MaxTokens,
+	}
+
+	// Копируем ParallelToolCalls из конфигурации модели
+	if modelDef.ParallelToolCalls != nil {
+		opts.ParallelToolCalls = modelDef.ParallelToolCalls
 	}
 
 	// Overrides из post-prompt если есть

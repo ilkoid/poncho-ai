@@ -467,6 +467,13 @@ func (s *CoreState) GetTodoManager() *todo.Manager {
 	return val
 }
 
+// SetTodoManager устанавливает todo manager в CoreState.
+//
+// Thread-safe: изменение защищено мьютексом.
+func (s *CoreState) SetTodoManager(manager *todo.Manager) error {
+	return s.Set(KeyTodo, manager)
+}
+
 // getTodoManager — вспомогательный метод для получения todo.Manager.
 //
 // Возвращает nil если менеджер не инициализирован.
@@ -635,18 +642,3 @@ func (s *CoreState) BuildAgentContext(systemPrompt string) []llm.Message {
 	return messages
 }
 
-// ============================================================
-// Compile-time Interface Compliance Checks
-// ============================================================
-
-// Проверки вызовут ошибку компиляции если CoreState не реализует интерфейсы.
-//
-// Rule 10: Interface compliance проверки должны быть в коде.
-var (
-	_ UnifiedStore        = (*CoreState)(nil) // ✅ CoreState implements UnifiedStore
-	_ MessageRepository   = (*CoreState)(nil) // ✅ CoreState implements MessageRepository
-	_ FileRepository      = (*CoreState)(nil) // ✅ CoreState implements FileRepository
-	_ TodoRepository      = (*CoreState)(nil) // ✅ CoreState implements TodoRepository
-	_ DictionaryRepository = (*CoreState)(nil) // ✅ CoreState implements DictionaryRepository
-	_ StorageRepository   = (*CoreState)(nil) // ✅ CoreState implements StorageRepository
-)

@@ -92,38 +92,3 @@ const (
 	//   registry, ok := coreState.Get[*tools.Registry](state.KeyToolsRegistry)
 	KeyToolsRegistry Key = "tools_registry"
 )
-
-// ReservedKeys возвращает список зарезервированных ключей.
-//
-// Вспомогательная функция для валидации — проверяет что пользователь
-// не пытается использовать системный ключ для своих данных.
-//
-// Пример использования:
-//   if contains(ReservedKeys(), userKey) {
-//       return error("key is reserved")
-//   }
-func ReservedKeys() []Key {
-	return []Key{
-		KeyHistory,
-		KeyFiles,
-		KeyCurrentArticle,
-		KeyTodo,
-		KeyDictionaries,
-		KeyStorage,
-		KeyToolsRegistry,
-	}
-}
-
-// IsReservedKey проверяет что ключ является зарезервированным.
-//
-// Возвращает true если ключ используется системой.
-//
-// Rule 7: Возвращает bool вместо panic при несуществующем ключе.
-func IsReservedKey(key Key) bool {
-	for _, reserved := range ReservedKeys() {
-		if key == reserved {
-			return true
-		}
-	}
-	return false
-}

@@ -2,8 +2,7 @@ package tui
 
 import (
 	"fmt"
-	"log"
-	"os"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ilkoid/poncho-ai/pkg/agent"
@@ -114,26 +113,18 @@ func WithPrompt(prompt string) Option {
 	}
 }
 
-// RunWithLogger запускает TUI с логированием (для отладки).
+// WithTimeout устанавливает таймаут для выполнения запросов агента.
 //
-// Логирует ошибки в stderr вместо silent failure.
-func RunWithLogger(client *agent.Client) error {
-	if client == nil {
-		return fmt.Errorf("client is nil")
+// По умолчанию используется 5 минут.
+//
+// Пример:
+//
+//	client, _ := agent.New(...)
+//	err := tui.RunWithOpts(client,
+//	    tui.WithTimeout(10 * time.Minute),
+//	)
+func WithTimeout(timeout time.Duration) Option {
+	return func(m *Model) {
+		m.timeout = timeout
 	}
-
-	emitter := events.NewChanEmitter(100)
-	client.SetEmitter(emitter)
-	sub := client.Subscribe()
-
-	model := NewModel(client, sub)
-
-	p := tea.NewProgram(model)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
-		return err
-	}
-
-	log.Println("TUI exited normally")
-	return nil
 }

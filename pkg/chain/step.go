@@ -21,9 +21,6 @@ const (
 
 	// ActionError — прервать выполнение с ошибкой.
 	ActionError
-
-	// ActionBranch — перейти к другому Step (для будущей Graph реализации).
-	ActionBranch
 )
 
 // String возвращает строковое представление NextAction (для дебага).
@@ -35,8 +32,6 @@ func (a NextAction) String() string {
 		return "Break"
 	case ActionError:
 		return "Error"
-	case ActionBranch:
-		return "Branch"
 	default:
 		return fmt.Sprintf("Unknown(%d)", a)
 	}
@@ -67,42 +62,4 @@ type Step interface {
 	//   - NextAction — что делать дальше (continue/break/error/branch)
 	//   - error — ошибка выполнения (для ActionError)
 	Execute(ctx context.Context, chainCtx *ChainContext) (NextAction, error)
-}
-
-// StepFunc — функциональная обёртка для простых Step.
-//
-// Позволяет создавать Step на лету без структур.
-//
-// Пример:
-//
-//	step := chain.StepFunc{
-//		name: "print_hello",
-//		fn: func(ctx context.Context, c *chain.ChainContext) (chain.NextAction, error) {
-//			fmt.Println("Hello from step!")
-//			return chain.ActionContinue, nil
-//		},
-//	}
-type StepFunc struct {
-	name string
-	fn   func(context.Context, *ChainContext) (NextAction, error)
-}
-
-// Name возвращает имя StepFunc.
-func (s StepFunc) Name() string {
-	return s.name
-}
-
-// Execute выполняет функцию StepFunc.
-func (s StepFunc) Execute(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
-	return s.fn(ctx, chainCtx)
-}
-
-// NewStepFunc создаёт новый StepFunc из функции.
-//
-// Rule 10: Godoc на public API.
-func NewStepFunc(name string, fn func(context.Context, *ChainContext) (NextAction, error)) Step {
-	return StepFunc{
-		name: name,
-		fn:   fn,
-	}
 }

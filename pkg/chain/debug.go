@@ -168,27 +168,3 @@ func (r *ChainDebugRecorder) GetRunID() string {
 	}
 	return r.recorder.GetRunID()
 }
-
-// AttachToChain — helper для присоединения debug recorder к Chain.
-//
-// Используется в CLI утилитах и тестах.
-//
-// Rule 7: Возвращает ошибку если Chain не поддерживает debug.
-func AttachToChain(c Chain, recorder *ChainDebugRecorder) error {
-	// Проверяем что Chain поддерживает debug
-	if dc, ok := c.(DebuggableChain); ok {
-		dc.AttachDebug(recorder)
-		return nil
-	}
-	return fmt.Errorf("chain does not support debug recording")
-}
-
-// DebuggableChain — интерфейс для Chain с поддержкой debug.
-//
-// ReActCycle и другие реализации должны реализовывать этот интерфейс.
-type DebuggableChain interface {
-	Chain
-
-	// AttachDebug присоединяет debug recorder к Chain.
-	AttachDebug(recorder *ChainDebugRecorder)
-}

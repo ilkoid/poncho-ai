@@ -19,6 +19,11 @@ type GenerateOptions struct {
 
 	// Format specifies response format (e.g., "json_object" for structured output)
 	Format string
+
+	// ParallelToolCalls controls whether LLM can call multiple tools at once.
+	// nil = use model default from config.yaml
+	// NOTE: Currently configured via model definition, not runtime options.
+	ParallelToolCalls *bool
 }
 
 // GenerateOption is a functional option for configuring GenerateOptions.
@@ -54,16 +59,5 @@ func WithMaxTokens(tokens int) GenerateOption {
 func WithFormat(format string) GenerateOption {
 	return func(o *GenerateOptions) {
 		o.Format = format
-	}
-}
-
-// defaultOptions returns GenerateOptions with sensible defaults.
-// Used when no config is available.
-func defaultOptions() GenerateOptions {
-	return GenerateOptions{
-		Model:       "",
-		Temperature: 0.5,
-		MaxTokens:   2000,
-		Format:      "",
 	}
 }
