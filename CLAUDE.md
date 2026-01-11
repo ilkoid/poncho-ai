@@ -29,6 +29,10 @@ poncho-ai/
 │   ├── vision-cli/        # CLI utility for vision analysis
 │   ├── chain-cli/         # CLI utility for testing Chain Pattern
 │   ├── debug-test/        # CLI utility for testing debug logs
+│   ├── tools-test/        # CLI utility for testing all enabled tools
+│   ├── todo-agent/        # Standalone TUI for task management
+│   ├── wb-ping-util-v2/   # Example of new 2-line agent API
+│   ├── simple-agent/      # Minimal agent implementation example
 │   └── wb-tools-test/     # CLI utility for testing WB tools
 ├── internal/              # Application-specific logic
 │   └── ui/               # Bubble Tea TUI (app-specific implementation)
@@ -260,8 +264,6 @@ emitter.Emit(ctx, events.Event{Type: events.EventThinking, Data: "query"})
 
 ### TUI Package (`pkg/tui/`)
 
-**NEW (2026-01-10)**: Reusable TUI helpers for Bubble Tea integration.
-
 **Purpose**: Adapter layer between `pkg/events` and Bubble Tea framework.
 
 **Components**:
@@ -285,12 +287,6 @@ err := tui.RunWithOpts(client,
     tui.WithTitle("My AI App"),
     tui.WithPrompt("> "),
 )
-
-// 3. Custom: integrate with existing TUI
-sub := client.Subscribe()
-cmd := tui.ReceiveEventCmd(sub, func(event events.Event) tea.Msg {
-    return tui.EventMsg(event)
-})
 ```
 
 **Architecture**:
@@ -421,6 +417,15 @@ go run cmd/chain-cli/main.go "show categories"
 
 # Debug test
 go run cmd/debug-test/main.go
+
+# Tools test (all enabled tools)
+cd cmd/tools-test && go run main.go
+
+# Todo agent (standalone TUI)
+cd cmd/todo-agent && go run main.go
+
+# wb-ping-util-v2 (demonstrates 2-line API)
+go run cmd/wb-ping-util-v2/main.go
 ```
 
 ---
@@ -470,3 +475,8 @@ CoreState, ToolsRegistry, ModelRegistry, TodoManager, wb.Client.limiters, TUI Ma
 ## Per-Tool Rate Limiting
 
 Each WB tool gets its own rate limiter instance (e.g., `get_wb_feedbacks`: 60/min, `get_wb_parent_categories`: 100/min).
+
+---
+
+**Last Updated**: 2026-01-11
+**Version**: 3.5 (CLI utilities, chains config, pkg/tui.Run)

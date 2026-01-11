@@ -141,7 +141,10 @@ Event Flow (Port & Adapter):
 | **model-registry-test** | Model Registry testing | CLI | List models, test retrieval, verify fallback |
 | **vision-cli** | Vision analysis | CLI | Multimodal queries, image analysis |
 | **debug-test** | Debug logs testing | CLI | Debug recorder simulation |
-| **wb-tools-test** | WB tools tester | Interactive CLI | Tool menu, result formatting |
+| **wb-tools-test** | S3 & WB tools tester | CLI | Sequential tool execution, JSON results |
+| **todo-agent** | Todo management TUI | Bubble Tea | Task planning with AI, standalone |
+| **wb-ping-util-v2** | WB API diagnostic | CLI | Example of new agent API (2-line) |
+| **simple-agent** | Agent API example | CLI | Minimal agent implementation |
 
 ### 2.2 Main Applications
 
@@ -189,6 +192,21 @@ All utilities require `config.yaml` next to binary (Rule 11 compliance).
 ```bash
 ./vision-cli                                  # Interactive
 ./vision-cli -query "describe image"          # Direct query
+```
+
+**tools-test** (comprehensive tool testing):
+```bash
+cd cmd/tools-test && go run main.go           # Tests all enabled tools
+```
+
+**todo-agent** (standalone TUI for todo management):
+```bash
+cd cmd/todo-agent && go run main.go           # Autonomous task planner
+```
+
+**wb-ping-util-v2** (demonstrates new 2-line API):
+```bash
+./wb-ping-util-v2                             # S3 + WB API diagnostics
 ```
 
 ---
@@ -674,11 +692,14 @@ app:
     enabled: true
     logs_dir: "./debug_logs"
 
+# Chain Configuration (Rule 2: YAML-driven)
 chains:
-  react_agent:
+  default:
     type: "react"
     max_iterations: 10
-    timeout: "120s"
+    timeout: "5m"
+    tool_post_prompts:
+      get_wb_parent_categories: "wb/parent_categories_analysis.yaml"
 ```
 
 ### 4.2 Required Environment Variables
@@ -972,7 +993,7 @@ The framework follows **"Convention over Configuration"** - developers follow si
 
 ---
 
-**Last Updated**: 2026-01-10
-**Version**: 3.4 (Port & Adapter: pkg/events + pkg/tui)
+**Last Updated**: 2026-01-11
+**Version**: 3.5 (CLI utilities, chains config, pkg/tui.Run)
 
 **Maintainer**: Poncho AI Development Team
