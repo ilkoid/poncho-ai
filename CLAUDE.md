@@ -12,7 +12,9 @@ Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI
 - `pkg/state/CoreState` - Framework core (reusable, includes e-commerce helpers)
 - `internal/ui/` - TUI-specific (stores UI state separately from CoreState)
 - `pkg/chain/ReActCycle` - Implements both Chain and Agent interfaces
-- `pkg/app/components.go` - Returns `*state.CoreState` (Rule 6 compliant)
+- `pkg/app/components.go` - Component initialization with context propagation (Rule 11 compliant)
+- `pkg/agent/Client` - Simple 2-line agent API (Facade pattern)
+- `pkg/events/` - Port & Adapter pattern for UI decoupling
 - Rule 6 Compliant: `pkg/` has NO imports from `internal/`
 
 ---
@@ -33,6 +35,7 @@ poncho-ai/
 │   ├── todo-agent/        # Standalone TUI for task management
 │   ├── wb-ping-util-v2/   # Example of new 2-line agent API
 │   ├── simple-agent/      # Minimal agent implementation example
+│   ├── streaming-test/    # NEW: Streaming functionality test
 │   └── wb-tools-test/     # CLI utility for testing WB tools
 ├── internal/              # Application-specific logic
 │   └── ui/               # Bubble Tea TUI (app-specific implementation)
@@ -45,7 +48,7 @@ poncho-ai/
 │   ├── debug/            # JSON debug logging system
 │   ├── events/           # Port & Adapter: Event interfaces (Emitter, Subscriber)
 │   ├── factory/          # LLM provider factory
-│   ├── llm/              # LLM abstraction layer + options pattern
+│   ├── llm/              # LLM abstraction layer + options + streaming support
 │   ├── models/           # Model Registry (centralized LLM provider management)
 │   ├── prompt/           # Prompt loading and rendering + post-prompts
 │   ├── s3storage/        # S3-compatible storage client
@@ -78,6 +81,11 @@ poncho-ai/
 | **11: Context Propagation** | All long-running operations must accept and respect `context.Context` through all layers |
 | **12: Security & Secrets** | Never hardcode secrets. Use ENV vars `${VAR}`, validate inputs, redact sensitive data in logs, HTTPS only |
 | **13: Resource Localization** | Autonomous `/cmd` apps with local config/prompts |
+
+**Rule 11 Compliance Status**: ✅ **FULLY COMPLIANT** (2026-01-12)
+- `pkg/app/components.go`: `Initialize(parentCtx, ...)` and `Execute(parentCtx, ...)`
+- `pkg/tui/`: Context stored in Model struct for Bubble Tea integration
+- All entry points pass `context.Background()` or parent context
 
 ---
 
@@ -131,9 +139,64 @@ type Provider interface {
 llm.Generate(ctx, messages, llm.WithModel("glm-4.6"), llm.WithTemperature(0.5))
 ```
 
+**Streaming Support** (NEW):
+
+```go
+type StreamingProvider interface {
+    Provider  // Embedded for backward compatibility
+
+    GenerateStream(
+        ctx context.Context,
+        messages []Message,
+        callback func(StreamChunk),
+        opts ...any,
+    ) (Message, error)
+}
+
+// StreamChunk represents a portion of streaming response
+type StreamChunk struct {
+    Type             ChunkType  // ChunkThinking, ChunkContent, ChunkError, ChunkDone
+    Content          string     // Accumulated content
+    ReasoningContent string     // Accumulated reasoning_content (thinking mode)
+    Delta            string     // Incremental changes (for real-time UI)
+    Done             bool
+    Error            error
+}
+```
+
+**Streaming Configuration** (`config.yaml`):
+```yaml
+app:
+  streaming:
+    enabled: true        # Opt-out design (default: true)
+    thinking_only: true  # Only send reasoning_content events
+```
+
+**Streaming Usage**:
+```go
+if streamingProvider, ok := provider.(llm.StreamingProvider); ok {
+    response, err := streamingProvider.GenerateStream(
+        ctx,
+        messages,
+        func(chunk llm.StreamChunk) {
+            switch chunk.Type {
+            case llm.ChunkThinking:
+                // Handle reasoning_content
+                fmt.Print(chunk.Delta)
+            case llm.ChunkContent:
+                // Handle regular content
+                fmt.Print(chunk.Delta)
+            }
+        },
+        llm.WithStream(true),
+        llm.WithThinkingOnly(true),
+    )
+}
+```
+
 ### ReActCycle (`pkg/chain/`)
 
-Implements both **Chain** and **Agent** interfaces:
+Implements both **Chain** and **Agent** interfaces with streaming and event support:
 
 ```go
 // Chain - full control
@@ -144,11 +207,16 @@ result, err := reactCycle.Run(ctx, query)
 history := reactCycle.GetHistory()
 ```
 
+**New Features**:
+- **Event Emitter**: `events.Emitter` field for UI integration
+- **Streaming Support**: `streamingEnabled` flag from config
+- **Context Propagation**: All methods accept `context.Context` (Rule 11 compliant)
+
 **Note**: `internal/agent/orchestrator.go` was DELETED. Use ReActCycle instead.
 
 ### Simple Agent API (`pkg/agent/`)
 
-**NEW (2026-01-08)**: Ultra-simple API for creating AI agents in **2 lines**.
+**Facade Pattern**: Ultra-simple API for creating AI agents in **2 lines**.
 
 ```go
 // Before (50+ lines of boilerplate):
@@ -200,8 +268,7 @@ cfg := client.GetConfig()              // Direct config access
 - ✅ Thread-safe
 - ✅ Compatible with both TUI and CLI
 - ✅ No circular imports (Agent interface in `pkg/chain`)
-
-**Architecture**: Facade pattern over `ReActCycle`. See `cmd/simple-agent/` and `cmd/wb-ping-util-v2/` for examples.
+- ✅ Streaming support via event system
 
 **Events Support** (Port & Adapter):
 ```go
@@ -217,6 +284,9 @@ for event := range sub.Events() {
     switch event.Type {
     case events.EventThinking:
         ui.showSpinner()
+    case events.EventThinkingChunk:
+        // Handle streaming reasoning content
+        ui.updateThinking(event.Data.(events.ThinkingChunkData).Chunk)
     case events.EventMessage:
         ui.showMessage(event.Data.(string))
     case events.EventDone:
@@ -227,13 +297,11 @@ for event := range sub.Events() {
 
 ### Event System (`pkg/events/`)
 
-**NEW (2026-01-10)**: Port & Adapter pattern for agent events.
-
-**Purpose**: Decouple agent logic from UI implementation through event interfaces.
+**Port & Adapter Pattern**: Decouple agent logic from UI implementation through event interfaces.
 
 **Interfaces**:
 ```go
-// Emitter - Port for sending events (used by pkg/agent)
+// Emitter - Port for sending events (used by pkg/agent, pkg/chain)
 type Emitter interface {
     Emit(ctx context.Context, event Event)
 }
@@ -247,11 +315,34 @@ type Subscriber interface {
 
 **Event Types**:
 - `EventThinking` - Agent starts thinking
+- `EventThinkingChunk` - **NEW**: Streaming reasoning content (for thinking mode)
 - `EventToolCall` - Tool execution started
 - `EventToolResult` - Tool execution completed
 - `EventMessage` - Agent generated message
 - `EventError` - Error occurred
 - `EventDone` - Agent finished
+
+**Event Data Structures**:
+```go
+// ThinkingChunkData - streaming reasoning content
+type ThinkingChunkData struct {
+    Chunk       string // Delta (new content)
+    Accumulated string // Full accumulated content
+}
+
+// ToolCallData - tool invocation info
+type ToolCallData struct {
+    ToolName string
+    Args     string
+}
+
+// ToolResultData - tool execution result
+type ToolResultData struct {
+    ToolName string
+    Result   string
+    Duration time.Duration
+}
+```
 
 **ChanEmitter** - Standard implementation:
 ```go
@@ -268,7 +359,7 @@ emitter.Emit(ctx, events.Event{Type: events.EventThinking, Data: "query"})
 
 **Components**:
 - `adapter.go` - EventMsg type, ReceiveEventCmd, WaitForEvent
-- `model.go` - Base TUI Model with agent integration
+- `model.go` - Base TUI Model with agent integration and context storage
 - `run.go` - Ready-to-use TUI runner
 
 **Basic Usage**:
@@ -278,16 +369,21 @@ import "github.com/ilkoid/poncho-ai/pkg/tui"
 client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
 
 // 1. Simple: use pre-built TUI
-if err := tui.Run(client); err != nil {
+if err := tui.Run(context.Background(), client); err != nil {
     log.Fatal(err)
 }
 
 // 2. Advanced: customize
-err := tui.RunWithOpts(client,
+err := tui.RunWithOpts(context.Background(), client,
     tui.WithTitle("My AI App"),
     tui.WithPrompt("> "),
 )
 ```
+
+**Context Handling** (Rule 11):
+- Model stores `ctx context.Context` field
+- `Run()` accepts context as first parameter
+- Context propagated through all agent operations
 
 **Architecture**:
 - `pkg/events.*` - Port (interfaces)
@@ -295,6 +391,49 @@ err := tui.RunWithOpts(client,
 - `internal/ui.*` - Concrete TUI implementation (app-specific)
 
 **Rule 6 Compliant**: Only reusable code in `pkg/tui`, no app-specific logic.
+
+### App Initialization (`pkg/app/`)
+
+**Rule 11 Compliant**: Context propagation through all layers.
+
+```go
+// Initialize creates all components with context propagation
+func Initialize(
+    parentCtx context.Context,  // NEW: Rule 11 compliance
+    cfg *config.AppConfig,
+    maxIters int,
+    systemPrompt string,
+) (*Components, error)
+
+// Execute runs agent with context propagation
+func Execute(
+    parentCtx context.Context,  // NEW: Rule 11 compliance
+    c *Components,
+    query string,
+    timeout time.Duration,
+) (*ExecutionResult, error)
+```
+
+**Usage**:
+```go
+// CLI entry point
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+defer cancel()
+
+components, err := app.Initialize(ctx, cfg, 10, "")
+result, err := app.Execute(ctx, components, query, timeout)
+```
+
+**Components Structure**:
+```go
+type Components struct {
+    Config         *config.AppConfig
+    State          *state.CoreState
+    ModelRegistry  *models.Registry
+    ToolsRegistry  *tools.Registry
+    ReActCycle     *chain.ReActCycle
+}
+```
 
 ### Tool Post-Prompts
 
@@ -348,7 +487,11 @@ type Step interface {
 }
 ```
 
-**ReActCycle**: Composable steps (LLMInvocationStep, ToolExecutionStep) with debug support via `ChainDebugRecorder`.
+**ReActCycle**: Composable steps (LLMInvocationStep, ToolExecutionStep) with:
+- Debug support via `ChainDebugRecorder`
+- Event emission via `events.Emitter`
+- Streaming support via `StreamingProvider`
+- Context propagation (Rule 11)
 
 ### Debug System (`pkg/debug/`)
 
@@ -364,6 +507,14 @@ app:
 ### Configuration (`config.yaml`)
 
 ```yaml
+app:
+  streaming:
+    enabled: true        # Opt-out design (default: true)
+    thinking_only: true  # Only send reasoning_content events
+  debug_logs:
+    enabled: false
+    logs_dir: "./debug_logs"
+
 models:
   default_reasoning: "glm-4.6"
   default_chat: "glm-4.6"
@@ -393,16 +544,18 @@ s3:
 
 | Pattern | Location | Purpose |
 |---------|----------|---------|
-| Repository | `pkg/state/` | Unified storage with domain interfaces |
-| Registry | `pkg/tools/`, `pkg/models/` | Tool and Model registration/discovery |
-| Factory | `pkg/factory/` | LLM provider creation |
-| Options | `pkg/llm/` | Runtime parameter overrides |
-| Command | `internal/ui/` | TUI command handling (local, not in pkg/) |
-| ReAct | `pkg/chain/` | Agent reasoning loop |
-| Chain of Responsibility | `pkg/chain/` | Modular step-based execution |
-| Recorder | `pkg/debug/` | JSON trace recording |
+| **Facade** | `pkg/agent/Client` | Simple 2-line API over ReActCycle |
 | **Port & Adapter** | `pkg/events/`, `pkg/tui/` | Decouple agent from UI implementation |
-| Facade | `pkg/agent/` | Simple 2-line agent API |
+| **Repository** | `pkg/state/` | Unified storage with domain interfaces |
+| **Registry** | `pkg/tools/`, `pkg/models/` | Tool and Model registration/discovery |
+| **Factory** | `pkg/factory/` | LLM provider creation |
+| **Options** | `pkg/llm/`, `pkg/llm/streaming_options.go` | Runtime parameter overrides |
+| **Command** | `internal/ui/` | TUI command handling (local, not in pkg/) |
+| **ReAct** | `pkg/chain/` | Agent reasoning loop |
+| **Chain of Responsibility** | `pkg/chain/` | Modular step-based execution |
+| **Recorder** | `pkg/debug/` | JSON trace recording |
+| **Observer** | `pkg/events/` | Event-driven architecture |
+| **Streaming** | `pkg/llm/StreamingProvider` | Real-time response streaming |
 
 ---
 
@@ -424,8 +577,14 @@ cd cmd/tools-test && go run main.go
 # Todo agent (standalone TUI)
 cd cmd/todo-agent && go run main.go
 
+# Simple agent (2-line API demo)
+go run cmd/simple-agent/main.go "show categories"
+
 # wb-ping-util-v2 (demonstrates 2-line API)
 go run cmd/wb-ping-util-v2/main.go
+
+# Streaming test (real-time events)
+go run cmd/streaming-test/main.go "Explain quantum computing"
 ```
 
 ---
@@ -478,5 +637,5 @@ Each WB tool gets its own rate limiter instance (e.g., `get_wb_feedbacks`: 60/mi
 
 ---
 
-**Last Updated**: 2026-01-11
-**Version**: 3.5 (CLI utilities, chains config, pkg/tui.Run)
+**Last Updated**: 2026-01-12
+**Version**: 4.0 (Streaming support, Rule 11 compliance, event system)

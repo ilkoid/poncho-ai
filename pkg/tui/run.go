@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -14,10 +15,12 @@ import (
 // Это главная точка входа для пользователей библиотеки.
 // Создаёт emitter, подписывается на события и запускает Bubble Tea программу.
 //
+// Правило 11: принимает и распространяет context.Context.
+//
 // # Basic Usage
 //
 //	client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
-//	if err := tui.Run(client); err != nil {
+//	if err := tui.Run(context.Background(), client); err != nil {
 //	    log.Fatal(err)
 //	}
 //
@@ -33,9 +36,8 @@ import (
 //	    log.Fatal(err)
 //	}
 //
-// Rule 11: уважает context.Context (используется внутри Model).
 // Thread-safe.
-func Run(client *agent.Client) error {
+func Run(ctx context.Context, client *agent.Client) error {
 	if client == nil {
 		return fmt.Errorf("client is nil")
 	}
@@ -47,8 +49,9 @@ func Run(client *agent.Client) error {
 	// Получаем subscriber для TUI
 	sub := client.Subscribe()
 
-	// Создаём модель
+	// Создаём модель с контекстом
 	model := NewModel(client, sub)
+	model.ctx = ctx // Правило 11: сохраняем родительский контекст
 
 	// Запускаем Bubble Tea программу
 	p := tea.NewProgram(model)
@@ -64,14 +67,16 @@ func Run(client *agent.Client) error {
 //
 // Позволяет кастомизировать поведение TUI через опции.
 //
+// Правило 11: принимает и распространяет context.Context.
+//
 // Пример:
 //
 //	client, _ := agent.New(...)
-//	err := tui.RunWithOpts(client,
+//	err := tui.RunWithOpts(context.Background(), client,
 //	    tui.WithTitle("My AI App"),
 //	    tui.WithPrompt("> "),
 //	)
-func RunWithOpts(client *agent.Client, opts ...Option) error {
+func RunWithOpts(ctx context.Context, client *agent.Client, opts ...Option) error {
 	if client == nil {
 		return fmt.Errorf("client is nil")
 	}
@@ -83,6 +88,7 @@ func RunWithOpts(client *agent.Client, opts ...Option) error {
 
 	// Создаём модель с опциями
 	model := NewModel(client, sub)
+	model.ctx = ctx // Правило 11: сохраняем родительский контекст
 	for _, opt := range opts {
 		opt(&model)
 	}

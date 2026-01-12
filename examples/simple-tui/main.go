@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/ilkoid/poncho-ai/pkg/agent"
@@ -36,7 +37,9 @@ func main() {
 	//   - Отображение "Thinking..." во время работы агента
 	//   - Обработку ошибок
 	//   - Ctrl+C для выхода
-	if err := tui.Run(client); err != nil {
+	//
+	// Правило 11: передаём контекст для распространения отмены
+	if err := tui.Run(context.Background(), client); err != nil {
 		log.Fatalf("TUI error: %v", err)
 	}
 }

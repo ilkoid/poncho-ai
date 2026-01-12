@@ -68,7 +68,8 @@ func main() {
 	}
 
 	// 3. Инициализируем компоненты
-	components, err := appcomp.Initialize(cfg, 10, "")
+	// Правило 11: передаём контекст для распространения отмены
+	components, err := appcomp.Initialize(context.Background(), cfg, 10, "")
 	if err != nil {
 		log.Fatalf("Failed to initialize components: %v", err)
 	}

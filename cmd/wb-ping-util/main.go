@@ -46,7 +46,8 @@ func main() {
 
 	// 3. Создаём компоненты через app.Initialize (Rule 0: переиспользуем код)
 	// MaxIterations=3 достаточно для ping проверки (LLM → S3 → WB → отчет)
-	comps, err := app.Initialize(cfg, 3, "")
+	// Правило 11: передаём контекст для распространения отмены
+	comps, err := app.Initialize(context.Background(), cfg, 3, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating components: %v\n", err)
 		utils.Error("Components initialization failed", "error", err)

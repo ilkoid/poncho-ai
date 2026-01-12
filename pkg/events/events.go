@@ -45,6 +45,10 @@ const (
 	// EventThinking отправляется когда агент начинает думать.
 	EventThinking EventType = "thinking"
 
+	// EventThinkingChunk отправляется для каждой порции reasoning_content.
+	// Используется только в streaming mode с thinking enabled (Zai GLM).
+	EventThinkingChunk EventType = "thinking_chunk"
+
 	// EventToolCall отправляется когда агент вызывает инструмент.
 	EventToolCall EventType = "tool_call"
 
@@ -65,6 +69,7 @@ const (
 //
 // Data содержит данные события, тип зависит от EventType:
 //   - EventThinking: string (запрос пользователя)
+//   - EventThinkingChunk: ThinkingChunkData (порция reasoning_content)
 //   - EventToolCall: ToolCallData (имя инструмента, аргументы)
 //   - EventToolResult: ToolResultData (результат выполнения)
 //   - EventMessage: string (ответ агента)
@@ -87,6 +92,17 @@ type ToolResultData struct {
 	ToolName string
 	Result   string
 	Duration time.Duration
+}
+
+// ThinkingChunkData содержит данные для EventThinkingChunk.
+//
+// Используется для потоковой передачи reasoning_content из thinking mode (Zai GLM).
+type ThinkingChunkData struct {
+	// Chunk — инкрементальные данные (delta)
+	Chunk string
+
+	// Accumulated — накопленные данные (полный reasoning_content на данный момент)
+	Accumulated string
 }
 
 // Emitter — это Port для отправки событий.

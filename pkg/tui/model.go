@@ -25,6 +25,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +47,8 @@ import (
 //
 // Thread-safe.
 //
+// Правило 11: хранит родительский context.Context для распространения отмены.
+//
 // Для расширения функционала (todo-панель, special commands)
 // используйте встраивание (embedding) в internal/ui/.
 type Model struct {
@@ -66,6 +69,9 @@ type Model struct {
 	prompt  string // Приглашение ввода
 	ready   bool   // Флаг первой инициализации
 	timeout time.Duration // Таймаут для agent execution
+
+	// Правило 11: родительский контекст для распространения отмены
+	ctx context.Context
 }
 
 // NewModel создаёт новую TUI модель.
@@ -103,6 +109,7 @@ func NewModel(agent agent.Agent, eventSub events.Subscriber) Model {
 		prompt:       "┃ ",
 		ready:        false,
 		timeout:      5 * time.Minute, // дефолтный timeout
+		ctx:          context.Background(), // дефолтный контекст для обратной совместимости
 	}
 }
 
@@ -161,6 +168,15 @@ func (m Model) handleAgentEvent(event events.Event) (tea.Model, tea.Cmd) {
 		m.isProcessing = true
 		m.mu.Unlock()
 		m.appendLog(systemStyle("Thinking..."))
+		return m, WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
+			return EventMsg(e)
+		})
+
+	case events.EventThinkingChunk:
+		// Обработка порции reasoning_content при streaming
+		if chunkData, ok := event.Data.(events.ThinkingChunkData); ok {
+			m.appendThinkingChunk(chunkData.Chunk)
+		}
 		return m, WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		})
@@ -256,9 +272,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // startAgent запускает агента с заданным запросом.
+// Правило 11: использует сохранённый родительский контекст.
 func (m Model) startAgent(query string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := m.contextWithTimeout()
+		ctx, cancel := m.contextWithTimeout(m.ctx)
 		defer cancel()
 
 		_, err := m.agent.Run(ctx, query)
@@ -280,6 +297,38 @@ func (m *Model) appendLog(str string) {
 	m.viewport.GotoBottom()
 }
 
+// appendThinkingChunk обновляет строку с thinking content.
+//
+// В отличие от appendLog, этот метод обновляет последнюю строку
+// вместо добавления новой (для эффекта печатающегося текста).
+func (m *Model) appendThinkingChunk(chunk string) {
+	currentContent := m.viewport.View()
+	lines := fmt.Sprintf("%s", currentContent)
+
+	// Разбиваем на строки
+	linesList := strings.Split(lines, "\n")
+
+	// Если последняя строка начинается с "Thinking: ", обновляем её
+	if len(linesList) > 0 {
+		lastLine := linesList[len(linesList)-1]
+		if strings.Contains(lastLine, "Thinking") {
+			// Заменяем последнюю строку с новым chunk
+			linesList[len(linesList)-1] = thinkingStyle("Thinking: ") + thinkingContentStyle(chunk)
+		} else {
+			// Добавляем новую строку
+			linesList = append(linesList, thinkingStyle("Thinking: ")+thinkingContentStyle(chunk))
+		}
+	} else {
+		// Добавляем новую строку
+		linesList = []string{thinkingStyle("Thinking: ") + thinkingContentStyle(chunk)}
+	}
+
+	// Объединяем обратно
+	newContent := strings.Join(linesList, "\n")
+	m.viewport.SetContent(newContent)
+	m.viewport.GotoBottom()
+}
+
 // View реализует tea.Model интерфейс.
 //
 // Возвращает строковое представление TUI для рендеринга.
@@ -291,8 +340,9 @@ func (m Model) View() string {
 }
 
 // contextWithTimeout создаёт контекст с таймаутом из настроек модели.
-func (m Model) contextWithTimeout() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), m.timeout)
+// Правило 11: принимает родительский контекст для распространения отмены.
+func (m Model) contextWithTimeout(parentCtx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parentCtx, m.timeout)
 }
 
 // ===== STYLES =====
@@ -325,6 +375,21 @@ func userMessageStyle(str string) string {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color("226")). // Yellow
 		Bold(true).
+		Render(str)
+}
+
+// thinkingStyle возвращает стиль для заголовка thinking.
+func thinkingStyle(str string) string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("99")). // Purple
+		Bold(true).
+		Render(str)
+}
+
+// thinkingContentStyle возвращает стиль для контента thinking.
+func thinkingContentStyle(str string) string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245")). // Dim gray
 		Render(str)
 }
 

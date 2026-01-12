@@ -120,20 +120,29 @@ func New(cfg Config) (*Client, error) {
 
 	// 3. Инициализируем компоненты (переиспользуем логику из app.Initialize)
 	// Это гарантирует что весь init код в одном месте
-	components, err := app.Initialize(appCfg, maxIters, cfg.SystemPrompt)
+	// Правило 11: передаём контекст для распространения отмены
+	components, err := app.Initialize(context.Background(), appCfg, maxIters, cfg.SystemPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize components: %w", err)
 	}
 
 	// 4. Создаём Agent фасад
-	return &Client{
+	client := &Client{
 		reactCycle:     components.Orchestrator,
 		modelRegistry:  components.ModelRegistry,
 		toolsRegistry:  components.State.GetToolsRegistry(),
 		state:          components.State,
 		config:         components.Config,
 		wbClient:       components.WBClient,
-	}, nil
+	}
+
+	// 5. Устанавливаем streaming конфигурацию из config.yaml
+	// Rule 2: конфигурация через YAML
+	streamingEnabled := components.Config.App.Streaming.Enabled
+	components.Orchestrator.SetStreamingEnabled(streamingEnabled)
+	utils.Info("Streaming configured", "enabled", streamingEnabled)
+
+	return client, nil
 }
 
 // RegisterTool регистрирует дополнительный инструмент в агенте.
@@ -184,6 +193,15 @@ func (c *Client) Subscribe() events.Subscriber {
 	return c.emitter.(*events.ChanEmitter).Subscribe()
 }
 
+// SetStreamingEnabled включает или выключает streaming режим.
+//
+// Thread-safe.
+func (c *Client) SetStreamingEnabled(enabled bool) {
+	if c.reactCycle != nil {
+		c.reactCycle.SetStreamingEnabled(enabled)
+	}
+}
+
 // Run выполняет запрос пользователя через агента.
 //
 // Метод делегирует выполнение ReActCycle, который:
@@ -223,23 +241,12 @@ func (c *Client) Run(ctx context.Context, query string) (string, error) {
 			Data:      err,
 			Timestamp: time.Now(),
 		})
+		utils.Error("Agent query failed", "error", err)
 		return "", err
 	}
 
-	// EventMessage: финальный ответ
-	c.emitEvent(ctx, events.Event{
-		Type:      events.EventMessage,
-		Data:      result,
-		Timestamp: time.Now(),
-	})
-
-	// EventDone: агент завершил работу
-	c.emitEvent(ctx, events.Event{
-		Type:      events.EventDone,
-		Data:      result,
-		Timestamp: time.Now(),
-	})
-
+	utils.Info("Agent query completed", "result_length", len(result))
+	// EventMessage и EventDone отправляются в react.go
 	return result, nil
 }
 
@@ -249,8 +256,10 @@ func (c *Client) Run(ctx context.Context, query string) (string, error) {
 // Rule 11: уважает context.Context.
 func (c *Client) emitEvent(ctx context.Context, event events.Event) {
 	if c.emitter == nil {
+		utils.Debug("agent.emitEvent: emitter is nil, skipping", "event_type", event.Type)
 		return
 	}
+	utils.Debug("agent.emitEvent: sending", "event_type", event.Type, "has_data", event.Data != nil)
 	c.emitter.Emit(ctx, event)
 }
 

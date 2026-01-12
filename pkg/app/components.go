@@ -137,12 +137,14 @@ func InitializeConfig(finder ConfigPathFinder) (*config.AppConfig, string, error
 //
 // Правило 6: entry points - initialization and orchestration only.
 // Правило 5: использует thread-safe GlobalState.
+// Правило 11: распространяет context.Context через все слои.
 //
 // Параметры:
+//   - parentCtx: родительский контекст для отмены операций
 //   - cfg: конфигурация приложения
 //   - maxIters: максимальное количество итераций оркестратора
 //   - systemPrompt: опциональный системный промпт (если пустой, загружается из промптов)
-func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Components, error) {
+func Initialize(parentCtx context.Context, cfg *config.AppConfig, maxIters int, systemPrompt string) (*Components, error) {
 	utils.Info("Initializing components", "maxIters", maxIters)
 
 	// 1. Инициализируем S3 клиент (ОПЦИОНАЛЬНО)
@@ -168,8 +170,7 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 		}
 		// Ping с параметрами из конфига
 		wbCfg := cfg.WB.GetDefaults()
-		ctx := context.Background()
-		if _, err := wbClient.Ping(ctx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit); err != nil {
+		if _, err := wbClient.Ping(parentCtx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit); err != nil {
 			log.Printf("Warning: WB API ping failed: %v", err)
 			utils.Error("WB API ping failed", "error", err)
 		} else {
@@ -188,10 +189,9 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 	// 3. Загружаем справочники WB (кэшируем при старте)
 	var dicts *wb.Dictionaries
 	if wbClient != nil {
-		ctx := context.Background()
 		// Применяем defaults для WB секции
 		wbCfg := cfg.WB.GetDefaults()
-		dicts, err = wbClient.LoadDictionaries(ctx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit)
+		dicts, err = wbClient.LoadDictionaries(parentCtx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit)
 		if err != nil {
 			log.Printf("Warning: failed to load WB dictionaries: %v", err)
 			utils.Error("WB dictionaries loading failed", "error", err)
@@ -346,12 +346,13 @@ func Initialize(cfg *config.AppConfig, maxIters int, systemPrompt string) (*Comp
 //
 // Правило 4: работает только через llm.Provider интерфейс.
 // Правило 3: использует tools.Registry для инструментов.
-func Execute(c *Components, query string, timeout time.Duration) (*ExecutionResult, error) {
+// Правило 11: распространяет context.Context через все слои.
+func Execute(parentCtx context.Context, c *Components, query string, timeout time.Duration) (*ExecutionResult, error) {
 	startTime := time.Now()
 	utils.Info("Executing query", "query", query, "timeout", timeout)
 
 	// Создаём контекст с timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 
 	log.Printf("Executing query: %s", query)

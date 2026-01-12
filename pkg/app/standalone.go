@@ -6,6 +6,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -216,7 +217,8 @@ func InitializeForStandalone(
 	}
 
 	// 2. Инициализируем компоненты
-	components, err := Initialize(cfg, maxIters, systemPrompt)
+	// Правило 11: передаём контекст для распространения отмены
+	components, err := Initialize(context.Background(), cfg, maxIters, systemPrompt)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to initialize components: %w", err)
 	}

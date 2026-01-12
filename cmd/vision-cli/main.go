@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -70,8 +71,8 @@ func main() {
 
 	utils.Info("Executing query", "query", query)
 
-	// Выполняем запрос
-	result, err := app.Execute(components, query, *timeoutFlag)
+	// Выполняем запрос (Правило 11: передаём контекст для отмены)
+	result, err := app.Execute(context.Background(), components, query, *timeoutFlag)
 	if err != nil {
 		utils.Error("Query execution failed", "error", err)
 		fmt.Fprintf(os.Stderr, "Query execution failed: %v\n", err)

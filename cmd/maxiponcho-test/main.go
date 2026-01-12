@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -63,7 +64,9 @@ func run() error {
 	log.Printf("Config loaded from %s", cfgPath)
 
 	// Инициализируем компоненты
+	// Правило 11: передаём контекст для распространения отмены
 	components, err := appcomponents.Initialize(
+		context.Background(),
 		cfg,
 		10,    // max iterations
 		"",    // system prompt - из конфига
@@ -80,7 +83,8 @@ func run() error {
 	fmt.Printf("Query: %s\n\n", query)
 	fmt.Println("Processing...")
 
-	result, err := appcomponents.Execute(components, query, 5*time.Minute)
+	// Правило 11: передаём контекст для отмены
+	result, err := appcomponents.Execute(context.Background(), components, query, 5*time.Minute)
 	if err != nil {
 		utils.Error("Execution failed", "error", err)
 		return err

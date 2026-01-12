@@ -129,9 +129,10 @@ type ImageProcConfig struct {
 
 // AppSpecific — общие настройки приложения.
 type AppSpecific struct {
-	Debug      bool        `yaml:"debug"`
-	PromptsDir string      `yaml:"prompts_dir"`
-	DebugLogs  DebugConfig `yaml:"debug_logs"`
+	Debug      bool          `yaml:"debug"`
+	PromptsDir string        `yaml:"prompts_dir"`
+	DebugLogs  DebugConfig   `yaml:"debug_logs"`
+	Streaming  StreamingConfig `yaml:"streaming"`
 }
 
 // DebugConfig — настройки отладочных логов (JSON трейсы выполнения).
@@ -155,6 +156,15 @@ type DebugConfig struct {
 	// Превышение обрезается с суффиксом "... (truncated)"
 	// 0 означает без ограничений
 	MaxResultSize int `yaml:"max_result_size"`
+}
+
+// StreamingConfig — настройки потоковой передачи LLM ответов.
+type StreamingConfig struct {
+	// Enabled — включен ли стриминг (default: true, opt-out)
+	Enabled bool `yaml:"enabled"`
+
+	// ThinkingOnly — отправлять только reasoning_content события (default: true)
+	ThinkingOnly bool `yaml:"thinking_only"`
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.

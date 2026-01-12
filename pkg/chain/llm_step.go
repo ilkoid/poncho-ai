@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
@@ -35,6 +36,9 @@ type LLMInvocationStep struct {
 
 	// debugRecorder — опциональный debug recorder
 	debugRecorder *ChainDebugRecorder
+
+	// emitter — для отправки streaming событий (EventThinkingChunk)
+	emitter events.Emitter
 
 	// startTime — время начала выполнения step (для duration tracking)
 	startTime time.Time
@@ -105,8 +109,17 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 	}
 
 	// 8. Вызываем LLM (Rule 4)
+	// Проверяем: поддерживает ли провайдер streaming?
 	llmStart := time.Now()
-	response, err := provider.Generate(ctx, messages, generateOpts...)
+	var response llm.Message
+
+	if streamingProvider, ok := provider.(llm.StreamingProvider); ok && s.emitter != nil {
+		// Используем streaming режим
+		response, err = s.invokeStreamingLLM(ctx, streamingProvider, messages, generateOpts)
+	} else {
+		// Обычный синхронный режим
+		response, err = provider.Generate(ctx, messages, generateOpts...)
+	}
 	llmDuration := time.Since(llmStart).Milliseconds()
 
 	if err != nil {
@@ -199,4 +212,59 @@ func (s *LLMInvocationStep) determineLLMOptions(chainCtx *ChainContext, modelDef
 // GetDuration возвращает длительность выполнения step.
 func (s *LLMInvocationStep) GetDuration() time.Duration {
 	return time.Since(s.startTime)
+}
+
+// invokeStreamingLLM вызывает LLM с поддержкой стриминга.
+//
+// Отправляет EventThinkingChunk для каждой порции reasoning_content.
+func (s *LLMInvocationStep) invokeStreamingLLM(
+	ctx context.Context,
+	provider llm.StreamingProvider,
+	messages []llm.Message,
+	opts []any,
+) (llm.Message, error) {
+	// Callback для обработки чанков
+	callback := func(chunk llm.StreamChunk) {
+		// Rule 11: проверяем context
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		switch chunk.Type {
+		case llm.ChunkThinking:
+			// Отправляем EventThinkingChunk с reasoning_content
+			s.emitThinkingChunk(ctx, chunk)
+		case llm.ChunkError:
+			// Отправляем EventError
+			if s.emitter != nil && chunk.Error != nil {
+				s.emitter.Emit(ctx, events.Event{
+					Type:      events.EventError,
+					Data:      chunk.Error,
+					Timestamp: time.Now(),
+				})
+			}
+		case llm.ChunkDone:
+			// Стриминг завершен
+		}
+	}
+
+	// Вызываем GenerateStream
+	return provider.GenerateStream(ctx, messages, callback, opts...)
+}
+
+// emitThinkingChunk отправляет событие с порцией reasoning_content.
+func (s *LLMInvocationStep) emitThinkingChunk(ctx context.Context, chunk llm.StreamChunk) {
+	if s.emitter == nil {
+		return
+	}
+	s.emitter.Emit(ctx, events.Event{
+		Type: events.EventThinkingChunk,
+		Data: events.ThinkingChunkData{
+			Chunk:       chunk.Delta,
+			Accumulated: chunk.ReasoningContent,
+		},
+		Timestamp: time.Now(),
+	})
 }

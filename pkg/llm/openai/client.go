@@ -5,12 +5,14 @@
 package openai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
@@ -420,10 +422,20 @@ func (c *Client) generateWithThinking(ctx context.Context, messages []llm.Messag
 
 	// Если есть reasoning_content от thinking mode, добавляем к контенту
 	if choice.ReasoningContent != "" {
-		result.Content = choice.ReasoningContent + "\n\n" + choice.Content
+		// Избегаем дублирования: если content уже содержится в reasoning_content, не добавляем
+		if choice.Content == "" || strings.Contains(choice.ReasoningContent, choice.Content) {
+			result.Content = choice.ReasoningContent
+		} else if strings.Contains(choice.Content, choice.ReasoningContent) {
+			// content уже содержит reasoning_content
+			result.Content = choice.Content
+		} else {
+			// Объединяем без дубликатов
+			result.Content = choice.ReasoningContent + "\n\n" + choice.Content
+		}
 		utils.Debug("Thinking content extracted",
 			"reasoning_length", len(choice.ReasoningContent),
-			"content_length", len(choice.Content))
+			"content_length", len(choice.Content),
+			"result_length", len(result.Content))
 	}
 
 	// Извлекаем ToolCalls
@@ -555,4 +567,467 @@ func convertToolsToOpenAI(defs []tools.ToolDefinition) []openaisdk.Tool {
 	}
 
 	return result
+}
+
+// GenerateStream выполняет запрос к API с потоковой передачей ответа.
+//
+// Реализует llm.StreamingProvider интерфейс. Отправляет чанки через callback,
+// накапливает финальное сообщение и возвращает его после завершения стриминга.
+//
+// Rule 11: Уважает context.Context, прерывает стриминг при отмене.
+func (c *Client) GenerateStream(
+	ctx context.Context,
+	messages []llm.Message,
+	callback func(llm.StreamChunk),
+	opts ...any,
+) (llm.Message, error) {
+	startTime := time.Now()
+
+	// 1. Начинаем с дефолтных значений из config.yaml
+	options := c.baseConfig
+
+	// 2. Разделяем opts на tools, GenerateOption и StreamOption
+	var toolDefs []tools.ToolDefinition
+	streamEnabled := true // Default: true (opt-out)
+	thinkingOnly := true // Default: true
+
+	for _, opt := range opts {
+		switch v := opt.(type) {
+		case []tools.ToolDefinition:
+			toolDefs = v
+		case llm.GenerateOption:
+			v(&options)
+		case llm.StreamOption:
+			var so llm.StreamOptions
+			v(&so)
+			streamEnabled = so.Enabled
+			thinkingOnly = so.ThinkingOnly
+		default:
+			return llm.Message{}, fmt.Errorf("invalid option type: expected []tools.ToolDefinition, llm.GenerateOption or llm.StreamOption, got %T", opt)
+		}
+	}
+
+	// 3. Если стриминг выключен, fallback на обычный Generate
+	if !streamEnabled {
+		return c.Generate(ctx, messages, opts...)
+	}
+
+	utils.Debug("LLM streaming request started",
+		"model", options.Model,
+		"thinking", c.thinking,
+		"thinking_only", thinkingOnly,
+		"temperature", options.Temperature,
+		"max_tokens", options.MaxTokens,
+		"messages_count", len(messages),
+		"tools_count", len(toolDefs))
+
+	// 4. Если thinking включен - используем streaming с thinking
+	if c.thinking != "" && c.thinking != "disabled" {
+		return c.generateWithThinkingStream(ctx, messages, options, toolDefs, callback, thinkingOnly, startTime)
+	}
+
+	// 5. Иначе - стандартный streaming путь
+	return c.generateStandardStream(ctx, messages, options, toolDefs, callback, thinkingOnly, startTime)
+}
+
+// generateWithThinkingStream выполняет streaming запрос с thinking параметром.
+func (c *Client) generateWithThinkingStream(
+	ctx context.Context,
+	messages []llm.Message,
+	options llm.GenerateOptions,
+	toolDefs []tools.ToolDefinition,
+	callback func(llm.StreamChunk),
+	thinkingOnly bool,
+	startTime time.Time,
+) (llm.Message, error) {
+	// Конвертируем сообщения
+	openaiMsgs := make([]openaisdk.ChatCompletionMessage, len(messages))
+	for i, m := range messages {
+		openaiMsgs[i] = mapToOpenAI(m)
+	}
+
+	// Строим запрос body
+	reqBody := map[string]interface{}{
+		"model":       options.Model,
+		"temperature": options.Temperature,
+		"max_tokens":  options.MaxTokens,
+		"messages":    openaiMsgs,
+		"stream":      true, // Включаем стриминг
+		"thinking": map[string]string{
+			"type": c.thinking,
+		},
+	}
+
+	// ResponseFormat если указан
+	if options.Format == "json_object" {
+		reqBody["response_format"] = map[string]string{
+			"type": "json_object",
+		}
+	}
+
+	// Добавляем tools если переданы
+	if len(toolDefs) > 0 {
+		reqBody["tools"] = convertToolsToOpenAI(toolDefs)
+		reqBody["tool_choice"] = "auto"
+
+		if options.ParallelToolCalls != nil {
+			reqBody["parallel_tool_calls"] = *options.ParallelToolCalls
+		}
+	}
+
+	// Marshal в JSON
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Создаём HTTP запрос
+	url := c.baseURL + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Устанавливаем заголовки
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	utils.Debug("Sending streaming HTTP request with thinking",
+		"url", url,
+		"thinking", c.thinking,
+		"body_size", len(jsonBody))
+
+	// Выполняем запрос
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		utils.Error("HTTP request failed",
+			"error", err,
+			"url", url,
+			"duration_ms", time.Since(startTime).Milliseconds())
+		return llm.Message{}, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		utils.Error("HTTP request returned error",
+			"status", resp.StatusCode,
+			"body", string(body),
+			"duration_ms", time.Since(startTime).Milliseconds())
+		return llm.Message{}, fmt.Errorf("api returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Парсим SSE ответ
+	return c.parseSSEStream(ctx, resp.Body, callback, thinkingOnly, startTime)
+}
+
+// generateStandardStream выполняет стандартный streaming запрос (без thinking).
+func (c *Client) generateStandardStream(
+	ctx context.Context,
+	messages []llm.Message,
+	options llm.GenerateOptions,
+	toolDefs []tools.ToolDefinition,
+	callback func(llm.StreamChunk),
+	thinkingOnly bool,
+	startTime time.Time,
+) (llm.Message, error) {
+	// Конвертируем сообщения
+	openaiMsgs := make([]openaisdk.ChatCompletionMessage, len(messages))
+	for i, m := range messages {
+		openaiMsgs[i] = mapToOpenAI(m)
+	}
+
+	// Строим запрос body
+	reqBody := map[string]interface{}{
+		"model":       options.Model,
+		"temperature": options.Temperature,
+		"max_tokens":  options.MaxTokens,
+		"messages":    openaiMsgs,
+		"stream":      true, // Включаем стриминг
+	}
+
+	// ResponseFormat если указан
+	if options.Format == "json_object" {
+		reqBody["response_format"] = map[string]string{
+			"type": "json_object",
+		}
+	}
+
+	// Добавляем tools если переданы
+	if len(toolDefs) > 0 {
+		reqBody["tools"] = convertToolsToOpenAI(toolDefs)
+		reqBody["tool_choice"] = "auto"
+
+		if options.ParallelToolCalls != nil {
+			reqBody["parallel_tool_calls"] = *options.ParallelToolCalls
+		}
+	}
+
+	// Marshal в JSON
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Создаём HTTP запрос
+	url := c.baseURL + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Устанавливаем заголовки
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	utils.Debug("Sending standard streaming HTTP request",
+		"url", url,
+		"body_size", len(jsonBody))
+
+	// Выполняем запрос
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		utils.Error("HTTP request failed",
+			"error", err,
+			"url", url,
+			"duration_ms", time.Since(startTime).Milliseconds())
+		return llm.Message{}, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		utils.Error("HTTP request returned error",
+			"status", resp.StatusCode,
+			"body", string(body),
+			"duration_ms", time.Since(startTime).Milliseconds())
+		return llm.Message{}, fmt.Errorf("api returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Парсим SSE ответ
+	return c.parseSSEStream(ctx, resp.Body, callback, thinkingOnly, startTime)
+}
+
+// parseSSEStream парсит Server-Sent Events ответ от API.
+//
+// SSE формат: "data: {json}\n\n"
+// Каждая строка содержит JSON объект с чанком ответа.
+func (c *Client) parseSSEStream(
+	ctx context.Context,
+	body io.Reader,
+	callback func(llm.StreamChunk),
+	thinkingOnly bool,
+	startTime time.Time,
+) (llm.Message, error) {
+	scanner := bufio.NewScanner(body)
+
+	// Накопленные данные
+	var accumulatedContent string
+	var accumulatedReasoning string
+
+	// ID последнего tool call для накопления аргументов
+	pendingToolCalls := make(map[string]*llm.ToolCall)
+
+	for scanner.Scan() {
+		// Rule 11: Проверяем context cancellation
+		select {
+		case <-ctx.Done():
+			return llm.Message{}, fmt.Errorf("streaming cancelled: %w", ctx.Err())
+		default:
+		}
+
+		line := scanner.Text()
+
+		// SSE формат: строки начинаются с "data: "
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		// Убираем префикс "data: "
+		jsonStr := strings.TrimPrefix(line, "data: ")
+
+		// Пустые данные или [DONE] маркер
+		if jsonStr == "" || jsonStr == "[DONE]" {
+			continue
+		}
+
+		// Парсим JSON
+		var chunkData struct {
+			Choices []struct {
+				Delta struct {
+					Role            string `json:"role"`
+					Content         string `json:"content"`
+					ReasoningContent string `json:"reasoning_content,omitempty"`
+					ToolCallID      string `json:"tool_call_id,omitempty"`
+					// Tool calls в streaming приходят через delta
+					ToolCalls []struct {
+						Index    int `json:"index"`
+						ID       string `json:"id,omitempty"`
+						Type     string `json:"type,omitempty"`
+						Function struct {
+							Name      string `json:"name,omitempty"`
+							Arguments string `json:"arguments,omitempty"`
+						} `json:"function,omitempty"`
+					} `json:"tool_calls,omitempty"`
+				} `json:"delta"`
+				Message struct {
+					Role            string                   `json:"role,omitempty"`
+					Content         string                   `json:"content,omitempty"`
+					ReasoningContent string                   `json:"reasoning_content,omitempty"`
+					ToolCalls       []openaisdk.ToolCall     `json:"tool_calls,omitempty"`
+				} `json:"message,omitempty"`
+				FinishReason string `json:"finish_reason,omitempty"`
+			} `json:"choices"`
+		}
+
+		if err := json.Unmarshal([]byte(jsonStr), &chunkData); err != nil {
+			utils.Debug("Failed to parse SSE chunk", "error", err, "json", jsonStr)
+			continue
+		}
+
+		if len(chunkData.Choices) == 0 {
+			continue
+		}
+
+		choice := chunkData.Choices[0]
+
+		// Обрабатываем reasoning_content из thinking mode
+		if choice.Delta.ReasoningContent != "" {
+			delta := choice.Delta.ReasoningContent
+			accumulatedReasoning += delta
+
+			// ВСЕГДА отправляем reasoning chunks для streaming
+			// (включая thinkingOnly режим - именно ради него мы стримим!)
+			if callback != nil {
+				callback(llm.StreamChunk{
+					Type:             llm.ChunkThinking,
+					Content:          accumulatedContent,
+					ReasoningContent: accumulatedReasoning,
+					Delta:            delta,
+				})
+			}
+		}
+
+		// Обрабатываем обычный контент
+		if choice.Delta.Content != "" {
+			delta := choice.Delta.Content
+			accumulatedContent += delta
+
+			// Отправляем событие только если НЕ thinkingOnly
+			if callback != nil && !thinkingOnly {
+				callback(llm.StreamChunk{
+					Type:             llm.ChunkContent,
+					Content:          accumulatedContent,
+					ReasoningContent: accumulatedReasoning,
+					Delta:            delta,
+				})
+			}
+		}
+
+		// Обрабатываем tool calls из delta (streaming mode!)
+		// В streaming режиме tool calls приходят через delta, а не через message
+		if len(choice.Delta.ToolCalls) > 0 {
+			for _, deltaTC := range choice.Delta.ToolCalls {
+				// Используем index как ключ (может быть 0, 1, 2...)
+				indexKey := fmt.Sprintf("delta_%d", deltaTC.Index)
+
+				if _, exists := pendingToolCalls[indexKey]; !exists {
+					// Новый tool call
+					pendingToolCalls[indexKey] = &llm.ToolCall{
+						ID:   deltaTC.ID,
+						Name: deltaTC.Function.Name,
+						Args: deltaTC.Function.Arguments,
+					}
+					utils.Debug("New tool call in delta", "index", deltaTC.Index, "id", deltaTC.ID, "name", deltaTC.Function.Name)
+				} else {
+					// Обновляем существующий tool call (ID может прийти позже, накапливаем arguments)
+					if deltaTC.ID != "" {
+						pendingToolCalls[indexKey].ID = deltaTC.ID
+					}
+					if deltaTC.Function.Name != "" {
+						pendingToolCalls[indexKey].Name = deltaTC.Function.Name
+					}
+					if deltaTC.Function.Arguments != "" {
+						pendingToolCalls[indexKey].Args += deltaTC.Function.Arguments
+					}
+					utils.Debug("Accumulated tool call in delta", "index", deltaTC.Index, "args_len", len(deltaTC.Function.Arguments))
+				}
+			}
+		}
+
+		// Обрабатываем tool calls из message (финальные данные)
+		if len(choice.Message.ToolCalls) > 0 {
+			for _, tc := range choice.Message.ToolCalls {
+				if _, exists := pendingToolCalls[tc.ID]; !exists {
+					pendingToolCalls[tc.ID] = &llm.ToolCall{
+						ID:   tc.ID,
+						Name: tc.Function.Name,
+						Args: tc.Function.Arguments,
+					}
+				} else {
+					// Накапливаем аргументы
+					pendingToolCalls[tc.ID].Args += tc.Function.Arguments
+				}
+			}
+		}
+
+		// Проверяем завершение стриминга
+		if choice.FinishReason != "" {
+			utils.Debug("Streaming finished",
+				"reason", choice.FinishReason,
+				"content_length", len(accumulatedContent),
+				"reasoning_length", len(accumulatedReasoning),
+				"tool_calls_count", len(pendingToolCalls))
+		}
+	}
+
+	// Проверяем ошибки сканера
+	if err := scanner.Err(); err != nil {
+		utils.Error("Scanner error during streaming", "error", err)
+		return llm.Message{}, fmt.Errorf("scanner error: %w", err)
+	}
+
+	// Собираем финальное сообщение
+	result := llm.Message{
+		Role:    llm.RoleAssistant,
+		Content: accumulatedContent,
+	}
+
+	// Если есть reasoning_content, добавляем к контенту (как в generateWithThinking)
+	if accumulatedReasoning != "" {
+		if accumulatedContent == "" || strings.Contains(accumulatedReasoning, accumulatedContent) {
+			result.Content = accumulatedReasoning
+		} else if strings.Contains(accumulatedContent, accumulatedReasoning) {
+			result.Content = accumulatedContent
+		} else {
+			result.Content = accumulatedReasoning + "\n\n" + accumulatedContent
+		}
+	}
+
+	// Собираем tool calls
+	if len(pendingToolCalls) > 0 {
+		result.ToolCalls = make([]llm.ToolCall, 0, len(pendingToolCalls))
+		for _, tc := range pendingToolCalls {
+			result.ToolCalls = append(result.ToolCalls, *tc)
+		}
+	}
+
+	// Отправляем финальный chunk
+	if callback != nil {
+		callback(llm.StreamChunk{
+			Type:             llm.ChunkDone,
+			Content:          result.Content,
+			ReasoningContent: accumulatedReasoning,
+			Done:             true,
+		})
+	}
+
+	utils.Info("LLM streaming response received",
+		"model", c.baseConfig.Model,
+		"tool_calls_count", len(result.ToolCalls),
+		"content_length", len(result.Content),
+		"reasoning_length", len(accumulatedReasoning),
+		"duration_ms", time.Since(startTime).Milliseconds())
+
+	return result, nil
 }

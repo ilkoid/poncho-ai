@@ -45,6 +45,11 @@ app:
   debug: true
   prompts_dir: "./prompts"
 
+  # Streaming Configuration
+  streaming:
+    enabled: true        # Default: true (opt-out). Streaming включен по умолчанию
+    thinking_only: true  # Default: true. Отправлять только reasoning_content события
+
   # Debug Logs Configuration (JSON трейсы выполнения)
   debug_logs:
     enabled: true           # Включить запись отладочных логов

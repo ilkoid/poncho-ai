@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	appcomponents "github.com/ilkoid/poncho-ai/pkg/app"
@@ -23,10 +24,11 @@ func findConfigPath() string {
 // createComponents создаёт все необходимые компоненты для работы Chain.
 //
 // Rule 0: Используем appcomponents.Initialize() вместо дублирования 133 строк кода.
+// Rule 11: Передаём контекст для распространения отмены.
 func createComponents(cfg *config.AppConfig, modelNameOverride string) (*appcomponents.Components, error) {
 	// Rule 0: Переиспользуем существующую инфраструктуру
 	// Initialize регистрирует все доступные инструменты согласно config.yaml
-	comps, err := appcomponents.Initialize(cfg, 10, "")
+	comps, err := appcomponents.Initialize(context.Background(), cfg, 10, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize components: %w", err)
 	}

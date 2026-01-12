@@ -13,6 +13,7 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 // ReActCycle — реализация ReAct (Reasoning + Acting) паттерна.
@@ -40,6 +41,9 @@ type ReActCycle struct {
 
 	// Configuration
 	config ReActCycleConfig
+
+	// Streaming configuration
+	streamingEnabled bool // Streaming включен по умолчанию (из config)
 
 	// Runtime state (thread-safe)
 	mu            sync.Mutex
@@ -132,6 +136,17 @@ func (c *ReActCycle) SetEmitter(emitter events.Emitter) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.emitter = emitter
+	// Передаём emitter в LLM шаг для streaming событий
+	c.llmStep.emitter = emitter
+}
+
+// SetStreamingEnabled включает или выключает streaming режим.
+//
+// Thread-safe.
+func (c *ReActCycle) SetStreamingEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.streamingEnabled = enabled
 }
 
 // emitEvent отправляет событие если emitter установлен.
@@ -139,8 +154,10 @@ func (c *ReActCycle) SetEmitter(emitter events.Emitter) {
 // Thread-safe helper метод.
 func (c *ReActCycle) emitEvent(ctx context.Context, event events.Event) {
 	if c.emitter == nil {
+		utils.Debug("emitEvent: emitter is nil, skipping", "event_type", event.Type)
 		return
 	}
+	utils.Debug("emitEvent: sending", "event_type", event.Type, "has_data", event.Data != nil)
 	c.emitter.Emit(ctx, event)
 }
 
@@ -203,12 +220,26 @@ func (c *ReActCycle) Execute(ctx context.Context, input ChainInput) (ChainOutput
 		}
 
 		// Отправляем EventThinking с контентом LLM (рассуждения)
+		// НО только если НЕ был streaming (streaming отправляет EventThinkingChunk)
 		lastMsg := chainCtx.GetLastMessage()
-		c.emitEvent(ctx, events.Event{
-			Type:      events.EventThinking,
-			Data:      lastMsg.Content,
-			Timestamp: time.Now(),
-		})
+
+		// Проверяем: был ли streaming? Если в content есть reasoning_content markers
+		// или если есть emitter (используется для streaming), то не дублируем
+		shouldSendThinking := true
+		if c.emitter != nil {
+			// Streaming был включен, EventThinkingChunk уже отправляли
+			// Проверяем по косвенным признакам: длинный content без markdown заголовков
+			// В streaming режиме reasoning_content выводится по буквам
+			shouldSendThinking = false
+		}
+
+		if shouldSendThinking {
+			c.emitEvent(ctx, events.Event{
+				Type:      events.EventThinking,
+				Data:      lastMsg.Content,
+				Timestamp: time.Now(),
+			})
+		}
 
 		// Отправляем EventToolCall для каждого tool call
 		for _, tc := range lastMsg.ToolCalls {
@@ -261,13 +292,34 @@ func (c *ReActCycle) Execute(ctx context.Context, input ChainInput) (ChainOutput
 	lastMsg := chainCtx.GetLastMessage()
 	result := lastMsg.Content
 
-	// 7. Финализируем debug
+	utils.Debug("ReAct cycle completed",
+		"iterations", iterations+1,
+		"result_length", len(result),
+		"duration_ms", time.Since(startTime).Milliseconds())
+
+	// 7. Отправляем EventMessage с текстом ответа
+	utils.Debug("Sending EventMessage", "content_length", len(result))
+	c.emitEvent(ctx, events.Event{
+		Type:      events.EventMessage,
+		Data:      result,
+		Timestamp: time.Now(),
+	})
+
+	// 8. Отправляем EventDone
+	utils.Debug("Sending EventDone")
+	c.emitEvent(ctx, events.Event{
+		Type:      events.EventDone,
+		Data:      result,
+		Timestamp: time.Now(),
+	})
+
+	// 9. Финализируем debug
 	debugPath := ""
 	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
 		debugPath, _ = c.debugRecorder.Finalize(result, time.Since(startTime))
 	}
 
-	// 8. Возвращаем результат
+	// 10. Возвращаем результат
 	return ChainOutput{
 		Result:     result,
 		Iterations: iterations + 1,

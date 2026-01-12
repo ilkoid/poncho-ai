@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -51,7 +52,8 @@ func main() {
 	utils.Info("Config loaded", "path", cfgPath)
 
 	// 4. Создаём компоненты через pkg/app (Rule 0: переиспользуем код)
-	comps, err := appcomponents.Initialize(cfg, 10, "")
+	// Правило 11: передаём контекст для распространения отмены
+	comps, err := appcomponents.Initialize(context.Background(), cfg, 10, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing components: %v\n", err)
 		os.Exit(1)
