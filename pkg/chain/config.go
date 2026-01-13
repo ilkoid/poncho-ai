@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 )
 
@@ -31,6 +32,20 @@ type ReActCycleConfig struct {
 	// Timeout — таймаут выполнения всей цепочки.
 	// По умолчанию: 5 минут.
 	Timeout time.Duration
+
+	// DefaultEmitter — emitter по умолчанию для созданных executions.
+	// Может быть переопределён через SetEmitter.
+	// Thread-safe: Emitter не должен модифицироваться после установки.
+	DefaultEmitter events.Emitter
+
+	// DefaultDebugRecorder — debug recorder по умолчанию для созданных executions.
+	// Может быть переопределён через AttachDebug.
+	// Thread-safe: Recorder не должен модифицироваться после установки.
+	DefaultDebugRecorder *ChainDebugRecorder
+
+	// StreamingEnabled — включён ли streaming по умолчанию.
+	// Может быть переопределён через SetStreamingEnabled.
+	StreamingEnabled bool
 }
 
 // NewReActCycleConfig создаёт конфигурацию ReAct цикла с дефолтными значениями.

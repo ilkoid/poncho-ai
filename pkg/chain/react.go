@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
@@ -13,7 +12,6 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/prompt"
 	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
-	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 // ReActCycle — реализация ReAct (Reasoning + Acting) паттерна.
@@ -27,11 +25,15 @@ import (
 // Rule 2: Конфигурация через YAML
 // Rule 3: Tools вызываются через Registry
 // Rule 4: LLM вызывается через llm.Provider
-// Rule 5: Thread-safe через sync.Mutex
+// Rule 5: Thread-safe через immutability (шаблон + execution)
 // Rule 7: Все ошибки возвращаются, нет panic
 // Rule 10: Godoc на всех public API
+//
+// PHASE 1 REFACTOR: ReActCycle теперь immutable template.
+// Runtime состояние вынесено в ReActExecution (execution.go).
+// Concurrent execution безопасен - каждый Execute() создаёт свой execution.
 type ReActCycle struct {
-	// Dependencies
+	// Dependencies (immutable)
 	modelRegistry *models.Registry // Registry всех LLM провайдеров
 	registry      *tools.Registry
 	state         *state.CoreState
@@ -39,22 +41,18 @@ type ReActCycle struct {
 	// Default model name для fallback
 	defaultModel string
 
-	// Configuration
+	// Configuration (immutable после создания, кроме runtimeDefaults)
 	config ReActCycleConfig
 
-	// Streaming configuration
-	streamingEnabled bool // Streaming включен по умолчанию (из config)
+	// Runtime defaults protection - только для mutable полей config
+	// (DefaultEmitter, DefaultDebugRecorder, StreamingEnabled)
+	mu sync.RWMutex
 
-	// Runtime state (thread-safe)
-	mu            sync.Mutex
-	debugRecorder *ChainDebugRecorder
-	emitter       events.Emitter // Port & Adapter: отправка событий в UI
-
-	// Steps (создаются один раз при конструировании)
+	// Steps (immutable template - клонируются в execution)
 	llmStep  *LLMInvocationStep
 	toolStep *ToolExecutionStep
 
-	// Prompts directory
+	// Prompts directory (immutable)
 	promptsDir string
 }
 
@@ -74,7 +72,7 @@ func NewReActCycle(config ReActCycleConfig) *ReActCycle {
 		promptsDir: config.PromptsDir,
 	}
 
-	// Создаём шаги (без dependencies - они будут установлены через Setters)
+	// Создаём шаги (immutable template - будут клонироваться в execution)
 	cycle.llmStep = &LLMInvocationStep{
 		systemPrompt: config.SystemPrompt,
 	}
@@ -90,9 +88,8 @@ func NewReActCycle(config ReActCycleConfig) *ReActCycle {
 //
 // Rule 3: Registry pattern для моделей.
 // Rule 4: Работает через models.Registry интерфейс.
+// Thread-safe: устанавливает immutable dependencies.
 func (c *ReActCycle) SetModelRegistry(registry *models.Registry, defaultModel string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.modelRegistry = registry
 	c.defaultModel = defaultModel
 	c.llmStep.modelRegistry = registry
@@ -102,9 +99,8 @@ func (c *ReActCycle) SetModelRegistry(registry *models.Registry, defaultModel st
 // SetRegistry устанавливает реестр инструментов.
 //
 // Rule 3: Tools вызываются через Registry.
+// Thread-safe: устанавливает immutable dependencies.
 func (c *ReActCycle) SetRegistry(registry *tools.Registry) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.registry = registry
 	c.llmStep.registry = registry
 	c.toolStep.registry = registry
@@ -113,251 +109,84 @@ func (c *ReActCycle) SetRegistry(registry *tools.Registry) {
 // SetState устанавливает framework core состояние.
 //
 // Rule 6: Использует pkg/state.CoreState вместо internal/app.
+// Thread-safe: устанавливает immutable dependencies.
 func (c *ReActCycle) SetState(state *state.CoreState) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.state = state
 }
 
 // AttachDebug присоединяет debug recorder к ReActCycle.
+//
+// PHASE 1 REFACTOR: Теперь сохраняет recorder в config для передачи в execution.
+// Thread-safe: использует mutex для защиты config.DefaultDebugRecorder.
 func (c *ReActCycle) AttachDebug(recorder *ChainDebugRecorder) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.debugRecorder = recorder
-	c.llmStep.debugRecorder = recorder
-	c.toolStep.debugRecorder = recorder
+	c.config.DefaultDebugRecorder = recorder
 }
 
 // SetEmitter устанавливает emitter для отправки событий в UI.
 //
 // Port & Adapter pattern: ReActCycle зависит от абстракции events.Emitter.
-// Thread-safe.
+//
+// PHASE 1 REFACTOR: Теперь сохраняет emitter в config для передачи в execution.
+// Thread-safe: использует mutex для защиты config.DefaultEmitter.
 func (c *ReActCycle) SetEmitter(emitter events.Emitter) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.emitter = emitter
-	// Передаём emitter в LLM шаг для streaming событий
-	c.llmStep.emitter = emitter
+	c.config.DefaultEmitter = emitter
 }
 
 // SetStreamingEnabled включает или выключает streaming режим.
 //
-// Thread-safe.
+// PHASE 1 REFACTOR: Теперь сохраняет флаг в config для передачи в execution.
+// Thread-safe: использует mutex для защиты config.StreamingEnabled.
 func (c *ReActCycle) SetStreamingEnabled(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.streamingEnabled = enabled
-}
-
-// emitEvent отправляет событие если emitter установлен.
-//
-// Thread-safe helper метод.
-func (c *ReActCycle) emitEvent(ctx context.Context, event events.Event) {
-	if c.emitter == nil {
-		utils.Debug("emitEvent: emitter is nil, skipping", "event_type", event.Type)
-		return
-	}
-	utils.Debug("emitEvent: sending", "event_type", event.Type, "has_data", event.Data != nil)
-	c.emitter.Emit(ctx, event)
+	c.config.StreamingEnabled = enabled
 }
 
 // Execute выполняет ReAct цикл.
 //
+// PHASE 1 REFACTOR: Теперь создаёт ReActExecution на каждый вызов.
+// Thread-safe: читает runtime defaults с RWMutex, concurrent execution безопасен.
+// Concurrent execution безопасен - несколько Execute() могут работать параллельно.
+//
 // ReAct цикл:
-// 1. Добавляем user message в историю
-// 2. Повторяем до MaxIterations:
-//    a. LLMInvocationStep — вызываем LLM
-//    b. Если есть tool calls → ToolExecutionStep
-//    c. Если нет tool calls → BREAK (финальный ответ)
-// 3. Возвращаем финальный ответ
+// 1. Валидация зависимостей (read-only, без блокировки)
+// 2. Читаем runtime defaults с RWMutex
+// 3. Создаём ReActExecution (runtime state)
+// 4. Запускаем execution.Run()
+// 5. Возвращаем результат
 //
 // Rule 7: Возвращает ошибку вместо panic.
 func (c *ReActCycle) Execute(ctx context.Context, input ChainInput) (ChainOutput, error) {
-	startTime := time.Now()
-
-	// Thread-safety: блокируем на время выполнения
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// 1. Проверяем зависимости
+	// 1. Валидация (read-only, без блокировки)
 	if err := c.validateDependencies(); err != nil {
 		return ChainOutput{}, fmt.Errorf("invalid dependencies: %w", err)
 	}
 
-	// 2. Создаём контекст выполнения
-	chainCtx := NewChainContext(input)
+	// 2. Читаем runtime defaults с RLock
+	c.mu.RLock()
+	defaultEmitter := c.config.DefaultEmitter
+	defaultDebugRecorder := c.config.DefaultDebugRecorder
+	streamingEnabled := c.config.StreamingEnabled
+	c.mu.RUnlock()
 
-	// 3. Добавляем user message в историю
-	// REFACTORED 2026-01-04: AppendMessage теперь возвращает ошибку
-	if err := chainCtx.AppendMessage(llm.Message{
-		Role:    llm.RoleUser,
-		Content: input.UserQuery,
-	}); err != nil {
-		return ChainOutput{}, fmt.Errorf("failed to append user message: %w", err)
-	}
+	// 3. Создаём execution (runtime state)
+	execution := NewReActExecution(
+		ctx,
+		input,
+		c.llmStep,               // Шаблон шага (будет склонирован)
+		c.toolStep,              // Шаблон шага (будет склонирован)
+		defaultEmitter,          // Emitter из config (thread-safe copy)
+		defaultDebugRecorder,    // Debug recorder из config (thread-safe copy)
+		streamingEnabled,        // Streaming флаг из config (thread-safe copy)
+		&c.config,               // Reference на config (immutable part)
+	)
 
-	// 4. Начинаем debug запись
-	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
-		c.debugRecorder.Start(input)
-	}
-
-	// 5. ReAct цикл
-	iterations := 0
-	for iterations = 0; iterations < c.config.MaxIterations; iterations++ {
-		// Start debug iteration для всей итерации (LLM + Tools)
-		if c.debugRecorder != nil && c.debugRecorder.Enabled() {
-			c.debugRecorder.StartIteration(iterations + 1)
-		}
-
-		// 5a. LLM Invocation
-		action, err := c.executeLLMStep(ctx, chainCtx)
-		if err != nil {
-			return c.finalizeWithError(chainCtx, startTime, err)
-		}
-		if action == ActionError {
-			c.endDebugIteration()
-			return c.finalizeWithError(chainCtx, startTime, fmt.Errorf("LLM step failed"))
-		}
-
-		// Отправляем EventThinking с контентом LLM (рассуждения)
-		// НО только если НЕ был streaming (streaming отправляет EventThinkingChunk)
-		lastMsg := chainCtx.GetLastMessage()
-
-		// Проверяем: был ли streaming? Если в content есть reasoning_content markers
-		// или если есть emitter (используется для streaming), то не дублируем
-		shouldSendThinking := true
-		if c.emitter != nil {
-			// Streaming был включен, EventThinkingChunk уже отправляли
-			// Проверяем по косвенным признакам: длинный content без markdown заголовков
-			// В streaming режиме reasoning_content выводится по буквам
-			shouldSendThinking = false
-		}
-
-		if shouldSendThinking {
-			c.emitEvent(ctx, events.Event{
-				Type:      events.EventThinking,
-				Data:      lastMsg.Content,
-				Timestamp: time.Now(),
-			})
-		}
-
-		// Отправляем EventToolCall для каждого tool call
-		for _, tc := range lastMsg.ToolCalls {
-			c.emitEvent(ctx, events.Event{
-				Type: events.EventToolCall,
-				Data: events.ToolCallData{
-					ToolName: tc.Name,
-					Args:     tc.Args,
-				},
-				Timestamp: time.Now(),
-			})
-		}
-
-		// 5b. Проверяем есть ли tool calls
-		if len(lastMsg.ToolCalls) == 0 {
-			// Финальный ответ - нет tool calls
-			c.endDebugIteration()
-			break
-		}
-
-		// 5c. Tool Execution (внутри той же итерации!)
-		action, err = c.executeToolStep(ctx, chainCtx)
-		if err != nil {
-			c.endDebugIteration()
-			return c.finalizeWithError(chainCtx, startTime, err)
-		}
-		if action == ActionError {
-			c.endDebugIteration()
-			return c.finalizeWithError(chainCtx, startTime, fmt.Errorf("tool execution failed"))
-		}
-
-		// Отправляем EventToolResult для каждого выполненного tool
-		for _, tr := range c.toolStep.GetToolResults() {
-			c.emitEvent(ctx, events.Event{
-				Type: events.EventToolResult,
-				Data: events.ToolResultData{
-					ToolName: tr.Name,
-					Result:   tr.Result,
-					Duration: time.Duration(tr.Duration) * time.Millisecond,
-				},
-				Timestamp: time.Now(),
-			})
-		}
-
-		// End debug iteration после LLM + Tools
-		c.endDebugIteration()
-	}
-
-	// 6. Формируем результат
-	lastMsg := chainCtx.GetLastMessage()
-	result := lastMsg.Content
-
-	utils.Debug("ReAct cycle completed",
-		"iterations", iterations+1,
-		"result_length", len(result),
-		"duration_ms", time.Since(startTime).Milliseconds())
-
-	// 7. Отправляем EventMessage с текстом ответа
-	utils.Debug("Sending EventMessage", "content_length", len(result))
-	c.emitEvent(ctx, events.Event{
-		Type:      events.EventMessage,
-		Data:      result,
-		Timestamp: time.Now(),
-	})
-
-	// 8. Отправляем EventDone
-	utils.Debug("Sending EventDone")
-	c.emitEvent(ctx, events.Event{
-		Type:      events.EventDone,
-		Data:      result,
-		Timestamp: time.Now(),
-	})
-
-	// 9. Финализируем debug
-	debugPath := ""
-	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
-		debugPath, _ = c.debugRecorder.Finalize(result, time.Since(startTime))
-	}
-
-	// 10. Возвращаем результат
-	return ChainOutput{
-		Result:     result,
-		Iterations: iterations + 1,
-		Duration:   time.Since(startTime),
-		FinalState: chainCtx.GetMessages(),
-		DebugPath:  debugPath,
-	}, nil
-}
-
-// executeLLMStep выполняет LLM шаг.
-//
-// Debug iteration управляется в ReActCycle.Execute() (одна итерация = LLM + Tools).
-func (c *ReActCycle) executeLLMStep(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
-	return c.llmStep.Execute(ctx, chainCtx)
-}
-
-// executeToolStep выполняет Tool шаг.
-func (c *ReActCycle) executeToolStep(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
-	return c.toolStep.Execute(ctx, chainCtx)
-}
-
-// endDebugIteration завершает текущую debug итерацию.
-//
-// Helper метод для избежания дублирования кода.
-func (c *ReActCycle) endDebugIteration() {
-	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
-		c.debugRecorder.EndIteration()
-	}
-}
-
-// finalizeWithError завершает выполнение с ошибкой.
-func (c *ReActCycle) finalizeWithError(chainCtx *ChainContext, startTime time.Time, err error) (ChainOutput, error) {
-	// Финализируем debug с ошибкой
-	if c.debugRecorder != nil && c.debugRecorder.Enabled() {
-		c.debugRecorder.Finalize("", time.Since(startTime))
-	}
-
-	return ChainOutput{}, err
+	// 4. Запускаем execution (без mutex!)
+	return execution.Run()
 }
 
 // validateDependencies проверяет что все зависимости установлены.
@@ -419,9 +248,9 @@ var _ Chain = (*ReActCycle)(nil)
 // Реализует Agent interface для прямого использования агента.
 // Удобно для простых случаев когда не нужен полный контроль ChainInput.
 //
-// Thread-safe (делегирует блокировку в Execute).
+// PHASE 1 REFACTOR: Thread-safe через immutability - без mutex.
 func (c *ReActCycle) Run(ctx context.Context, query string) (string, error) {
-	// Проверяем зависимости без блокировки (Execute заблокирует)
+	// Проверяем зависимости (read-only)
 	if err := c.validateDependencies(); err != nil {
 		return "", err
 	}
@@ -434,7 +263,6 @@ func (c *ReActCycle) Run(ctx context.Context, query string) (string, error) {
 	}
 
 	// Выполняем Chain и возвращаем результат
-	// Execute выполнит блокировку мьютекса
 	output, err := c.Execute(ctx, input)
 	if err != nil {
 		return "", err
@@ -451,10 +279,8 @@ func (c *ReActCycle) Run(ctx context.Context, query string) (string, error) {
 // GetHistory возвращает историю диалога.
 //
 // Реализует Agent interface.
+// PHASE 1 REFACTOR: Блокировка не нужна - CoreState thread-safe (RWMutex).
 func (c *ReActCycle) GetHistory() []llm.Message {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.state == nil {
 		return []llm.Message{}
 	}
