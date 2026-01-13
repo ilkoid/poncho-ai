@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
@@ -44,8 +43,11 @@ type StepExecutor interface {
 // Thread-safe: Использует ReActExecution который создаётся на каждый вызов,
 // поэтому concurrent execution безопасен.
 type ReActExecutor struct {
-	// observers — список наблюдателей за выполнением (Phase 4 подготовка)
+	// observers — список наблюдателей за выполнением (Phase 4)
 	observers []ExecutionObserver
+
+	// iterationObserver — наблюдатель для событий внутри итерации (PHASE 4)
+	iterationObserver *EmitterIterationObserver
 }
 
 // ExecutionObserver — интерфейс для наблюдения за выполнением (Phase 4).
@@ -62,7 +64,8 @@ type ExecutionObserver interface {
 // NewReActExecutor создаёт новый ReActExecutor.
 func NewReActExecutor() *ReActExecutor {
 	return &ReActExecutor{
-		observers: make([]ExecutionObserver, 0),
+		observers:         make([]ExecutionObserver, 0),
+		iterationObserver: nil, // Будет установлен через SetIterationObserver
 	}
 }
 
@@ -74,14 +77,25 @@ func (e *ReActExecutor) AddObserver(observer ExecutionObserver) {
 	e.observers = append(e.observers, observer)
 }
 
+// SetIterationObserver устанавливает наблюдатель для событий внутри итерации.
+//
+// PHASE 4 REFACTOR: Изоляция логики отправки событий из core orchestration.
+// Thread-safe: вызывается до Execute(), не требует синхронизации.
+func (e *ReActExecutor) SetIterationObserver(observer *EmitterIterationObserver) {
+	e.iterationObserver = observer
+}
+
 // Execute выполняет ReAct цикл.
 //
 // PHASE 3 REFACTOR: Основная логика из ReActExecution.Run(),
 // но теперь в отдельном компоненте (StepExecutor).
 //
+// PHASE 4 REFACTOR: Изоляция debug и events через observer pattern.
+// Execute() больше не содержит прямых вызовов Emit или debug методов.
+//
 // Итерация:
 //   ├─ LLMInvocationStep
-//   ├─ Отправка событий (EventThinking, EventToolCall)
+//   ├─ Отправка событий через iterationObserver (EventThinking, EventToolCall)
 //   ├─ Проверка сигнала (SignalFinalAnswer, SignalNeedUserInput)
 //   ├─ Если tool calls:
 //   │  └─ ToolExecutionStep
@@ -102,19 +116,12 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 		return e.notifyFinishWithError(exec, fmt.Errorf("failed to append user message: %w", err))
 	}
 
-	// 2. Начинаем debug запись
-	if exec.debugRecorder != nil && exec.debugRecorder.Enabled() {
-		exec.debugRecorder.Start(*exec.chainCtx.Input)
-	}
+	// 2. Debug запись теперь обрабатывается ChainDebugRecorder observer
+	// (была добавлена в ReActCycle.Execute())
 
 	// 3. ReAct цикл
 	iterations := 0
 	for iterations = 0; iterations < exec.config.MaxIterations; iterations++ {
-		// Start debug iteration для всей итерации (LLM + Tools)
-		if exec.debugRecorder != nil && exec.debugRecorder.Enabled() {
-			exec.debugRecorder.StartIteration(iterations + 1)
-		}
-
 		// Notify observers: OnIterationStart
 		for _, obs := range e.observers {
 			obs.OnIterationStart(iterations + 1)
@@ -125,7 +132,6 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 
 		// Обрабатываем результат
 		if llmResult.Action == ActionError || llmResult.Error != nil {
-			exec.endDebugIteration()
 			err := llmResult.Error
 			if err == nil {
 				err = fmt.Errorf("LLM step failed")
@@ -133,7 +139,7 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 			return e.notifyFinishWithError(exec, err)
 		}
 
-		// Отправляем EventThinking с контентом LLM
+		// 3b. Отправляем события через iterationObserver (PHASE 4)
 		lastMsg := exec.chainCtx.GetLastMessage()
 
 		// Проверяем: был ли streaming?
@@ -143,49 +149,37 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 			shouldSendThinking = false
 		}
 
-		if shouldSendThinking {
-			exec.emitEvent(events.Event{
-				Type:      events.EventThinking,
-				Data:      events.ThinkingData{Query: lastMsg.Content},
-				Timestamp: time.Now(),
-			})
+		if shouldSendThinking && e.iterationObserver != nil {
+			e.iterationObserver.EmitThinking(ctx, lastMsg.Content)
 		}
 
 		// Отправляем EventToolCall для каждого tool call
-		for _, tc := range lastMsg.ToolCalls {
-			exec.emitEvent(events.Event{
-				Type: events.EventToolCall,
-				Data: events.ToolCallData{
-					ToolName: tc.Name,
-					Args:     tc.Args,
-				},
-				Timestamp: time.Now(),
-			})
+		if e.iterationObserver != nil {
+			for _, tc := range lastMsg.ToolCalls {
+				e.iterationObserver.EmitToolCall(ctx, tc)
+			}
 		}
 
-		// 3b. Проверяем сигнал от LLM шага
+		// 3c. Проверяем сигнал от LLM шага
 		if llmResult.Signal == SignalFinalAnswer || llmResult.Signal == SignalNeedUserInput {
 			exec.finalSignal = llmResult.Signal
-			exec.endDebugIteration()
 			break
 		}
 
-		// 3c. Проверяем есть ли tool calls
+		// 3d. Проверяем есть ли tool calls
 		if len(lastMsg.ToolCalls) == 0 {
 			// Финальный ответ - нет tool calls
 			if exec.finalSignal == SignalNone {
 				exec.finalSignal = SignalFinalAnswer
 			}
-			exec.endDebugIteration()
 			break
 		}
 
-		// 3d. Tool Execution
+		// 3e. Tool Execution
 		toolResult := exec.toolStep.Execute(ctx, exec.chainCtx)
 
 		// Обрабатываем результат
 		if toolResult.Action == ActionError || toolResult.Error != nil {
-			exec.endDebugIteration()
 			err := toolResult.Error
 			if err == nil {
 				err = fmt.Errorf("tool execution failed")
@@ -193,21 +187,12 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 			return e.notifyFinishWithError(exec, err)
 		}
 
-		// Отправляем EventToolResult для каждого выполненного tool
-		for _, tr := range exec.toolStep.GetToolResults() {
-			exec.emitEvent(events.Event{
-				Type: events.EventToolResult,
-				Data: events.ToolResultData{
-					ToolName: tr.Name,
-					Result:   tr.Result,
-					Duration: time.Duration(tr.Duration) * time.Millisecond,
-				},
-				Timestamp: time.Now(),
-			})
+		// Отправляем EventToolResult через iterationObserver (PHASE 4)
+		if e.iterationObserver != nil {
+			for _, tr := range exec.toolStep.GetToolResults() {
+				e.iterationObserver.EmitToolResult(ctx, tr.Name, tr.Result, time.Duration(tr.Duration)*time.Millisecond)
+			}
 		}
-
-		// End debug iteration после LLM + Tools
-		exec.endDebugIteration()
 
 		// Notify observers: OnIterationEnd
 		for _, obs := range e.observers {
@@ -224,27 +209,14 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 		"result_length", len(result),
 		"duration_ms", time.Since(exec.startTime).Milliseconds())
 
-	// 5. Отправляем EventMessage с текстом ответа
-	utils.Debug("Sending EventMessage", "content_length", len(result))
-	exec.emitEvent(events.Event{
-		Type:      events.EventMessage,
-		Data:      events.MessageData{Content: result},
-		Timestamp: time.Now(),
-	})
-
-	// 6. Отправляем EventDone
-	utils.Debug("Sending EventDone")
-	exec.emitEvent(events.Event{
-		Type:      events.EventDone,
-		Data:      events.MessageData{Content: result},
-		Timestamp: time.Now(),
-	})
-
-	// 7. Финализируем debug
-	debugPath := ""
-	if exec.debugRecorder != nil && exec.debugRecorder.Enabled() {
-		debugPath, _ = exec.debugRecorder.Finalize(result, time.Since(exec.startTime))
+	// 5. Отправляем EventMessage через iterationObserver (PHASE 4)
+	if e.iterationObserver != nil {
+		e.iterationObserver.EmitMessage(ctx, result)
 	}
+
+	// 6. EventDone будет отправлен через EmitterObserver.OnFinish (PHASE 4)
+
+	// 7. Debug финализация теперь обрабатывается ChainDebugRecorder.OnFinish
 
 	// 8. Возвращаем результат
 	output := ChainOutput{
@@ -252,11 +224,11 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 		Iterations: iterations + 1,
 		Duration:   time.Since(exec.startTime),
 		FinalState: exec.chainCtx.GetMessages(),
-		DebugPath:  debugPath,
+		DebugPath:  "", // Будет заполнен в ChainDebugObserver.OnFinish
 		Signal:     exec.finalSignal,
 	}
 
-	// 9. Notify observers: OnFinish
+	// 9. Notify observers: OnFinish (EmitterObserver отправит EventDone, ChainDebugRecorder финализирует)
 	for _, obs := range e.observers {
 		obs.OnFinish(output, nil)
 	}
@@ -266,12 +238,9 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 
 // notifyFinishWithError завершает выполнение с ошибкой и уведомляет наблюдателей.
 func (e *ReActExecutor) notifyFinishWithError(exec *ReActExecution, err error) (ChainOutput, error) {
-	// Финализируем debug с ошибкой
-	if exec.debugRecorder != nil && exec.debugRecorder.Enabled() {
-		exec.debugRecorder.Finalize("", time.Since(exec.startTime))
-	}
+	// Debug финализация теперь обрабатывается ChainDebugRecorder.OnFinish
 
-	// Notify observers: OnFinish with error
+	// Notify observers: OnFinish with error (EmitterObserver отправит EventError, ChainDebugRecorder финализирует)
 	for _, obs := range e.observers {
 		obs.OnFinish(ChainOutput{}, err)
 	}

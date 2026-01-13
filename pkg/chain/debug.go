@@ -2,6 +2,7 @@
 package chain
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -14,9 +15,10 @@ import (
 //
 // Предоставляет удобные методы для записи LLM вызовов и tool execution.
 type ChainDebugRecorder struct {
-	recorder *debug.Recorder
-	enabled  bool
-	logsDir  string
+	recorder   *debug.Recorder
+	enabled    bool
+	logsDir    string
+	startTime  time.Time // PHASE 4: для отслеживания длительности выполнения
 }
 
 // NewChainDebugRecorder создаёт новый ChainDebugRecorder.
@@ -168,3 +170,48 @@ func (r *ChainDebugRecorder) GetRunID() string {
 	}
 	return r.recorder.GetRunID()
 }
+
+// PHASE 4 REFACTOR: ExecutionObserver implementation
+//
+// ChainDebugRecorder теперь реализует ExecutionObserver для отслеживания
+// жизненного цикла выполнения ReAct цикла.
+
+// OnStart вызывается в начале выполнения Execute().
+func (r *ChainDebugRecorder) OnStart(ctx context.Context, exec *ReActExecution) {
+	if !r.enabled {
+		return
+	}
+	r.startTime = time.Now()
+	r.Start(*exec.chainCtx.Input)
+}
+
+// OnIterationStart вызывается в начале каждой итерации.
+func (r *ChainDebugRecorder) OnIterationStart(iteration int) {
+	if !r.enabled {
+		return
+	}
+	r.StartIteration(iteration)
+}
+
+// OnIterationEnd вызывается в конце каждой итерации.
+func (r *ChainDebugRecorder) OnIterationEnd(iteration int) {
+	if !r.enabled {
+		return
+	}
+	r.EndIteration()
+}
+
+// OnFinish вызывается в конце выполнения Execute().
+func (r *ChainDebugRecorder) OnFinish(result ChainOutput, err error) {
+	if !r.enabled {
+		return
+	}
+	resultStr := result.Result
+	if err != nil {
+		resultStr = ""
+	}
+	r.Finalize(resultStr, time.Since(r.startTime))
+}
+
+// Ensure ChainDebugRecorder implements ExecutionObserver
+var _ ExecutionObserver = (*ChainDebugRecorder)(nil)

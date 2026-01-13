@@ -150,6 +150,7 @@ func (c *ReActCycle) SetStreamingEnabled(enabled bool) {
 //
 // PHASE 1 REFACTOR: Теперь создаёт ReActExecution на каждый вызов.
 // PHASE 3 REFACTOR: Использует StepExecutor для выполнения.
+// PHASE 4 REFACTOR: Регистрирует наблюдателей (debug, events) с executor.
 // Thread-safe: читает runtime defaults с RWMutex, concurrent execution безопасен.
 // Concurrent execution безопасен - несколько Execute() могут работать параллельно.
 //
@@ -158,8 +159,9 @@ func (c *ReActCycle) SetStreamingEnabled(enabled bool) {
 // 2. Читаем runtime defaults с RWMutex
 // 3. Создаём ReActExecution (runtime state)
 // 4. Создаём ReActExecutor (исполнитель)
-// 5. Запускаем executor.Execute()
-// 6. Возвращаем результат
+// 5. Регистрируем наблюдателей (PHASE 4)
+// 6. Запускаем executor.Execute()
+// 7. Возвращаем результат
 //
 // Rule 7: Возвращает ошибку вместо panic.
 func (c *ReActCycle) Execute(ctx context.Context, input ChainInput) (ChainOutput, error) {
@@ -187,10 +189,24 @@ func (c *ReActCycle) Execute(ctx context.Context, input ChainInput) (ChainOutput
 		&c.config,               // Reference на config (immutable part)
 	)
 
-	// 4. Создаём executor (PHASE 3 REFACTOR)
+	// 4. Создаём executor
 	executor := NewReActExecutor()
 
-	// 5. Запускаем executor (без mutex!)
+	// 5. Регистрируем наблюдателей (PHASE 4 REFACTOR)
+	if defaultDebugRecorder != nil {
+		executor.AddObserver(defaultDebugRecorder)
+	}
+	if defaultEmitter != nil {
+		// EmitterObserver для финальных событий (EventDone, EventError)
+		emitterObserver := NewEmitterObserver(defaultEmitter)
+		executor.AddObserver(emitterObserver)
+
+		// EmitterIterationObserver для событий внутри итераций
+		iterationObserver := NewEmitterIterationObserver(defaultEmitter)
+		executor.SetIterationObserver(iterationObserver)
+	}
+
+	// 6. Запускаем executor (без mutex!)
 	return executor.Execute(ctx, execution)
 }
 

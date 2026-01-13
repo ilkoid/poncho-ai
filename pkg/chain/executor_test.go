@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/events"
+	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
@@ -414,6 +415,226 @@ func TestExecutionObserverInterface(t *testing.T) {
 	// Verify mockObserver implements ExecutionObserver
 	var _ ExecutionObserver = (*mockObserver)(nil)
 
-	// Verify ChainDebugRecorder could implement ExecutionObserver (Phase 4)
-	// var _ ExecutionObserver = (*ChainDebugRecorder)(nil)
+	// Verify ChainDebugRecorder implements ExecutionObserver (PHASE 4)
+	var _ ExecutionObserver = (*ChainDebugRecorder)(nil)
+
+	// Verify EmitterObserver implements ExecutionObserver (PHASE 4)
+	var _ ExecutionObserver = (*EmitterObserver)(nil)
+}
+
+// PHASE 4 REFACTOR: Tests for new observers
+
+// TestEmitterObserver verifies EmitterObserver sends correct events.
+func TestEmitterObserver(t *testing.T) {
+	ctx := context.Background()
+	config := NewReActCycleConfig()
+	config.MaxIterations = 1
+
+	// Create a mock emitter to capture events
+	eventChan := make(chan events.Event, 10)
+	mockEmitter := &mockEmitter{eventsCh: eventChan}
+
+	// Create EmitterObserver
+	observer := NewEmitterObserver(mockEmitter)
+
+	// Create a mock execution
+	modelRegistry := models.NewRegistry()
+	toolsRegistry := tools.NewRegistry()
+
+	llmStepTemplate := &LLMInvocationStep{
+		modelRegistry: modelRegistry,
+		defaultModel:  "test-model",
+		registry:      toolsRegistry,
+		systemPrompt:  "test prompt",
+	}
+
+	toolStepTemplate := &ToolExecutionStep{
+		registry:     toolsRegistry,
+		promptLoader: nil,
+	}
+
+	input := ChainInput{
+		UserQuery: "test query",
+		State:     state.NewCoreState(nil),
+		Registry:  toolsRegistry,
+	}
+
+	execution := NewReActExecution(
+		ctx,
+		input,
+		llmStepTemplate,
+		toolStepTemplate,
+		nil,
+		nil,
+		false,
+		&config,
+	)
+
+	// Test OnStart (should not emit anything)
+	observer.OnStart(ctx, execution)
+
+	// Test OnFinish with success
+	output := ChainOutput{
+		Result:     "test result",
+		Iterations: 1,
+		Duration:   100 * time.Millisecond,
+		Signal:     SignalFinalAnswer,
+	}
+
+	observer.OnFinish(output, nil)
+
+	// Verify EventDone was sent
+	select {
+	case event := <-eventChan:
+		if event.Type != events.EventDone {
+			t.Errorf("Expected EventDone, got %v", event.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Expected EventDone event but received none")
+	}
+
+	// Test OnFinish with error
+	testErr := fmt.Errorf("test error")
+	observer.OnFinish(ChainOutput{}, testErr)
+
+	// Verify EventError was sent
+	select {
+	case event := <-eventChan:
+		if event.Type != events.EventError {
+			t.Errorf("Expected EventError, got %v", event.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Expected EventError event but received none")
+	}
+}
+
+// TestEmitterIterationObserver verifies EmitterIterationObserver sends correct events.
+func TestEmitterIterationObserver(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a mock emitter to capture events
+	eventChan := make(chan events.Event, 10)
+	mockEmitter := &mockEmitter{eventsSh: eventChan}
+
+	// Create EmitterIterationObserver
+	observer := NewEmitterIterationObserver(mockEmitter)
+
+	// Test EmitThinking
+	observer.EmitThinking(ctx, "test query")
+
+	select {
+	case event := <-eventChan:
+		if event.Type != events.EventThinking {
+			t.Errorf("Expected EventThinking, got %v", event.Type)
+		}
+		if data, ok := event.Data.(events.ThinkingData); ok {
+			if data.Query != "test query" {
+				t.Errorf("Expected query 'test query', got %v", data.Query)
+			}
+		} else {
+			t.Error("Expected ThinkingData, got different type")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Expected EventThinking event but received none")
+	}
+
+	// Test EmitToolCall
+	toolCall := llm.ToolCall{
+		ID:   "call-123",
+		Name: "test_tool",
+		Args: `{"arg1": "value1"}`,
+	}
+	observer.EmitToolCall(ctx, toolCall)
+
+	select {
+	case event := <-eventChan:
+		if event.Type != events.EventToolCall {
+			t.Errorf("Expected EventToolCall, got %v", event.Type)
+		}
+		if data, ok := event.Data.(events.ToolCallData); ok {
+			if data.ToolName != "test_tool" {
+				t.Errorf("Expected tool name 'test_tool', got %v", data.ToolName)
+			}
+		} else {
+			t.Error("Expected ToolCallData, got different type")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Expected EventToolCall event but received none")
+	}
+
+	// Test EmitToolResult
+	observer.EmitToolResult(ctx, "test_tool", `{"result": "success"}`, 50*time.Millisecond)
+
+	select {
+	case event := <-eventChan:
+		if event.Type != events.EventToolResult {
+			t.Errorf("Expected EventToolResult, got %v", event.Type)
+		}
+		if data, ok := event.Data.(events.ToolResultData); ok {
+			if data.ToolName != "test_tool" {
+				t.Errorf("Expected tool name 'test_tool', got %v", data.ToolName)
+			}
+			if data.Duration != 50*time.Millisecond {
+				t.Errorf("Expected duration 50ms, got %v", data.Duration)
+			}
+		} else {
+			t.Error("Expected ToolResultData, got different type")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Expected EventToolResult event but received none")
+	}
+
+	// Test EmitMessage
+	observer.EmitMessage(ctx, "test message")
+
+	select {
+	case event := <-eventChan:
+		if event.Type != events.EventMessage {
+			t.Errorf("Expected EventMessage, got %v", event.Type)
+		}
+		if data, ok := event.Data.(events.MessageData); ok {
+			if data.Content != "test message" {
+				t.Errorf("Expected content 'test message', got %v", data.Content)
+			}
+		} else {
+			t.Error("Expected MessageData, got different type")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Expected EventMessage event but received none")
+	}
+}
+
+// TestEmitterIterationObserverWithNilEmitter verifies observer works with nil emitter.
+func TestEmitterIterationObserverWithNilEmitter(t *testing.T) {
+	ctx := context.Background()
+
+	// Create observer with nil emitter
+	observer := NewEmitterIterationObserver(nil)
+
+	// Should not panic
+	observer.EmitThinking(ctx, "test query")
+	observer.EmitToolCall(ctx, llm.ToolCall{})
+	observer.EmitToolResult(ctx, "tool", "result", 0)
+	observer.EmitMessage(ctx, "message")
+}
+
+// mockEmitter is a mock Emitter for testing.
+type mockEmitter struct {
+	eventsSh chan events.Event
+	eventsCh chan events.Event // alias for compatibility
+}
+
+func (m *mockEmitter) Emit(ctx context.Context, event events.Event) {
+	if m.eventsSh != nil {
+		select {
+		case m.eventsSh <- event:
+		case <-ctx.Done():
+		}
+	}
+	if m.eventsCh != nil {
+		select {
+		case m.eventsCh <- event:
+		case <-ctx.Done():
+		}
+	}
 }
