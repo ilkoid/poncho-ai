@@ -196,23 +196,44 @@ if streamingProvider, ok := provider.(llm.StreamingProvider); ok {
 
 ### ReActCycle (`pkg/chain/`)
 
+**PHASE 1-5 REFACTOR COMPLETE**: Template-Execution separation with Observer pattern.
+
 Implements both **Chain** and **Agent** interfaces with streaming and event support:
 
 ```go
 // Chain - full control
-output, err := reactChain.Execute(ctx, chain.ChainInput{...})
+output, err := reactCycle.Execute(ctx, chain.ChainInput{
+    UserQuery: "What categories exist?",
+    State:     coreState,
+    Registry:  toolsRegistry,
+})
 
 // Agent - simple
 result, err := reactCycle.Run(ctx, query)
 history := reactCycle.GetHistory()
 ```
 
-**New Features**:
-- **Event Emitter**: `events.Emitter` field for UI integration
-- **Streaming Support**: `streamingEnabled` flag from config
-- **Context Propagation**: All methods accept `context.Context` (Rule 11 compliant)
+**Architecture**:
+- **ReActCycle**: Immutable template (thread-safe for concurrent Execute())
+- **ReActExecution**: Runtime state (created per execution, never shared)
+- **ReActExecutor**: Orchestrates iteration loop with observer notifications
+- **Observers**: Handle cross-cutting concerns (debug, events)
+
+**Key Features**:
+- ✅ **Concurrent Execution**: Multiple Execute() calls can run simultaneously
+- ✅ **Type-Safe Signals**: ExecutionSignal enum (SignalFinalAnswer, SignalNeedUserInput, etc.)
+- ✅ **Observer Pattern**: ChainDebugRecorder, EmitterObserver, EmitterIterationObserver
+- ✅ **Event Emitter**: Integration with pkg/events for UI decoupling
+- ✅ **Streaming Support**: StreamingProvider for real-time responses
+- ✅ **Context Propagation**: All methods accept `context.Context` (Rule 11 compliant)
+
+**Thread Safety**:
+- Multiple goroutines can call Execute() concurrently
+- No global mutex held during LLM calls or tool execution
+- Each execution gets isolated ReActExecution instance
 
 **Note**: `internal/agent/orchestrator.go` was DELETED. Use ReActCycle instead.
+**See Also**: `pkg/chain/` section below for detailed architecture
 
 ### Simple Agent API (`pkg/agent/`)
 
@@ -479,19 +500,164 @@ UpdateType[T any](s *CoreState, key Key, fn func(T) T) error
 
 ### Chain Pattern (`pkg/chain/`)
 
-**Step Interface**:
+**PHASE 1-5 REFACTOR COMPLETE**: Template-Execution separation with Observer pattern.
+
+#### Architecture Overview
+
+The chain package implements the ReAct (Reasoning + Acting) pattern with a clean separation
+between immutable template (ReActCycle) and runtime state (ReActExecution).
+
+```
+ReActCycle (Immutable Template)
+    ↓ Execute()
+ReActExecution (Runtime State)
+    ↓ Execute()
+ReActExecutor (Orchestrator)
+    ↓ Observer Notifications
+Observers (Debug, Events)
+```
+
+#### Core Components
+
+**ReActCycle** (Immutable Template):
+- Created once, shared across all Execute() calls
+- Thread-safe for concurrent execution
+- Holds: registries, config, step templates, runtime defaults
+- No global mutex - uses RWMutex only for runtime defaults
+
+**ReActExecution** (Runtime State):
+- Created per Execute() invocation
+- Never shared between goroutines
+- Pure data container with no execution logic
+- Holds: chain context, step instances, emitter, debug recorder
+
+**ReActExecutor** (Orchestrator):
+- Implements StepExecutor interface
+- Executes iteration loop with observer notifications
+- Coordinates LLM and Tool steps
+
+**Observers** (Cross-Cutting Concerns):
+- ChainDebugRecorder: Records debug logs (implements ExecutionObserver)
+- EmitterObserver: Sends final events (EventDone, EventError)
+- EmitterIterationObserver: Sends iteration events (EventThinking, EventToolCall, etc.)
+
+#### Execution Signals (Type-Safe)
+
 ```go
-type Step interface {
-    Name() string
-    Execute(ctx context.Context, chainCtx *ChainContext) (NextAction, error)
+type ExecutionSignal int
+
+const (
+    SignalNone ExecutionSignal = iota  // Continue to next step
+    SignalFinalAnswer                    // Execution complete
+    SignalNeedUserInput                  // Waiting for user input
+    SignalError                          // Execution failed
+)
+
+type StepResult struct {
+    Action NextAction
+    Signal ExecutionSignal
+    Error  error
 }
 ```
 
-**ReActCycle**: Composable steps (LLMInvocationStep, ToolExecutionStep) with:
-- Debug support via `ChainDebugRecorder`
-- Event emission via `events.Emitter`
-- Streaming support via `StreamingProvider`
-- Context propagation (Rule 11)
+#### Step Interface
+
+```go
+type Step interface {
+    Name() string
+    Execute(ctx context.Context, chainCtx *ChainContext) StepResult
+}
+```
+
+#### StepExecutor Interface
+
+```go
+type StepExecutor interface {
+    Execute(ctx context.Context, exec *ReActExecution) (ChainOutput, error)
+}
+```
+
+#### ExecutionObserver Interface
+
+```go
+type ExecutionObserver interface {
+    OnStart(ctx context.Context, exec *ReActExecution)
+    OnIterationStart(iteration int)
+    OnIterationEnd(iteration int)
+    OnFinish(result ChainOutput, err error)
+}
+```
+
+#### Thread Safety
+
+- **ReActCycle**: Thread-safe for concurrent Execute() calls
+  - Immutable fields: No synchronization needed
+  - Runtime defaults: Protected by sync.RWMutex
+  - Multiple goroutines can call Execute() simultaneously
+
+- **ReActExecution**: Not thread-safe (never shared)
+  - Created per execution, used by only one goroutine
+  - No synchronization needed
+
+- **ReActExecutor**: Thread-safe with isolated executions
+  - Observers list set before execution
+  - Each execution uses isolated ReActExecution
+
+#### Usage Examples
+
+**Chain Interface** (full control):
+```go
+output, err := reactCycle.Execute(ctx, chain.ChainInput{
+    UserQuery: "What categories exist?",
+    State:     coreState,
+    Registry:  toolsRegistry,
+})
+```
+
+**Agent Interface** (simple):
+```go
+result, err := reactCycle.Run(ctx, query)
+history := reactCycle.GetHistory()
+```
+
+**Concurrent Execution**:
+```go
+// Multiple concurrent Execute() calls are safe
+var wg sync.WaitGroup
+for i := 0; i < 5; i++ {
+    wg.Add(1)
+    go func(query string) {
+        defer wg.Done()
+        output, _ := reactCycle.Execute(ctx, chain.ChainInput{
+            UserQuery: query,
+        })
+    }(queries[i])
+}
+wg.Wait()
+```
+
+**Key Features**:
+- ✅ Template-Execution separation (Phase 1)
+- ✅ Type-safe execution signals (Phase 2)
+- ✅ Real step pipeline with StepExecutor (Phase 3)
+- ✅ Observer pattern for cross-cutting concerns (Phase 4)
+- ✅ Comprehensive documentation and architecture contracts (Phase 5)
+- ✅ Debug support via ChainDebugRecorder (ExecutionObserver)
+- ✅ Event emission via EmitterObserver and EmitterIterationObserver
+- ✅ Streaming support via StreamingProvider
+- ✅ Context propagation (Rule 11)
+
+**Files**:
+- `react.go` - ReActCycle template
+- `execution.go` - ReActExecution runtime state
+- `executor.go` - ReActExecutor and ExecutionObserver interface
+- `observers.go` - EmitterObserver, EmitterIterationObserver
+- `step.go` - Step interface, ExecutionSignal, StepResult
+- `llm_step.go` - LLMInvocationStep implementation
+- `tool_step.go` - ToolExecutionStep implementation
+- `debug.go` - ChainDebugRecorder (ExecutionObserver implementation)
+
+**See Also**: ADR-007.md for complete refactoring documentation
 
 ### Debug System (`pkg/debug/`)
 
@@ -553,8 +719,9 @@ s3:
 | **Command** | `internal/ui/` | TUI command handling (local, not in pkg/) |
 | **ReAct** | `pkg/chain/` | Agent reasoning loop |
 | **Chain of Responsibility** | `pkg/chain/` | Modular step-based execution |
+| **Template-Execution** | `pkg/chain/` | Immutable template + runtime state (Phase 1) |
+| **Observer** | `pkg/chain/` | Cross-cutting concerns (debug, events) (Phase 4) |
 | **Recorder** | `pkg/debug/` | JSON trace recording |
-| **Observer** | `pkg/events/` | Event-driven architecture |
 | **Streaming** | `pkg/llm/StreamingProvider` | Real-time response streaming |
 
 ---
@@ -637,5 +804,5 @@ Each WB tool gets its own rate limiter instance (e.g., `get_wb_feedbacks`: 60/mi
 
 ---
 
-**Last Updated**: 2026-01-12
-**Version**: 4.0 (Streaming support, Rule 11 compliance, event system)
+**Last Updated**: 2026-01-13
+**Version**: 5.0 (ReActCycle refactoring complete - Template-Execution separation, Observer pattern, Type-safe signals)
