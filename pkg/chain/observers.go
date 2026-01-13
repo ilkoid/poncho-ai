@@ -9,15 +9,32 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 )
 
-// PHASE 4 REFACTOR: Observers для изоляции cross-cutting concerns
+// PHASE 4 REFACTOR: Observer implementations for isolating cross-cutting concerns.
 //
-// EmitterObserver и другие наблюдатели позволяют убрать логику отправки
-// событий из core orchestration (executor.Execute()).
+// This file contains observer implementations that handle:
+// - Event emission to UI (EmitterObserver, EmitterIterationObserver)
+//
+// Observers remove cross-cutting logic from core orchestration (executor.Execute())
+// and enable clean separation of concerns.
 
 // EmitterObserver — наблюдатель который отправляет события в Emitter.
 //
-// Реализует ExecutionObserver для интеграции с pkg/events.
-// Отправляет события в UI через Port & Adapter pattern.
+// # Purpose (PHASE 4 REFACTOR)
+//
+// EmitterObserver implements ExecutionObserver to send final lifecycle events
+// to the UI through the events.Emitter interface (Port & Adapter pattern).
+//
+// # Event Emission
+//
+// - OnStart: (no event)
+// - OnIterationStart: (no event)
+// - OnIterationEnd: (no event)
+// - OnFinish: Sends EventDone (success) or EventError (failure)
+//
+// # Thread Safety
+//
+// Thread-safe when used with thread-safe events.Emitter implementations.
+// Each execution should use its own observer instance.
 type EmitterObserver struct {
 	emitter events.Emitter
 }
@@ -46,7 +63,7 @@ func (o *EmitterObserver) OnIterationEnd(iteration int) {
 
 // OnFinish вызывается в конце выполнения Execute().
 //
-// Отправляет финальные события: EventDone.
+// Отправляет финальные события: EventDone (success) or EventError (failure).
 func (o *EmitterObserver) OnFinish(result ChainOutput, err error) {
 	if o.emitter == nil {
 		return
@@ -77,8 +94,29 @@ var _ ExecutionObserver = (*EmitterObserver)(nil)
 
 // EmitterIterationObserver — наблюдатель для событий внутри итерации.
 //
-// Отправляет EventThinking, EventToolCall, EventToolResult в течение итерации.
-// Этот наблюдатель нужно вызывать вручную из executor.Execute() для каждого события.
+// # Purpose (PHASE 4 REFACTOR)
+//
+// EmitterIterationObserver sends events during each iteration of the ReAct loop.
+// Unlike ExecutionObserver (which is notified of lifecycle events), this observer
+// is called manually from executor.Execute() for specific events.
+//
+// # Event Emission
+//
+// - EmitThinking: Sends EventThinking after LLM response
+// - EmitToolCall: Sends EventToolCall for each tool call from LLM
+// - EmitToolResult: Sends EventToolResult after each tool execution
+// - EmitMessage: Sends EventMessage with final result
+//
+// # Why Separate Observer?
+//
+// This is separate from EmitterObserver because:
+//   - These events occur DURING iterations (not at lifecycle boundaries)
+//   - They require iteration-specific data (query, tool calls, results)
+//   - They're called manually from executor, not via observer notifications
+//
+// # Thread Safety
+//
+// Thread-safe when used with thread-safe events.Emitter implementations.
 type EmitterIterationObserver struct {
 	emitter events.Emitter
 }

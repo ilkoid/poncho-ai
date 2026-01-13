@@ -1,4 +1,98 @@
 // Package chain предоставляет Chain Pattern для AI агента.
+//
+// # Architecture Overview
+//
+// The chain package implements the ReAct (Reasoning + Acting) pattern for building
+// AI agents with composable steps. The architecture follows a template-execution
+// separation pattern that enables concurrent execution and clear separation of concerns.
+//
+// # Template vs Execution
+//
+// ## Template (Immutable Configuration)
+//
+// ReActCycle serves as an immutable template that is created once and shared across
+// multiple executions. It holds:
+//   - Configuration (ReActCycleConfig)
+//   - Registries (models, tools)
+//   - Step templates (LLMInvocationStep, ToolExecutionStep)
+//   - Runtime defaults (emitter, debug recorder, streaming flag)
+//
+// Template fields are either fully immutable or protected by mutex for runtime defaults.
+// This allows multiple Execute() calls to run concurrently without blocking each other.
+//
+// ## Execution (Runtime State)
+//
+// ReActExecution is created per Execute() invocation and holds runtime state:
+//   - ChainContext (message history)
+//   - Step instances (cloned from templates)
+//   - Cross-cutting concerns (emitter, debug recorder)
+//   - Execution metadata (timestamps, signals)
+//
+// Execution instances are never shared between goroutines, eliminating the need for
+// synchronization during execution.
+//
+// # Execution Flow
+//
+// 1. ReActCycle.Execute() creates ReActExecution with isolated state
+// 2. ReActExecutor orchestrates the iteration loop with observer notifications
+// 3. Observers handle cross-cutting concerns (debug, events) separately
+// 4. ChainOutput is returned with result, iterations, duration, and signal
+//
+// # Thread Safety
+//
+// ReActCycle: Thread-safe for concurrent Execute() calls
+//   - Immutable fields: No synchronization needed
+//   - Runtime defaults: Protected by sync.RWMutex
+//   - Multiple goroutines can call Execute() simultaneously
+//
+// ReActExecution: Not thread-safe (never shared)
+//   - Created per execution, used only by one goroutine
+//   - No synchronization needed
+//
+// # Example Usage
+//
+//	// Create template (once)
+//	config := chain.ReActCycleConfig{MaxIterations: 10}
+//	cycle := chain.NewReActCycle(config)
+//	cycle.SetModelRegistry(modelRegistry, "glm-4.6")
+//	cycle.SetRegistry(toolsRegistry)
+//	cycle.SetState(coreState)
+//
+//	// Execute concurrently (multiple times)
+//	var wg sync.WaitGroup
+//	for i := 0; i < 5; i++ {
+//		wg.Add(1)
+//		go func(query string) {
+//			defer wg.Done()
+//			output, err := cycle.Execute(ctx, chain.ChainInput{
+//				UserQuery: query,
+//				State:     coreState,
+//				Registry:  toolsRegistry,
+//			})
+//			// Handle output...
+//		}(queries[i])
+//	}
+//	wg.Wait()
+//
+// # Observer Pattern (Phase 4)
+//
+// Cross-cutting concerns are handled by observers:
+//   - ChainDebugRecorder: Records debug logs for each execution
+//   - EmitterObserver: Sends final events (EventDone, EventError)
+//   - EmitterIterationObserver: Sends iteration events
+//
+// Observers are registered with the executor before execution and receive
+// lifecycle notifications (OnStart, OnIterationStart, OnIterationEnd, OnFinish).
+//
+// # Execution Signals
+//
+// Steps communicate their intent via typed signals:
+//   - SignalNone: Continue to next step
+//   - SignalFinalAnswer: Execution complete, return result
+//   - SignalNeedUserInput: Execution paused, waiting for user input
+//   - SignalError: Execution failed with error
+//
+// Signals are propagated through StepResult and included in ChainOutput.
 package chain
 
 import (
@@ -16,22 +110,45 @@ import (
 
 // ReActCycle — реализация ReAct (Reasoning + Acting) паттерна.
 //
-// ReActCycle выполняет цикл:
+// # Template vs Execution (PHASE 1-4 REFACTOR)
+//
+// ReActCycle is an IMMUTABLE TEMPLATE that is created once and shared across
+// multiple executions. Runtime state is separated into ReActExecution.
+//
+// ## Template (this struct)
+//   - Created once during initialization
+//   - Shared across all Execute() calls
+//   - Holds: registries, config, step templates
+//   - Thread-safe: immutable fields + mutex for runtime defaults
+//
+// ## Execution (ReActExecution)
+//   - Created per Execute() call
+//   - Never shared between goroutines
+//   - Holds: chain context, step instances, emitter, debug recorder
+//   - No synchronization needed (not shared)
+//
+// # Execution Cycle
+//
 // 1. LLM анализирует контекст и решает что делать (Reasoning)
 // 2. Если нужны инструменты — выполняет их (Acting)
 // 3. Повторяет пока не получен финальный ответ или не достигнут лимит
+//
+// # Thread Safety
+//
+// Multiple goroutines can call Execute() concurrently:
+//   - Each Execute() creates its own ReActExecution
+//   - No mutex held during LLM calls or tool execution
+//   - Runtime defaults (emitter, debug recorder) protected by RWMutex
+//
+// # Rule Compliance
 //
 // Rule 1: Работает с Tool interface ("Raw In, String Out")
 // Rule 2: Конфигурация через YAML
 // Rule 3: Tools вызываются через Registry
 // Rule 4: LLM вызывается через llm.Provider
-// Rule 5: Thread-safe через immutability (шаблон + execution)
+// Rule 5: Thread-safe через immutability (template) + isolation (execution)
 // Rule 7: Все ошибки возвращаются, нет panic
 // Rule 10: Godoc на всех public API
-//
-// PHASE 1 REFACTOR: ReActCycle теперь immutable template.
-// Runtime состояние вынесено в ReActExecution (execution.go).
-// Concurrent execution безопасен - каждый Execute() создаёт свой execution.
 type ReActCycle struct {
 	// Dependencies (immutable)
 	modelRegistry *models.Registry // Registry всех LLM провайдеров

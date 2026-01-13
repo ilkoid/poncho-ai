@@ -11,15 +11,41 @@ import (
 
 // ReActExecution — runtime состояние выполнения ReAct цикла.
 //
-// PHASE 3 REFACTOR: Теперь это чистый контейнер данных (data container).
-// Логика исполнения вынесена в StepExecutor (ReActExecutor).
+// # Template vs Execution
 //
-// Создаётся на каждый вызов Execute(), не разделяется между goroutines.
-// ReActCycle (template) → создаёт → ReActExecution (runtime data)
-// ReActExecution → исполняется → StepExecutor (e.g., ReActExecutor)
+// ReActExecution is the RUNTIME STATE that is created per Execute() call.
+// It is a pure data container with no execution logic (PHASE 3 REFACTOR).
 //
-// Thread-safe: Не нуждается в синхронизации так как создаётся на каждый вызов
-// и никогда не разделяется между goroutines.
+// ## Template (ReActCycle)
+//   - Immutable configuration shared across executions
+//   - Created once during initialization
+//   - Example: model registry, tool registry, system prompt
+//
+// ## Execution (this struct)
+//   - Mutable runtime state per execution
+//   - Created for each Execute() call
+//   - Example: message history, step instances, emitter, debug recorder
+//
+// # Lifecycle
+//
+// 1. Created by ReActCycle.Execute() with isolated state
+// 2. Passed to StepExecutor.Execute() for execution
+// 3. Discarded after execution (not reused)
+//
+// # Thread Safety
+//
+// ReActExecution is NOT thread-safe and does NOT need to be:
+//   - Created per execution (never shared)
+//   - Used by only one goroutine
+//   - No synchronization needed
+//
+// # Data Isolation
+//
+// Each execution gets cloned step instances to prevent state leakage:
+//   - LLMInvocationStep: Has emitter, debugRecorder, modelRegistry
+//   - ToolExecutionStep: Has debugRecorder, promptLoader
+//
+// This allows multiple concurrent Execute() calls from the same ReActCycle.
 type ReActExecution struct {
 	// Context
 	ctx      context.Context

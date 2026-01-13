@@ -12,14 +12,23 @@ import (
 
 // StepExecutor — интерфейс для исполнителей шагов в ReAct цикле.
 //
-// PHASE 3 REFACTOR: Новая абстракция для разделения данных (ReActExecution)
-// и логики исполнения (StepExecutor). Это позволяет:
-//   - Добавлять новые стратегии исполнения без изменения ReActCycle
-//   - Компоновать шаги в различные пайплайны (sequential, branching)
-//   - Тестировать исполнители изолированно
+// # StepExecutor Pattern (PHASE 3 REFACTOR)
 //
-// ReActExecutor — базовая реализация с классическим ReAct циклом.
-// Future: ReflectionExecutor, ValidationExecutor, ParallelExecutor и т.д.
+// StepExecutor separates execution logic from data (ReActExecution).
+// This enables:
+//   - Adding new execution strategies without modifying ReActCycle
+//   - Composing steps into different pipelines (sequential, branching)
+//   - Testing executors in isolation
+//
+// # Implementations
+//
+// ReActExecutor: Classic ReAct loop (LLM → Tools → Repeat)
+// Future: ReflectionExecutor, ValidationExecutor, ParallelExecutor, etc.
+//
+// # Thread Safety
+//
+// StepExecutor implementations receive isolated ReActExecution instances,
+// so concurrent execution is inherently safe.
 type StepExecutor interface {
 	// Execute выполняет пайплайн шагов и возвращает результат.
 	//
@@ -30,18 +39,38 @@ type StepExecutor interface {
 
 // ReActExecutor — базовая реализация StepExecutor для классического ReAct цикла.
 //
-// PHASE 3 REFACTOR: Выносит логику итераций из ReActExecution.Run()
-// в отдельный компонент. Теперь:
-//   - ReActExecution = чистый контейнер данных (runtime state)
-//   - ReActExecutor = логика исполнения (iteration loop)
+// # Architecture (PHASE 3-4 REFACTOR)
 //
-// Итерация:
-//   1. LLMInvocationStep — вызов LLM
-//   2. Если есть tool calls → ToolExecutionStep
-//   3. Если нет tool calls или финальный сигнал → break
+// Separation of concerns:
+//   - ReActExecution = pure data container (runtime state)
+//   - ReActExecutor = execution logic (iteration loop)
+//   - Observers = cross-cutting concerns (debug, events)
 //
-// Thread-safe: Использует ReActExecution который создаётся на каждый вызов,
-// поэтому concurrent execution безопасен.
+// # Iteration Loop
+//
+// For each iteration (up to MaxIterations):
+//   1. Notify observers: OnIterationStart
+//   2. Execute LLMInvocationStep
+//   3. Send events via IterationObserver
+//   4. Check ExecutionSignal
+//      - SignalFinalAnswer/SignalNeedUserInput → BREAK
+//      - SignalNone → continue if no tool calls
+//   5. If tool calls: Execute ToolExecutionStep
+//   6. Send events via IterationObserver
+//   7. Notify observers: OnIterationEnd
+//
+// # Observer Notifications (PHASE 4)
+//
+// Lifecycle:
+//   - OnStart: Before execution begins
+//   - OnIterationStart: Before each iteration
+//   - OnIterationEnd: After each iteration
+//   - OnFinish: After execution completes (success or error)
+//
+// # Thread Safety
+//
+// Thread-safe when used with isolated ReActExecution instances.
+// Each Execute() call uses its own execution state, enabling concurrent execution.
 type ReActExecutor struct {
 	// observers — список наблюдателей за выполнением (Phase 4)
 	observers []ExecutionObserver
@@ -50,10 +79,38 @@ type ReActExecutor struct {
 	iterationObserver *EmitterIterationObserver
 }
 
-// ExecutionObserver — интерфейс для наблюдения за выполнением (Phase 4).
+// ExecutionObserver — интерфейс для наблюдения за выполнением (PHASE 4).
 //
-// PHASE 3 REFACTOR: Добавляем заглушку для подготовки к Phase 4.
-// В Phase 4 это будет использоваться для изоляции debug и events.
+// # Observer Pattern (PHASE 4 REFACTOR)
+//
+// ExecutionObserver isolates cross-cutting concerns from core orchestration.
+// Instead of calling Emit() or debug methods directly, executor notifies observers
+// of lifecycle events and delegates concerns to observer implementations.
+//
+// # Implementations
+//
+// ChainDebugRecorder: Records debug logs for each execution
+//   - OnStart: Starts debug recording
+//   - OnIterationStart: Starts new iteration in debug log
+//   - OnIterationEnd: Ends iteration in debug log
+//   - OnFinish: Finalizes debug log and writes to file
+//
+// EmitterObserver: Sends final events to UI
+//   - OnStart: (no action)
+//   - OnIterationStart: (no action)
+//   - OnIterationEnd: (no action)
+//   - OnFinish: Sends EventDone or EventError
+//
+// # Thread Safety
+//
+// Observer implementations must be thread-safe as they may be called
+// from concurrent Execute() executions (each with isolated ReActExecution).
+//
+// # Lifecycle Contract
+//
+// 1. OnStart is called once at the beginning of execution
+// 2. OnIterationStart/OnIterationEnd are called for each iteration
+// 3. OnFinish is called once at the end (success or error)
 type ExecutionObserver interface {
 	OnStart(ctx context.Context, exec *ReActExecution)
 	OnIterationStart(iteration int)
