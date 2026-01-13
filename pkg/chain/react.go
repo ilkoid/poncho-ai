@@ -99,6 +99,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
@@ -195,7 +196,9 @@ func NewReActCycle(config ReActCycleConfig) *ReActCycle {
 	}
 
 	cycle.toolStep = &ToolExecutionStep{
-		promptLoader: cycle, // ReActCycle реализует PromptLoader
+		promptLoader:        cycle,     // ReActCycle реализует PromptLoader
+		defaultToolTimeout:  30 * time.Second, // Дефолтный timeout для инструментов
+		toolTimeouts:        make(map[string]time.Duration),
 	}
 
 	return cycle

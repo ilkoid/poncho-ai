@@ -98,9 +98,11 @@ func NewReActExecution(
 
 	// Клонируем Tool шаг для этого выполнения
 	toolStep := &ToolExecutionStep{
-		registry:       toolStepTemplate.registry,
-		promptLoader:   toolStepTemplate.promptLoader,
-		debugRecorder:  debugRecorder,
+		registry:          toolStepTemplate.registry,
+		promptLoader:      toolStepTemplate.promptLoader,
+		debugRecorder:     debugRecorder,
+		defaultToolTimeout: toolStepTemplate.defaultToolTimeout,
+		toolTimeouts:      toolStepTemplate.toolTimeouts,
 	}
 
 	return &ReActExecution{

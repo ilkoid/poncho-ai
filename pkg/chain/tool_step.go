@@ -36,6 +36,13 @@ type ToolExecutionStep struct {
 
 	// toolResults — результаты выполненных инструментов (для post-processing)
 	toolResults []ToolResult
+
+	// defaultToolTimeout — защитный timeout для выполнения инструментов
+	// Если tool не завершится за это время, он будет отменён
+	defaultToolTimeout time.Duration
+
+	// toolTimeouts — переопределение timeout для конкретных инструментов
+	toolTimeouts map[string]time.Duration
 }
 
 // ToolResult — результат выполнения одного инструмента.
@@ -136,6 +143,11 @@ func (s *ToolExecutionStep) Execute(ctx context.Context, chainCtx *ChainContext)
 //
 // Rule 1: "Raw In, String Out" - получаем JSON строку, возвращаем строку.
 // Rule 7: Возвращает ошибку вместо panic.
+//
+// Tool Timeout Protection:
+//   - Использует defaultToolTimeout для предотвращения зависания
+//   - Конкретный timeout можно переопределить через SetToolTimeout()
+//   - При timeout возвращает ошибку без блокировки всего агента
 func (s *ToolExecutionStep) executeToolCall(ctx context.Context, tc llm.ToolCall, chainCtx *ChainContext) (ToolResult, error) {
 	start := time.Now()
 	result := ToolResult{
@@ -155,33 +167,94 @@ func (s *ToolExecutionStep) executeToolCall(ctx context.Context, tc llm.ToolCall
 		return result, err
 	}
 
-	// 3. Выполняем tool (Rule 1: "Raw In, String Out")
-	execResult, execErr := tool.Execute(ctx, cleanArgs)
-	duration := time.Since(start).Milliseconds()
+	// 3. Определяем timeout для этого инструмента
+	timeout := s.defaultToolTimeout
+	if customTimeout, exists := s.toolTimeouts[tc.Name]; exists {
+		timeout = customTimeout
+	}
 
-	// 4. Формируем результат
-	if execErr != nil {
+	// 4. Создаём контекст с timeout для защиты от зависания
+	toolCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// 5. Выполняем tool в отдельной goroutine для возможности отмены
+	type execResult struct {
+		output string
+		err    error
+	}
+	resultChan := make(chan execResult, 1)
+
+	go func() {
+		execOutput, execErr := tool.Execute(toolCtx, cleanArgs)
+		resultChan <- execResult{execOutput, execErr}
+	}()
+
+	// 6. Ждём результат или timeout
+	select {
+	case <-toolCtx.Done():
+		// Timeout или отмена контекста
+		duration := time.Since(start).Milliseconds()
 		result.Success = false
-		result.Error = execErr
-		result.Result = fmt.Sprintf("Error: %v", execErr)
-	} else {
-		result.Success = true
-		result.Result = execResult
-	}
-	result.Duration = duration
+		result.Duration = duration
 
-	// 5. Записываем в debug
-	if s.debugRecorder != nil && s.debugRecorder.Enabled() {
-		s.debugRecorder.RecordToolExecution(
-			tc.Name,
-			cleanArgs,
-			result.Result,
-			duration,
-			result.Success,
+		if toolCtx.Err() == context.DeadlineExceeded {
+			result.Error = fmt.Errorf("tool execution timeout after %v", timeout)
+			result.Result = fmt.Sprintf(
+				"Tool %q exceeded timeout of %v. "+
+					"Either the tool is stuck or the API response is slow.",
+				tc.Name, timeout,
+			)
+		} else {
+			result.Error = fmt.Errorf("tool execution cancelled: %w", toolCtx.Err())
+			result.Result = "Tool execution was cancelled"
+		}
+
+		// Записываем в debug
+		if s.debugRecorder != nil && s.debugRecorder.Enabled() {
+			s.debugRecorder.RecordToolExecution(
+				tc.Name,
+				cleanArgs,
+				result.Result,
+				duration,
+				result.Success,
+			)
+		}
+
+		utils.Warn("Tool execution timeout",
+			"tool", tc.Name,
+			"timeout", timeout,
+			"duration_ms", duration,
 		)
-	}
 
-	return result, nil
+		return result, result.Error
+
+	case res := <-resultChan:
+		// Tool завершился успешно (или с ошибкой, но в пределах timeout)
+		duration := time.Since(start).Milliseconds()
+
+		if res.err != nil {
+			result.Success = false
+			result.Error = res.err
+			result.Result = fmt.Sprintf("Error: %v", res.err)
+		} else {
+			result.Success = true
+			result.Result = res.output
+		}
+		result.Duration = duration
+
+		// Записываем в debug
+		if s.debugRecorder != nil && s.debugRecorder.Enabled() {
+			s.debugRecorder.RecordToolExecution(
+				tc.Name,
+				cleanArgs,
+				result.Result,
+				duration,
+				result.Success,
+			)
+		}
+
+		return result, nil
+	}
 }
 
 // loadAndActivatePostPrompt загружает и активирует post-prompt для инструмента.
@@ -219,4 +292,32 @@ func (s *ToolExecutionStep) GetToolResults() []ToolResult {
 // GetDuration возвращает длительность выполнения step.
 func (s *ToolExecutionStep) GetDuration() time.Duration {
 	return time.Since(s.startTime)
+}
+
+// SetDefaultToolTimeout устанавливает защитный timeout для всех инструментов.
+//
+// Если tool не завершится за это время, он будет отменён.
+// Дефолтное значение: 30 секунд.
+//
+// Thread-safe: вызывать до начала Execute().
+func (s *ToolExecutionStep) SetDefaultToolTimeout(timeout time.Duration) {
+	s.defaultToolTimeout = timeout
+}
+
+// SetToolTimeout устанавливает индивидуальный timeout для конкретного инструмента.
+//
+// Переопределяет defaultToolTimeout для указанного инструмента.
+// Полезно для медленных API (например, batch операции).
+//
+// Thread-safe: вызывать до начала Execute().
+func (s *ToolExecutionStep) SetToolTimeout(toolName string, timeout time.Duration) {
+	if s.toolTimeouts == nil {
+		s.toolTimeouts = make(map[string]time.Duration)
+	}
+	s.toolTimeouts[toolName] = timeout
+}
+
+// GetDefaultToolTimeout возвращает текущий default timeout.
+func (s *ToolExecutionStep) GetDefaultToolTimeout() time.Duration {
+	return s.defaultToolTimeout
 }

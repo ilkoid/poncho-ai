@@ -33,6 +33,11 @@ type ReActCycleConfig struct {
 	// По умолчанию: 5 минут.
 	Timeout time.Duration
 
+	// DefaultToolTimeout — защитный timeout для выполнения инструментов.
+	// Если tool не завершится за это время, он будет отменён.
+	// По умолчанию: 30 секунд.
+	DefaultToolTimeout time.Duration
+
 	// DefaultEmitter — emitter по умолчанию для созданных executions.
 	// Может быть переопределён через SetEmitter.
 	// Thread-safe: Emitter не должен модифицироваться после установки.
@@ -53,9 +58,10 @@ type ReActCycleConfig struct {
 // Rule 10: Godoc на public API.
 func NewReActCycleConfig() ReActCycleConfig {
 	return ReActCycleConfig{
-		SystemPrompt:  DefaultSystemPrompt,
-		MaxIterations: 10,
-		Timeout:       5 * time.Minute,
+		SystemPrompt:       DefaultSystemPrompt,
+		MaxIterations:      10,
+		Timeout:            5 * time.Minute,
+		DefaultToolTimeout: 30 * time.Second, // Защита от зависания инструментов
 	}
 }
 

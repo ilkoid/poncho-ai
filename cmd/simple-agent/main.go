@@ -13,9 +13,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/agent"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 func main() {
@@ -31,9 +31,14 @@ func main() {
 	fmt.Println("================================")
 	fmt.Printf("Query: %s\n\n", query)
 
-	// 2. Создаём агент (1 строка!)
+	// 2. Graceful Shutdown: обрабатываем Ctrl+C для корректного завершения
+	// Rule 11: создаём родительский контекст с поддержкой отмены
+	ctx, shutdown := utils.SetupGracefulShutdownWithContext()
+	defer shutdown()
+
+	// 3. Создаём агент с контекстом (1 строка!)
 	fmt.Println("⏳ Initializing agent...")
-	client, err := agent.New(agent.Config{
+	client, err := agent.New(ctx, agent.Config{
 		ConfigPath: "config.yaml",
 	})
 	if err != nil {
@@ -41,26 +46,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 3. Выполняем запрос (1 строка!)
+	// 4. Выполняем запрос с контекстом (1 строка!)
 	fmt.Println("🚀 Running query...")
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	startTime := time.Now()
 	result, err := client.Run(ctx, query)
 	if err != nil {
+		// Проверяем что это была отмена пользователем
+		if ctx.Err() == context.Canceled {
+			fmt.Println("\n⚠️  Query cancelled by user")
+			os.Exit(130) // Стандартный код выхода для SIGINT
+		}
 		fmt.Fprintf(os.Stderr, "Error running query: %v\n", err)
 		os.Exit(1)
 	}
 
-	duration := time.Since(startTime)
-
-	// 4. Выводим результат
+	// 5. Выводим результат
 	fmt.Println("\n✅ Result:")
 	fmt.Println("-----------")
 	fmt.Println(result)
 	fmt.Println("-----------")
-	fmt.Printf("\n⏱️  Duration: %v\n", duration)
 
 	// Бонус: покажем историю
 	history := client.GetHistory()
