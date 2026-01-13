@@ -37,6 +37,9 @@ type ReActExecution struct {
 
 	// Configuration reference (не создаём копию, читаем только)
 	config *ReActCycleConfig
+
+	// PHASE 2 REFACTOR: Трекаем финальный сигнал от выполнения
+	finalSignal ExecutionSignal
 }
 
 // NewReActExecution создаёт execution для одного вызова Execute().
@@ -90,6 +93,7 @@ func NewReActExecution(
 // Основная логика из ReActCycle.Execute(), но БЕЗ sync.Mutex
 // так как execution не шарится между goroutines.
 //
+// PHASE 2 REFACTOR: Обрабатывает StepResult с типизированными сигналами.
 // Использует локальные экземпляры llmStep, toolStep, emitter.
 func (e *ReActExecution) Run() (ChainOutput, error) {
 	// 1. Добавляем user message в историю
@@ -114,13 +118,17 @@ func (e *ReActExecution) Run() (ChainOutput, error) {
 		}
 
 		// 3a. LLM Invocation
-		action, err := e.llmStep.Execute(e.ctx, e.chainCtx)
-		if err != nil {
-			return e.finalizeWithError(err)
-		}
-		if action == ActionError {
+		// PHASE 2 REFACTOR: Получаем StepResult вместо (NextAction, error)
+		llmResult := e.llmStep.Execute(e.ctx, e.chainCtx)
+
+		// Обрабатываем результат
+		if llmResult.Action == ActionError || llmResult.Error != nil {
 			e.endDebugIteration()
-			return e.finalizeWithError(fmt.Errorf("LLM step failed"))
+			err := llmResult.Error
+			if err == nil {
+				err = fmt.Errorf("LLM step failed")
+			}
+			return e.finalizeWithError(err)
 		}
 
 		// Отправляем EventThinking с контентом LLM (рассуждения)
@@ -155,22 +163,39 @@ func (e *ReActExecution) Run() (ChainOutput, error) {
 			})
 		}
 
-		// 3b. Проверяем есть ли tool calls
-		if len(lastMsg.ToolCalls) == 0 {
-			// Финальный ответ - нет tool calls
+		// 3b. Проверяем сигнал от LLM шага
+		// PHASE 2 REFACTOR: Используем типизированные сигналы
+		if llmResult.Signal == SignalFinalAnswer || llmResult.Signal == SignalNeedUserInput {
+			// Финальный ответ или запрос пользовательского ввода
+			// Сохраняем сигнал для возвращения в ChainOutput
+			e.finalSignal = llmResult.Signal
 			e.endDebugIteration()
 			break
 		}
 
-		// 3c. Tool Execution (внутри той же итерации!)
-		action, err = e.toolStep.Execute(e.ctx, e.chainCtx)
-		if err != nil {
+		// 3c. Проверяем есть ли tool calls (обратная совместимость)
+		if len(lastMsg.ToolCalls) == 0 {
+			// Финальный ответ - нет tool calls
+			// PHASE 2 REFACTOR: Устанавливаем финальный сигнал
+			if e.finalSignal == SignalNone {
+				e.finalSignal = SignalFinalAnswer
+			}
 			e.endDebugIteration()
-			return e.finalizeWithError(err)
+			break
 		}
-		if action == ActionError {
+
+		// 3d. Tool Execution (внутри той же итерации!)
+		// PHASE 2 REFACTOR: Получаем StepResult вместо (NextAction, error)
+		toolResult := e.toolStep.Execute(e.ctx, e.chainCtx)
+
+		// Обрабатываем результат
+		if toolResult.Action == ActionError || toolResult.Error != nil {
 			e.endDebugIteration()
-			return e.finalizeWithError(fmt.Errorf("tool execution failed"))
+			err := toolResult.Error
+			if err == nil {
+				err = fmt.Errorf("tool execution failed")
+			}
+			return e.finalizeWithError(err)
 		}
 
 		// Отправляем EventToolResult для каждого выполненного tool
@@ -222,12 +247,14 @@ func (e *ReActExecution) Run() (ChainOutput, error) {
 	}
 
 	// 8. Возвращаем результат
+	// PHASE 2 REFACTOR: Включаем финальный сигнал в ChainOutput
 	return ChainOutput{
 		Result:     result,
 		Iterations: iterations + 1,
 		Duration:   time.Since(e.startTime),
 		FinalState: e.chainCtx.GetMessages(),
 		DebugPath:  debugPath,
+		Signal:     e.finalSignal,
 	}, nil
 }
 

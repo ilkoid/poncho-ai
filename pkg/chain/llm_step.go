@@ -52,11 +52,14 @@ func (s *LLMInvocationStep) Name() string {
 // Execute выполняет LLM вызов.
 //
 // Возвращает:
-//   - ActionContinue — если LLM вернул ответ (с tool calls или без)
-//   - ActionError — если произошла ошибка
+//   - StepResult{Action: ActionContinue, Signal: SignalNone} — если LLM вернул ответ с tool calls
+//   - StepResult{Action: ActionBreak, Signal: SignalFinalAnswer} — если финальный ответ (без tool calls)
+//   - StepResult с ошибкой — если произошла ошибка
+//
+// PHASE 2 REFACTOR: Теперь возвращает StepResult с типизированным сигналом.
 //
 // Rule 7: Возвращает ошибку вместо panic.
-func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
+func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext) StepResult {
 	s.startTime = time.Now()
 
 	// 1. Определяем какую модель использовать
@@ -65,7 +68,7 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 	// 2. Получаем провайдер и конфигурацию из реестра
 	provider, modelDef, actualModel, err := s.modelRegistry.GetWithFallback(modelName, s.defaultModel)
 	if err != nil {
-		return ActionError, fmt.Errorf("failed to get model provider: %w", err)
+		return StepResult{}.WithError(fmt.Errorf("failed to get model provider: %w", err))
 	}
 
 	// 3. Определяем параметры LLM (defaults + post-prompt overrides)
@@ -124,7 +127,7 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 
 	if err != nil {
 		// Rule 7: возвращаем ошибку вместо panic
-		return ActionError, fmt.Errorf("LLM generation failed: %w", err)
+		return StepResult{}.WithError(fmt.Errorf("LLM generation failed: %w", err))
 	}
 
 	// 9. Записываем LLM response в debug
@@ -142,7 +145,7 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		Content:   response.Content,
 		ToolCalls: response.ToolCalls,
 	}); err != nil {
-		return ActionError, fmt.Errorf("failed to append assistant message: %w", err)
+		return StepResult{}.WithError(fmt.Errorf("failed to append assistant message: %w", err))
 	}
 
 	// 11. Сохраняем фактические параметры модели в контексте
@@ -150,8 +153,29 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 	chainCtx.SetActualTemperature(opts.Temperature)
 	chainCtx.SetActualMaxTokens(opts.MaxTokens)
 
-	// 12. Продолжаем выполнение (ReAct цикл определит что делать дальше)
-	return ActionContinue, nil
+	// 12. Определяем сигнал на основе ответа
+	// PHASE 2 REFACTOR: Используем типизированные сигналы вместо string-маркеров
+	if len(response.ToolCalls) == 0 {
+		// Финальный ответ - нет tool calls
+		// Проверяем на маркер пользовательского ввода (для обратной совместимости)
+		// TODO: В будущем это должно определяться через structured output
+		if response.Content == UserChoiceRequest {
+			return StepResult{
+				Action: ActionBreak,
+				Signal: SignalNeedUserInput,
+			}
+		}
+		return StepResult{
+			Action: ActionBreak,
+			Signal: SignalFinalAnswer,
+		}
+	}
+
+	// Есть tool calls - продолжаем цикл
+	return StepResult{
+		Action: ActionContinue,
+		Signal: SignalNone,
+	}
 }
 
 // determineModelName определяет какую модель использовать для текущей итерации.
@@ -241,7 +265,7 @@ func (s *LLMInvocationStep) invokeStreamingLLM(
 			if s.emitter != nil && chunk.Error != nil {
 				s.emitter.Emit(ctx, events.Event{
 					Type:      events.EventError,
-					Data:      chunk.Error,
+					Data:      events.ErrorData{Err: chunk.Error},
 					Timestamp: time.Now(),
 				})
 			}

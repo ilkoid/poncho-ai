@@ -68,24 +68,29 @@ func (s *ToolExecutionStep) Name() string {
 // Execute выполняет все инструменты из последнего LLM ответа.
 //
 // Возвращает:
-//   - ActionContinue — если инструменты выполнены успешно
-//   - ActionError — если произошла критическая ошибка
+//   - StepResult{Action: ActionContinue, Signal: SignalNone} — если инструменты выполнены успешно
+//   - StepResult с ошибкой — если произошла критическая ошибка
+//
+// PHASE 2 REFACTOR: Теперь возвращает StepResult.
 //
 // Rule 7: Возвращает ошибку вместо panic (но non-critical ошибки инструментов
 //    возвращаются как строки в results).
-func (s *ToolExecutionStep) Execute(ctx context.Context, chainCtx *ChainContext) (NextAction, error) {
+func (s *ToolExecutionStep) Execute(ctx context.Context, chainCtx *ChainContext) StepResult {
 	s.startTime = time.Now()
 	s.toolResults = make([]ToolResult, 0)
 
 	// 1. Получаем последнее сообщение (должен быть assistant с tool calls)
 	lastMsg := chainCtx.GetLastMessage()
 	if lastMsg == nil || lastMsg.Role != llm.RoleAssistant {
-		return ActionError, fmt.Errorf("no assistant message found")
+		return StepResult{}.WithError(fmt.Errorf("no assistant message found"))
 	}
 
 	if len(lastMsg.ToolCalls) == 0 {
 		// Нет tool calls - это нормально для финальной итерации
-		return ActionContinue, nil
+		return StepResult{
+			Action: ActionContinue,
+			Signal: SignalNone,
+		}
 	}
 
 	// 2. Выполняем каждый tool call
@@ -95,7 +100,7 @@ func (s *ToolExecutionStep) Execute(ctx context.Context, chainCtx *ChainContext)
 
 		if err != nil {
 			// Критическая ошибка выполнения
-			return ActionError, fmt.Errorf("tool execution failed: %w", err)
+			return StepResult{}.WithError(fmt.Errorf("tool execution failed: %w", err))
 		}
 
 		// 3. Добавляем tool result message в историю (thread-safe)
@@ -105,7 +110,7 @@ func (s *ToolExecutionStep) Execute(ctx context.Context, chainCtx *ChainContext)
 			ToolCallID: tc.ID,
 			Content:    result.Result,
 		}); err != nil {
-			return ActionError, fmt.Errorf("failed to append tool result message: %w", err)
+			return StepResult{}.WithError(fmt.Errorf("failed to append tool result message: %w", err))
 		}
 	}
 
@@ -121,7 +126,10 @@ func (s *ToolExecutionStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		}
 	}
 
-	return ActionContinue, nil
+	return StepResult{
+		Action: ActionContinue,
+		Signal: SignalNone,
+	}
 }
 
 // executeToolCall выполняет один tool call.

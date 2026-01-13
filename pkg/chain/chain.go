@@ -62,6 +62,14 @@ type ChainOutput struct {
 
 	// DebugPath — путь к сохраненному debug логу (если включен)
 	DebugPath string
+
+	// Signal — типизированный сигнал от последнего шага
+	// PHASE 2 REFACTOR: Указывает на особые условия завершения
+	//   - SignalNone: нормальное завершение
+	//   - SignalFinalAnswer: финальный ответ получен
+	//   - SignalNeedUserInput: требуется пользовательский ввод
+	//   - SignalError: ошибка выполнения
+	Signal ExecutionSignal
 }
 
 // ChainConfig — конфигурация цепочки из YAML.

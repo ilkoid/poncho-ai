@@ -249,6 +249,7 @@ var _ Chain = (*ReActCycle)(nil)
 // Удобно для простых случаев когда не нужен полный контроль ChainInput.
 //
 // PHASE 1 REFACTOR: Thread-safe через immutability - без mutex.
+// PHASE 2 REFACTOR: Использует типизированный Signal вместо string-маркера.
 func (c *ReActCycle) Run(ctx context.Context, query string) (string, error) {
 	// Проверяем зависимости (read-only)
 	if err := c.validateDependencies(); err != nil {
@@ -268,8 +269,9 @@ func (c *ReActCycle) Run(ctx context.Context, query string) (string, error) {
 		return "", err
 	}
 
-	// Проверяем на UserChoiceRequest
-	if output.Result == UserChoiceRequest {
+	// PHASE 2 REFACTOR: Проверяем типизированный сигнал вместо string-маркера
+	// SignalNeedUserInput указывает что нужен пользовательский ввод
+	if output.Signal == SignalNeedUserInput {
 		return UserChoiceRequest, nil
 	}
 
