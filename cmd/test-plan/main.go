@@ -47,8 +47,12 @@ func run() error {
 	}
 	fmt.Printf("✅ Config loaded: %s\n\n", cfgPath)
 
-	// 2. Создаём агент (как в TUI)
-	client, err := agent.New(agent.Config{ConfigPath: cfgPath})
+	// 2. Rule 11: Создаём родительский контекст для инициализации
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
+	// 3. Создаём агент (как в TUI)
+	client, err := agent.New(initCtx, agent.Config{ConfigPath: cfgPath})
 	if err != nil {
 		utils.Error("Agent creation failed", "error", err)
 		return err
@@ -56,7 +60,7 @@ func run() error {
 	fmt.Println("✅ Agent client created")
 	fmt.Println()
 
-	// 3. Проверяем что tools зарегистрированы
+	// 4. Проверяем что tools зарегистрированы
 	toolsRegistry := client.GetToolsRegistry()
 	allTools := toolsRegistry.GetDefinitions()
 	fmt.Printf("📋 Tools registered (%d):\n", len(allTools))
@@ -67,7 +71,7 @@ func run() error {
 	}
 	fmt.Println()
 
-	// 4. Тестируем plan_set_tasks через agent
+	// 5. Тестируем plan_set_tasks через agent
 	testQuery := "Составь план из 3 задач для анализа товара: проверь категорию, загрузи эскизы, сгенерируй описание"
 	fmt.Printf("🔍 Testing query: \"%s\"\n\n", testQuery)
 

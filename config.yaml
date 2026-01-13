@@ -297,6 +297,60 @@ tools:
     enabled: false
     description: "Анализирует изображения из текущего артикула с помощью Vision LLM. Обрабатывает картинки параллельно в горутинах. Опционально фильтрует по тегу (sketch, plm_data, marketing). Используй это после classify_and_download_s3_files для анализа эскизов."
 
+  # === WB Analytics Tools ===
+  get_wb_product_funnel:
+    enabled: true
+    description: "Воронка продаж по товарам за период (просмотры→корзина→заказ, конверсии)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180  # 3 req/min (лимит WB Analytics API)
+    burst: 3
+
+  get_wb_product_funnel_history:
+    enabled: true
+    description: "История воронки по дням (до 7 дней бесплатно, до 365 с Джем)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180
+    burst: 3
+
+  get_wb_search_positions:
+    enabled: true
+    description: "Позиции товаров в поиске и видимость (средняя позиция, топ-100)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180
+    burst: 3
+
+  get_wb_top_search_queries:
+    enabled: true
+    description: "Топ поисковых запросов по товару (до 100 фраз, сортировка по заказам)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180
+    burst: 3
+
+  get_wb_top_organic_positions:
+    enabled: true
+    description: "Топ-10 позиций в органическом поиске по запросам (агрегирует данные из get_wb_top_search_queries)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180
+    burst: 3
+
+  get_wb_campaign_stats:
+    enabled: true
+    description: "Статистика рекламных кампаний (показы, клики, CTR, CPC, затраты, заказы)"
+    endpoint: "https://advert-api.wildberries.ru"
+    rate_limit: 60   # 1 req/min (строгий лимит Promotion API)
+    burst: 1
+
+  get_wb_keyword_stats:
+    enabled: true
+    description: "Статистика по ключевым фразам кампании (за 7 дней, максимум)"
+    endpoint: "https://advert-api.wildberries.ru"
+    rate_limit: 240  # 4 req/sec (для keyword stats)
+    burst: 4
+
+  get_wb_attribution_summary:
+    enabled: true
+    description: "Атрибуция заказов: органика vs реклама по товару (агрегирует данные из воронки и кампаний)"
+
 # Chain Configuration (Chain Pattern)
 # Rule 2: Конфигурация цепочек через YAML
 chains:

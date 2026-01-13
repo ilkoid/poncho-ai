@@ -55,8 +55,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case events.EventMessage:
 			// Промежуточное сообщение от агента
-			if content, ok := event.Data.(string); ok {
-				m.appendLog(systemMsgStyle("AI: ") + content)
+			if msgData, ok := event.Data.(events.MessageData); ok {
+				m.appendLog(systemMsgStyle("AI: ") + msgData.Content)
 			}
 			return m, tui.WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
 				return tui.EventMsg(e)
@@ -64,8 +64,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case events.EventError:
 			// Ошибка агента
-			if err, ok := event.Data.(error); ok {
-				m.appendLog(errorMsgStyle("ERROR: ") + err.Error())
+			if errData, ok := event.Data.(events.ErrorData); ok {
+				m.appendLog(errorMsgStyle("ERROR: ") + errData.Err.Error())
 			}
 			m.mu.Lock()
 			m.isProcessing = false
@@ -75,8 +75,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case events.EventDone:
 			// Агент завершил работу
-			if result, ok := event.Data.(string); ok {
-				m.appendLog(systemMsgStyle("AI: ") + result)
+			if msgData, ok := event.Data.(events.MessageData); ok {
+				m.appendLog(systemMsgStyle("AI: ") + msgData.Content)
 			}
 			m.mu.Lock()
 			m.isProcessing = false

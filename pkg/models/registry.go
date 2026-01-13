@@ -14,8 +14,8 @@ import (
 	"sync"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
-	"github.com/ilkoid/poncho-ai/pkg/factory"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
+	"github.com/ilkoid/poncho-ai/pkg/llm/openai"
 )
 
 // Registry — потокобезопасное хранилище LLM провайдеров.
@@ -115,6 +115,19 @@ func (r *Registry) ListNames() []string {
 	return names
 }
 
+// CreateProvider создаёт LLM провайдер на основе конфигурации модели.
+//
+// Перенесено из pkg/factory для логической связанности (models создаёт провайдеры).
+// Поддерживает провайдеры: zai, openai, deepseek.
+func CreateProvider(modelDef config.ModelDef) (llm.Provider, error) {
+	switch modelDef.Provider {
+	case "zai", "openai", "deepseek":
+		return openai.NewClient(modelDef), nil
+	default:
+		return nil, fmt.Errorf("unknown provider type: %s", modelDef.Provider)
+	}
+}
+
 // NewRegistryFromConfig создаёт и заполняет реестр из конфигурации.
 //
 // Итерируется через cfg.Models.Definitions и создаёт провайдеры для каждой модели.
@@ -127,7 +140,7 @@ func NewRegistryFromConfig(cfg *config.AppConfig) (*Registry, error) {
 
 	// Регистрируем все определённые модели
 	for name, modelDef := range cfg.Models.Definitions {
-		provider, err := factory.NewLLMProvider(modelDef)
+		provider, err := CreateProvider(modelDef)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create provider for model '%s': %w", name, err)
 		}

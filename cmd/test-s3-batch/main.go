@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/agent"
 	_ "github.com/ilkoid/poncho-ai/pkg/s3storage" // Imported for type assertion in -compare mode
@@ -39,8 +40,12 @@ func main() {
 	fmt.Printf("   Article ID: %s\n", articleID)
 	fmt.Printf("   Config: %s\n\n", cfgPath)
 
+	// Rule 11: Создаём родительский контекст для инициализации
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
 	// Создаём agent с 2-line API
-	client, err := agent.New(agent.Config{
+	client, err := agent.New(initCtx, agent.Config{
 		ConfigPath: cfgPath,
 	})
 	if err != nil {

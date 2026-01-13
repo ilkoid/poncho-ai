@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/agent"
 	appcomponents "github.com/ilkoid/poncho-ai/pkg/app"
@@ -40,15 +41,19 @@ func run() error {
 	}
 	fmt.Println()
 
-	// 3. Создаём агент
-	client, err := agent.New(agent.Config{ConfigPath: cfgPath})
+	// 3. Rule 11: Создаём родительский контекст для инициализации
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
+	// 4. Создаём агент
+	client, err := agent.New(initCtx, agent.Config{ConfigPath: cfgPath})
 	if err != nil {
 		return err
 	}
 	fmt.Println("✅ Agent created")
 	fmt.Println()
 
-	// 4. Тестируем ping_wb_api (должен активировать api_health_report.yaml)
+	// 5. Тестируем ping_wb_api (должен активировать api_health_report.yaml)
 	//    В post-prompt указано: temperature: 0.2, max_tokens: 1500
 	fmt.Println("🧪 TEST: Calling ping_wb_api (should use api_health_report.yaml)")
 	fmt.Println("   Expected: temperature=0.2, max_tokens=1500")
@@ -69,7 +74,7 @@ func run() error {
 	fmt.Println("═════════════════════════════════════════════════════════════")
 	fmt.Println()
 
-	// 5. Проверяем debug лог
+	// 7. Проверяем debug лог
 	fmt.Println("🔍 CHECKING DEBUG LOG FOR PARAMETERS...")
 	fmt.Println()
 	fmt.Println("Find latest debug log and check:")

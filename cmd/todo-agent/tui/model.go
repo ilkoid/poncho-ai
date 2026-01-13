@@ -340,15 +340,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case events.EventMessage:
-			if data, ok := msg.Event.Data.(string); ok {
-				utils.Debug("TUI: EventMessage", "content_len", len(data))
-				m.output = append(m.output, renderAgentMsg(data))
+			if msgData, ok := msg.Event.Data.(events.MessageData); ok {
+				utils.Debug("TUI: EventMessage", "content_len", len(msgData.Content))
+				m.output = append(m.output, renderAgentMsg(msgData.Content))
 			}
 
 		case events.EventError:
-			if data, ok := msg.Event.Data.(error); ok {
-				utils.Debug("TUI: EventError", "error", fmt.Sprintf("%v", data))
-				m.output = append(m.output, renderError(fmt.Sprintf("Ошибка: %v", data)))
+			if errData, ok := msg.Event.Data.(events.ErrorData); ok {
+				utils.Debug("TUI: EventError", "error", fmt.Sprintf("%v", errData.Err))
+				m.output = append(m.output, renderError(fmt.Sprintf("Ошибка: %v", errData.Err)))
 			}
 
 		case events.EventDone:
@@ -479,13 +479,13 @@ func (m *Model) handleAgentEvent(event events.Event) {
 		}
 
 	case events.EventMessage:
-		if data, ok := event.Data.(string); ok {
-			m.appendOutput(renderAgentMsg(data))
+		if msgData, ok := event.Data.(events.MessageData); ok {
+			m.appendOutput(renderAgentMsg(msgData.Content))
 		}
 
 	case events.EventError:
-		if data, ok := event.Data.(error); ok {
-			m.appendOutput(renderError(fmt.Sprintf("Ошибка: %v", data)))
+		if errData, ok := event.Data.(events.ErrorData); ok {
+			m.appendOutput(renderError(fmt.Sprintf("Ошибка: %v", errData.Err)))
 		}
 
 	case events.EventDone:

@@ -56,12 +56,12 @@ func NewClient(modelDef config.ModelDef) *Client {
 		cfg.BaseURL = baseURL
 	}
 
-	client := openaisdk.NewClientWithConfig(cfg)
-
-	// Если baseURL не задан, используем дефолтный OpenAI
+	// Rule 12: Нет hardcoded значений - base_url обязателен в конфиге
 	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
+		return nil // Возвращаем nil, так как без baseURL клиент не работает
 	}
+
+	client := openaisdk.NewClientWithConfig(cfg)
 
 	// Заполняем baseConfig из ModelDef для использования как дефолты
 	baseConfig := llm.GenerateOptions{

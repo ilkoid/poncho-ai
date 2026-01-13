@@ -76,12 +76,15 @@ type Model struct {
 
 // NewModel создаёт новую TUI модель.
 //
+// Rule 11: Принимает родительский контекст для распространения отмены.
+//
 // Parameters:
+//   - ctx: Родительский контекст для распространения отмены
 //   - agent: AI агент (реализует agent.Agent интерфейс)
 //   - eventSub: Подписчик на события агента
 //
 // Возвращает модель готовую к использованию с Bubble Tea.
-func NewModel(agent agent.Agent, eventSub events.Subscriber) Model {
+func NewModel(ctx context.Context, agent agent.Agent, eventSub events.Subscriber) Model {
 	// Настройка поля ввода
 	ta := textarea.New()
 	ta.Placeholder = "Введите запрос к AI агенту..."
@@ -109,7 +112,7 @@ func NewModel(agent agent.Agent, eventSub events.Subscriber) Model {
 		prompt:       "┃ ",
 		ready:        false,
 		timeout:      5 * time.Minute, // дефолтный timeout
-		ctx:          context.Background(), // дефолтный контекст для обратной совместимости
+		ctx:          ctx, // Rule 11: сохраняем родительский контекст
 	}
 }
 
@@ -182,16 +185,16 @@ func (m Model) handleAgentEvent(event events.Event) (tea.Model, tea.Cmd) {
 		})
 
 	case events.EventMessage:
-		if content, ok := event.Data.(string); ok {
-			m.appendLog(aiMessageStyle("AI: ") + content)
+		if msgData, ok := event.Data.(events.MessageData); ok {
+			m.appendLog(aiMessageStyle("AI: ") + msgData.Content)
 		}
 		return m, WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		})
 
 	case events.EventError:
-		if err, ok := event.Data.(error); ok {
-			m.appendLog(errorStyle("ERROR: ") + err.Error())
+		if errData, ok := event.Data.(events.ErrorData); ok {
+			m.appendLog(errorStyle("ERROR: ") + errData.Err.Error())
 		}
 		m.mu.Lock()
 		m.isProcessing = false
@@ -200,8 +203,8 @@ func (m Model) handleAgentEvent(event events.Event) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case events.EventDone:
-		if result, ok := event.Data.(string); ok {
-			m.appendLog(aiMessageStyle("AI: ") + result)
+		if msgData, ok := event.Data.(events.MessageData); ok {
+			m.appendLog(aiMessageStyle("AI: ") + msgData.Content)
 		}
 		m.mu.Lock()
 		m.isProcessing = false
@@ -282,7 +285,7 @@ func (m Model) startAgent(query string) tea.Cmd {
 		if err != nil {
 			return EventMsg{
 				Type: events.EventError,
-				Data: err,
+				Data: events.ErrorData{Err: err},
 			}
 		}
 		// События придут через emitter автоматически

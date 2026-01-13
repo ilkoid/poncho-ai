@@ -33,10 +33,14 @@ func main() {
 	utils.Info("vision-cli started", "config", *configFlag, "query", *queryFlag)
 
 	// === СТРОГАЯ ИНИЦИАЛИЗАЦИЯ ===
+	// Rule 11: Создаём родительский контекст для инициализации
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
 	// Ищет config.yaml рядом с бинарником, падает если не найден
 	finder := &app.StandaloneConfigPathFinder{ConfigFlag: *configFlag}
 
-	components, cfgPath, err := app.InitializeForStandalone(finder, 10, "")
+	components, cfgPath, err := app.InitializeForStandalone(initCtx, finder, 10, "")
 	if err != nil {
 		utils.Error("Initialization failed", "error", err)
 		fmt.Fprintf(os.Stderr, "Initialization failed: %v\n\n"+

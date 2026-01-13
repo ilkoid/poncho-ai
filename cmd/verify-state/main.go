@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/agent"
 	appcomponents "github.com/ilkoid/poncho-ai/pkg/app"
@@ -33,26 +34,30 @@ func run() error {
 	}
 	fmt.Printf("✅ Config loaded: %s\n\n", cfgPath)
 
-	// 2. Создаём агент
-	client, err := agent.New(agent.Config{ConfigPath: cfgPath})
+	// 2. Rule 11: Создаём родительский контекст для инициализации
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
+	// 3. Создаём агент
+	client, err := agent.New(initCtx, agent.Config{ConfigPath: cfgPath})
 	if err != nil {
 		return err
 	}
 	fmt.Println("✅ Agent client created")
 	fmt.Println()
 
-	// 3. Получаем state ДО вызова plan_set_tasks
+	// 4. Получаем state ДО вызова plan_set_tasks
 	stateBefore := client.GetState()
 	todoBefore := stateBefore.GetTodoManager()
 	pendingBefore, doneBefore, failedBefore := todoBefore.GetStats()
 	fmt.Printf("📊 BEFORE: Todo Manager Stats: pending=%d done=%d failed=%d\n\n",
 		pendingBefore, doneBefore, failedBefore)
 
-	// 4. Проверяем что тот же instance в state
+	// 5. Проверяем что тот же instance в state
 	todoFromState := stateBefore.GetTodoManager()
 	fmt.Printf("🔗 SAME INSTANCE: todoBefore == todoFromState = %v\n\n", todoBefore == todoFromState)
 
-	// 5. Вызываем agent с plan_set_tasks
+	// 6. Вызываем agent с plan_set_tasks
 	ctx := context.Background()
 	testQuery := "Составь план из 3 задач для анализа товара: проверь категорию, загрузи эскизы, сгенерируй описание"
 	fmt.Printf("🔍 Query: %s\n\n", testQuery)

@@ -19,14 +19,14 @@ import (
 //
 // # Basic Usage
 //
-//	client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+//	client, _ := agent.New(context.Background(), agent.Config{ConfigPath: "config.yaml"})
 //	if err := tui.Run(context.Background(), client); err != nil {
 //	    log.Fatal(err)
 //	}
 //
 // # Advanced Usage (с кастомным emitter)
 //
-//	client, _ := agent.New(...)
+//	client, _ := agent.New(context.Background(), ...)
 //	emitter := events.NewChanEmitter(100)
 //	client.SetEmitter(emitter)
 //
@@ -49,9 +49,8 @@ func Run(ctx context.Context, client *agent.Client) error {
 	// Получаем subscriber для TUI
 	sub := client.Subscribe()
 
-	// Создаём модель с контекстом
-	model := NewModel(client, sub)
-	model.ctx = ctx // Правило 11: сохраняем родительский контекст
+	// Создаём модель с контекстом (Rule 11)
+	model := NewModel(ctx, client, sub)
 
 	// Запускаем Bubble Tea программу
 	p := tea.NewProgram(model)
@@ -71,7 +70,7 @@ func Run(ctx context.Context, client *agent.Client) error {
 //
 // Пример:
 //
-//	client, _ := agent.New(...)
+//	client, _ := agent.New(context.Background(), ...)
 //	err := tui.RunWithOpts(context.Background(), client,
 //	    tui.WithTitle("My AI App"),
 //	    tui.WithPrompt("> "),
@@ -86,9 +85,8 @@ func RunWithOpts(ctx context.Context, client *agent.Client, opts ...Option) erro
 	client.SetEmitter(emitter)
 	sub := client.Subscribe()
 
-	// Создаём модель с опциями
-	model := NewModel(client, sub)
-	model.ctx = ctx // Правило 11: сохраняем родительский контекст
+	// Создаём модель с опциями (Rule 11)
+	model := NewModel(ctx, client, sub)
 	for _, opt := range opts {
 		opt(&model)
 	}
@@ -125,8 +123,8 @@ func WithPrompt(prompt string) Option {
 //
 // Пример:
 //
-//	client, _ := agent.New(...)
-//	err := tui.RunWithOpts(client,
+//	client, _ := agent.New(context.Background(), ...)
+//	err := tui.RunWithOpts(context.Background(), client,
 //	    tui.WithTimeout(10 * time.Minute),
 //	)
 func WithTimeout(timeout time.Duration) Option {

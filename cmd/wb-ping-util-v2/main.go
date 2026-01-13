@@ -50,7 +50,11 @@ func main() {
 
 	utils.Info("Starting wb-ping-util-v2", "version", Version)
 
-	// 2. Создаём агент - ОДНА СТРОКА! (всё остальное под капотом)
+	// 2. Rule 11: Создаём родительский контекст для инициализации
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
+	// 3. Создаём агент с контекстом - ОДНА СТРОКА! (всё остальное под капотом)
 	//
 	// agent.New() автоматически:
 	//   - Загружает config.yaml
@@ -63,7 +67,7 @@ func main() {
 	//   - max_iterations: 10 (можно переопределить в YAML)
 	//   - timeout: "5m" (можно переопределить в YAML)
 	utils.Info("Creating agent...")
-	client, err := agent.New(agent.Config{
+	client, err := agent.New(initCtx, agent.Config{
 		ConfigPath: "config.yaml",
 		// MaxIterations: 0 // <- используем значение из config.yaml chains.default.max_iterations
 	})

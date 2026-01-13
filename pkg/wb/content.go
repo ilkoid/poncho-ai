@@ -1,4 +1,28 @@
-// Бизнес-логика методов
+// High-level API methods for Wildberries Content API.
+//
+// This file contains methods that wrap the raw HTTP client with WB-specific logic:
+//   - Response wrapper handling (APIResponse[T])
+//   - Auto-pagination for paginated endpoints
+//   - Client-side filtering for API limitations
+//
+// Why this logic is in the SDK and not in tools:
+//
+// 1. Auto-pagination (GetAllSubjectsLazy, GetBrands):
+//    These methods handle WB API's pagination mechanism internally.
+//    This is a technical detail of the API, not business logic.
+//    Moving pagination to tools would cause code duplication across tools.
+//
+// 2. Response wrapper handling (GetParentCategories, GetColors, etc.):
+//    WB API wraps all responses in APIResponse[T] with Error/ErrorText fields.
+//    Unwrapping is a concern of the SDK, not individual tools.
+//
+// 3. Client-side filtering (GetProductsByArticles):
+//    WB Content API with Promotion token doesn't support filtering by multiple articles.
+//    This is a workaround for API limitations, not business logic.
+//
+// The pattern:
+//   - pkg/wb SDK: handles API quirks, pagination, response formats
+//   - pkg/tools/std: thin wrappers for LLM function calling (just SDK calls + JSON marshaling)
 package wb
 
 import (

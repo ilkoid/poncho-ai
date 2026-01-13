@@ -1,3 +1,25 @@
+// Package wb provides a reusable SDK for Wildberries API.
+//
+// Architecture:
+//
+// This is an **API SDK**, not just a "dumb" HTTP client. It provides:
+//   - HTTP client with retry, rate limiting, and error classification
+//   - High-level methods that handle WB API-specific response wrappers
+//   - Auto-pagination for endpoints that return partial data
+//   - Client-side filtering for API limitations (workarounds)
+//
+// Comparison with S3 client:
+//   - S3 client (pkg/s3storage) is a "dumb" client - S3 API is simple and standardized
+//   - WB client is an SDK - WB API is complex with custom response formats and quirks
+//
+// Usage pattern:
+//   - pkg/wb - reusable SDK (can be used in any project)
+//   - pkg/tools/std - thin wrappers for LLM function calling
+//
+// Design rationale:
+// Auto-pagination and filtering are NOT business logic - they are technical workarounds
+// for WB API limitations. Moving them to tools would violate DRY and make code harder
+// to maintain.
 package wb
 
 import (
@@ -195,42 +217,18 @@ func (c *Client) ClassifyError(err error) ErrorType {
 	return ErrUnknown
 }
 
-// Get выполняет GET запрос к Wildberries API с поддержкой Rate Limit и Retries.
-//
-// Параметры передаются при каждом вызове, что позволяет каждому tool иметь
-// свой endpoint и rate limit.
-//
-// Параметры:
-//   - ctx: контекст для отмены
-//   - toolID: идентификатор tool для выбора limiter (например, "get_wb_parent_categories")
-//   - baseURL: базовый URL API (например, "https://content-api.wildberries.ru")
-//   - rateLimit: лимит запросов в минуту
-//   - burst: burst для rate limiter
-//   - path: путь к endpoint (например, "/api/v1/directory/parent-categories")
-//   - params: query параметры (может быть nil)
-//   - dest: указатель на структуру для unmarshal результата
-//
-// Возвращает ошибку если запрос не удался.
-func (c *Client) Get(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params url.Values, dest interface{}) error {
-	// Валидация обязательных параметров - client "тупой", ожидает что их предоставит tool
-	if baseURL == "" {
-		return fmt.Errorf("baseURL is required (tool should provide value from config)")
-	}
-	if rateLimit <= 0 {
-		return fmt.Errorf("rateLimit must be positive (tool should provide value from config)")
-	}
-	if burst <= 0 {
-		return fmt.Errorf("burst must be positive (tool should provide value from config)")
-	}
+// httpRequest описывает параметры HTTP запроса.
+type httpRequest struct {
+	method string
+	url    string
+	body   io.Reader
+}
 
-	u, err := url.Parse(baseURL + path)
-	if err != nil {
-		return fmt.Errorf("invalid url: %w", err)
-	}
-	if params != nil {
-		u.RawQuery = params.Encode()
-	}
-
+// doRequest выполняет HTTP запрос с retry логикой и rate limiting.
+//
+// Общий метод для Get() и Post(), реализующий retry loop, rate limiting
+// и обработку 429 ответов.
+func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, burst int, req httpRequest, dest interface{}) error {
 	// Получаем или создаём limiter для этого tool
 	limiter := c.getOrCreateLimiter(toolID, rateLimit, burst)
 
@@ -243,16 +241,16 @@ func (c *Client) Get(ctx context.Context, toolID string, baseURL string, rateLim
 			return fmt.Errorf("rate limiter wait: %w", err)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+		httpReq, err := http.NewRequestWithContext(ctx, req.method, req.url, req.body)
 		if err != nil {
 			return err
 		}
 
-		req.Header.Set("Authorization", c.apiKey)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json")
+		httpReq.Header.Set("Authorization", c.apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			lastErr = err
 			continue // Сетевая ошибка, пробуем еще
@@ -292,6 +290,49 @@ func (c *Client) Get(ctx context.Context, toolID string, baseURL string, rateLim
 	}
 
 	return fmt.Errorf("max retries exceeded, last error: %v", lastErr)
+}
+
+// Get выполняет GET запрос к Wildberries API с поддержкой Rate Limit и Retries.
+//
+// Параметры передаются при каждом вызове, что позволяет каждому tool иметь
+// свой endpoint и rate limit.
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - toolID: идентификатор tool для выбора limiter (например, "get_wb_parent_categories")
+//   - baseURL: базовый URL API (например, "https://content-api.wildberries.ru")
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - path: путь к endpoint (например, "/api/v1/directory/parent-categories")
+//   - params: query параметры (может быть nil)
+//   - dest: указатель на структуру для unmarshal результата
+//
+// Возвращает ошибку если запрос не удался.
+func (c *Client) Get(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params url.Values, dest interface{}) error {
+	// Валидация обязательных параметров - client "тупой", ожидает что их предоставит tool
+	if baseURL == "" {
+		return fmt.Errorf("baseURL is required (tool should provide value from config)")
+	}
+	if rateLimit <= 0 {
+		return fmt.Errorf("rateLimit must be positive (tool should provide value from config)")
+	}
+	if burst <= 0 {
+		return fmt.Errorf("burst must be positive (tool should provide value from config)")
+	}
+
+	u, err := url.Parse(baseURL + path)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	if params != nil {
+		u.RawQuery = params.Encode()
+	}
+
+	return c.doRequest(ctx, toolID, rateLimit, burst, httpRequest{
+		method: "GET",
+		url:    u.String(),
+		body:   nil,
+	}, dest)
 }
 
 // getOrCreateLimiter возвращает существующий limiter для toolID или создаёт новый.
@@ -359,67 +400,11 @@ func (c *Client) Post(ctx context.Context, toolID string, baseURL string, rateLi
 		return fmt.Errorf("marshal body: %w", err)
 	}
 
-	// Получаем или создаём limiter для этого tool
-	limiter := c.getOrCreateLimiter(toolID, rateLimit, burst)
-
-	var lastErr error
-
-	// Retry loop
-	for i := 0; i < c.retryAttempts; i++ {
-		// 1. Ждем разрешения от лимитера (блокирует горутину, если превысили лимит)
-		if err := limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait: %w", err)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "POST", u.String(), strings.NewReader(string(bodyJSON)))
-		if err != nil {
-			return err
-		}
-
-		req.Header.Set("Authorization", c.apiKey)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json")
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			lastErr = err
-			continue // Сетевая ошибка, пробуем еще
-		}
-		defer resp.Body.Close()
-
-		responseBody, _ := io.ReadAll(resp.Body)
-
-		// Обработка 429 (Too Many Requests)
-		if resp.StatusCode == http.StatusTooManyRequests {
-			// Читаем заголовок X-Ratelimit-Retry или Retry-After
-			retryAfter := 1 * time.Second // Дефолт
-			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
-				if sec, err := strconv.Atoi(s); err == nil {
-					retryAfter = time.Duration(sec) * time.Second
-				}
-			}
-
-			// Ждем и ретраем
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(retryAfter):
-				continue
-			}
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(responseBody))
-		}
-
-		if err := json.Unmarshal(responseBody, dest); err != nil {
-			return fmt.Errorf("unmarshal error: %w", err)
-		}
-
-		return nil // Успех
-	}
-
-	return fmt.Errorf("max retries exceeded, last error: %v", lastErr)
+	return c.doRequest(ctx, toolID, rateLimit, burst, httpRequest{
+		method: "POST",
+		url:    u.String(),
+		body:   strings.NewReader(string(bodyJSON)),
+	}, dest)
 }
 // PingResponse представляет ответ от ping endpoint Wildberries Content API.
 //

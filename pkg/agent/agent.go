@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/app"
@@ -51,6 +52,9 @@ type Client struct {
 	// Optional dependencies (могут быть nil)
 	wbClient *wb.Client
 	emitter  events.Emitter // Port & Adapter: Emitter для UI подписки
+
+	// emitterMu protects emitter field for concurrent access
+	emitterMu sync.RWMutex
 }
 
 // Config определяет конфигурацию для создания агента.
@@ -89,10 +93,11 @@ type Config struct {
 //   - config.yaml не найден или невалиден
 //   - обязательные зависимости не могут быть созданы
 //
-// Rule 2: конфигурация через YAML с ENV поддержкой.
+// Rule 2: конфигурация через YAML с ENV поддержку.
 // Rule 3: tools регистрируются через Registry.
 // Rule 6: только pkg/ импорты, без internal/.
-func New(cfg Config) (*Client, error) {
+// Rule 11: принимает context.Context для распространения отмены.
+func New(ctx context.Context, cfg Config) (*Client, error) {
 	utils.Info("Creating agent", "config_path", cfg.ConfigPath)
 
 	// 1. Загружаем конфигурацию
@@ -120,8 +125,8 @@ func New(cfg Config) (*Client, error) {
 
 	// 3. Инициализируем компоненты (переиспользуем логику из app.Initialize)
 	// Это гарантирует что весь init код в одном месте
-	// Правило 11: передаём контекст для распространения отмены
-	components, err := app.Initialize(context.Background(), appCfg, maxIters, cfg.SystemPrompt)
+	// Rule 11: передаём родительский контекст для распространения отмены
+	components, err := app.Initialize(ctx, appCfg, maxIters, cfg.SystemPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize components: %w", err)
 	}
@@ -173,6 +178,8 @@ func (c *Client) RegisterTool(tool tools.Tool) error {
 //
 // Thread-safe.
 func (c *Client) SetEmitter(emitter events.Emitter) {
+	c.emitterMu.Lock()
+	defer c.emitterMu.Unlock()
 	c.emitter = emitter
 	// Передаём emitter в ReActCycle для отправки событий во время выполнения
 	if c.reactCycle != nil {
@@ -186,6 +193,8 @@ func (c *Client) SetEmitter(emitter events.Emitter) {
 //
 // Thread-safe.
 func (c *Client) Subscribe() events.Subscriber {
+	c.emitterMu.Lock()
+	defer c.emitterMu.Unlock()
 	if c.emitter == nil {
 		// Создаём дефолтный emitter если не установлен
 		c.emitter = events.NewChanEmitter(100)
@@ -218,7 +227,7 @@ func (c *Client) Run(ctx context.Context, query string) (string, error) {
 	if c.reactCycle == nil {
 		c.emitEvent(ctx, events.Event{
 			Type:      events.EventError,
-			Data:      fmt.Errorf("agent is not properly initialized"),
+			Data:      events.ErrorData{Err: fmt.Errorf("agent is not properly initialized")},
 			Timestamp: time.Now(),
 		})
 		return "", fmt.Errorf("agent is not properly initialized")
@@ -227,7 +236,7 @@ func (c *Client) Run(ctx context.Context, query string) (string, error) {
 	// EventThinking: агент начинает думать
 	c.emitEvent(ctx, events.Event{
 		Type:      events.EventThinking,
-		Data:      query,
+		Data:      events.ThinkingData{Query: query},
 		Timestamp: time.Now(),
 	})
 
@@ -238,7 +247,7 @@ func (c *Client) Run(ctx context.Context, query string) (string, error) {
 		// EventError: произошла ошибка
 		c.emitEvent(ctx, events.Event{
 			Type:      events.EventError,
-			Data:      err,
+			Data:      events.ErrorData{Err: err},
 			Timestamp: time.Now(),
 		})
 		utils.Error("Agent query failed", "error", err)
@@ -255,6 +264,8 @@ func (c *Client) Run(ctx context.Context, query string) (string, error) {
 // Thread-safe.
 // Rule 11: уважает context.Context.
 func (c *Client) emitEvent(ctx context.Context, event events.Event) {
+	c.emitterMu.RLock()
+	defer c.emitterMu.RUnlock()
 	if c.emitter == nil {
 		utils.Debug("agent.emitEvent: emitter is nil, skipping", "event_type", event.Type)
 		return

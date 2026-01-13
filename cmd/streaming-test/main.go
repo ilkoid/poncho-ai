@@ -24,8 +24,12 @@ func main() {
 
 	query := os.Args[1]
 
-	// Create agent
-	client, err := agent.New(agent.Config{ConfigPath: "config.yaml"})
+	// Rule 11: Create parent context for agent initialization
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
+	// Create agent with context
+	client, err := agent.New(initCtx, agent.Config{ConfigPath: "config.yaml"})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create agent: %v\n", err)
 		os.Exit(1)
@@ -105,8 +109,8 @@ func printEvent(event events.Event, lastChunk *string) {
 		}
 
 	case events.EventMessage:
-		if content, ok := event.Data.(string); ok {
-			fmt.Printf("\n[MESSAGE] %s\n", truncate(content, 100))
+		if msgData, ok := event.Data.(events.MessageData); ok {
+			fmt.Printf("\n[MESSAGE] %s\n", truncate(msgData.Content, 100))
 		}
 
 	case events.EventToolCall:
@@ -120,13 +124,13 @@ func printEvent(event events.Event, lastChunk *string) {
 		}
 
 	case events.EventError:
-		if err, ok := event.Data.(error); ok {
-			fmt.Printf("\n[ERROR] %v\n", err)
+		if errData, ok := event.Data.(events.ErrorData); ok {
+			fmt.Printf("\n[ERROR] %v\n", errData.Err)
 		}
 
 	case events.EventDone:
-		if result, ok := event.Data.(string); ok {
-			fmt.Printf("\n[DONE] Result: %s\n", truncate(result, 100))
+		if msgData, ok := event.Data.(events.MessageData); ok {
+			fmt.Printf("\n[DONE] Result: %s\n", truncate(msgData.Content, 100))
 		}
 	}
 }

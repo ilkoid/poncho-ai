@@ -2,9 +2,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ilkoid/poncho-ai/cmd/todo-agent/tui"
@@ -44,8 +46,12 @@ func run() error {
 	// Логируем загруженные ключи (с маскированием для безопасности)
 	logKeysInfo(cfg)
 
-	// 2. Создаём агент через pkg/agent
-	client, err := agent.New(agent.Config{ConfigPath: cfgPath})
+	// 2. Rule 11: Создаём родительский контекст для инициализации
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
+	// 3. Создаём агент через pkg/agent с контекстом
+	client, err := agent.New(initCtx, agent.Config{ConfigPath: cfgPath})
 	if err != nil {
 		utils.Error("Agent creation failed", "error", err)
 		return fmt.Errorf("agent creation failed: %w", err)

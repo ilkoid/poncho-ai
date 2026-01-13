@@ -198,14 +198,17 @@ func ValidateAllPromptsStrict(cfg *config.AppConfig) error {
 //
 // Возвращает ошибку если что-то не найдено — fail-fast поведение.
 //
+// Rule 11: Принимает context.Context для распространения отмены.
+//
 // Пример использования:
 //
 //	finder := &app.StandaloneConfigPathFinder{ConfigFlag: *configFlag}
-//	components, cfgPath, err := app.InitializeForStandalone(finder, 10, "")
+//	components, cfgPath, err := app.InitializeForStandalone(ctx, finder, 10, "")
 //	if err != nil {
 //	    log.Fatalf("Initialization failed: %v", err)
 //	}
 func InitializeForStandalone(
+	ctx context.Context,
 	finder ConfigPathFinder,
 	maxIters int,
 	systemPrompt string,
@@ -217,8 +220,8 @@ func InitializeForStandalone(
 	}
 
 	// 2. Инициализируем компоненты
-	// Правило 11: передаём контекст для распространения отмены
-	components, err := Initialize(context.Background(), cfg, maxIters, systemPrompt)
+	// Rule 11: передаём родительский контекст для распространения отмены
+	components, err := Initialize(ctx, cfg, maxIters, systemPrompt)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to initialize components: %w", err)
 	}

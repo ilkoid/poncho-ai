@@ -106,156 +106,100 @@ func (t *WbColorsTool) Execute(ctx context.Context, argsJSON string) (string, er
 	return string(data), nil
 }
 
-// WbCountriesTool — инструмент для получения справочника стран.
+// simpleDictTool — базовый тип для простых справочников WB.
 //
-// Возвращает список стран производства для карточки товара.
-type WbCountriesTool struct {
-	dicts  *wb.Dictionaries
-	toolID string
-	description string
+// Устраняет дублирование для tools, которые просто возвращают список
+// значений из справочника без дополнительной логики.
+type simpleDictTool[T any] struct {
+	dicts        *wb.Dictionaries
+	toolID       string
+	description  string
+	getData      func(*wb.Dictionaries) []T
 }
 
-// NewWbCountriesTool создает инструмент для получения стран.
-func NewWbCountriesTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbCountriesTool {
-	return &WbCountriesTool{
-		dicts:  dicts,
-		toolID: "get_wb_countries",
-		description: cfg.Description,
-	}
-}
-
-func (t *WbCountriesTool) Definition() tools.ToolDefinition {
+// Definition возвращает описание инструмента для LLM.
+func (t *simpleDictTool[T]) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
-		Name:        "get_wb_countries",
-		Description: t.description, // Должен быть задан в config.yaml
+		Name:        t.toolID,
+		Description: t.description,
 		Parameters: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
-			"required":   []string{}, // Нет обязательных параметров
+			"required":   []string{},
 		},
 	}
 }
 
-func (t *WbCountriesTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-	data, err := json.Marshal(t.dicts.Countries)
+// Execute возвращает данные из справочника как JSON.
+func (t *simpleDictTool[T]) Execute(ctx context.Context, argsJSON string) (string, error) {
+	data, err := json.Marshal(t.getData(t.dicts))
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// newSimpleDictTool создает инструмент для простого справочника.
+func newSimpleDictTool[T any](
+	toolID string,
+	getData func(*wb.Dictionaries) []T,
+	dicts *wb.Dictionaries,
+	cfg config.ToolConfig,
+) tools.Tool {
+	return &simpleDictTool[T]{
+		dicts:       dicts,
+		toolID:      toolID,
+		description: cfg.Description,
+		getData:     getData,
+	}
+}
+
+// WbCountriesTool — инструмент для получения справочника стран.
+//
+// Возвращает список стран производства для карточки товара.
+type WbCountriesTool = simpleDictTool[wb.Country]
+
+// NewWbCountriesTool создает инструмент для получения стран.
+func NewWbCountriesTool(dicts *wb.Dictionaries, cfg config.ToolConfig) tools.Tool {
+	return newSimpleDictTool("get_wb_countries", func(d *wb.Dictionaries) []wb.Country {
+		return d.Countries
+	}, dicts, cfg)
 }
 
 // WbGendersTool — инструмент для получения справочника полов.
 //
 // Возвращает список допустимых значений для характеристики "Пол".
-type WbGendersTool struct {
-	dicts  *wb.Dictionaries
-	toolID string
-	description string
-}
+type WbGendersTool = simpleDictTool[string]
 
 // NewWbGendersTool создает инструмент для получения полов.
-func NewWbGendersTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbGendersTool {
-	return &WbGendersTool{
-		dicts:  dicts,
-		toolID: "get_wb_genders",
-		description: cfg.Description,
-	}
-}
-
-func (t *WbGendersTool) Definition() tools.ToolDefinition {
-	return tools.ToolDefinition{
-		Name:        "get_wb_genders",
-		Description: t.description, // Должен быть задан в config.yaml
-		Parameters: map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-			"required":   []string{}, // Нет обязательных параметров
-		},
-	}
-}
-
-func (t *WbGendersTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-	data, err := json.Marshal(t.dicts.Genders)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+func NewWbGendersTool(dicts *wb.Dictionaries, cfg config.ToolConfig) tools.Tool {
+	return newSimpleDictTool("get_wb_genders", func(d *wb.Dictionaries) []string {
+		return d.Genders
+	}, dicts, cfg)
 }
 
 // WbSeasonsTool — инструмент для получения справочника сезонов.
 //
 // Возвращает список допустимых значений для характеристики "Сезон".
-type WbSeasonsTool struct {
-	dicts  *wb.Dictionaries
-	toolID string
-	description string
-}
+type WbSeasonsTool = simpleDictTool[string]
 
 // NewWbSeasonsTool создает инструмент для получения сезонов.
-func NewWbSeasonsTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbSeasonsTool {
-	return &WbSeasonsTool{
-		dicts:  dicts,
-		toolID: "get_wb_seasons",
-		description: cfg.Description,
-	}
-}
-
-func (t *WbSeasonsTool) Definition() tools.ToolDefinition {
-	return tools.ToolDefinition{
-		Name:        "get_wb_seasons",
-		Description: t.description, // Должен быть задан в config.yaml
-		Parameters: map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-			"required":   []string{}, // Нет обязательных параметров
-		},
-	}
-}
-
-func (t *WbSeasonsTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-	data, err := json.Marshal(t.dicts.Seasons)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+func NewWbSeasonsTool(dicts *wb.Dictionaries, cfg config.ToolConfig) tools.Tool {
+	return newSimpleDictTool("get_wb_seasons", func(d *wb.Dictionaries) []string {
+		return d.Seasons
+	}, dicts, cfg)
 }
 
 // WbVatRatesTool — инструмент для получения справочника ставок НДС.
 //
 // Возвращает список допустимых значений НДС для карточки товара.
-type WbVatRatesTool struct {
-	dicts  *wb.Dictionaries
-	toolID string
-	description string
-}
+type WbVatRatesTool = simpleDictTool[string]
 
 // NewWbVatRatesTool создает инструмент для получения ставок НДС.
-func NewWbVatRatesTool(dicts *wb.Dictionaries, cfg config.ToolConfig) *WbVatRatesTool {
-	return &WbVatRatesTool{
-		dicts:  dicts,
-		toolID: "get_wb_vat_rates",
-		description: cfg.Description,
-	}
-}
-
-func (t *WbVatRatesTool) Definition() tools.ToolDefinition {
-	return tools.ToolDefinition{
-		Name:        "get_wb_vat_rates",
-		Description: t.description, // Должен быть задан в config.yaml
-		Parameters: map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-			"required":   []string{}, // Нет обязательных параметров
-		},
-	}
-}
-
-func (t *WbVatRatesTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-	data, err := json.Marshal(t.dicts.Vats)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+func NewWbVatRatesTool(dicts *wb.Dictionaries, cfg config.ToolConfig) tools.Tool {
+	return newSimpleDictTool("get_wb_vat_rates", func(d *wb.Dictionaries) []string {
+		return d.Vats
+	}, dicts, cfg)
 }
 
 // ReloadWbDictionariesTool — заглушка для перезагрузки справочников из API.

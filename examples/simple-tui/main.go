@@ -16,20 +16,23 @@ import (
 )
 
 func main() {
-	// 1. Создаём AI агент (загружает config.yaml автоматически)
+	// 1. Rule 11: Создаём родительский контекст для инициализации
+	ctx := context.Background()
+
+	// 2. Создаём AI агент (загружает config.yaml автоматически)
 	//
 	// ConfigPath можно опустить - агент найдёт config.yaml автоматически:
 	//   - Текущая директория
 	//   - Директория исполняемого файла
 	//   - Родительская директория
-	client, err := agent.New(agent.Config{
+	client, err := agent.New(ctx, agent.Config{
 		ConfigPath: "../../config.yaml", // Путь к config.yaml
 	})
 	if err != nil {
 		log.Fatalf("Failed to create agent: %v", err)
 	}
 
-	// 2. Запускаем готовый TUI (одна строка!)
+	// 3. Запускаем готовый TUI (одна строка!)
 	//
 	// TUI предоставляет:
 	//   - Чат-подобный интерфейс
@@ -38,8 +41,8 @@ func main() {
 	//   - Обработку ошибок
 	//   - Ctrl+C для выхода
 	//
-	// Правило 11: передаём контекст для распространения отмены
-	if err := tui.Run(context.Background(), client); err != nil {
+	// Rule 11: передаём контекст для распространения отмены
+	if err := tui.Run(ctx, client); err != nil {
 		log.Fatalf("TUI error: %v", err)
 	}
 }

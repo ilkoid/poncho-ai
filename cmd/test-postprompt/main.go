@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/agent"
 	appcomponents "github.com/ilkoid/poncho-ai/pkg/app"
@@ -60,9 +61,13 @@ func run() error {
 	}
 	fmt.Println()
 
-	// 4. Создаём агент (здесь произойдет ошибка если post-prompts не найдены)
+	// 4. Rule 11: Создаём родительский контекст для инициализации
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
+	// 5. Создаём агент (здесь произойдет ошибка если post-prompts не найдены)
 	fmt.Println("🔧 Creating agent (this will fail if post-prompts are broken)...")
-	client, err := agent.New(agent.Config{ConfigPath: cfgPath})
+	client, err := agent.New(initCtx, agent.Config{ConfigPath: cfgPath})
 	if err != nil {
 		fmt.Printf("❌ Agent creation FAILED: %v\n", err)
 		fmt.Println()
@@ -74,7 +79,7 @@ func run() error {
 	fmt.Println("✅ Agent created successfully")
 	fmt.Println()
 
-	// 5. Проверяем что tools с post-prompts зарегистрированы
+	// 7. Проверяем что tools с post-prompts зарегистрированы
 	toolsRegistry := client.GetToolsRegistry()
 	allTools := toolsRegistry.GetDefinitions()
 

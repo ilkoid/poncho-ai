@@ -544,6 +544,55 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 		}
 	}
 
+	// === WB Analytics Tools ===
+	if toolCfg, exists := getToolCfg("get_wb_product_funnel"); exists && toolCfg.Enabled {
+		if err := register("get_wb_product_funnel", std.NewWbProductFunnelTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_product_funnel_history"); exists && toolCfg.Enabled {
+		if err := register("get_wb_product_funnel_history", std.NewWbProductFunnelHistoryTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_search_positions"); exists && toolCfg.Enabled {
+		if err := register("get_wb_search_positions", std.NewWbSearchPositionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_top_search_queries"); exists && toolCfg.Enabled {
+		if err := register("get_wb_top_search_queries", std.NewWbTopSearchQueriesTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_top_organic_positions"); exists && toolCfg.Enabled {
+		if err := register("get_wb_top_organic_positions", std.NewWbTopOrganicPositionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_campaign_stats"); exists && toolCfg.Enabled {
+		if err := register("get_wb_campaign_stats", std.NewWbCampaignStatsTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_keyword_stats"); exists && toolCfg.Enabled {
+		if err := register("get_wb_keyword_stats", std.NewWbKeywordStatsTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("get_wb_attribution_summary"); exists && toolCfg.Enabled {
+		if err := register("get_wb_attribution_summary", std.NewWbAttributionSummaryTool(wbClient, toolCfg, cfg.WB)); err != nil {
+			return err
+		}
+	}
+
 	// === S3 Basic Tools ===
 	if toolCfg, exists := getToolCfg("list_s3_files"); exists && toolCfg.Enabled {
 		if err := register("list_s3_files", std.NewS3ListTool(state.GetStorage())); err != nil {
@@ -692,6 +741,15 @@ func getAllKnownToolNames() []string {
 		"get_wb_brands",
 		// WB Service Tools
 		"reload_wb_dictionaries",
+		// WB Analytics Tools
+		"get_wb_product_funnel",
+		"get_wb_product_funnel_history",
+		"get_wb_search_positions",
+		"get_wb_top_search_queries",
+		"get_wb_top_organic_positions",
+		"get_wb_campaign_stats",
+		"get_wb_keyword_stats",
+		"get_wb_attribution_summary",
 		// S3 Basic Tools
 		"list_s3_files",
 		"read_s3_object",

@@ -65,34 +65,20 @@ const (
 	EventDone EventType = "done"
 )
 
-// Event представляет событие от агента.
+// EventData — sealed interface для данных события.
 //
-// Data содержит данные события, тип зависит от EventType:
-//   - EventThinking: string (запрос пользователя)
-//   - EventThinkingChunk: ThinkingChunkData (порция reasoning_content)
-//   - EventToolCall: ToolCallData (имя инструмента, аргументы)
-//   - EventToolResult: ToolResultData (результат выполнения)
-//   - EventMessage: string (ответ агента)
-//   - EventError: error (ошибка)
-//   - EventDone: string (финальный ответ)
-type Event struct {
-	Type      EventType
-	Data      any
-	Timestamp time.Time
+// Только типы из пакета events могут реализовать этот интерфейс,
+// что обеспечивает compile-time type safety.
+type EventData interface {
+	eventData()
 }
 
-// ToolCallData содержит данные о вызове инструмента.
-type ToolCallData struct {
-	ToolName string
-	Args     string
+// ThinkingData содержит данные для EventThinking.
+type ThinkingData struct {
+	Query string
 }
 
-// ToolResultData содержит результат выполнения инструмента.
-type ToolResultData struct {
-	ToolName string
-	Result   string
-	Duration time.Duration
-}
+func (ThinkingData) eventData() {}
 
 // ThinkingChunkData содержит данные для EventThinkingChunk.
 //
@@ -103,6 +89,56 @@ type ThinkingChunkData struct {
 
 	// Accumulated — накопленные данные (полный reasoning_content на данный момент)
 	Accumulated string
+}
+
+func (ThinkingChunkData) eventData() {}
+
+// ToolCallData содержит данные о вызове инструмента.
+type ToolCallData struct {
+	ToolName string
+	Args     string
+}
+
+func (ToolCallData) eventData() {}
+
+// ToolResultData содержит результат выполнения инструмента.
+type ToolResultData struct {
+	ToolName string
+	Result   string
+	Duration time.Duration
+}
+
+func (ToolResultData) eventData() {}
+
+// MessageData содержит данные для EventMessage и EventDone.
+type MessageData struct {
+	Content string
+}
+
+func (MessageData) eventData() {}
+
+// ErrorData содержит данные для EventError.
+type ErrorData struct {
+	Err error
+}
+
+func (ErrorData) eventData() {}
+
+// Event представляет событие от агента.
+//
+// Data содержит типизированные данные события (EventData).
+// Для каждого EventType существует соответствующий тип данных:
+//   - EventThinking: ThinkingData (запрос пользователя)
+//   - EventThinkingChunk: ThinkingChunkData (порция reasoning_content)
+//   - EventToolCall: ToolCallData (имя инструмента, аргументы)
+//   - EventToolResult: ToolResultData (результат выполнения)
+//   - EventMessage: MessageData (ответ агента)
+//   - EventError: ErrorData (ошибка)
+//   - EventDone: MessageData (финальный ответ)
+type Event struct {
+	Type      EventType
+	Data      EventData
+	Timestamp time.Time
 }
 
 // Emitter — это Port для отправки событий.
