@@ -3,18 +3,20 @@ package chain
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/events"
-	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 // ReActExecution — runtime состояние выполнения ReAct цикла.
 //
+// PHASE 3 REFACTOR: Теперь это чистый контейнер данных (data container).
+// Логика исполнения вынесена в StepExecutor (ReActExecutor).
+//
 // Создаётся на каждый вызов Execute(), не разделяется между goroutines.
-// ReActCycle (template) → создаёт → ReActExecution (runtime)
+// ReActCycle (template) → создаёт → ReActExecution (runtime data)
+// ReActExecution → исполняется → StepExecutor (e.g., ReActExecutor)
 //
 // Thread-safe: Не нуждается в синхронизации так как создаётся на каждый вызов
 // и никогда не разделяется между goroutines.
@@ -28,8 +30,8 @@ type ReActExecution struct {
 	toolStep *ToolExecutionStep
 
 	// Cross-cutting concerns (локальные)
-	emitter        events.Emitter
-	debugRecorder  *ChainDebugRecorder
+	emitter       events.Emitter
+	debugRecorder *ChainDebugRecorder
 
 	// Configuration
 	streamingEnabled bool
@@ -86,176 +88,6 @@ func NewReActExecution(
 		startTime:        time.Now(),
 		config:           config,
 	}
-}
-
-// Run выполняет ReAct цикл.
-//
-// Основная логика из ReActCycle.Execute(), но БЕЗ sync.Mutex
-// так как execution не шарится между goroutines.
-//
-// PHASE 2 REFACTOR: Обрабатывает StepResult с типизированными сигналами.
-// Использует локальные экземпляры llmStep, toolStep, emitter.
-func (e *ReActExecution) Run() (ChainOutput, error) {
-	// 1. Добавляем user message в историю
-	if err := e.chainCtx.AppendMessage(llm.Message{
-		Role:    llm.RoleUser,
-		Content: e.chainCtx.Input.UserQuery,
-	}); err != nil {
-		return ChainOutput{}, fmt.Errorf("failed to append user message: %w", err)
-	}
-
-	// 2. Начинаем debug запись
-	if e.debugRecorder != nil && e.debugRecorder.Enabled() {
-		e.debugRecorder.Start(*e.chainCtx.Input)
-	}
-
-	// 3. ReAct цикл
-	iterations := 0
-	for iterations = 0; iterations < e.config.MaxIterations; iterations++ {
-		// Start debug iteration для всей итерации (LLM + Tools)
-		if e.debugRecorder != nil && e.debugRecorder.Enabled() {
-			e.debugRecorder.StartIteration(iterations + 1)
-		}
-
-		// 3a. LLM Invocation
-		// PHASE 2 REFACTOR: Получаем StepResult вместо (NextAction, error)
-		llmResult := e.llmStep.Execute(e.ctx, e.chainCtx)
-
-		// Обрабатываем результат
-		if llmResult.Action == ActionError || llmResult.Error != nil {
-			e.endDebugIteration()
-			err := llmResult.Error
-			if err == nil {
-				err = fmt.Errorf("LLM step failed")
-			}
-			return e.finalizeWithError(err)
-		}
-
-		// Отправляем EventThinking с контентом LLM (рассуждения)
-		// НО только если НЕ был streaming (streaming отправляет EventThinkingChunk)
-		lastMsg := e.chainCtx.GetLastMessage()
-
-		// Проверяем: был ли streaming? Если в content есть reasoning_content markers
-		// или если есть emitter (используется для streaming), то не дублируем
-		shouldSendThinking := true
-		if e.emitter != nil && e.streamingEnabled {
-			// Streaming был включен, EventThinkingChunk уже отправляли
-			shouldSendThinking = false
-		}
-
-		if shouldSendThinking {
-			e.emitEvent(events.Event{
-				Type:      events.EventThinking,
-				Data:      events.ThinkingData{Query: lastMsg.Content},
-				Timestamp: time.Now(),
-			})
-		}
-
-		// Отправляем EventToolCall для каждого tool call
-		for _, tc := range lastMsg.ToolCalls {
-			e.emitEvent(events.Event{
-				Type: events.EventToolCall,
-				Data: events.ToolCallData{
-					ToolName: tc.Name,
-					Args:     tc.Args,
-				},
-				Timestamp: time.Now(),
-			})
-		}
-
-		// 3b. Проверяем сигнал от LLM шага
-		// PHASE 2 REFACTOR: Используем типизированные сигналы
-		if llmResult.Signal == SignalFinalAnswer || llmResult.Signal == SignalNeedUserInput {
-			// Финальный ответ или запрос пользовательского ввода
-			// Сохраняем сигнал для возвращения в ChainOutput
-			e.finalSignal = llmResult.Signal
-			e.endDebugIteration()
-			break
-		}
-
-		// 3c. Проверяем есть ли tool calls (обратная совместимость)
-		if len(lastMsg.ToolCalls) == 0 {
-			// Финальный ответ - нет tool calls
-			// PHASE 2 REFACTOR: Устанавливаем финальный сигнал
-			if e.finalSignal == SignalNone {
-				e.finalSignal = SignalFinalAnswer
-			}
-			e.endDebugIteration()
-			break
-		}
-
-		// 3d. Tool Execution (внутри той же итерации!)
-		// PHASE 2 REFACTOR: Получаем StepResult вместо (NextAction, error)
-		toolResult := e.toolStep.Execute(e.ctx, e.chainCtx)
-
-		// Обрабатываем результат
-		if toolResult.Action == ActionError || toolResult.Error != nil {
-			e.endDebugIteration()
-			err := toolResult.Error
-			if err == nil {
-				err = fmt.Errorf("tool execution failed")
-			}
-			return e.finalizeWithError(err)
-		}
-
-		// Отправляем EventToolResult для каждого выполненного tool
-		for _, tr := range e.toolStep.GetToolResults() {
-			e.emitEvent(events.Event{
-				Type: events.EventToolResult,
-				Data: events.ToolResultData{
-					ToolName: tr.Name,
-					Result:   tr.Result,
-					Duration: time.Duration(tr.Duration) * time.Millisecond,
-				},
-				Timestamp: time.Now(),
-			})
-		}
-
-		// End debug iteration после LLM + Tools
-		e.endDebugIteration()
-	}
-
-	// 4. Формируем результат
-	lastMsg := e.chainCtx.GetLastMessage()
-	result := lastMsg.Content
-
-	utils.Debug("ReAct cycle completed",
-		"iterations", iterations+1,
-		"result_length", len(result),
-		"duration_ms", time.Since(e.startTime).Milliseconds())
-
-	// 5. Отправляем EventMessage с текстом ответа
-	utils.Debug("Sending EventMessage", "content_length", len(result))
-	e.emitEvent(events.Event{
-		Type:      events.EventMessage,
-		Data:      events.MessageData{Content: result},
-		Timestamp: time.Now(),
-	})
-
-	// 6. Отправляем EventDone
-	utils.Debug("Sending EventDone")
-	e.emitEvent(events.Event{
-		Type:      events.EventDone,
-		Data:      events.MessageData{Content: result},
-		Timestamp: time.Now(),
-	})
-
-	// 7. Финализируем debug
-	debugPath := ""
-	if e.debugRecorder != nil && e.debugRecorder.Enabled() {
-		debugPath, _ = e.debugRecorder.Finalize(result, time.Since(e.startTime))
-	}
-
-	// 8. Возвращаем результат
-	// PHASE 2 REFACTOR: Включаем финальный сигнал в ChainOutput
-	return ChainOutput{
-		Result:     result,
-		Iterations: iterations + 1,
-		Duration:   time.Since(e.startTime),
-		FinalState: e.chainCtx.GetMessages(),
-		DebugPath:  debugPath,
-		Signal:     e.finalSignal,
-	}, nil
 }
 
 // emitEvent отправляет событие если emitter установлен.
