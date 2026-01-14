@@ -118,10 +118,10 @@ func (r *Registry) ListNames() []string {
 // CreateProvider создаёт LLM провайдер на основе конфигурации модели.
 //
 // Перенесено из pkg/factory для логической связанности (models создаёт провайдеры).
-// Поддерживает провайдеры: zai, openai, deepseek.
+// Поддерживает провайдеры: zai, openai, deepseek, openrouter.
 func CreateProvider(modelDef config.ModelDef) (llm.Provider, error) {
 	switch modelDef.Provider {
-	case "zai", "openai", "deepseek":
+	case "zai", "openai", "deepseek", "openrouter":
 		return openai.NewClient(modelDef), nil
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", modelDef.Provider)

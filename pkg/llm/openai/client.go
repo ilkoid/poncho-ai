@@ -30,16 +30,27 @@ import (
 //   - Vision запросы (изображения)
 //   - Runtime переопределение параметров через GenerateOption
 //   - Thinking mode для Zai GLM (параметр thinking)
+//   - OpenRouter.ai (required headers: HTTP-Referer, X-Title)
 //
 // Правило 4 ("Тупой клиент"): Не хранит состояние между вызовами.
 // Все параметры передаются при каждом Generate() вызове.
 type Client struct {
 	api        *openaisdk.Client
-	apiKey     string               // API Key для кастомных HTTP запросов с thinking
+	apiKey     string               // API Key для кастомных HTTP запросов
 	baseConfig llm.GenerateOptions // Дефолтные параметры из config.yaml
 	thinking   string               // Thinking parameter для Zai GLM: "enabled", "disabled" или ""
-	httpClient *http.Client         // Для кастомных запросов с thinking
+	httpClient *http.Client         // Для кастомных запросов
 	baseURL    string               // Base URL для HTTP запросов
+	provider   string               // Provider name: "zai", "openai", "deepseek", "openrouter"
+}
+
+// setOpenRouterHeaders добавляет требуемые OpenRouter заголовки для атрибуции.
+//
+// OpenRouter требует эти заголовки согласно условиям обслуживания:
+// https://openrouter.ai/docs#quick-start
+func setOpenRouterHeaders(req *http.Request) {
+	req.Header.Set("HTTP-Referer", "https://poncho-ai.dev")
+	req.Header.Set("X-Title", "Poncho AI")
 }
 
 // NewClient создает OpenAI клиент на основе конфигурации модели.
@@ -101,6 +112,7 @@ func NewClient(modelDef config.ModelDef) *Client {
 		baseConfig: baseConfig,
 		thinking:   modelDef.Thinking,
 		baseURL:    baseURL,
+		provider:   modelDef.Provider,
 		httpClient: &http.Client{
 			Timeout:   httpTimeout,
 			Transport: transport,
@@ -239,6 +251,11 @@ func (c *Client) generateStandard(ctx context.Context, messages []llm.Message, o
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
+	// OpenRouter требует attribution headers
+	if c.provider == "openrouter" {
+		setOpenRouterHeaders(req)
+	}
+
 	utils.Debug("Sending standard HTTP request",
 		"url", url,
 		"body_size", len(jsonBody),
@@ -363,6 +380,11 @@ func (c *Client) generateWithThinking(ctx context.Context, messages []llm.Messag
 	// Устанавливаем заголовки
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	// OpenRouter требует attribution headers
+	if c.provider == "openrouter" {
+		setOpenRouterHeaders(req)
+	}
 
 	utils.Debug("Sending custom HTTP request with thinking",
 		"url", url,
@@ -692,6 +714,11 @@ func (c *Client) generateWithThinkingStream(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
+	// OpenRouter требует attribution headers
+	if c.provider == "openrouter" {
+		setOpenRouterHeaders(req)
+	}
+
 	utils.Debug("Sending streaming HTTP request with thinking",
 		"url", url,
 		"thinking", c.thinking,
@@ -779,6 +806,11 @@ func (c *Client) generateStandardStream(
 	// Устанавливаем заголовки
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	// OpenRouter требует attribution headers
+	if c.provider == "openrouter" {
+		setOpenRouterHeaders(req)
+	}
 
 	utils.Debug("Sending standard streaming HTTP request",
 		"url", url,
