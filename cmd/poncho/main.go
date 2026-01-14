@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -47,7 +48,7 @@ func run() error {
 
 	// 2. Создаём агент через pkg/agent (Port & Adapter паттерн)
 	// REFACTORED 2026-01-10: Используем agent.Client вместо прямого ReActCycle
-	client, err := agent.New(agent.Config{ConfigPath: cfgPath})
+	client, err := agent.New(context.Background(), agent.Config{ConfigPath: cfgPath})
 	if err != nil {
 		utils.Error("Agent creation failed", "error", err)
 		return fmt.Errorf("agent creation failed: %w", err)

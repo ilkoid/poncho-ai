@@ -41,6 +41,8 @@ go.work.sum
 *.swp
 *.swo
 *~
+docs/
+plans/
 
 # OS generated files
 .DS_Store
@@ -53,6 +55,7 @@ Thumbs.db
 
 # Logs
 *.log
+*.json
 
 # Temporary files
 tmp/

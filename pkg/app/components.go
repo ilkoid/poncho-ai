@@ -388,36 +388,21 @@ func Execute(parentCtx context.Context, c *Components, query string, timeout tim
 	return result, nil
 }
 
-// SetupTools регистрирует инструменты из YAML конфигурации.
-//
-// Правило 3: все инструменты регистрируются через Registry.Register().
-// Правило 1: инструменты реализуют Tool интерфейс.
-// Правило 6: Принимает *state.CoreState (framework core) вместо *app.AppState.
-//
-// Конфигурация читается из cfg.Tools, где ключом является имя tool.
-// Инструмент регистрируется только если cfg.Tools[toolName].Enabled == true.
-//
-// Возвращает ошибку если:
-//   - инструмент не найден в коде (unknown tool)
-//   - валидация схемы инструмента не прошла
-func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provider, cfg *config.AppConfig) error {
-	registry := state.GetToolsRegistry()
-	var registered []string
-
-	// Helper для регистрации с логированием
+// setupWBTools регистрирует все Wildberries API инструменты.
+// Зависимости: wb.Client, cfg.WB
+func setupWBTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.Client) error {
+	// Helper для регистрации
 	register := func(name string, tool tools.Tool) error {
 		if err := registry.Register(tool); err != nil {
 			return fmt.Errorf("failed to register tool '%s': %w", name, err)
 		}
-		registered = append(registered, name)
 		return nil
 	}
 
-	// Helper для получения конфигурации tool с дефолтными значениями
+	// Helper для получения конфигурации tool
 	getToolCfg := func(name string) (config.ToolConfig, bool) {
 		tc, exists := cfg.Tools[name]
 		if !exists {
-			// Если tool не указан в конфиге, возвращаем disabled
 			return config.ToolConfig{Enabled: false}, false
 		}
 		return tc, true
@@ -448,7 +433,7 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 		}
 	}
 
-	// === WB Feedbacks API Tools (новые) ===
+	// === WB Feedbacks API Tools ===
 	if toolCfg, exists := getToolCfg("get_wb_feedbacks"); exists && toolCfg.Enabled {
 		if err := register("get_wb_feedbacks", std.NewWbFeedbacksTool(wbClient, toolCfg)); err != nil {
 			return err
@@ -476,39 +461,6 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 	if toolCfg, exists := getToolCfg("get_wb_unanswered_questions_counts"); exists && toolCfg.Enabled {
 		if err := register("get_wb_unanswered_questions_counts", std.NewWbUnansweredQuestionsCountsTool(wbClient, toolCfg)); err != nil {
 			return err
-		}
-	}
-
-	// === WB Dictionary Tools ===
-	if state.GetDictionaries() != nil {
-		if toolCfg, exists := getToolCfg("wb_colors"); exists && toolCfg.Enabled {
-			if err := register("wb_colors", std.NewWbColorsTool(state.GetDictionaries(), toolCfg)); err != nil {
-				return err
-			}
-		}
-
-		if toolCfg, exists := getToolCfg("wb_countries"); exists && toolCfg.Enabled {
-			if err := register("wb_countries", std.NewWbCountriesTool(state.GetDictionaries(), toolCfg)); err != nil {
-				return err
-			}
-		}
-
-		if toolCfg, exists := getToolCfg("wb_genders"); exists && toolCfg.Enabled {
-			if err := register("wb_genders", std.NewWbGendersTool(state.GetDictionaries(), toolCfg)); err != nil {
-				return err
-			}
-		}
-
-		if toolCfg, exists := getToolCfg("wb_seasons"); exists && toolCfg.Enabled {
-			if err := register("wb_seasons", std.NewWbSeasonsTool(state.GetDictionaries(), toolCfg)); err != nil {
-				return err
-			}
-		}
-
-		if toolCfg, exists := getToolCfg("wb_vat_rates"); exists && toolCfg.Enabled {
-			if err := register("wb_vat_rates", std.NewWbVatRatesTool(state.GetDictionaries(), toolCfg)); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -593,28 +545,106 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 		}
 	}
 
+	return nil
+}
+
+// setupDictionaryTools регистрирует инструменты WB словарей.
+// Зависимости: state.CoreState (для GetDictionaries)
+func setupDictionaryTools(registry *tools.Registry, cfg *config.AppConfig, state *state.CoreState) error {
+	dicts := state.GetDictionaries()
+	if dicts == nil {
+		return nil // Нет словарей — нечего регистрировать
+	}
+
+	register := func(name string, tool tools.Tool) error {
+		if err := registry.Register(tool); err != nil {
+			return fmt.Errorf("failed to register tool '%s': %w", name, err)
+		}
+		return nil
+	}
+
+	getToolCfg := func(name string) (config.ToolConfig, bool) {
+		tc, exists := cfg.Tools[name]
+		if !exists {
+			return config.ToolConfig{Enabled: false}, false
+		}
+		return tc, true
+	}
+
+	// === WB Dictionary Tools ===
+	if toolCfg, exists := getToolCfg("wb_colors"); exists && toolCfg.Enabled {
+		if err := register("wb_colors", std.NewWbColorsTool(dicts, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("wb_countries"); exists && toolCfg.Enabled {
+		if err := register("wb_countries", std.NewWbCountriesTool(dicts, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("wb_genders"); exists && toolCfg.Enabled {
+		if err := register("wb_genders", std.NewWbGendersTool(dicts, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("wb_seasons"); exists && toolCfg.Enabled {
+		if err := register("wb_seasons", std.NewWbSeasonsTool(dicts, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	if toolCfg, exists := getToolCfg("wb_vat_rates"); exists && toolCfg.Enabled {
+		if err := register("wb_vat_rates", std.NewWbVatRatesTool(dicts, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// setupS3Tools регистрирует инструменты S3 хранения.
+// Зависимости: s3storage.Client, state.CoreState (для классификации), cfg
+func setupS3Tools(registry *tools.Registry, cfg *config.AppConfig, s3Client *s3storage.Client, state *state.CoreState) error {
+	register := func(name string, tool tools.Tool) error {
+		if err := registry.Register(tool); err != nil {
+			return fmt.Errorf("failed to register tool '%s': %w", name, err)
+		}
+		return nil
+	}
+
+	getToolCfg := func(name string) (config.ToolConfig, bool) {
+		tc, exists := cfg.Tools[name]
+		if !exists {
+			return config.ToolConfig{Enabled: false}, false
+		}
+		return tc, true
+	}
+
 	// === S3 Basic Tools ===
 	if toolCfg, exists := getToolCfg("list_s3_files"); exists && toolCfg.Enabled {
-		if err := register("list_s3_files", std.NewS3ListTool(state.GetStorage())); err != nil {
+		if err := register("list_s3_files", std.NewS3ListTool(s3Client)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("read_s3_object"); exists && toolCfg.Enabled {
-		if err := register("read_s3_object", std.NewS3ReadTool(state.GetStorage())); err != nil {
+		if err := register("read_s3_object", std.NewS3ReadTool(s3Client)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("read_s3_image"); exists && toolCfg.Enabled {
-		tool := std.NewS3ReadImageTool(state.GetStorage(), cfg.ImageProcessing)
+		tool := std.NewS3ReadImageTool(s3Client, cfg.ImageProcessing)
 		if err := register("read_s3_image", tool); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("get_plm_data"); exists && toolCfg.Enabled {
-		tool := std.NewGetPLMDataTool(state.GetStorage())
+		tool := std.NewGetPLMDataTool(s3Client)
 		if err := register("get_plm_data", tool); err != nil {
 			return err
 		}
@@ -623,7 +653,7 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 	// === S3 Batch Tools ===
 	if toolCfg, exists := getToolCfg("classify_and_download_s3_files"); exists && toolCfg.Enabled {
 		tool := std.NewClassifyAndDownloadS3Files(
-			state.GetStorage(),
+			s3Client,
 			state,
 			cfg.ImageProcessing,
 			cfg.FileRules,
@@ -634,6 +664,28 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 		}
 	}
 
+	return nil
+}
+
+// setupVisionTools регистрирует инструменты анализа изображений.
+// Зависимости: llm.Provider (vision), s3storage.Client, state.CoreState, cfg
+func setupVisionTools(registry *tools.Registry, cfg *config.AppConfig, state *state.CoreState, visionLLM llm.Provider) error {
+	register := func(name string, tool tools.Tool) error {
+		if err := registry.Register(tool); err != nil {
+			return fmt.Errorf("failed to register tool '%s': %w", name, err)
+		}
+		return nil
+	}
+
+	getToolCfg := func(name string) (config.ToolConfig, bool) {
+		tc, exists := cfg.Tools[name]
+		if !exists {
+			return config.ToolConfig{Enabled: false}, false
+		}
+		return tc, true
+	}
+
+	// === Vision Tools ===
 	if toolCfg, exists := getToolCfg("analyze_article_images_batch"); exists && toolCfg.Enabled {
 		// Vision LLM обязателен для этого tool
 		if visionLLM == nil {
@@ -659,42 +711,110 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 		}
 	}
 
+	return nil
+}
+
+// setupTodoTools регистрирует инструменты планировщика задач.
+// Зависимости: todo.Manager
+func setupTodoTools(registry *tools.Registry, cfg *config.AppConfig, tm *todo.Manager) error {
+	register := func(name string, tool tools.Tool) error {
+		if err := registry.Register(tool); err != nil {
+			return fmt.Errorf("failed to register tool '%s': %w", name, err)
+		}
+		return nil
+	}
+
+	getToolCfg := func(name string) (config.ToolConfig, bool) {
+		tc, exists := cfg.Tools[name]
+		if !exists {
+			return config.ToolConfig{Enabled: false}, false
+		}
+		return tc, true
+	}
+
 	// === Planner Tools ===
 	if toolCfg, exists := getToolCfg("plan_add_task"); exists && toolCfg.Enabled {
-		if err := register("plan_add_task", std.NewPlanAddTaskTool(state.GetTodoManager(), toolCfg)); err != nil {
+		if err := register("plan_add_task", std.NewPlanAddTaskTool(tm, toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_mark_done"); exists && toolCfg.Enabled {
-		if err := register("plan_mark_done", std.NewPlanMarkDoneTool(state.GetTodoManager(), toolCfg)); err != nil {
+		if err := register("plan_mark_done", std.NewPlanMarkDoneTool(tm, toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_mark_failed"); exists && toolCfg.Enabled {
-		if err := register("plan_mark_failed", std.NewPlanMarkFailedTool(state.GetTodoManager(), toolCfg)); err != nil {
+		if err := register("plan_mark_failed", std.NewPlanMarkFailedTool(tm, toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_clear"); exists && toolCfg.Enabled {
-		if err := register("plan_clear", std.NewPlanClearTool(state.GetTodoManager(), toolCfg)); err != nil {
+		if err := register("plan_clear", std.NewPlanClearTool(tm, toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("plan_set_tasks"); exists && toolCfg.Enabled {
-		if err := register("plan_set_tasks", std.NewPlanSetTasksTool(state.GetTodoManager(), toolCfg)); err != nil {
+		if err := register("plan_set_tasks", std.NewPlanSetTasksTool(tm, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	// === Валидация на неизвестные tools ===
+	return nil
+}
+
+// SetupTools регистрирует инструменты из YAML конфигурации.
+//
+// Правило 3: все инструменты регистрируются через Registry.Register().
+// Правило 1: инструменты реализуют Tool интерфейс.
+// Правило 6: Принимает *state.CoreState (framework core) вместо *app.AppState.
+//
+// Конфигурация читается из cfg.Tools, где ключом является имя tool.
+// Инструмент регистрируется только если cfg.Tools[toolName].Enabled == true.
+//
+// Возвращает ошибку если:
+//   - инструмент не найден в коде (unknown tool)
+//   - валидация схемы инструмента не прошла
+func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provider, cfg *config.AppConfig) error {
+	registry := state.GetToolsRegistry()
+
+	// Регистрируем инструменты по категориям
+	if err := setupWBTools(registry, cfg, wbClient); err != nil {
+		return err
+	}
+
+	if err := setupDictionaryTools(registry, cfg, state); err != nil {
+		return err
+	}
+
+	if err := setupS3Tools(registry, cfg, state.GetStorage(), state); err != nil {
+		return err
+	}
+
+	if err := setupVisionTools(registry, cfg, state, visionLLM); err != nil {
+		return err
+	}
+
+	if err := setupTodoTools(registry, cfg, state.GetTodoManager()); err != nil {
+		return err
+	}
+
+	// Валидация на неизвестные tools
 	for toolName := range cfg.Tools {
 		if !isKnownTool(toolName) {
 			return fmt.Errorf("unknown tool '%s' in config. Known tools: %v",
 				toolName, getAllKnownToolNames())
+		}
+	}
+
+	// Собираем список зарегистрированных tools для логирования
+	var registered []string
+	for toolName := range cfg.Tools {
+		if cfg.Tools[toolName].Enabled && isKnownTool(toolName) {
+			registered = append(registered, toolName)
 		}
 	}
 
