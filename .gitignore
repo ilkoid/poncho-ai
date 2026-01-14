@@ -72,5 +72,8 @@ debug_logs/
 s3-download/
 cmd/s3-download/
 
+# Examples directory (local utilities and demos)
+examples/
+
 # Personal notes
 mynotes.md
