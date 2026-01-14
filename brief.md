@@ -45,23 +45,24 @@ poncho-ai/
 ├── pkg/                   # Reusable library packages
 │   ├── agent/            # Agent Client facade (2-line agent API)
 │   ├── app/              # Component initialization
-│   ├── chain/            # Chain Pattern + ReAct implementation
+│   ├── chain/            # Chain Pattern + ReAct implementation (Template/Execution split)
+│   ├── classifier/       # File classification engine
 │   ├── config/           # YAML configuration
 │   ├── debug/            # Debug logging
 │   ├── events/           # Port & Adapter: Event interfaces (Emitter, Subscriber)
 │   ├── factory/          # LLM provider factory
-│   ├── llm/              # LLM abstraction layer
+│   ├── llm/              # LLM abstraction layer (Provider + StreamingProvider)
 │   ├── models/           # Model Registry (centralized LLM providers)
 │   ├── prompt/           # Prompt loading/rendering
 │   ├── state/            # Framework core (CoreState)
 │   ├── tui/              # Reusable TUI helpers (adapter for Bubble Tea)
 │   ├── tools/            # Tool system (registry + std tools)
-│   └── [other packages]  # S3, WB, classifier, utils, etc.
+│   └── [other packages]  # S3, WB, utils, etc.
 ├── prompts/              # YAML prompt templates
 └── config.yaml           # Main configuration
 ```
 
-### 1.2 Component Architecture (2026-01-10)
+### 1.2 Component Architecture
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -105,12 +106,12 @@ poncho-ai/
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 
-Key Points (2026-01-10):
+Key Points:
   - pkg/state/CoreState: Framework core (includes e-commerce helpers)
-  - pkg/agent/Client: Facade with 2-line API, event support
+  - pkg/agent/Client: Facade with 2-line API, event support, streaming
   - pkg/events.*: Port interfaces (Emitter, Subscriber)
   - pkg/tui.*: Adapter helpers for Bubble Tea
-  - pkg/chain/ReActCycle: Implements both Chain and Agent interfaces
+  - pkg/chain/ReActCycle: Immutable template for agent execution
   - internal/ui/: App-specific TUI (extends pkg/tui)
   - Rule 6 Compliance: pkg/ has ZERO imports from internal/
   - Port & Adapter: Decouples agent from UI implementation
@@ -119,8 +120,8 @@ Key Points (2026-01-10):
 ### 1.3 Data Flow
 
 ```
-User Input → Command Registry → Agent.Client → ReActCycle →
-Build Context → LLM Provider → Tool Execution → Update History
+User Input → Command Registry → Agent.Client → ReActCycle (Template) →
+Create Execution → LLM Provider (Streaming/Sync) → Tool Execution → Update History
 
 Event Flow (Port & Adapter):
   Agent.Client → Emitter.Emit(Event) → Channel → Subscriber.Events() →
@@ -230,10 +231,18 @@ type Tool interface {
 - **LLM-Agnostic**: Works with any LLM provider
 
 **Standard Tools** (`pkg/tools/std/`):
-- Planner: `plan_add_task`, `plan_mark_done`, `plan_mark_failed`, `plan_clear`
-- WB Catalog: `get_wb_parent_categories`, `get_wb_subjects`, `ping_wb_api`
-- WB Products: `search_wb_products`, `get_wb_characteristics`, `get_wb_tnved`
-- WB References: `get_wb_brands`, `get_wb_colors`, `get_wb_countries`, etc.
+- **Planner**: `plan_add_task`, `plan_mark_done`, `plan_mark_failed`, `plan_clear`
+- **WB Catalog**: `get_wb_parent_categories`, `get_wb_subjects`, `ping_wb_api`
+- **WB Products**: `search_wb_products`, `get_wb_characteristics`, `get_wb_tnved`
+- **WB References**: `get_wb_brands`, `get_wb_colors`, `get_wb_countries`, etc.
+- **WB Analytics**:
+    - `get_wb_campaign_stats`: Campaign statistics (views, clicks, orders)
+    - `get_wb_keyword_stats`: Keyword statistics
+    - `get_wb_attribution_summary`: Organic vs Ad attribution
+    - `get_wb_search_positions`: Product search positions
+    - `get_wb_top_search_queries`: Top search queries for product
+    - `get_wb_top_organic_positions`: Top 10 organic positions
+- **WB Feedbacks (Stub)**: `get_wb_feedbacks`, `get_wb_questions`, etc.
 
 **Selective Tool Registration** (Bit Flags):
 ```go
@@ -280,7 +289,12 @@ type ModelEntry struct {
 
 ### 3.3 ReActCycle (`pkg/chain/`)
 
-**Purpose**: Implements both **Chain** and **Agent** interfaces.
+**Purpose**: Implements both **Chain** and **Agent** interfaces using a Template/Execution pattern.
+
+**Architecture (Phase 1-4 Refactor)**:
+- **ReActCycle (Template)**: Immutable, created once. Holds config, registries, step templates. Thread-safe.
+- **ReActExecution (Runtime)**: Created per `Execute()` call. Holds runtime state (history, steps). Not shared.
+- **Observer Pattern**: Handles cross-cutting concerns (debug logs, events).
 
 ```go
 // Agent interface (simple)
@@ -291,7 +305,6 @@ history := reactChain.GetHistory()
 output, err := reactChain.Execute(ctx, chain.ChainInput{
     UserQuery: query,
     State:     coreState,
-    LLM:       llmProvider,
     Registry:  registry,
 })
 ```
@@ -301,17 +314,19 @@ output, err := reactChain.Execute(ctx, chain.ChainInput{
 - `LLMInvocationStep` - Call LLM with context
 - `ToolExecutionStep` - Execute tool calls
 - `ChainContext` - Thread-safe execution state
-- `ChainDebugRecorder` - Debug integration
+- `ChainDebugRecorder` - Debug integration via Observer
+- `Signals` - Typed execution control (`SignalNone`, `SignalFinalAnswer`, `SignalNeedUserInput`, `SignalError`)
 
 **Benefits**:
 - Rule 6 compliant (no internal/ imports)
 - Reusable across CLI, TUI, HTTP API
 - Dual pattern support
 - YAML-configurable
+- Thread-safe concurrent execution
 
 ### 3.3.1 Simple Agent API (`pkg/agent/`)
 
-**NEW (2026-01-08)**: Ultra-simple facade for creating AI agents in **2 lines**.
+**Facade**: Ultra-simple facade for creating AI agents in **2 lines**.
 
 **Problem Solved**: Original API required 50+ lines of boilerplate code.
 
@@ -336,7 +351,7 @@ import (
 )
 
 func main() {
-    client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+    client, _ := agent.New(context.Background(), agent.Config{ConfigPath: "config.yaml"})
     result, _ := client.Run(context.Background(), "Find products under 1000₽")
     fmt.Println(result)
 }
@@ -344,7 +359,7 @@ func main() {
 
 **With Custom Tool**:
 ```go
-client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+client, _ := agent.New(ctx, agent.Config{ConfigPath: "config.yaml"})
 client.RegisterTool(&MyPriceCheckerTool{})
 result, _ := client.Run(ctx, "Check price of SKU123")
 ```
@@ -374,10 +389,6 @@ cfg := client.GetConfig()              // Direct config access
 - No circular imports (Agent interface in `pkg/chain/agent.go`)
 - Thread-safe
 - Compatible with both TUI and CLI
-
-**Examples**:
-- `cmd/simple-agent/main.go` - Basic usage
-- `cmd/wb-ping-util-v2/main.go` - Comparison with old API
 
 ### 3.4 State Management (Repository Pattern)
 
@@ -484,11 +495,16 @@ type Provider interface {
     Generate(ctx context.Context, messages []Message, opts ...any) (Message, error)
 }
 
+type StreamingProvider interface {
+    Provider
+    GenerateStream(ctx context.Context, messages []Message, callback func(StreamChunk), opts ...any) (Message, error)
+}
+
 // Options pattern
 llm.Generate(ctx, messages, llm.WithModel("glm-4.6"), llm.WithTemperature(0.5))
 ```
 
-**Implementation**: OpenAI-compatible adapter covers 99% of modern APIs.
+**Implementation**: OpenAI-compatible adapter covers 99% of modern APIs. Supports streaming and "Thinking Mode" (Zai GLM).
 
 **Factory**: `pkg/factory/llm_factory.go` creates providers from config.
 
@@ -553,7 +569,7 @@ type ExecutionResult struct {
 
 ### 3.10 Port & Adapter Pattern (`pkg/events/`, `pkg/tui/`)
 
-**NEW (2026-01-10)**: Decouples agent logic from UI implementation.
+**Decouples agent logic from UI implementation.**
 
 **Problem**: Without this pattern, agent code depends on specific UI framework (Bubble Tea), making:
 - Library code (pkg/) dependent on app-specific code (internal/)
@@ -610,7 +626,7 @@ func RunWithOpts(client *agent.Client, opts ...Option) error
 
 ```go
 // cmd/poncho/main.go
-client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+client, _ := agent.New(ctx, agent.Config{ConfigPath: "config.yaml"})
 
 // Create emitter
 emitter := events.NewChanEmitter(100)
@@ -691,6 +707,8 @@ app:
   debug_logs:
     enabled: true
     logs_dir: "./debug_logs"
+  streaming:
+    enabled: true
 
 # Chain Configuration (Rule 2: YAML-driven)
 chains:
@@ -759,7 +777,7 @@ Layered architecture, thread-safe, no globals.
 - `internal/` - Application-specific
 - `cmd/` - Entry points only
 
-**Status (2026-01-10)**: ✅ Full compliance achieved. `pkg/` has ZERO imports from `internal/`. `pkg/app/components` returns `*state.CoreState`. Port & Adapter pattern (`pkg/events`, `pkg/tui`) enables clean UI integration without breaking Rule 6.
+**Status**: ✅ Full compliance achieved. `pkg/` has ZERO imports from `internal/`. `pkg/app/components` returns `*state.CoreState`. Port & Adapter pattern (`pkg/events`, `pkg/tui`) enables clean UI integration without breaking Rule 6.
 
 ### Rule 7: Error Handling
 No `panic()` in business logic. All errors returned up stack.
@@ -993,7 +1011,7 @@ The framework follows **"Convention over Configuration"** - developers follow si
 
 ---
 
-**Last Updated**: 2026-01-11
-**Version**: 3.5 (CLI utilities, chains config, pkg/tui.Run)
+**Last Updated**: 2026-01-14
+**Version**: 3.6 (Streaming, Expanded WB Tools, Chain Refactor)
 
 **Maintainer**: Poncho AI Development Team
