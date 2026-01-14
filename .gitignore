@@ -68,10 +68,6 @@ bin/
 # Debug logs
 debug_logs/
 
-# Build artifacts (local)
-main
-poncho
-
 # S3 downloaded data
 s3-download/
 cmd/s3-download/
