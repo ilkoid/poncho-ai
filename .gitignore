@@ -77,3 +77,7 @@ examples/
 
 # Personal notes
 mynotes.md
+
+# Intent classification docs (draft)
+ADR-001-intent-classification.md
+IMPLEMENTATION_PLAN_INTENT_CLASSIFICATION*.md
