@@ -31,6 +31,9 @@ type LLMInvocationStep struct {
 	// registry — реестр инструментов для получения определений (Rule 3)
 	registry *tools.Registry
 
+	// bundleResolver — резолвер bundle для токен-оптимизации (Phase 3)
+	bundleResolver *BundleResolver
+
 	// systemPrompt — базовый системный промпт
 	systemPrompt string
 
@@ -78,8 +81,13 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 	messages := chainCtx.BuildContextMessagesForModel(s.systemPrompt)
 	messagesCount := len(messages)
 
-	// 5. Получаем определения инструментов
-	toolDefs := s.registry.GetDefinitions()
+	// 5. Получаем определения инструментов (с учётом bundle mode)
+	var toolDefs []tools.ToolDefinition
+	if s.bundleResolver != nil {
+		toolDefs = s.bundleResolver.GetToolDefinitions()
+	} else {
+		toolDefs = s.registry.GetDefinitions()
+	}
 
 	// 6. Записываем LLM request в debug
 	if s.debugRecorder != nil && s.debugRecorder.Enabled() {
@@ -146,6 +154,32 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		ToolCalls: response.ToolCalls,
 	}); err != nil {
 		return StepResult{}.WithError(fmt.Errorf("failed to append assistant message: %w", err))
+	}
+
+	// 10a. PHASE 3: Bundle Resolution — проверяем и расширяем bundle calls
+	if s.bundleResolver != nil && len(response.ToolCalls) > 0 {
+		// Проверяем есть ли bundle calls среди tool calls
+		for _, tc := range response.ToolCalls {
+			if s.bundleResolver.IsBundleCall(tc.Name) {
+				// Bundle call detected — расширяем bundle
+				bundleMsg, err := s.bundleResolver.ExpandBundle(tc.Name)
+				if err != nil {
+					return StepResult{}.WithError(fmt.Errorf("failed to expand bundle '%s': %w", tc.Name, err))
+				}
+
+				// Добавляем bundle expansion message как system message
+				if err := chainCtx.AppendMessage(bundleMsg); err != nil {
+					return StepResult{}.WithError(fmt.Errorf("failed to append bundle expansion message: %w", err))
+				}
+
+				// Логируем bundle expansion
+				toolCount := s.countExpandedTools(bundleMsg.Content)
+				fmt.Printf("[Bundle Resolver] Expanded bundle: %s → %d tools\n", tc.Name, toolCount)
+
+				// Re-run LLM call с расширенным контекстом
+				return s.reRunWithExpandedContext(ctx, chainCtx, provider, modelDef, actualModel, opts)
+			}
+		}
 	}
 
 	// 11. Сохраняем фактические параметры модели в контексте
@@ -291,4 +325,125 @@ func (s *LLMInvocationStep) emitThinkingChunk(ctx context.Context, chunk llm.Str
 		},
 		Timestamp: time.Now(),
 	})
+}
+
+// countExpandedTools подсчитывает количество инструментов в bundle expansion message.
+//
+// Парсит содержимое system message и возвращает количество ## заголовков.
+func (s *LLMInvocationStep) countExpandedTools(content string) int {
+	count := 0
+	for i := 0; i < len(content); i++ {
+		if i+2 < len(content) && content[i] == '#' && content[i+1] == '#' {
+			// Пропускаем пробелы после ##
+			j := i + 2
+			for j < len(content) && content[j] == ' ' {
+				j++
+			}
+			// Если после ## есть текст (не конец строки), считаем как tool
+			if j < len(content) && content[j] != '\n' {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// reRunWithExpandedContext перезапускает LLM вызов с расширенным контекстом.
+//
+// Вызывается после bundle expansion. Получает обновлённый список сообщений
+// из chainContext и делает ещё один LLM вызов.
+func (s *LLMInvocationStep) reRunWithExpandedContext(
+	ctx context.Context,
+	chainCtx *ChainContext,
+	provider llm.Provider,
+	modelDef config.ModelDef,
+	actualModel string,
+	opts llm.GenerateOptions,
+) StepResult {
+	// 1. Получаем обновлённые сообщения (с bundle expansion)
+	messages := chainCtx.BuildContextMessagesForModel(s.systemPrompt)
+
+	// 2. Получаем tool definitions (теперь с расширенными tools из bundle)
+	var toolDefs []tools.ToolDefinition
+	if s.bundleResolver != nil {
+		// После expansion bundle resolver должен возвращать все tools (включая расширенные)
+		// Для simplicity пока берём все tools из registry
+		toolDefs = s.registry.GetDefinitions()
+	} else {
+		toolDefs = s.registry.GetDefinitions()
+	}
+
+	// 3. Подготавливаем opts
+	generateOpts := []any{toolDefs}
+	if opts.Model != "" {
+		generateOpts = append(generateOpts, llm.WithModel(opts.Model))
+	}
+	if opts.Temperature != 0 {
+		generateOpts = append(generateOpts, llm.WithTemperature(opts.Temperature))
+	}
+	if opts.MaxTokens != 0 {
+		generateOpts = append(generateOpts, llm.WithMaxTokens(opts.MaxTokens))
+	}
+	if opts.Format != "" {
+		generateOpts = append(generateOpts, llm.WithFormat(opts.Format))
+	}
+
+	// 4. Вызываем LLM с расширенным контекстом
+	llmStart := time.Now()
+	var response llm.Message
+	var err error
+
+	if streamingProvider, ok := provider.(llm.StreamingProvider); ok && s.emitter != nil {
+		response, err = s.invokeStreamingLLM(ctx, streamingProvider, messages, generateOpts)
+	} else {
+		response, err = provider.Generate(ctx, messages, generateOpts...)
+	}
+	llmDuration := time.Since(llmStart).Milliseconds()
+
+	if err != nil {
+		return StepResult{}.WithError(fmt.Errorf("LLM re-generation failed (after bundle expansion): %w", err))
+	}
+
+	// 5. Записываем LLM response в debug
+	if s.debugRecorder != nil && s.debugRecorder.Enabled() {
+		s.debugRecorder.RecordLLMResponse(
+			response.Content,
+			response.ToolCalls,
+			llmDuration,
+		)
+	}
+
+	// 6. Добавляем assistant message в историю
+	if err := chainCtx.AppendMessage(llm.Message{
+		Role:      llm.RoleAssistant,
+		Content:   response.Content,
+		ToolCalls: response.ToolCalls,
+	}); err != nil {
+		return StepResult{}.WithError(fmt.Errorf("failed to append re-generated assistant message: %w", err))
+	}
+
+	// 7. Сохраняем фактические параметры модели
+	chainCtx.SetActualModel(actualModel)
+	chainCtx.SetActualTemperature(opts.Temperature)
+	chainCtx.SetActualMaxTokens(opts.MaxTokens)
+
+	// 8. Определяем сигнал на основе ответа
+	if len(response.ToolCalls) == 0 {
+		if response.Content == UserChoiceRequest {
+			return StepResult{
+				Action: ActionBreak,
+				Signal: SignalNeedUserInput,
+			}
+		}
+		return StepResult{
+			Action: ActionBreak,
+			Signal: SignalFinalAnswer,
+		}
+	}
+
+	// Есть tool calls - продолжаем цикл
+	return StepResult{
+		Action: ActionContinue,
+		Signal: SignalNone,
+	}
 }

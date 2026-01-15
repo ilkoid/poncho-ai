@@ -181,6 +181,12 @@ tool_bundles:
 # Если не указано, используются individual enabled флаги из tools секции
 enable_bundles: []
 
+# Tool Resolution Mode (опционально)
+# Режим резолюции инструментов для токен-оптимизации:
+#   - "flat": backward compatible, все tools отправляются в LLM сразу (по умолчанию)
+#   - "bundle-first": сначала bundles (~300 tokens), затем dynamic expansion при вызове bundle
+# tool_resolution_mode: "bundle-first"  # Раскомментируйте для включения bundle-first режима
+
 # Tools Configuration
 #
 # Каждый tool имеет свою конфигурацию с параметрами:

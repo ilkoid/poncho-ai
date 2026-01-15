@@ -12,11 +12,12 @@ import (
 // AppConfig — корневая структура конфигурации.
 // Она зеркалит структуру твоего config.yaml.
 type AppConfig struct {
-	Models          ModelsConfig         `yaml:"models"`
-	Tools           map[string]ToolConfig `yaml:"tools"`
-	ToolBundles     map[string]ToolBundle `yaml:"tool_bundles"`  // NEW: Группы инструментов
-	EnableBundles   []string             `yaml:"enable_bundles"`  // NEW: Какие bundles включить
-	S3              S3Config             `yaml:"s3"`
+	Models             ModelsConfig         `yaml:"models"`
+	Tools              map[string]ToolConfig `yaml:"tools"`
+	ToolBundles        map[string]ToolBundle `yaml:"tool_bundles"`         // NEW: Группы инструментов
+	EnableBundles      []string             `yaml:"enable_bundles"`         // NEW: Какие bundles включить
+	ToolResolutionMode string               `yaml:"tool_resolution_mode"`  // NEW: Режим резолюции (bundle-first, flat)
+	S3                 S3Config             `yaml:"s3"`
 	ImageProcessing ImageProcConfig      `yaml:"image_processing"`
 	App             AppSpecific          `yaml:"app"`
 	FileRules       []FileRule           `yaml:"file_rules"`
@@ -359,4 +360,13 @@ func (c *AppConfig) GetChainMaxIterations(chainName string) int {
 	}
 
 	return chainCfg.MaxIterations
+}
+
+// GetToolResolutionMode возвращает режим резолюции инструментов.
+// Если не указан, возвращает "flat" (backward compatible).
+func (c *AppConfig) GetToolResolutionMode() string {
+	if c.ToolResolutionMode == "" {
+		return "flat" // дефолт: backward compatible
+	}
+	return c.ToolResolutionMode
 }

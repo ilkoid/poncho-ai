@@ -170,6 +170,9 @@ type ReActCycle struct {
 	llmStep  *LLMInvocationStep
 	toolStep *ToolExecutionStep
 
+	// Bundle Resolver для токен-оптимизации (Phase 3)
+	bundleResolver *BundleResolver
+
 	// Prompts directory (immutable)
 	promptsDir string
 }
@@ -224,6 +227,15 @@ func (c *ReActCycle) SetRegistry(registry *tools.Registry) {
 	c.registry = registry
 	c.llmStep.registry = registry
 	c.toolStep.registry = registry
+}
+
+// SetBundleResolver устанавливает резолвер bundle для токен-оптимизации (Phase 3).
+//
+// Если bundleResolver == nil, bundle resolution отключён (backward compatible).
+// Thread-safe: устанавливает immutable dependencies.
+func (c *ReActCycle) SetBundleResolver(bundleResolver *BundleResolver) {
+	c.bundleResolver = bundleResolver
+	c.llmStep.bundleResolver = bundleResolver
 }
 
 // SetState устанавливает framework core состояние.

@@ -88,12 +88,13 @@ func NewReActExecution(
 
 	// Клонируем LLM шаг для этого выполнения (изолируем emitter, debugRecorder)
 	llmStep := &LLMInvocationStep{
-		modelRegistry:  llmStepTemplate.modelRegistry,
-		defaultModel:   llmStepTemplate.defaultModel,
-		registry:       llmStepTemplate.registry,
-		systemPrompt:   llmStepTemplate.systemPrompt,
-		emitter:        emitter,
-		debugRecorder:  debugRecorder,
+		modelRegistry:   llmStepTemplate.modelRegistry,
+		defaultModel:    llmStepTemplate.defaultModel,
+		registry:        llmStepTemplate.registry,
+		bundleResolver:  llmStepTemplate.bundleResolver,
+		systemPrompt:    llmStepTemplate.systemPrompt,
+		emitter:         emitter,
+		debugRecorder:   debugRecorder,
 	}
 
 	// Клонируем Tool шаг для этого выполнения
