@@ -14,6 +14,8 @@ import (
 type AppConfig struct {
 	Models          ModelsConfig         `yaml:"models"`
 	Tools           map[string]ToolConfig `yaml:"tools"`
+	ToolBundles     map[string]ToolBundle `yaml:"tool_bundles"`  // NEW: Группы инструментов
+	EnableBundles   []string             `yaml:"enable_bundles"`  // NEW: Какие bundles включить
 	S3              S3Config             `yaml:"s3"`
 	ImageProcessing ImageProcConfig      `yaml:"image_processing"`
 	App             AppSpecific          `yaml:"app"`
@@ -109,6 +111,26 @@ type ToolConfig struct {
 	Timeout     string `yaml:"timeout,omitempty"`
 	PostPrompt  string `yaml:"post_prompt,omitempty"`    // Путь к post-prompt файлу
 	DefaultTake int    `yaml:"default_take,omitempty"`   // Для feedbacks API
+}
+
+// ToolBundle — группа связанных инструментов для токен-оптимизации.
+//
+// Bundles позволяют сгруппировать инструменты по бизнес-контексту,
+// что снижает количество токенов в system prompt (100 tools → 10 bundles).
+//
+// Пример использования:
+//   tool_bundles:
+//     wb-tools:
+//       description: "Wildberries API: категории, бренды, отзывы"
+//       tools:
+//         - get_wb_parent_categories
+//         - get_wb_brands
+//         - get_wb_feedbacks
+//   enable_bundles:
+//     - wb-tools
+type ToolBundle struct {
+	Description string   `yaml:"description"` // Описание bundle для LLM
+	Tools       []string `yaml:"tools"`       // Список инструментов в bundle
 }
 
 // S3Config — настройки объектного хранилища.

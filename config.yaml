@@ -87,6 +87,100 @@ wb:
   retry_attempts: 3    # Default: retry attempts
   timeout: "30s"       # Default: HTTP timeout
 
+# Tool Bundles Configuration
+#
+# Bundles позволяют группировать инструменты по бизнес-контексту для токен-оптимизации.
+# Вместо 100 инструментов в system prompt (~15,000 токенов) можно отправить 10 bundles (~300 токенов).
+#
+# Гибридный режим: bundles + individual overrides
+# 1. Сначала включаются инструменты из enable_bundles
+# 2. Затем применяются individual overrides из tools секции
+#
+# Пример использования:
+#   enable_bundles:
+#     - wb-content-tools
+#     - s3-tools
+#   tools:
+#     get_wb_feedbacks: {enabled: false}  # Выключаем конкретный tool из bundle
+
+tool_bundles:
+  # === Wildberries Content API ===
+  wb-content-tools:
+    description: "Wildberries Content API: поиск товаров, категории, бренды, характеристики, ТНВЭД"
+    tools:
+      - search_wb_products
+      - get_wb_parent_categories
+      - get_wb_subjects
+      - get_wb_subjects_by_name
+      - get_wb_characteristics
+      - get_wb_tnved
+      - get_wb_brands
+      - ping_wb_api
+      - reload_wb_dictionaries
+
+  # === Wildberries Feedbacks API ===
+  wb-feedbacks-tools:
+    description: "Wildberries Feedbacks API: отзывы, вопросы, уведомления, статистика"
+    tools:
+      - get_wb_feedbacks
+      - get_wb_questions
+      - get_wb_new_feedbacks_questions
+      - get_wb_unanswered_feedbacks_counts
+      - get_wb_unanswered_questions_counts
+
+  # === Wildberries Analytics API ===
+  wb-analytics-tools:
+    description: "Wildberries Analytics API: воронки продаж, позиции в поиске, рекламные кампании, ключевые слова"
+    tools:
+      - get_wb_product_funnel
+      - get_wb_product_funnel_history
+      - get_wb_search_positions
+      - get_wb_top_search_queries
+      - get_wb_top_organic_positions
+      - get_wb_campaign_stats
+      - get_wb_keyword_stats
+      - get_wb_attribution_summary
+
+  # === Wildberries Dictionaries ===
+  wb-dictionaries-tools:
+    description: "Справочники Wildberries: цвета, страны, пол, сезоны, НДС"
+    tools:
+      - wb_colors
+      - wb_countries
+      - wb_genders
+      - wb_seasons
+      - wb_vat_rates
+
+  # === S3 Storage Tools ===
+  s3-storage-tools:
+    description: "S3 хранилище: список файлов, чтение объектов, загрузка изображений"
+    tools:
+      - list_s3_files
+      - read_s3_object
+      - read_s3_image
+      - get_plm_data
+
+  # === S3 Batch Tools ===
+  s3-batch-tools:
+    description: "Пакетные операции S3: классификация файлов, анализ изображений"
+    tools:
+      - classify_and_download_s3_files
+      - analyze_article_images_batch
+
+  # === Planner Tools ===
+  planner-tools:
+    description: "Планировщик задач: добавление, выполнение, провал задач"
+    tools:
+      - plan_add_task
+      - plan_mark_done
+      - plan_mark_failed
+      - plan_clear
+      - plan_set_tasks
+
+# Какие bundles включить (опционально)
+# Если не указано, используются individual enabled флаги из tools секции
+enable_bundles: []
+
 # Tools Configuration
 #
 # Каждый tool имеет свою конфигурацию с параметрами:
@@ -98,6 +192,10 @@ wb:
 #   - burst: burst capacity (если применимо)
 #   - default_take: дефолтное количество записей (для feedbacks)
 #   - post_prompt: путь к post-prompt файлу (опционально)
+#
+# Гибридный режим:
+# - Сначала инструменты включаются из bundles (если enable_bundles не пуст)
+# - Затем individual overrides из этой секции могут переопределить состояние
 #
 # Если tool не указан в этом списке или enabled=false, он не регистрируется.
 

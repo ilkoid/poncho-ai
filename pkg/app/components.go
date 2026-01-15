@@ -399,6 +399,7 @@ func Execute(parentCtx context.Context, c *Components, query string, timeout tim
 // Rule 13: Автономные утилиты могут работать только с S3 или другими сервисами.
 // В таких случаях WB инициализация не нужна.
 func hasWBTools(cfg *config.AppConfig) bool {
+	enabledTools := getEnabledTools(cfg)
 	wbTools := []string{
 		"search_wb_products",
 		"get_wb_parent_categories",
@@ -410,11 +411,56 @@ func hasWBTools(cfg *config.AppConfig) bool {
 	}
 
 	for _, toolName := range wbTools {
-		if toolCfg, exists := cfg.Tools[toolName]; exists && toolCfg.Enabled {
+		if enabledTools[toolName] {
 			return true
 		}
 	}
 	return false
+}
+
+// getEnabledTools возвращает карту включенных инструментов с учетом bundles.
+//
+// Гибридный режим:
+// 1. Если enable_bundles не пустой: сначала включаются инструменты из bundles,
+//    затем применяются individual overrides из tools секции.
+// 2. Если enable_bundles пустой: используются individual enabled флаги (backward compatible).
+//
+// Возвращает map[toolName]enabled для быстрой проверки.
+func getEnabledTools(cfg *config.AppConfig) map[string]bool {
+	enabled := make(map[string]bool)
+
+	// Если bundles не включены, используем backward compatible режим
+	if len(cfg.EnableBundles) == 0 {
+		for toolName, toolCfg := range cfg.Tools {
+			enabled[toolName] = toolCfg.Enabled
+		}
+		return enabled
+	}
+
+	// === Bundle mode: bundles + individual overrides ===
+
+	// 1. Сначала включаем инструменты из bundles
+	for _, bundleName := range cfg.EnableBundles {
+		bundle, exists := cfg.ToolBundles[bundleName]
+		if !exists {
+			continue // Логируем предупреждение? Пока пропускаем
+		}
+		for _, toolName := range bundle.Tools {
+			enabled[toolName] = true
+		}
+	}
+
+	// 2. Затем применяем individual overrides из tools секции
+	// Это позволяет точно настроить: включить или выключить конкретный tool
+	for toolName, toolCfg := range cfg.Tools {
+		if toolCfg.Enabled {
+			enabled[toolName] = true // Явно включаем
+		} else {
+			enabled[toolName] = false // Явно выключаем (override bundle)
+		}
+	}
+
+	return enabled
 }
 
 // setupWBTools регистрирует все Wildberries API инструменты.
@@ -437,138 +483,146 @@ func setupWBTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.
 		return tc, true
 	}
 
+	// Получаем карту включенных инструментов (с учетом bundles)
+	enabledTools := getEnabledTools(cfg)
+
+	// Helper для проверки включен ли tool
+	isEnabled := func(name string) bool {
+		return enabledTools[name]
+	}
+
 	// === WB Content API Tools ===
-	if toolCfg, exists := getToolCfg("search_wb_products"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("search_wb_products"); exists && isEnabled("search_wb_products") {
 		if err := register("search_wb_products", std.NewWbProductSearchTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_parent_categories"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_parent_categories"); exists && isEnabled("get_wb_parent_categories") {
 		if err := register("get_wb_parent_categories", std.NewWbParentCategoriesTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_subjects"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_subjects"); exists && isEnabled("get_wb_subjects") {
 		if err := register("get_wb_subjects", std.NewWbSubjectsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("ping_wb_api"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("ping_wb_api"); exists && isEnabled("ping_wb_api") {
 		if err := register("ping_wb_api", std.NewWbPingTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
 	// === WB Feedbacks API Tools ===
-	if toolCfg, exists := getToolCfg("get_wb_feedbacks"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_feedbacks"); exists && isEnabled("get_wb_feedbacks") {
 		if err := register("get_wb_feedbacks", std.NewWbFeedbacksTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_questions"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_questions"); exists && isEnabled("get_wb_questions") {
 		if err := register("get_wb_questions", std.NewWbQuestionsTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_new_feedbacks_questions"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_new_feedbacks_questions"); exists && isEnabled("get_wb_new_feedbacks_questions") {
 		if err := register("get_wb_new_feedbacks_questions", std.NewWbNewFeedbacksQuestionsTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_unanswered_feedbacks_counts"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_unanswered_feedbacks_counts"); exists && isEnabled("get_wb_unanswered_feedbacks_counts") {
 		if err := register("get_wb_unanswered_feedbacks_counts", std.NewWbUnansweredFeedbacksCountsTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_unanswered_questions_counts"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_unanswered_questions_counts"); exists && isEnabled("get_wb_unanswered_questions_counts") {
 		if err := register("get_wb_unanswered_questions_counts", std.NewWbUnansweredQuestionsCountsTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	// === WB Characteristics Tools ===
-	if toolCfg, exists := getToolCfg("get_wb_subjects_by_name"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_subjects_by_name"); exists && isEnabled("get_wb_subjects_by_name") {
 		if err := register("get_wb_subjects_by_name", std.NewWbSubjectsByNameTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_characteristics"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_characteristics"); exists && isEnabled("get_wb_characteristics") {
 		if err := register("get_wb_characteristics", std.NewWbCharacteristicsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_tnved"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_tnved"); exists && isEnabled("get_wb_tnved") {
 		if err := register("get_wb_tnved", std.NewWbTnvedTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_brands"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_brands"); exists && isEnabled("get_wb_brands") {
 		if err := register("get_wb_brands", std.NewWbBrandsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
 	// === WB Service Tools ===
-	if toolCfg, exists := getToolCfg("reload_wb_dictionaries"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("reload_wb_dictionaries"); exists && isEnabled("reload_wb_dictionaries") {
 		if err := register("reload_wb_dictionaries", std.NewReloadWbDictionariesTool(wbClient, toolCfg)); err != nil {
 			return err
 		}
 	}
 
 	// === WB Analytics Tools ===
-	if toolCfg, exists := getToolCfg("get_wb_product_funnel"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_product_funnel"); exists && isEnabled("get_wb_product_funnel") {
 		if err := register("get_wb_product_funnel", std.NewWbProductFunnelTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_product_funnel_history"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_product_funnel_history"); exists && isEnabled("get_wb_product_funnel_history") {
 		if err := register("get_wb_product_funnel_history", std.NewWbProductFunnelHistoryTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_search_positions"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_search_positions"); exists && isEnabled("get_wb_search_positions") {
 		if err := register("get_wb_search_positions", std.NewWbSearchPositionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_top_search_queries"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_top_search_queries"); exists && isEnabled("get_wb_top_search_queries") {
 		if err := register("get_wb_top_search_queries", std.NewWbTopSearchQueriesTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_top_organic_positions"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_top_organic_positions"); exists && isEnabled("get_wb_top_organic_positions") {
 		if err := register("get_wb_top_organic_positions", std.NewWbTopOrganicPositionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_campaign_stats"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_campaign_stats"); exists && isEnabled("get_wb_campaign_stats") {
 		if err := register("get_wb_campaign_stats", std.NewWbCampaignStatsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_keyword_stats"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_keyword_stats"); exists && isEnabled("get_wb_keyword_stats") {
 		if err := register("get_wb_keyword_stats", std.NewWbKeywordStatsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_wb_attribution_summary"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("get_wb_attribution_summary"); exists && isEnabled("get_wb_attribution_summary") {
 		if err := register("get_wb_attribution_summary", std.NewWbAttributionSummaryTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
@@ -600,32 +654,37 @@ func setupDictionaryTools(registry *tools.Registry, cfg *config.AppConfig, state
 		return tc, true
 	}
 
+	enabledTools := getEnabledTools(cfg)
+	isEnabled := func(name string) bool {
+		return enabledTools[name]
+	}
+
 	// === WB Dictionary Tools ===
-	if toolCfg, exists := getToolCfg("wb_colors"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("wb_colors"); exists && isEnabled("wb_colors") {
 		if err := register("wb_colors", std.NewWbColorsTool(dicts, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("wb_countries"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("wb_countries"); exists && isEnabled("wb_countries") {
 		if err := register("wb_countries", std.NewWbCountriesTool(dicts, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("wb_genders"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("wb_genders"); exists && isEnabled("wb_genders") {
 		if err := register("wb_genders", std.NewWbGendersTool(dicts, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("wb_seasons"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("wb_seasons"); exists && isEnabled("wb_seasons") {
 		if err := register("wb_seasons", std.NewWbSeasonsTool(dicts, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("wb_vat_rates"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("wb_vat_rates"); exists && isEnabled("wb_vat_rates") {
 		if err := register("wb_vat_rates", std.NewWbVatRatesTool(dicts, toolCfg)); err != nil {
 			return err
 		}
@@ -644,35 +703,35 @@ func setupS3Tools(registry *tools.Registry, cfg *config.AppConfig, s3Client *s3s
 		return nil
 	}
 
-	getToolCfg := func(name string) (config.ToolConfig, bool) {
-		tc, exists := cfg.Tools[name]
-		if !exists {
-			return config.ToolConfig{Enabled: false}, false
-		}
-		return tc, true
+	enabledTools := getEnabledTools(cfg)
+	isEnabled := func(name string) bool {
+		return enabledTools[name]
 	}
 
 	// === S3 Basic Tools ===
-	if toolCfg, exists := getToolCfg("list_s3_files"); exists && toolCfg.Enabled {
-		if err := register("list_s3_files", std.NewS3ListTool(s3Client)); err != nil {
-			return err
+	// Для S3 tools конфигурация обычно не требуется, проверяем только enabled
+	if isEnabled("list_s3_files") {
+		if _, exists := cfg.Tools["list_s3_files"]; exists {
+			if err := register("list_s3_files", std.NewS3ListTool(s3Client)); err != nil {
+				return err
+			}
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("read_s3_object"); exists && toolCfg.Enabled {
+	if _, exists := cfg.Tools["read_s3_object"]; exists && isEnabled("read_s3_object") {
 		if err := register("read_s3_object", std.NewS3ReadTool(s3Client)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("read_s3_image"); exists && toolCfg.Enabled {
+	if _, exists := cfg.Tools["read_s3_image"]; exists && isEnabled("read_s3_image") {
 		tool := std.NewS3ReadImageTool(s3Client, cfg.ImageProcessing)
 		if err := register("read_s3_image", tool); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("get_plm_data"); exists && toolCfg.Enabled {
+	if _, exists := cfg.Tools["get_plm_data"]; exists && isEnabled("get_plm_data") {
 		tool := std.NewGetPLMDataTool(s3Client)
 		if err := register("get_plm_data", tool); err != nil {
 			return err
@@ -680,7 +739,7 @@ func setupS3Tools(registry *tools.Registry, cfg *config.AppConfig, s3Client *s3s
 	}
 
 	// === S3 Batch Tools ===
-	if toolCfg, exists := getToolCfg("classify_and_download_s3_files"); exists && toolCfg.Enabled {
+	if toolCfg, exists := cfg.Tools["classify_and_download_s3_files"]; exists && isEnabled("classify_and_download_s3_files") {
 		tool := std.NewClassifyAndDownloadS3Files(
 			s3Client,
 			state,
@@ -706,16 +765,13 @@ func setupVisionTools(registry *tools.Registry, cfg *config.AppConfig, state *st
 		return nil
 	}
 
-	getToolCfg := func(name string) (config.ToolConfig, bool) {
-		tc, exists := cfg.Tools[name]
-		if !exists {
-			return config.ToolConfig{Enabled: false}, false
-		}
-		return tc, true
+	enabledTools := getEnabledTools(cfg)
+	isEnabled := func(name string) bool {
+		return enabledTools[name]
 	}
 
 	// === Vision Tools ===
-	if toolCfg, exists := getToolCfg("analyze_article_images_batch"); exists && toolCfg.Enabled {
+	if toolCfg, exists := cfg.Tools["analyze_article_images_batch"]; exists && isEnabled("analyze_article_images_batch") {
 		// Vision LLM обязателен для этого tool
 		if visionLLM == nil {
 			return fmt.Errorf("analyze_article_images_batch tool requires default_vision model to be configured")
@@ -761,32 +817,37 @@ func setupTodoTools(registry *tools.Registry, cfg *config.AppConfig, tm *todo.Ma
 		return tc, true
 	}
 
+	enabledTools := getEnabledTools(cfg)
+	isEnabled := func(name string) bool {
+		return enabledTools[name]
+	}
+
 	// === Planner Tools ===
-	if toolCfg, exists := getToolCfg("plan_add_task"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("plan_add_task"); exists && isEnabled("plan_add_task") {
 		if err := register("plan_add_task", std.NewPlanAddTaskTool(tm, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("plan_mark_done"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("plan_mark_done"); exists && isEnabled("plan_mark_done") {
 		if err := register("plan_mark_done", std.NewPlanMarkDoneTool(tm, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("plan_mark_failed"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("plan_mark_failed"); exists && isEnabled("plan_mark_failed") {
 		if err := register("plan_mark_failed", std.NewPlanMarkFailedTool(tm, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("plan_clear"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("plan_clear"); exists && isEnabled("plan_clear") {
 		if err := register("plan_clear", std.NewPlanClearTool(tm, toolCfg)); err != nil {
 			return err
 		}
 	}
 
-	if toolCfg, exists := getToolCfg("plan_set_tasks"); exists && toolCfg.Enabled {
+	if toolCfg, exists := getToolCfg("plan_set_tasks"); exists && isEnabled("plan_set_tasks") {
 		if err := register("plan_set_tasks", std.NewPlanSetTasksTool(tm, toolCfg)); err != nil {
 			return err
 		}
