@@ -137,15 +137,7 @@ Event Flow (Port & Adapter):
 | Tool | Purpose | Interface | Key Features |
 |------|---------|-----------|--------------|
 | **poncho** | Main TUI application | Bubble Tea | Full agent interface, file management, vision |
-| **maxiponcho** | WB PLM analysis TUI | Bubble Tea | S3 integration, WB API, product analysis |
-| **chain-cli** | Chain Pattern testing | CLI | Debug logging, JSON output, model override |
-| **model-registry-test** | Model Registry testing | CLI | List models, test retrieval, verify fallback |
-| **vision-cli** | Vision analysis | CLI | Multimodal queries, image analysis |
-| **debug-test** | Debug logs testing | CLI | Debug recorder simulation |
-| **wb-tools-test** | S3 & WB tools tester | CLI | Sequential tool execution, JSON results |
-| **todo-agent** | Todo management TUI | Bubble Tea | Task planning with AI, standalone |
-| **wb-ping-util-v2** | WB API diagnostic | CLI | Example of new agent API (2-line) |
-| **simple-agent** | Agent API example | CLI | Minimal agent implementation |
+
 
 ### 2.2 Main Applications
 
@@ -214,7 +206,73 @@ cd cmd/todo-agent && go run main.go           # Autonomous task planner
 
 ## 3. Core Components
 
-### 3.1 Tool System (`pkg/tools/`)
+### 3.1 Client Storage Architecture
+
+**Where do clients live?**
+
+| Client | Stored In | Pattern | How to Access |
+|--------|-----------|---------|---------------|
+| **S3 Client** | `CoreState.store` | Repository | `state.GetStorage()` |
+| **LLM Providers** | `ModelRegistry` | Registry | `modelRegistry.Get()` |
+| **WB Client** | ❌ NOT in State | Dependency Injection | Passed to tools |
+
+**S3 Client** (`pkg/s3storage/`):
+- "Dumb" client for simple S3 operations
+- Stored in CoreState: `state.SetStorage(client)`
+- Accessed by tools: `state.GetStorage()`
+- Thread-safe: minio client handles concurrency
+
+**LLM Providers** (`pkg/models/`):
+- Stored in ModelRegistry, NOT in CoreState
+- All models from `config.yaml` registered at startup
+- ReActCycle manages model selection via registry
+- Thread-safe: `sync.RWMutex` protects registry access
+
+```go
+// ModelRegistry structure
+type Registry struct {
+    mu     sync.RWMutex
+    models map[string]ModelEntry  // name → Provider + Config
+}
+
+type ModelEntry struct {
+    Provider llm.Provider
+    Config   config.ModelDef
+}
+
+// Usage
+provider, modelDef, err := modelRegistry.Get("glm-4.6")
+provider, modelDef, actualModel, err := modelRegistry.GetWithFallback("custom", "glm-4.6")
+```
+
+**WB Client** (`pkg/wb/`):
+- SDK with auto-pagination, retry, rate limiting
+- NOT stored in CoreState - passed via Dependency Injection
+- Created in `app.Initialize()` and passed to tools directly
+- Per-tool rate limiting via `getOrCreateLimiter(toolID, rateLimit, burst)`
+
+```go
+// WB client creation (pkg/app/components.go:163)
+wbClient, err := wb.NewFromConfig(cfg.WB)
+
+// Passed to tools in setupWBTools()
+func setupWBTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.Client) error {
+    if toolCfg, exists := getToolCfg("get_wb_parent_categories"); exists && toolCfg.Enabled {
+        register("get_wb_parent_categories",
+            std.NewWbParentCategoriesTool(wbClient, toolCfg, cfg.WB))
+    }
+}
+
+// Tool stores client internally
+type WbParentCategoriesTool struct {
+    client   *wb.Client
+    toolID   string
+    endpoint string
+    // ...
+}
+```
+
+### 3.2 Tool System (`pkg/tools/`)
 
 **Design Principle**: "Raw In, String Out"
 
@@ -229,6 +287,7 @@ type Tool interface {
 - **Registry Pattern**: Dynamic tool registration via `Registry.Register()`
 - **Thread-Safe**: Protected by `sync.RWMutex`
 - **LLM-Agnostic**: Works with any LLM provider
+- **YAML-Driven**: Tools only registered if `enabled: true` in config
 
 **Standard Tools** (`pkg/tools/std/`):
 - **Planner**: `plan_add_task`, `plan_mark_done`, `plan_mark_failed`, `plan_clear`
@@ -256,7 +315,7 @@ const (
 components := appcomponents.Initialize(cfg, 10, "", appcomponents.ToolWB|appcomponents.ToolPlanner)
 ```
 
-### 3.2 Model Registry (`pkg/models/`)
+### 3.3 Model Registry (`pkg/models/`)
 
 **Purpose**: Centralized LLM provider management with dynamic model switching.
 
@@ -286,6 +345,7 @@ type ModelEntry struct {
 - Post-prompts can switch models dynamically via `model` field
 - Thread-safe operations
 - Fallback mechanism for missing models
+- Vision model detection via `IsVisionModel()`
 
 ### 3.3 ReActCycle (`pkg/chain/`)
 

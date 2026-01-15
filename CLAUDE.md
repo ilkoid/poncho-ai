@@ -35,8 +35,10 @@ poncho-ai/
 │   ├── todo-agent/        # Standalone TUI for task management
 │   ├── wb-ping-util-v2/   # Example of new 2-line agent API
 │   ├── simple-agent/      # Minimal agent implementation example
-│   ├── streaming-test/    # NEW: Streaming functionality test
+│   ├── streaming-test/    # Streaming functionality test
 │   └── wb-tools-test/     # CLI utility for testing WB tools
+├── examples/              # Usage examples (not utilities)
+│   └── interruptible-agent/ # NEW: Interruption mechanism demonstration
 ├── internal/              # Application-specific logic
 │   └── ui/               # Bubble Tea TUI (app-specific implementation)
 ├── pkg/                   # Reusable library packages
@@ -282,6 +284,24 @@ state := client.GetState()             // Direct CoreState access
 cfg := client.GetConfig()              // Direct config access
 ```
 
+**With Interruptions** (NEW):
+```go
+// Create channel for user input
+inputChan := make(chan string, 10)
+
+// Create ChainInput with UserInputChan for interruptions
+chainInput := chain.ChainInput{
+    UserQuery:    "Analyze product data",
+    State:        client.GetState(),
+    Registry:     client.GetToolsRegistry(),
+    Config:       chainConfig,
+    UserInputChan: inputChan,
+}
+
+// Execute with interruption support
+output, err := client.Execute(ctx, chainInput)
+```
+
 **Features**:
 - ✅ Auto-loads config.yaml
 - ✅ Auto-registers tools (only `enabled: true`)
@@ -290,6 +310,7 @@ cfg := client.GetConfig()              // Direct config access
 - ✅ Compatible with both TUI and CLI
 - ✅ No circular imports (Agent interface in `pkg/chain`)
 - ✅ Streaming support via event system
+- ✅ Interruption mechanism via `Execute(ctx, ChainInput)`
 
 **Events Support** (Port & Adapter):
 ```go
@@ -336,9 +357,10 @@ type Subscriber interface {
 
 **Event Types**:
 - `EventThinking` - Agent starts thinking
-- `EventThinkingChunk` - **NEW**: Streaming reasoning content (for thinking mode)
+- `EventThinkingChunk` - Streaming reasoning content (for thinking mode)
 - `EventToolCall` - Tool execution started
 - `EventToolResult` - Tool execution completed
+- `EventUserInterruption` - **NEW**: User interrupted execution with message
 - `EventMessage` - Agent generated message
 - `EventError` - Error occurred
 - `EventDone` - Agent finished
@@ -362,6 +384,13 @@ type ToolResultData struct {
     ToolName string
     Result   string
     Duration time.Duration
+}
+
+// UserInterruptionData - user interruption (NEW)
+type UserInterruptionData struct {
+    Message      string // User's interruption message
+    Iteration    int    // Current ReAct iteration number
+    PromptSource string // "yaml:path" or "default"
 }
 ```
 
@@ -448,11 +477,13 @@ result, err := app.Execute(ctx, components, query, timeout)
 **Components Structure**:
 ```go
 type Components struct {
-    Config         *config.AppConfig
-    State          *state.CoreState
-    ModelRegistry  *models.Registry
-    ToolsRegistry  *tools.Registry
-    ReActCycle     *chain.ReActCycle
+    Config        *config.AppConfig    // Application configuration
+    State         *state.CoreState     // Framework core (thread-safe storage)
+    ModelRegistry *models.Registry     // LLM providers (NOT in CoreState)
+    LLM           llm.Provider         // DEPRECATED: Use ModelRegistry
+    VisionLLM     llm.Provider         // Vision model (from ModelRegistry)
+    WBClient      *wb.Client           // WB API client (NOT in CoreState - DI)
+    Orchestrator  *chain.ReActCycle    // ReAct agent executor
 }
 ```
 
@@ -477,26 +508,242 @@ messages:
     content: "Format as table..."
 ```
 
+### Interruption Mechanism (`pkg/chain/interruption.go`)
+
+**NEW**: User can interrupt ReAct cycle execution and send messages in real-time.
+
+**Architecture**:
+```
+ReAct Cycle Iteration:
+  ├─ LLM Invocation
+  ├─ Tool Execution
+  ├─ EventToolResult sent
+  ├─ ⏸️ INTERRUPTION CHECK (between iterations)
+  │   ├─ User input channel check (non-blocking)
+  │   ├─ If input received:
+  │   │   ├─ Append interruption message to history
+  │   │   ├─ Load interruption handler prompt (YAML or fallback)
+  │   │   ├─ SetActivePostPrompt(interruptionPrompt)
+  │   │   └─ Emit EventUserInterruption
+  │   └─ Else: continue
+  └─ Next iteration (with interruption prompt active)
+```
+
+**Configuration** (`config.yaml`):
+```yaml
+chains:
+  default:
+    interruption_prompt: "interruption_handler.yaml"  # Relative to prompts_dir
+```
+
+**Prompt** (`prompts/interruption_handler.yaml`):
+```yaml
+version: "1.0"
+description: "Handles user interruptions during ReAct cycle execution"
+
+config:
+  temperature: 0.3
+  max_tokens: 1500
+
+messages:
+  - role: system
+    content: |
+      You are an INTERRUPTION HANDLER for an AI agent.
+      ...
+      ## TODO Operations (if user mentions "todo" or "plan"):
+      - "todo: add <task>" → Call `plan_add_task` tool
+      - "todo: complete <N>" → Call `plan_mark_done` tool
+      ...
+```
+
+**ChainInput Extension**:
+```go
+type ChainInput struct {
+    // ... existing fields ...
+
+    // UserInputChan — канал для интерактивного пользовательского ввода
+    // Если не nil — оркестратор проверяет канал между итерациями
+    UserInputChan chan string `json:"-" yaml:"-"`
+}
+```
+
+**Usage Example** (`examples/interruptible-agent/`):
+```go
+client, _ := agent.New(ctx, agent.Config{ConfigPath: "config.yaml"})
+
+// Create channel for interruptions
+inputChan := make(chan string, 10)
+
+// Execute with interruption support
+output, _ := client.Execute(ctx, chain.ChainInput{
+    UserQuery:    "Show categories",
+    State:        client.GetState(),
+    Registry:     client.GetToolsRegistry(),
+    Config:       chainConfig,
+    UserInputChan: inputChan,
+})
+
+// During execution, send interruptions:
+inputChan <- "todo: add verify SKU data"
+inputChan <- "What are you doing?"
+inputChan <- "stop"
+```
+
+**Key Features**:
+- ✅ YAML-first configuration with fallback (Rule 2)
+- ✅ Non-blocking check via `select` with `default` case
+- ✅ Thread-safe (channel-based communication)
+- ✅ Event emission via `EventUserInterruption`
+- ✅ Supports existing `plan_*` tools for todo operations
+- ✅ Works even if YAML file missing (defaultInterruptionPrompt fallback)
+
+**Components**:
+- `pkg/chain/interruption.go` - `loadInterruptionPrompt()` function
+- `pkg/chain/executor.go` - Interruption check at lines 262-313
+- `pkg/chain/chain.go` - `UserInputChan` in ChainInput, `InterruptionPrompt` in ChainConfig
+- `prompts/interruption_handler.yaml` - YAML prompt template
+- `examples/interruptible-agent/` - Working example
+
 ### State Management
 
 **Repository Pattern** with type-safe operations:
 
 ```go
-// Typed keys
+// Typed keys (pkg/state/keys.go)
 type Key string
-const (KeyHistory, KeyFiles, KeyTodo, KeyDictionaries, KeyStorage, KeyToolsRegistry Key)
+const (
+    KeyHistory         Key = "history"           // []llm.Message
+    KeyFiles           Key = "files"             // map[string][]*FileMeta
+    KeyCurrentArticle  Key = "current_article"   // string
+    KeyTodo            Key = "todo"              // *todo.Manager
+    KeyDictionaries    Key = "dictionaries"      // *wb.Dictionaries
+    KeyStorage         Key = "storage"           // *s3storage.Client
+    KeyToolsRegistry   Key = "tools_registry"    // *tools.Registry
+)
 
-// Generic helpers
+// Generic helpers (pkg/state/generic.go)
 GetType[T any](s *CoreState, key Key) (T, bool)
 SetType[T any](s *CoreState, key Key, value T) error
 UpdateType[T any](s *CoreState, key Key, fn func(T) T) error
 ```
 
 **CoreState** (`pkg/state/core.go`):
-- Dependencies: Config, S3, Dictionaries, Todo, ToolsRegistry
 - Thread-safe storage: `mu sync.RWMutex`, `store map[string]any`
-- Implements: MessageRepository, FileRepository, TodoRepository, DictionaryRepository, StorageRepository
+- Implements: MessageRepository, FileRepository, TodoRepository, DictionaryRepository, StorageRepository, ToolsRepository
 - E-commerce helpers: `SetCurrentArticle()`, `GetCurrentArticleID()`, `GetCurrentArticle()`
+- Context building: `BuildAgentContext()` injects vision analysis and todo state
+
+**Repository Interfaces**:
+```go
+// MessageRepository - Chat history
+Append(msg llm.Message)
+GetHistory() []llm.Message
+
+// FileRepository - File management with vision analysis
+SetFiles(files map[string][]*FileMeta)
+GetFiles() map[string][]*FileMeta
+UpdateFileAnalysis(tag, filename, description string)
+
+// TodoRepository - Task management
+AddTask(description string) error
+CompleteTask(index int) error
+FailTask(index int, reason string) error
+GetTodoString() string
+GetTodoStats() (pending, done, failed int)
+
+// DictionaryRepository - E-commerce dictionaries
+SetDictionaries(dicts *wb.Dictionaries)
+GetDictionaries() *wb.Dictionaries
+
+// StorageRepository - S3 client management
+SetStorage(client *s3storage.Client) error
+GetStorage() *s3storage.Client
+HasStorage() bool
+
+// ToolsRepository - Tool registry
+SetToolsRegistry(registry *tools.Registry) error
+GetToolsRegistry() *tools.Registry
+```
+
+### Client Storage Architecture
+
+**Where do clients live?**
+
+| Client | Stored In | Pattern | How to Access |
+|--------|-----------|---------|---------------|
+| **S3 Client** | `CoreState.store` | Repository | `state.GetStorage()` |
+| **LLM Providers** | `ModelRegistry` | Registry | `modelRegistry.Get()` |
+| **WB Client** | ❌ NOT in State | Dependency Injection | Passed to tools |
+
+**S3 Client** (`pkg/s3storage/`):
+- "Dumb" client for simple S3 operations
+- Stored in CoreState: `state.SetStorage(client)`
+- Accessed by tools: `state.GetStorage()`
+- Thread-safe: minio client handles concurrency
+
+**LLM Providers** (`pkg/models/`):
+- Stored in ModelRegistry, NOT in CoreState
+- All models from `config.yaml` registered at startup
+- ReActCycle manages model selection via registry
+- Thread-safe: `sync.RWMutex` protects registry access
+
+```go
+// ModelRegistry structure
+type Registry struct {
+    mu     sync.RWMutex
+    models map[string]ModelEntry  // name → Provider + Config
+}
+
+type ModelEntry struct {
+    Provider llm.Provider
+    Config   config.ModelDef
+}
+
+// Usage
+provider, modelDef, err := modelRegistry.Get("glm-4.6")
+provider, modelDef, actualModel, err := modelRegistry.GetWithFallback("custom", "glm-4.6")
+```
+
+**WB Client** (`pkg/wb/`):
+- SDK with auto-pagination, retry, rate limiting
+- NOT stored in CoreState - passed via Dependency Injection
+- Created in `app.Initialize()` and passed to tools directly
+- Per-tool rate limiting via `getOrCreateLimiter(toolID, rateLimit, burst)`
+
+```go
+// WB client creation (pkg/app/components.go:163)
+wbClient, err := wb.NewFromConfig(cfg.WB)
+
+// Passed to tools in setupWBTools()
+func setupWBTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.Client) error {
+    if toolCfg, exists := getToolCfg("get_wb_parent_categories"); exists && toolCfg.Enabled {
+        register("get_wb_parent_categories",
+            std.NewWbParentCategoriesTool(wbClient, toolCfg, cfg.WB))
+    }
+}
+
+// Tool stores client internally
+type WbParentCategoriesTool struct {
+    client   *wb.Client
+    toolID   string
+    endpoint string
+    // ...
+}
+```
+
+**Why different patterns?**
+
+1. **S3 → Repository**: Multiple tools need access (S3 tools, Vision tools)
+2. **LLM → Registry**: Dynamic model switching, managed by ReActCycle
+3. **WB → DI**: Only WB tools use it, explicit dependency is clearer
+
+**Thread Safety**:
+
+| Component | Mutex | Purpose |
+|-----------|-------|---------|
+| CoreState | `sync.RWMutex` | Protects `store` map |
+| ModelRegistry | `sync.RWMutex` | Protects `models` map |
+| WB Client | `sync.RWMutex` | Protects `limiters` map (per-tool rate limiters) |
 
 ### Chain Pattern (`pkg/chain/`)
 
@@ -650,12 +897,14 @@ wg.Wait()
 **Files**:
 - `react.go` - ReActCycle template
 - `execution.go` - ReActExecution runtime state
-- `executor.go` - ReActExecutor and ExecutionObserver interface
-- `observers.go` - EmitterObserver, EmitterIterationObserver
+- `executor.go` - ReActExecutor and ExecutionObserver interface (includes interruption check)
+- `observers.go` - EmitterObserver, EmitterIterationObserver (includes EmitUserInterruption)
 - `step.go` - Step interface, ExecutionSignal, StepResult
 - `llm_step.go` - LLMInvocationStep implementation
 - `tool_step.go` - ToolExecutionStep implementation
 - `debug.go` - ChainDebugRecorder (ExecutionObserver implementation)
+- `interruption.go` - Interruption mechanism: `loadInterruptionPrompt()` function (NEW)
+- `interruption_test.go` - Unit tests for interruption mechanism (NEW)
 
 **See Also**: ADR-007.md for complete refactoring documentation
 
@@ -714,8 +963,9 @@ s3:
 | **Port & Adapter** | `pkg/events/`, `pkg/tui/` | Decouple agent from UI implementation |
 | **Repository** | `pkg/state/` | Unified storage with domain interfaces |
 | **Registry** | `pkg/tools/`, `pkg/models/` | Tool and Model registration/discovery |
-| **Factory** | `pkg/factory/` | LLM provider creation |
+| **Factory** | `pkg/models/` | LLM provider creation |
 | **Options** | `pkg/llm/`, `pkg/llm/streaming_options.go` | Runtime parameter overrides |
+| **Dependency Injection** | `pkg/app/`, `pkg/tools/std/` | WB client passed to tools via constructor |
 | **Command** | `internal/ui/` | TUI command handling (local, not in pkg/) |
 | **ReAct** | `pkg/chain/` | Agent reasoning loop |
 | **Chain of Responsibility** | `pkg/chain/` | Modular step-based execution |
@@ -723,6 +973,7 @@ s3:
 | **Observer** | `pkg/chain/` | Cross-cutting concerns (debug, events) (Phase 4) |
 | **Recorder** | `pkg/debug/` | JSON trace recording |
 | **Streaming** | `pkg/llm/StreamingProvider` | Real-time response streaming |
+| **Fallback** | `pkg/chain/interruption.go` | Default prompt when YAML missing (NEW) |
 
 ---
 
@@ -752,6 +1003,9 @@ go run cmd/wb-ping-util-v2/main.go
 
 # Streaming test (real-time events)
 go run cmd/streaming-test/main.go "Explain quantum computing"
+
+# Interruptible agent (demonstrates interruption mechanism)
+cd examples/interruptible-agent && go run main.go "Show parent categories"
 ```
 
 ---
@@ -794,7 +1048,19 @@ func (t *MyTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 
 ## Thread-Safe Components
 
-CoreState, ToolsRegistry, ModelRegistry, TodoManager, wb.Client.limiters, TUI MainModel (sync.RWMutex).
+| Component | Mutex Type | Purpose |
+|-----------|------------|---------|
+| **CoreState** | `sync.RWMutex` | Protects `store` map (read/write operations) |
+| **ModelRegistry** | `sync.RWMutex` | Protects `models` map (registration/retrieval) |
+| **ToolsRegistry** | `sync.RWMutex` | Protects `tools` map (registration/retrieval) |
+| **WB Client** | `sync.RWMutex` | Protects `limiters` map (per-tool rate limiters) |
+| **TodoManager** | `sync.RWMutex` | Protects tasks list and state |
+| **TUI MainModel** | `sync.RWMutex` | Protects UI state updates |
+
+**Concurrent Execution**:
+- **ReActCycle**: Multiple `Execute()` calls can run simultaneously (thread-safe)
+- **ReActExecution**: Not thread-safe, but created per execution (never shared)
+- **No Global Mutex**: No blocking during LLM calls or tool execution
 
 ---
 
@@ -804,5 +1070,5 @@ Each WB tool gets its own rate limiter instance (e.g., `get_wb_feedbacks`: 60/mi
 
 ---
 
-**Last Updated**: 2026-01-13
-**Version**: 5.0 (ReActCycle refactoring complete - Template-Execution separation, Observer pattern, Type-safe signals)
+**Last Updated**: 2026-01-16
+**Version**: 6.0 (Interruption Mechanism, EventUserInterruption, agent.Execute() with ChainInput)

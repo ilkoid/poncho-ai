@@ -55,6 +55,10 @@ const (
 	// EventToolResult отправляется когда инструмент вернул результат.
 	EventToolResult EventType = "tool_result"
 
+	// EventUserInterruption отправляется когда пользователь прерывает выполнение агента.
+	// Содержит сообщение пользователя и текущую итерацию.
+	EventUserInterruption EventType = "user_interruption"
+
 	// EventMessage отправляется когда агент генерирует сообщение.
 	EventMessage EventType = "message"
 
@@ -110,6 +114,20 @@ type ToolResultData struct {
 
 func (ToolResultData) eventData() {}
 
+// UserInterruptionData содержит данные о прерывании пользователем.
+type UserInterruptionData struct {
+	// Message — сообщение пользователя от которого произошло прерывание
+	Message string
+
+	// Iteration — номер текущей итерации ReAct цикла
+	Iteration int
+
+	// PromptSource — источник промпта interruption handler ("yaml:path" или "default")
+	PromptSource string
+}
+
+func (UserInterruptionData) eventData() {}
+
 // MessageData содержит данные для EventMessage и EventDone.
 type MessageData struct {
 	Content string
@@ -132,6 +150,7 @@ func (ErrorData) eventData() {}
 //   - EventThinkingChunk: ThinkingChunkData (порция reasoning_content)
 //   - EventToolCall: ToolCallData (имя инструмента, аргументы)
 //   - EventToolResult: ToolResultData (результат выполнения)
+//   - EventUserInterruption: UserInterruptionData (прерывание пользователем)
 //   - EventMessage: MessageData (ответ агента)
 //   - EventError: ErrorData (ошибка)
 //   - EventDone: MessageData (финальный ответ)

@@ -159,51 +159,57 @@ func Initialize(parentCtx context.Context, cfg *config.AppConfig, maxIters int, 
 		utils.Info("S3 client initialized", "bucket", cfg.S3.Bucket)
 	}
 
-	// 2. Инициализируем WB клиент из конфигурации
+	// 2. Инициализируем WB клиент ТОЛЬКО если включены WB tools
+	// Rule 13: Автономные утилиты могут работать без WB (только S3, Ozon и т.д.)
 	var wbClient *wb.Client
-	if cfg.WB.APIKey != "" {
-		var err error
-		wbClient, err = wb.NewFromConfig(cfg.WB)
-		if err != nil {
-			utils.Error("WB client creation failed", "error", err)
-			return nil, fmt.Errorf("failed to create WB client: %w", err)
-		}
-		// Ping с параметрами из конфига
-		wbCfg := cfg.WB.GetDefaults()
-		if _, err := wbClient.Ping(parentCtx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit); err != nil {
-			log.Printf("Warning: WB API ping failed: %v", err)
-			utils.Error("WB API ping failed", "error", err)
+	var dicts *wb.Dictionaries
+
+	if hasWBTools(cfg) {
+		if cfg.WB.APIKey != "" {
+			var err error
+			wbClient, err = wb.NewFromConfig(cfg.WB)
+			if err != nil {
+				utils.Error("WB client creation failed", "error", err)
+				return nil, fmt.Errorf("failed to create WB client: %w", err)
+			}
+			// Ping с параметрами из конфига
+			wbCfg := cfg.WB.GetDefaults()
+			if _, err := wbClient.Ping(parentCtx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit); err != nil {
+				log.Printf("Warning: WB API ping failed: %v", err)
+				utils.Error("WB API ping failed", "error", err)
+			} else {
+				utils.Info("WB API ping successful")
+			}
 		} else {
-			utils.Info("WB API ping successful")
+			log.Println("Warning: WB tools enabled but API key not set")
+			utils.Error("WB tools enabled but API key not set - WB tools will fail")
+		}
+
+		utils.Info("WB client initialized",
+			"api_key_set", cfg.WB.APIKey != "",
+			"rate_limit", cfg.WB.RateLimit,
+			"burst_limit", cfg.WB.BurstLimit)
+
+		// 3. Загружаем справочники WB (кэшируем при старте)
+		if wbClient != nil {
+			// Применяем defaults для WB секции
+			wbCfg := cfg.WB.GetDefaults()
+			dicts, err = wbClient.LoadDictionaries(parentCtx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit)
+			if err != nil {
+				log.Printf("Warning: failed to load WB dictionaries: %v", err)
+				utils.Error("WB dictionaries loading failed", "error", err)
+				// Продолжаем работу со справочниками = nil (dictionary tools вернут ошибку)
+			} else {
+				utils.Info("WB dictionaries loaded",
+					"colors", len(dicts.Colors),
+					"genders", len(dicts.Genders),
+					"countries", len(dicts.Countries),
+					"seasons", len(dicts.Seasons),
+					"vats", len(dicts.Vats))
+			}
 		}
 	} else {
-		log.Println("Warning: WB API key not set - using demo client")
-		utils.Info("WB API key not set, using demo client")
-		wbClient = wb.New("demo_key")
-	}
-	utils.Info("WB client initialized",
-		"api_key_set", cfg.WB.APIKey != "",
-		"rate_limit", cfg.WB.RateLimit,
-		"burst_limit", cfg.WB.BurstLimit)
-
-	// 3. Загружаем справочники WB (кэшируем при старте)
-	var dicts *wb.Dictionaries
-	if wbClient != nil {
-		// Применяем defaults для WB секции
-		wbCfg := cfg.WB.GetDefaults()
-		dicts, err = wbClient.LoadDictionaries(parentCtx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit)
-		if err != nil {
-			log.Printf("Warning: failed to load WB dictionaries: %v", err)
-			utils.Error("WB dictionaries loading failed", "error", err)
-			// Продолжаем работу со справочниками = nil (dictionary tools вернут ошибку)
-		} else {
-			utils.Info("WB dictionaries loaded",
-				"colors", len(dicts.Colors),
-				"genders", len(dicts.Genders),
-				"countries", len(dicts.Countries),
-				"seasons", len(dicts.Seasons),
-				"vats", len(dicts.Vats))
-		}
+		utils.Info("WB tools not enabled - skipping WB initialization")
 	}
 
 	// 4. Создаём CoreState (thread-safe)
@@ -386,6 +392,29 @@ func Execute(parentCtx context.Context, c *Components, query string, timeout tim
 	}
 
 	return result, nil
+}
+
+// hasWBTools проверяет, включён ли хотя бы один WB tool в конфиге.
+//
+// Rule 13: Автономные утилиты могут работать только с S3 или другими сервисами.
+// В таких случаях WB инициализация не нужна.
+func hasWBTools(cfg *config.AppConfig) bool {
+	wbTools := []string{
+		"search_wb_products",
+		"get_wb_parent_categories",
+		"get_wb_subjects",
+		"ping_wb_api",
+		"get_wb_feedbacks",
+		"get_wb_product_feedbacks",
+		"get_wb_product_detail",
+	}
+
+	for _, toolName := range wbTools {
+		if toolCfg, exists := cfg.Tools[toolName]; exists && toolCfg.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // setupWBTools регистрирует все Wildberries API инструменты.
@@ -818,8 +847,7 @@ func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provi
 		}
 	}
 
-	log.Printf("Tools registered (%d): %s", len(registered), registered)
-	utils.Info("Tools registered", "count", len(registered), "tools", registered)
+	utils.Debug("Tools registered", "count", len(registered), "tools", registered)
 	return nil
 }
 

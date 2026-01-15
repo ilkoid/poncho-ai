@@ -44,6 +44,11 @@ type ChainInput struct {
 
 	// Config — конфигурация цепочки (из YAML)
 	Config ChainConfig
+
+	// UserInputChan — канал для интерактивного пользовательского ввода
+	// Если не nil — оркестратор проверяет канал между итерациями
+	// Позволяет пользователю прервать выполнение и отправить сообщение
+	UserInputChan chan string `json:"-" yaml:"-"`
 }
 
 // ChainOutput — результат выполнения цепочки.
@@ -94,6 +99,10 @@ type ChainConfig struct {
 
 	// PostPromptsDir — директория с post-prompts
 	PostPromptsDir string
+
+	// InterruptionPrompt — путь к YAML файлу для обработки прерываний
+	// Если пусто — используется fallback промпт из кода
+	InterruptionPrompt string `yaml:"interruption_prompt"`
 }
 
 // StepConfig — конфигурация шага из YAML.

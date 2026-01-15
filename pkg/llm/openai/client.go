@@ -451,8 +451,9 @@ func (c *Client) generateWithThinking(ctx context.Context, messages []llm.Messag
 			// content уже содержит reasoning_content
 			result.Content = choice.Content
 		} else {
-			// Объединяем без дубликатов
-			result.Content = choice.ReasoningContent + "\n\n" + choice.Content
+			// Объединяем с чётким разделителем
+			// Triple newline для визуального разделения reasoning от content
+			result.Content = choice.ReasoningContent + "\n\n\n" + choice.Content
 		}
 		utils.Debug("Thinking content extracted",
 			"reasoning_length", len(choice.ReasoningContent),
@@ -1032,7 +1033,8 @@ func (c *Client) parseSSEStream(
 		} else if strings.Contains(accumulatedContent, accumulatedReasoning) {
 			result.Content = accumulatedContent
 		} else {
-			result.Content = accumulatedReasoning + "\n\n" + accumulatedContent
+			// Объединяем с чётким разделителем
+			result.Content = accumulatedReasoning + "\n\n\n" + accumulatedContent
 		}
 	}
 

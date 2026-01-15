@@ -259,6 +259,34 @@ func (c *Client) Run(ctx context.Context, query string) (string, error) {
 	return result, nil
 }
 
+// Execute выполняет запрос с расширенными параметрами через ChainInput.
+//
+// Этот метод предоставляет полный контроль над выполнением агента, включая:
+//   - UserInputChan для механизма прерываний
+//   - Кастомную ChainConfig
+//   - Прямой доступ к State и Registry
+//
+// Thread-safe.
+//
+// Rule 11: принимает context.Context для отмены операции.
+func (c *Client) Execute(ctx context.Context, input chain.ChainInput) (chain.ChainOutput, error) {
+	if c.reactCycle == nil {
+		return chain.ChainOutput{}, fmt.Errorf("agent is not properly initialized")
+	}
+
+	utils.Info("Executing agent with ChainInput", "query", input.UserQuery)
+
+	// Выполняем через Chain interface (ReActCycle)
+	output, err := c.reactCycle.Execute(ctx, input)
+	if err != nil {
+		utils.Error("Agent execution failed", "error", err)
+		return chain.ChainOutput{}, err
+	}
+
+	utils.Info("Agent execution completed", "iterations", output.Iterations)
+	return output, nil
+}
+
 // emitEvent отправляет событие через emitter если он установлен.
 //
 // Thread-safe.

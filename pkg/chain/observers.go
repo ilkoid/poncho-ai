@@ -182,3 +182,19 @@ func (o *EmitterIterationObserver) EmitMessage(ctx context.Context, content stri
 		Timestamp: time.Now(),
 	})
 }
+
+// EmitUserInterruption отправляет EventUserInterruption при прерывании пользователем.
+func (o *EmitterIterationObserver) EmitUserInterruption(ctx context.Context, message string, iteration int, promptSource string) {
+	if o.emitter == nil {
+		return
+	}
+	o.emitter.Emit(ctx, events.Event{
+		Type: events.EventUserInterruption,
+		Data: events.UserInterruptionData{
+			Message:      message,
+			Iteration:    iteration,
+			PromptSource: promptSource,
+		},
+		Timestamp: time.Now(),
+	})
+}

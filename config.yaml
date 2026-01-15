@@ -364,6 +364,7 @@ chains:
     max_iterations: 10
     timeout: "5m"
     prompts_dir: "./prompts"
+    interruption_prompt: "interruption_handler.yaml"  # Interruption handler промпт
     debug:
       enabled: false
       save_logs: true

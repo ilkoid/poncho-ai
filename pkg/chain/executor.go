@@ -220,6 +220,10 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 		// 3c. Проверяем сигнал от LLM шага
 		if llmResult.Signal == SignalFinalAnswer || llmResult.Signal == SignalNeedUserInput {
 			exec.finalSignal = llmResult.Signal
+			// Notify observers: OnIterationEnd (для записи финального LLM call с post-prompt)
+			for _, obs := range e.observers {
+				obs.OnIterationEnd(iterations + 1)
+			}
 			break
 		}
 
@@ -228,6 +232,10 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 			// Финальный ответ - нет tool calls
 			if exec.finalSignal == SignalNone {
 				exec.finalSignal = SignalFinalAnswer
+			}
+			// Notify observers: OnIterationEnd (для записи финального LLM call с post-prompt)
+			for _, obs := range e.observers {
+				obs.OnIterationEnd(iterations + 1)
 			}
 			break
 		}
@@ -248,6 +256,64 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 		if e.iterationObserver != nil {
 			for _, tr := range exec.toolStep.GetToolResults() {
 				e.iterationObserver.EmitToolResult(ctx, tr.Name, tr.Result, time.Duration(tr.Duration)*time.Millisecond)
+			}
+		}
+
+		// 3f. Check for user interruption between iterations (INTERRUPTION MECHANISM)
+		if exec.chainCtx.Input.UserInputChan != nil {
+			select {
+			case userInput := <-exec.chainCtx.Input.UserInputChan:
+				// Пользователь прервал выполнение
+				interruptMsg := fmt.Sprintf(`🛑 USER INTERRUPTION
+
+The user has interrupted the execution with the following message:
+
+--- USER MESSAGE ---
+%s
+-------------------
+
+Previous tool result is available in context. Please address the interruption and decide whether to continue or stop execution.`, userInput)
+
+				// Добавляем interruption message как user message
+				if err := exec.chainCtx.AppendMessage(llm.Message{
+					Role:    llm.RoleUser,
+					Content: interruptMsg,
+				}); err != nil {
+					return e.notifyFinishWithError(exec, fmt.Errorf("failed to append interruption message: %w", err))
+				}
+
+				// Загружаем interruption handler промпт
+				promptsDir := exec.chainCtx.Input.Config.PostPromptsDir
+				interruptionPath := exec.chainCtx.Input.Config.InterruptionPrompt
+
+				interruptPrompt, promptConfig := loadInterruptionPrompt(promptsDir, interruptionPath)
+
+				// Устанавливаем interruption handler как активный post-prompt
+				// Это заменит любой предыдущий post-prompt
+				exec.chainCtx.SetActivePostPrompt(interruptPrompt, promptConfig)
+
+				// Логируем прерывание
+				promptSource := "default"
+				if interruptionPath != "" {
+					promptSource = "yaml:" + interruptionPath
+				}
+
+				utils.Debug("User interruption received",
+					"iteration", iterations+1,
+					"user_input", userInput,
+					"prompt_source", promptSource)
+
+				// Отправляем событие прерывания
+				if e.iterationObserver != nil {
+					e.iterationObserver.EmitUserInterruption(ctx, userInput, iterations+1, promptSource)
+				}
+
+			case <-ctx.Done():
+				// Context cancelled
+				return e.notifyFinishWithError(exec, ctx.Err())
+
+			default:
+				// Нет пользовательского ввода — продолжаем
 			}
 		}
 
