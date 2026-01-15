@@ -288,6 +288,14 @@ func (c *AppConfig) validate() error {
 		}
 	}
 
+	// Валидируем tool_resolution_mode (обязательное поле)
+	if c.ToolResolutionMode == "" {
+		return fmt.Errorf("tool_resolution_mode is required (bundle-first or flat)")
+	}
+	if c.ToolResolutionMode != "bundle-first" && c.ToolResolutionMode != "flat" {
+		return fmt.Errorf("invalid tool_resolution_mode: '%s' (must be 'bundle-first' or 'flat')", c.ToolResolutionMode)
+	}
+
 	return nil
 }
 
@@ -360,13 +368,4 @@ func (c *AppConfig) GetChainMaxIterations(chainName string) int {
 	}
 
 	return chainCfg.MaxIterations
-}
-
-// GetToolResolutionMode возвращает режим резолюции инструментов.
-// Если не указан, возвращает "flat" (backward compatible).
-func (c *AppConfig) GetToolResolutionMode() string {
-	if c.ToolResolutionMode == "" {
-		return "flat" // дефолт: backward compatible
-	}
-	return c.ToolResolutionMode
 }

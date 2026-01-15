@@ -319,6 +319,14 @@ func Initialize(parentCtx context.Context, cfg *config.AppConfig, maxIters int, 
 	reactCycle.SetRegistry(state.GetToolsRegistry())
 	reactCycle.SetState(state)
 
+	// Инициализируем BundleResolver для токен-оптимизации (Phase 3)
+	bundleResolver := chain.NewBundleResolver(
+		cfg,
+		state.GetToolsRegistry(),
+		chain.ResolutionMode(cfg.ToolResolutionMode),
+	)
+	reactCycle.SetBundleResolver(bundleResolver)
+
 	// Создаём debug recorder если включён
 	debugRecorder, err := chain.NewChainDebugRecorder(chain.DebugConfig{
 		Enabled:             cfg.App.DebugLogs.Enabled,
