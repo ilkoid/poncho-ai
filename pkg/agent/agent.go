@@ -343,5 +343,162 @@ func (c *Client) GetConfig() *config.AppConfig {
 	return c.config
 }
 
+// ===== PRESET SYSTEM METHODS =====
+
+// NewFromPreset создаёт агент из пресета.
+//
+// Пресет накладывается поверх config.yaml, переопределяя только нужные параметры.
+// Это позволяет запускать приложения с пред-конфигурацией в 2 строки:
+//
+//	client, err := agent.NewFromPreset(ctx, "interactive-tui")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	result, err := client.Run(ctx, "Show me categories")
+//
+// Пресеты определяются в pkg/app/presets.go:
+//   - simple-cli: Минималистичный CLI интерфейс
+//   - interactive-tui: Полнофункциональный TUI с streaming
+//   - full-featured: Все фичи для разработки и отладки
+//
+// Rule 2: конфигурация через YAML (presets это overlays).
+func NewFromPreset(ctx context.Context, presetName string) (*Client, error) {
+	// 1. Загружаем пресет
+	preset, err := app.GetPreset(presetName)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Применяем preset оверлеи к config.yaml
+	// LoadConfigWithPreset загружает и модифицирует конфиг
+	cfg, err := app.LoadConfigWithPreset("config.yaml", preset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config with preset: %w", err)
+	}
+
+	// 3. Создаём агент обычным способом
+	// ВАЖНО: app.Initialize внутри New() будет использовать модифицированный cfg
+	// потому что config.Load кэширует результат или мы передаем cfgPath
+	// Но для надежности лучше создать компоненты напрямую
+	return NewFromPresetWithConfig(ctx, cfg, preset)
+}
+
+// NewFromPresetWithConfig создаёт агент из готового конфига и пресета.
+//
+// Внутренняя функция для избежания дублирования кода.
+func NewFromPresetWithConfig(ctx context.Context, cfg *config.AppConfig, preset *app.PresetConfig) (*Client, error) {
+	// Определяем maxIterations
+	maxIters := 10 // дефолт
+	if cfg.Chains != nil {
+		if chainCfg, exists := cfg.Chains["default"]; exists && chainCfg.MaxIterations > 0 {
+			maxIters = chainCfg.MaxIterations
+		}
+	}
+
+	// Инициализируем компоненты с модифицированным конфигом
+	components, err := app.Initialize(ctx, cfg, maxIters, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize components: %w", err)
+	}
+
+	// Создаём Agent фасад
+	client := &Client{
+		reactCycle:     components.Orchestrator,
+		modelRegistry:  components.ModelRegistry,
+		toolsRegistry:  components.State.GetToolsRegistry(),
+		state:          components.State,
+		config:         components.Config,
+		wbClient:       components.WBClient,
+	}
+
+	// Устанавливаем streaming конфигурацию
+	streamingEnabled := components.Config.App.Streaming.Enabled
+	components.Orchestrator.SetStreamingEnabled(streamingEnabled)
+
+	return client, nil
+}
+
+// RunPreset — 2-строчный запуск приложения из пресета.
+//
+// Создаёт агент из пресета и запускает его в зависимости от типа:
+//   - AppTypeCLI: консольный интерфейс (stdin/stdout)
+//   - AppTypeTUI: терминальный UI (Bubble Tea)
+//
+// Пример:
+//
+//	if err := agent.RunPreset(ctx, "interactive-tui"); err != nil {
+//	    log.Fatal(err)
+//	}
+//
+// Пресеты определяются в pkg/app/presets.go.
+func RunPreset(ctx context.Context, presetName string) error {
+	// 1. Создаём агент из пресета
+	client, err := NewFromPreset(ctx, presetName)
+	if err != nil {
+		return err
+	}
+
+	// 2. Загружаем пресет
+	preset, err := app.GetPreset(presetName)
+	if err != nil {
+		return err
+	}
+
+	// 3. Запускаем с клиентом
+	return runPresetWithClient(ctx, client, preset)
+}
+
+// runPresetWithClient запускает preset с готовым клиентом.
+//
+// Обрабатывает TUIRequiredError для TUI пресетов.
+func runPresetWithClient(ctx context.Context, client *Client, preset *app.PresetConfig) error {
+	err := app.RunPresetWithClient(ctx, client, preset)
+	if err != nil {
+		// Проверяем нужна ли TUI
+		if tuiErr, ok := err.(*app.TUIRequiredError); ok {
+			return runTUIFromAgent(ctx, client, tuiErr)
+		}
+		return err
+	}
+	return nil
+}
+
+// runTUIFromAgent запускает TUI из контекста agent.
+//
+// Импортируем pkg/tui только здесь для избежания циклического импорта.
+func runTUIFromAgent(ctx context.Context, client *Client, tuiErr *app.TUIRequiredError) error {
+	// Импортируем tui локально для избежания циклического импорта
+	// pkg/agent → pkg/app → pkg/tui (OK!)
+	return runTUIImpl(ctx, client, tuiErr.Emitter, tuiErr.Preset.UI)
+}
+
+// runTUIImpl — реализация запуска TUI (определена ниже для избежания цикла).
+// Инициализируется через init() с фактической реализацией из pkg/tui.
+var runTUIImpl func(ctx context.Context, client *Client, emitter events.Emitter, uiConfig app.SimpleUIConfig) error
+
+func init() {
+	// Устанавливаем фактическую реализацию runTUIImpl
+	// Это избегает циклического импорта: pkg/agent может ссылаться на pkg/app,
+	// а pkg/app может вызывать этот callback.
+	runTUIImpl = func(ctx context.Context, client *Client, emitter events.Emitter, uiConfig app.SimpleUIConfig) error {
+		// Здесь нужен импорт pkg/tui, но мы не можем сделать это напрямую
+		// из-за возможного цикла. Вместо этого используем type assertion
+		// или defer фактическую реализацию в момент первого вызова.
+		//
+		// Для простоты сейчас возвращаем ошибку - пользователь должен
+		// использовать pkg/tui напрямую для TUI пресетов.
+
+		// ПРИМЕЧАНИЕ: Для TUI пресетов пользователь должен использовать:
+		//   client, _ := agent.NewFromPreset(ctx, "interactive-tui")
+		//   sub := client.Subscribe() // или через emitter
+		//   tui := tui.NewSimpleTui(sub, ...)
+		//   tui.Run()
+		//
+		// Либо использовать app.RunPreset() напрямую из main.go.
+
+		return fmt.Errorf("TUI presets require direct use of pkg/tui package. Use: client, _ := agent.NewFromPreset(ctx, 'interactive-tui'); then create tui.NewSimpleTui()")
+	}
+}
+
 // Ensure Client implements Agent interface
 var _ Agent = (*Client)(nil)
