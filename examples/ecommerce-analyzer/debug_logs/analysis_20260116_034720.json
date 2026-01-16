@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-01-16T03:47:20.079200181+03:00",
+  "query": "\n\tПроанализируй Wildberries каталог:\n\t1. Получи список parent categories (используй get_wb_parent_categories)\n\t2. Для каждой категории покажи: ID, название, количество дочерних категорий\n\t3. Результат представь в виде структурированной таблицы\n\t4. Сохрани результаты в debug_logs/analysis.json\n\t",
+  "result": "Error: invalid arguments json: json: cannot unmarshal string into Go struct field .parentID of type int",
+  "duration": 27858007792,
+  "token_stats": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0
+  }
+}
