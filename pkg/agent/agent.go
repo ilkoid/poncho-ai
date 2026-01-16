@@ -43,11 +43,11 @@ import (
 // Thread-safe: все методы безопасны для параллельного вызова.
 type Client struct {
 	// Dependencies (инициализируются в New())
-	reactCycle     *chain.ReActCycle
-	modelRegistry  *models.Registry
-	toolsRegistry  *tools.Registry
-	state          *state.CoreState
-	config         *config.AppConfig
+	reactCycle    *chain.ReActCycle
+	modelRegistry *models.Registry
+	toolsRegistry *tools.Registry
+	state         *state.CoreState
+	config        *config.AppConfig
 
 	// Optional dependencies (могут быть nil)
 	wbClient *wb.Client
@@ -133,12 +133,12 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 
 	// 4. Создаём Agent фасад
 	client := &Client{
-		reactCycle:     components.Orchestrator,
-		modelRegistry:  components.ModelRegistry,
-		toolsRegistry:  components.State.GetToolsRegistry(),
-		state:          components.State,
-		config:         components.Config,
-		wbClient:       components.WBClient,
+		reactCycle:    components.Orchestrator,
+		modelRegistry: components.ModelRegistry,
+		toolsRegistry: components.State.GetToolsRegistry(),
+		state:         components.State,
+		config:        components.Config,
+		wbClient:      components.WBClient,
 	}
 
 	// 5. Устанавливаем streaming конфигурацию из config.yaml
@@ -214,9 +214,9 @@ func (c *Client) SetStreamingEnabled(enabled bool) {
 // Run выполняет запрос пользователя через агента.
 //
 // Метод делегирует выполнение ReActCycle, который:
-//   1. Добавляет запрос в историю
-//   2. Выполняет ReAct цикл (LLM → Tools → LLM → ...)
-//   3. Возвращает финальный ответ
+//  1. Добавляет запрос в историю
+//  2. Выполняет ReAct цикл (LLM → Tools → LLM → ...)
+//  3. Возвращает финальный ответ
 //
 // Отправляет события через emitter если установлен (Port & Adapter).
 //
@@ -403,12 +403,12 @@ func NewFromPresetWithConfig(ctx context.Context, cfg *config.AppConfig, preset 
 
 	// Создаём Agent фасад
 	client := &Client{
-		reactCycle:     components.Orchestrator,
-		modelRegistry:  components.ModelRegistry,
-		toolsRegistry:  components.State.GetToolsRegistry(),
-		state:          components.State,
-		config:         components.Config,
-		wbClient:       components.WBClient,
+		reactCycle:    components.Orchestrator,
+		modelRegistry: components.ModelRegistry,
+		toolsRegistry: components.State.GetToolsRegistry(),
+		state:         components.State,
+		config:        components.Config,
+		wbClient:      components.WBClient,
 	}
 
 	// Устанавливаем streaming конфигурацию

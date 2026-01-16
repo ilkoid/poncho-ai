@@ -260,11 +260,15 @@ func Load(path string) (*AppConfig, error) {
 
 // validate проверяет обязательные поля.
 func (c *AppConfig) validate() error {
-	if c.S3.Bucket == "" {
-		return fmt.Errorf("s3.bucket is required")
+	// S3 optional - валидируем только если bucket указан
+	if c.S3.Bucket != "" && c.S3.Endpoint == "" {
+		return fmt.Errorf("s3.endpoint is required when bucket is set")
 	}
-	if c.S3.Endpoint == "" {
-		return fmt.Errorf("s3.endpoint is required")
+	if c.S3.Bucket != "" && c.S3.AccessKey == "" {
+		return fmt.Errorf("s3.access_key is required when bucket is set")
+	}
+	if c.S3.Bucket != "" && c.S3.SecretKey == "" {
+		return fmt.Errorf("s3.secret_key is required when bucket is set")
 	}
 
 	// Валидируем default_reasoning если указан
