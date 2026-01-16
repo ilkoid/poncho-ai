@@ -277,7 +277,7 @@ func Initialize(parentCtx context.Context, cfg *config.AppConfig, maxIters int, 
 
 	// 8. Регистрируем инструменты из YAML конфигурации
 	// Передаем CoreState для регистрации инструментов (Rule 6: framework logic)
-	if err := SetupTools(state, wbClient, visionLLM, cfg); err != nil {
+	if err := SetupTools(state, wbClient, visionLLM, cfg, modelRegistry); err != nil {
 		utils.Error("Tools registration failed", "error", err)
 		return nil, fmt.Errorf("failed to register tools: %w", err)
 	}
@@ -701,6 +701,36 @@ func setupDictionaryTools(registry *tools.Registry, cfg *config.AppConfig, state
 	return nil
 }
 
+// setupLLMTools регистрирует инструменты LLM провайдеров.
+// Зависимости: models.Registry, cfg
+func setupLLMTools(registry *tools.Registry, cfg *config.AppConfig, modelRegistry *models.Registry) error {
+	register := func(name string, tool tools.Tool) error {
+		if err := registry.Register(tool); err != nil {
+			return fmt.Errorf("failed to register tool '%s': %w", name, err)
+		}
+		return nil
+	}
+
+	enabledTools := getEnabledTools(cfg)
+	isEnabled := func(name string) bool {
+		return enabledTools[name]
+	}
+
+	getToolCfg := func(name string) (config.ToolConfig, bool) {
+		cfg, exists := cfg.Tools[name]
+		return cfg, exists
+	}
+
+	// === LLM Provider Ping Tool ===
+	if toolCfg, exists := getToolCfg("ping_llm_provider"); exists && isEnabled("ping_llm_provider") {
+		if err := register("ping_llm_provider", std.NewLLMPingTool(modelRegistry, cfg, toolCfg)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // setupS3Tools регистрирует инструменты S3 хранения.
 // Зависимости: s3storage.Client, state.CoreState (для классификации), cfg
 func setupS3Tools(registry *tools.Registry, cfg *config.AppConfig, s3Client *s3storage.Client, state *state.CoreState) error {
@@ -876,11 +906,15 @@ func setupTodoTools(registry *tools.Registry, cfg *config.AppConfig, tm *todo.Ma
 // Возвращает ошибку если:
 //   - инструмент не найден в коде (unknown tool)
 //   - валидация схемы инструмента не прошла
-func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provider, cfg *config.AppConfig) error {
+func SetupTools(state *state.CoreState, wbClient *wb.Client, visionLLM llm.Provider, cfg *config.AppConfig, modelRegistry *models.Registry) error {
 	registry := state.GetToolsRegistry()
 
 	// Регистрируем инструменты по категориям
 	if err := setupWBTools(registry, cfg, wbClient); err != nil {
+		return err
+	}
+
+	if err := setupLLMTools(registry, cfg, modelRegistry); err != nil {
 		return err
 	}
 
@@ -934,6 +968,8 @@ func isKnownTool(name string) bool {
 // getAllKnownToolNames возвращает список всех известных tools.
 func getAllKnownToolNames() []string {
 	return []string{
+		// LLM Provider Tools
+		"ping_llm_provider",
 		// WB Content API
 		"search_wb_products",
 		"get_wb_parent_categories",

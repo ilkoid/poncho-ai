@@ -1,0 +1,739 @@
+# ==============================================================================
+# PONCHO AI - OPENROUTER REFERENCE CONFIGURATION
+# ==============================================================================
+# This is a reference configuration file for using OpenRouter as the LLM provider.
+#
+# ENVIRONMENT VARIABLES REQUIRED:
+#   OPENROUTER_API_KEY - Your OpenRouter API key (get from https://openrouter.ai)
+#   WB_API_KEY        - Wildberries API key (optional, only for WB tools)
+#   S3_ACCESS_KEY     - S3 storage access key (optional, only for S3 tools)
+#   S3_SECRET_KEY     - S3 storage secret key (optional, only for S3 tools)
+#
+# QUICK START:
+#   1. Export your API key: export OPENROUTER_API_KEY="sk-or-..."
+#   2. Run: go run cmd/poncho/main.go -config openrouter_conf.yaml
+#   3. Enable tools you need by setting enabled: true
+#
+# DOCUMENTATION:
+#   https://github.com/ilkoid/poncho-ai
+# ==============================================================================
+
+# ==============================================================================
+# MODELS CONFIGURATION
+# ==============================================================================
+# Poncho AI supports multiple LLM providers through a unified Model Registry.
+# Each model has a definition with provider-specific settings.
+#
+# Available providers: openai, openrouter, zai, deepseek
+#
+# Model Definition Fields:
+#   provider           - LLM provider name (required)
+#   model_name         - Actual model identifier in provider API (required)
+#   api_key            - API key with ${VAR} env var support (required)
+#   base_url           - API endpoint URL (required)
+#   max_tokens         - Maximum response tokens (optional, provider default)
+#   temperature        - Randomness 0.0-1.0 (optional, default: 0.5)
+#   timeout            - Request timeout (optional, default: 120s)
+#   thinking           - "enabled"/"disabled" for reasoning mode (optional)
+#   parallel_tool_calls - Enable parallel tool execution (optional)
+#   is_vision          - Mark model as vision-capable (optional, default: false)
+# ==============================================================================
+
+models:
+  # Default model aliases - can be overridden via post-prompts
+  default_reasoning: "glm-4.7"       # Reasoning model for orchestrator (planning, tool selection)
+  default_chat: "glm-4.7"            # Chat model (fallback, used in post-prompts)
+  default_vision: "gemini-2.0-flash" # Vision model for image analysis
+
+  definitions:
+    # --------------------------------------------------------------------------
+    # GLM 4.7 - Z.AI's flagship model for reasoning and chat
+    # --------------------------------------------------------------------------
+    # Provider: Z.AI via OpenRouter
+    # Strengths: Enhanced programming, stable multi-step reasoning
+    # Pricing: Check https://openrouter.ai/z-ai/glm-4.7
+    # --------------------------------------------------------------------------
+    glm-4.7:
+      provider: "openrouter"
+      model_name: "z-ai/glm-4.7"
+      api_key: "${OPENROUTER_API_KEY}"
+      base_url: "https://openrouter.ai/api/v1"
+      max_tokens: 4000
+      temperature: 0.5
+      timeout: "120s"
+      parallel_tool_calls: false
+      is_vision: false
+
+    # --------------------------------------------------------------------------
+    # Gemini 2.0 Flash - Fast multimodal model for vision tasks
+    # --------------------------------------------------------------------------
+    # Provider: Google via OpenRouter
+    # Strengths: Fast vision analysis, free tier available
+    # Pricing: Check https://openrouter.ai/google/gemini-2.0-flash-exp:free
+    # --------------------------------------------------------------------------
+    gemini-2.0-flash:
+      provider: "openrouter"
+      model_name: "google/gemini-2.0-flash-exp:free"
+      api_key: "${OPENROUTER_API_KEY}"
+      base_url: "https://openrouter.ai/api/v1"
+      max_tokens: 4000
+      temperature: 0.1
+      timeout: "120s"
+      parallel_tool_calls: false
+      is_vision: true
+
+    # --------------------------------------------------------------------------
+    # OPTIONAL: Add more models from OpenRouter
+    # --------------------------------------------------------------------------
+    # Uncomment and configure any of these as needed:
+    #
+    # # Claude 3.5 Sonnet - Excellent for reasoning and vision
+    # claude-3.5-sonnet:
+    #   provider: "openrouter"
+    #   model_name: "anthropic/claude-3.5-sonnet"
+    #   api_key: "${OPENROUTER_API_KEY}"
+    #   base_url: "https://openrouter.ai/api/v1"
+    #   max_tokens: 4000
+    #   temperature: 0.7
+    #   timeout: "120s"
+    #   parallel_tool_calls: true
+    #   is_vision: true
+    #
+    # # GPT-4o - Strong general-purpose model with vision
+    # gpt-4o:
+    #   provider: "openrouter"
+    #   model_name: "openai/gpt-4o"
+    #   api_key: "${OPENROUTER_API_KEY}"
+    #   base_url: "https://openrouter.ai/api/v1"
+    #   max_tokens: 4000
+    #   temperature: 0.7
+    #   timeout: "120s"
+    #   parallel_tool_calls: true
+    #   is_vision: true
+    #
+    # # DeepSeek V3 - Cost-effective reasoning model
+    # deepseek-v3:
+    #   provider: "openrouter"
+    #   model_name: "deepseek/deepseek-chat"
+    #   api_key: "${OPENROUTER_API_KEY}"
+    #   base_url: "https://openrouter.ai/api/v1"
+    #   max_tokens: 4000
+    #   temperature: 0.5
+    #   timeout: "120s"
+    #   parallel_tool_calls: false
+    #   is_vision: false
+    # --------------------------------------------------------------------------
+
+# ==============================================================================
+# S3 STORAGE CONFIGURATION
+# ==============================================================================
+# S3-compatible storage for file operations (images, PLM data, etc.)
+#
+# Configuration Fields:
+#   endpoint   - S3 endpoint URL (required if bucket set)
+#   region     - AWS region (optional, default: us-east-1)
+#   bucket     - Bucket name (required if endpoint set)
+#   access_key - Access key (required if bucket set)
+#   secret_key - Secret key (required if bucket set)
+#   use_ssl    - Use HTTPS (optional, default: true)
+# ==============================================================================
+
+s3:
+  endpoint: "storage.yandexcloud.net"
+  region: "ru-central1"
+  bucket: "plm-ai"
+  access_key: "${S3_ACCESS_KEY}"
+  secret_key: "${S3_SECRET_KEY}"
+  use_ssl: true
+
+# ==============================================================================
+# IMAGE PROCESSING CONFIGURATION
+# ==============================================================================
+# Settings for image optimization before vision analysis
+#
+# Configuration Fields:
+#   max_width - Maximum image width in pixels (default: 800)
+#   quality   - JPEG quality 1-100 (default: 90)
+# ==============================================================================
+
+image_processing:
+  max_width: 800
+  quality: 90
+
+# ==============================================================================
+# APPLICATION SETTINGS
+# ==============================================================================
+# Core application configuration
+#
+# Configuration Fields:
+#   debug        - Enable debug mode (default: false)
+#   prompts_dir  - Directory for prompt templates (default: "./prompts")
+# ==============================================================================
+
+app:
+  debug: false
+  prompts_dir: "./prompts"
+
+  # --------------------------------------------------------------------------
+  # STREAMING CONFIGURATION
+  # --------------------------------------------------------------------------
+  # Opt-out design: streaming is enabled by default
+  #
+  # Fields:
+  #   enabled        - Enable streaming responses (default: true)
+  #   thinking_only  - Only send reasoning_content events (default: true)
+  #                   When true: only EventThinkingChunk events are emitted
+  #                   When false: both thinking and content events are emitted
+  # --------------------------------------------------------------------------
+  streaming:
+    enabled: true        # Default: true (opt-out)
+    thinking_only: true  # Default: true (only reasoning_content events)
+
+  # --------------------------------------------------------------------------
+  # DEBUG LOGS CONFIGURATION
+  # --------------------------------------------------------------------------
+  # JSON trace recording for debugging and observability
+  #
+  # Fields:
+  #   enabled             - Enable debug log recording (default: false)
+  #   save_logs           - Save logs to files (default: false)
+  #   logs_dir            - Directory for log files (default: "./debug_logs")
+  #   include_tool_args   - Include tool arguments in logs (default: false)
+  #   include_tool_results - Include tool results in logs (default: false)
+  #   max_result_size     - Max tool result size in characters (default: 5000)
+  # --------------------------------------------------------------------------
+  debug_logs:
+    enabled: false           # Enable recording of execution traces
+    save_logs: false         # Save traces to JSON files
+    logs_dir: "./debug_logs" # Directory for log files
+    include_tool_args: false # Include tool arguments
+    include_tool_results: false # Include tool results
+    max_result_size: 5000    # Max result size to log (chars)
+
+# ==============================================================================
+# FILE CLASSIFICATION RULES
+# ==============================================================================
+# Rules for classifying files in S3 buckets by tags
+#
+# Each rule has:
+#   tag       - Tag name for this file type (required)
+#   patterns  - Glob patterns for matching files (required)
+#   required  - Whether files must match this pattern (default: false)
+# ==============================================================================
+
+file_rules:
+  - tag: "sketch"
+    patterns:
+      - "*.jpg"
+      - "*.jpeg"
+      - "*.png"
+    required: true
+
+  - tag: "plm_data"
+    patterns:
+      - "*.json"
+    required: true
+
+  - tag: "marketing"
+    patterns:
+      - "*seo*"
+      - "*keys*"
+
+# ==============================================================================
+# WILDBERRIES API CONFIGURATION
+# ==============================================================================
+# Default settings for Wildberries API tools
+#
+# Configuration Fields:
+#   api_key        - WB API key (required for WB tools)
+#   base_url       - Base URL for WB API (default: content-api.wildberries.ru)
+#   rate_limit     - Default requests per minute (default: 100)
+#   burst_limit    - Default burst capacity (default: 5)
+#   retry_attempts - Default retry attempts (default: 3)
+#   timeout        - Default HTTP timeout (default: 30s)
+#   brands_limit   - Max brands for get_wb_brands tool (default: 500)
+# ==============================================================================
+
+wb:
+  api_key: "${WB_API_KEY}"
+  base_url: "https://content-api.wildberries.ru"
+  rate_limit: 100
+  burst_limit: 5
+  retry_attempts: 3
+  timeout: "30s"
+  brands_limit: 500
+
+# ==============================================================================
+# TOOL BUNDLES CONFIGURATION
+# ==============================================================================
+# Bundles allow grouping tools by business context for token optimization.
+# Instead of 100 tools in system prompt (~15,000 tokens), send 10 bundles (~300 tokens).
+#
+# HYBRID MODE: bundles + individual overrides
+# 1. First, tools from enable_bundles are included
+# 2. Then, individual overrides from tools section are applied
+#
+# Usage Example:
+#   enable_bundles:
+#     - wb-content-tools
+#     - s3-tools
+#   tools:
+#     get_wb_feedbacks: {enabled: false}  # Disable specific tool from bundle
+# ==============================================================================
+
+tool_bundles:
+  # === Wildberries Content API ===
+  wb-content-tools:
+    description: "Wildberries Content API: поиск товаров, категории, бренды, характеристики, ТНВЭД"
+    tools:
+      - search_wb_products
+      - get_wb_parent_categories
+      - get_wb_subjects
+      - get_wb_subjects_by_name
+      - get_wb_characteristics
+      - get_wb_tnved
+      - get_wb_brands
+      - ping_wb_api
+      - reload_wb_dictionaries
+
+  # === Wildberries Feedbacks API ===
+  wb-feedbacks-tools:
+    description: "Wildberries Feedbacks API: отзывы, вопросы, уведомления, статистика"
+    tools:
+      - get_wb_feedbacks
+      - get_wb_questions
+      - get_wb_new_feedbacks_questions
+      - get_wb_unanswered_feedbacks_counts
+      - get_wb_unanswered_questions_counts
+
+  # === Wildberries Analytics API ===
+  wb-analytics-tools:
+    description: "Wildberries Analytics API: воронки продаж, позиции в поиске, рекламные кампании, ключевые слова"
+    tools:
+      - get_wb_product_funnel
+      - get_wb_product_funnel_history
+      - get_wb_search_positions
+      - get_wb_top_search_queries
+      - get_wb_top_organic_positions
+      - get_wb_campaign_stats
+      - get_wb_keyword_stats
+      - get_wb_attribution_summary
+
+  # === Wildberries Dictionaries ===
+  wb-dictionaries-tools:
+    description: "Справочники Wildberries: цвета, страны, пол, сезоны, НДС"
+    tools:
+      - wb_colors
+      - wb_countries
+      - wb_genders
+      - wb_seasons
+      - wb_vat_rates
+
+  # === S3 Storage Tools ===
+  s3-storage-tools:
+    description: "S3 хранилище: список файлов, чтение объектов, загрузка изображений"
+    tools:
+      - list_s3_files
+      - read_s3_object
+      - read_s3_image
+      - get_plm_data
+
+  # === S3 Batch Tools ===
+  s3-batch-tools:
+    description: "Пакетные операции S3: классификация файлов, анализ изображений"
+    tools:
+      - classify_and_download_s3_files
+      - analyze_article_images_batch
+
+  # === Planner Tools ===
+  planner-tools:
+    description: "Планировщик задач: добавление, выполнение, провал задач"
+    tools:
+      - plan_add_task
+      - plan_mark_done
+      - plan_mark_failed
+      - plan_clear
+      - plan_set_tasks
+
+# Which bundles to enable (optional)
+# If not specified, individual enabled flags from tools section are used
+enable_bundles: []
+
+# ==============================================================================
+# TOOL RESOLUTION MODE
+# ==============================================================================
+# Token optimization mode for tool delivery to LLM:
+#
+#   - "bundle-first": Send bundles first (~300 tokens), dynamically expand
+#                    when tool from bundle is called (RECOMMENDED)
+#   - "flat":        Send all tools immediately (no token optimization)
+# ==============================================================================
+
+tool_resolution_mode: "bundle-first"
+
+# ==============================================================================
+# TOOLS CONFIGURATION
+# ==============================================================================
+# Each tool has its own configuration with parameters:
+#   enabled      - Whether tool is registered (default: false)
+#   description  - Description for LLM function calling (optional)
+#   type         - Tool type: wb|dictionary|planner (optional)
+#   endpoint     - Base URL for API (optional, overrides WB base_url)
+#   path         - API path (optional)
+#   rate_limit   - Requests per minute (optional)
+#   burst        - Burst capacity (optional)
+#   timeout      - HTTP timeout (optional)
+#   post_prompt  - Path to post-prompt file (optional)
+#   default_take - Default records to return (optional, for feedbacks)
+#
+# HYBRID MODE:
+# - Tools are first enabled from bundles (if enable_bundles not empty)
+# - Then individual overrides from this section are applied
+#
+# If tool is not in this list or enabled=false, it is NOT registered.
+# ==============================================================================
+
+tools:
+  # ===========================================================================
+  # LLM PROVIDER TOOLS (1 tool)
+  # ===========================================================================
+
+  ping_llm_provider:
+    enabled: false
+    description: "Проверяет доступность LLM провайдера (OpenRouter, OpenAI, Zai, DeepSeek). Возвращает статус сервиса, задержку, информацию об ошибках (например, неверный API ключ, недоступность сети). Используй для диагностики перед использованием других функций."
+    post_prompt: "llm/ping_llm_provider.ru.yaml"
+
+  # ===========================================================================
+  # WB CONTENT API TOOLS (9 tools)
+  # ===========================================================================
+
+  search_wb_products:
+    enabled: false
+    description: "Ищет товары Wildberries по артикулам поставщика (vendor code/supplier article) и возвращает их nmID. Использует Content API (категория Promotion). ВАЖНО: видит только товары продавца, которому принадлежит API токен (до 100 карточек). Для поиска товаров других продавцов используйте get_wb_feedbacks или get_wb_questions."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+    post_prompt: "wb/content/products_search.ru.yaml"
+
+  get_wb_parent_categories:
+    enabled: false
+    description: "Возвращает список родительских категорий Wildberries (например: Женщинам, Электроника). Используй это, чтобы найти ID категории."
+    endpoint: "https://content-api.wildberries.ru"
+    path: "/content/v2/object/parent/all"
+    rate_limit: 100
+    burst: 5
+    timeout: "30s"
+    post_prompt: "parent_categories_analysis.yaml"
+
+  get_wb_subjects:
+    enabled: false
+    description: "Возвращает список предметов (подкатегорий) для заданной родительской категории с пагинацией."
+    endpoint: "https://content-api.wildberries.ru"
+    path: "/content/v2/object/all"
+    rate_limit: 100
+    burst: 5
+    post_prompt: "subjects_analysis.yaml"
+
+  get_wb_subjects_by_name:
+    enabled: false
+    description: "Ищет предметы (подкатегории) Wildberries по подстроке в названии. Возвращает список подходящих предметов с их ID и родительскими категориями."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+    post_prompt: "wb/content/subjects_by_name.ru.yaml"
+
+  get_wb_characteristics:
+    enabled: false
+    description: "Возвращает список характеристик для указанного предмета (subjectID). Включает информацию о том, является ли характеристика обязательной, тип данных, единицы измерения."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+    post_prompt: "wb/content/characteristics.ru.yaml"
+
+  get_wb_tnved:
+    enabled: false
+    description: "Возвращает список кодов ТНВЭД для указанного предмета. Коды ТНВЭД нужны для создания карточки товара и маркировки Честный ЗНАК (isKiz=true)."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+    post_prompt: "wb/content/tnved_codes.ru.yaml"
+
+  get_wb_brands:
+    enabled: false
+    description: "Возвращает список брендов для указанного предмета. Бренды отсортированы по популярности. Используй это для выбора бренда при создании карточки товара."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+    default_take: 500
+    post_prompt: "wb/content/brands.ru.yaml"
+
+  ping_wb_api:
+    enabled: false
+    description: "Проверяет доступность Wildberries Content API. Возвращает статус сервиса, timestamp и информацию об ошибках (например, неверный API ключ, недоступность сети). Используй для диагностики перед другими операциями с WB."
+    endpoint: "https://content-api.wildberries.ru"
+    path: "/ping"
+    rate_limit: 100
+    burst: 5
+    post_prompt: "api_health_report.yaml"
+
+  reload_wb_dictionaries:
+    enabled: false
+    description: "Перезагружает справочники Wildberries из API. Возвращает количество записей в каждом справочнике. Используй для проверки доступности API или после изменения данных. ВНИМАНИЕ: не обновляет состояние агента, только возвращает данные."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+    post_prompt: "wb/dictionaries/reload.ru.yaml"
+
+  # ===========================================================================
+  # WB FEEDBACKS API TOOLS (5 tools)
+  # ===========================================================================
+
+  get_wb_feedbacks:
+    enabled: false
+    description: "Возвращает отзывы на товары Wildberries с пагинацией. Позволяет фильтровать по отвеченности (isAnswered: true/false) и артикулу (nmID)."
+    endpoint: "https://feedbacks-api.wildberries.ru"
+    path: "/api/v1/feedbacks"
+    rate_limit: 60
+    burst: 3
+    default_take: 100
+    post_prompt: "wb/feedbacks/feedbacks_list.ru.yaml"
+
+  get_wb_questions:
+    enabled: false
+    description: "Возвращает вопросы о товарах Wildberries с пагинацией. Позволяет фильтровать по отвеченности (isAnswered: true/false) и артикулу (nmID)."
+    endpoint: "https://feedbacks-api.wildberries.ru"
+    path: "/api/v1/questions"
+    rate_limit: 60
+    burst: 3
+    default_take: 100
+    post_prompt: "wb/feedbacks/questions_list.ru.yaml"
+
+  get_wb_new_feedbacks_questions:
+    enabled: false
+    description: "Проверяет наличие новых отзывов и вопросов на Wildberries. Возвращает количество непрочитанных отзывов и вопросов."
+    endpoint: "https://feedbacks-api.wildberries.ru"
+    path: "/api/v1/new-feedbacks-questions"
+    rate_limit: 60
+    burst: 3
+    post_prompt: "wb/feedbacks/new_notifications.ru.yaml"
+
+  get_wb_unanswered_feedbacks_counts:
+    enabled: false
+    description: "Возвращает количество неотвеченных отзывов на Wildberries (общее и за сегодня). Используй для мониторинга качества сервиса."
+    endpoint: "https://feedbacks-api.wildberries.ru"
+    rate_limit: 60
+    burst: 3
+    post_prompt: "wb/feedbacks/unanswered_counts.ru.yaml"
+
+  get_wb_unanswered_questions_counts:
+    enabled: false
+    description: "Возвращает количество неотвеченных вопросов на Wildberries (общее и за сегодня). Используй для мониторинга качества сервиса."
+    endpoint: "https://feedbacks-api.wildberries.ru"
+    rate_limit: 60
+    burst: 3
+    post_prompt: "wb/feedbacks/unanswered_counts.ru.yaml"
+
+  # ===========================================================================
+  # WB DICTIONARY TOOLS (5 tools)
+  # ===========================================================================
+
+  wb_colors:
+    enabled: false
+    description: "Ищет цвета в справочнике Wildberries по подстроке. Возвращает топ-N подходящих цветов с названиями и базовыми цветами (parentName). Используй для точного определения цвета товара из описания или анализа изображения."
+    post_prompt: "agent_system.yaml"
+
+  wb_countries:
+    enabled: false
+    description: "Возвращает справочник стран производства для Wildberries. Используй для выбора страны происхождения товара при создании карточки."
+    post_prompt: "agent_system.yaml"
+
+  wb_genders:
+    enabled: false
+    description: "Возвращает справочник значений пола (gender/kind) для Wildberries. Используй для выбора пола товара при создании карточки."
+    post_prompt: "agent_system.yaml"
+
+  wb_seasons:
+    enabled: false
+    description: "Возвращает справочник сезонов для Wildberries. Используй для выбора сезона товара при создании карточки."
+    post_prompt: "agent_system.yaml"
+
+  wb_vat_rates:
+    enabled: false
+    description: "Возвращает справочник ставок НДС (VAT) для Wildberries. Используй для выбора ставки НДС товара при создании карточки."
+    post_prompt: "agent_system.yaml"
+
+  # ===========================================================================
+  # WB ANALYTICS TOOLS (8 tools)
+  # ===========================================================================
+
+  get_wb_product_funnel:
+    enabled: false
+    description: "Воронка продаж по товарам за период (просмотры→корзина→заказ, конверсии)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180
+    burst: 3
+    post_prompt: "wb/analytics/product_funnel.ru.yaml"
+
+  get_wb_product_funnel_history:
+    enabled: false
+    description: "История воронки по дням (до 7 дней бесплатно, до 365 с Джем)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180
+    burst: 3
+    post_prompt: "wb/analytics/funnel_history.ru.yaml"
+
+  get_wb_search_positions:
+    enabled: false
+    description: "Позиции товаров в поиске и видимость (средняя позиция, топ-100)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180
+    burst: 3
+    post_prompt: "wb/analytics/search_positions.ru.yaml"
+
+  get_wb_top_search_queries:
+    enabled: false
+    description: "Топ поисковых запросов по товару (до 100 фраз, сортировка по заказам)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180
+    burst: 3
+    post_prompt: "wb/analytics/top_search_queries.ru.yaml"
+
+  get_wb_top_organic_positions:
+    enabled: false
+    description: "Топ-10 позиций в органическом поиске по запросам (агрегирует данные из get_wb_top_search_queries)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 180
+    burst: 3
+    post_prompt: "wb/analytics/organic_positions.ru.yaml"
+
+  get_wb_campaign_stats:
+    enabled: false
+    description: "Статистика рекламных кампаний (показы, клики, CTR, CPC, затраты, заказы)"
+    endpoint: "https://advert-api.wildberries.ru"
+    rate_limit: 60
+    burst: 1
+    post_prompt: "wb/advertising/campaign_stats.ru.yaml"
+
+  get_wb_keyword_stats:
+    enabled: false
+    description: "Статистика по ключевым фразам кампании (за 7 дней, максимум)"
+    endpoint: "https://advert-api.wildberries.ru"
+    rate_limit: 240
+    burst: 4
+    post_prompt: "wb/advertising/keyword_stats.ru.yaml"
+
+  get_wb_attribution_summary:
+    enabled: false
+    description: "Атрибуция заказов: органика vs реклама по товару (агрегирует данные из воронки и кампаний)"
+    post_prompt: "wb/analytics/attribution.ru.yaml"
+
+  # ===========================================================================
+  # S3 BASIC TOOLS (4 tools)
+  # ===========================================================================
+
+  list_s3_files:
+    enabled: false
+    description: "Возвращает список файлов в S3 хранилище по указанному пути (префиксу). Используй это, чтобы найти артикулов или проверить наличие файлов."
+
+  read_s3_object:
+    enabled: false
+    description: "Читает содержимое файла из S3. Поддерживает текстовые файлы (JSON, TXT, MD). Не используй для картинок."
+
+  read_s3_image:
+    enabled: false
+    description: "Скачивает изображение из S3, оптимизирует его (resize) и возвращает в формате Base64. Используй это для Vision-анализа."
+
+  get_plm_data:
+    enabled: false
+    description: "Загружает PLM данные (plm.json) артикула из S3 и возвращает очищенный JSON без технических полей, миниатюр и эскизов. Используй для получения информации о товаре: артикул, категория, сезон, цвета, материалы, размерный ряд."
+
+  # ===========================================================================
+  # S3 BATCH TOOLS (2 tools)
+  # ===========================================================================
+
+  classify_and_download_s3_files:
+    enabled: false
+    description: "Списывает и классифицирует файлы артикула из S3 по тегам (sketch, plm_data, marketing). JSON файлы скачивает сразу, изображения — только метаданные. Для vision-анализа используй read_s3_image."
+    post_prompt: "s3/classify_and_download.ru.yaml"
+
+  analyze_article_images_batch:
+    enabled: false
+    description: "Анализирует изображения из текущего артикула с помощью Vision LLM. Обрабатывает картинки параллельно в горутинах. Опционально фильтрует по тегу (sketch, plm_data, marketing). Используй это после classify_and_download_s3_files для анализа эскизов."
+    post_prompt: "s3/analyze_images_batch.ru.yaml"
+
+  # ===========================================================================
+  # PLANNER TOOLS (5 tools)
+  # ===========================================================================
+
+  plan_add_task:
+    enabled: false
+    description: "Добавляет новую задачу в план действий. Указывай четкое описание того, что нужно выполнить."
+    post_prompt: "planner/task_management.ru.yaml"
+
+  plan_mark_done:
+    enabled: false
+    description: "Отмечает задачу как выполненную. Используй когда задача успешно завершена."
+    post_prompt: "planner/task_management.ru.yaml"
+
+  plan_mark_failed:
+    enabled: false
+    description: "Отмечает задачу как проваленную с указанием причины. Используй когда задачу невозможно выполнить по независимым причинам."
+    post_prompt: "planner/task_management.ru.yaml"
+
+  plan_clear:
+    enabled: false
+    description: "Очищает весь план действий. Используй для удаления всех задач из списка."
+    post_prompt: "planner/task_management.ru.yaml"
+
+  plan_set_tasks:
+    enabled: false
+    description: "Создает или заменяет весь план задач за один вызов. Используй это когда нужно составить полный план действий с нуля или полностью пересмотреть существующий план. LLM видит текущий план через контекст и учитывает его при перезаписи."
+    post_prompt: "planner/task_management.ru.yaml"
+
+# ==============================================================================
+# CHAIN CONFIGURATION
+# ==============================================================================
+# Configuration for ReAct chain execution
+#
+# Fields:
+#   type                - Chain type (default: "react")
+#   description         - Description of this chain (optional)
+#   system_prompt       - System prompt for LLM (optional)
+#   model               - Model to use (optional, overrides default)
+#   temperature         - Temperature override (optional)
+#   max_tokens          - Max tokens override (optional)
+#   max_iterations      - Max ReAct iterations (default: 10)
+#   timeout             - Chain execution timeout (default: "5m")
+#   prompts_dir         - Prompts directory (default: "./prompts")
+#   interruption_prompt - Interruption handler prompt (optional)
+#   debug               - Debug settings (optional)
+#   tool_post_prompts   - Tool-specific post-prompts (optional)
+# ==============================================================================
+
+chains:
+  default:
+    type: "react"
+    description: "Стандартная ReAct цепочка для общих запросов"
+    system_prompt: "You are a helpful AI assistant with access to tools."
+    model: "glm-4.7"
+    temperature: 0.5
+    max_tokens: 2000
+    max_iterations: 10
+    timeout: "5m"
+    prompts_dir: "./prompts"
+    interruption_prompt: "interruption_handler.yaml"
+    debug:
+      enabled: false
+      save_logs: true
+      logs_dir: "./logs"
+      include_tool_args: true
+      include_tool_results: true
+      max_result_size: 5000
+    tool_post_prompts:
+      get_wb_parent_categories: "wb/parent_categories_analysis.yaml"
+      get_wb_subjects: "wb/subjects_analysis.yaml"
+      ping_wb_api: "wb/api_health_report.yaml"
+
+# ==============================================================================
+# END OF CONFIGURATION
+# ==============================================================================

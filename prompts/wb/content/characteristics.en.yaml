@@ -1,0 +1,32 @@
+version: "1.0"
+description: "Post-prompt for get_wb_characteristics - product characteristics analysis"
+config:
+  model: "gpt-4o"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received product characteristics from Wildberries.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Total characteristics: [N]
+      - Required: [M]
+      - Optional: [K]
+
+      ## Required Characteristics
+      | Name | Type | Required | Units |
+      |------|-----|----------|-------|
+      | ... | ... | Yes | ... |
+
+      ## Optional Characteristics
+      | Name | Type | Recommended |
+      |------|-----|-------------|
+      | ... | ... | ... |
+
+      ## Recommendations
+      - Fill all required characteristics before creating product card
+      - Use optional for better SEO
+      - Pay attention to data types (string, number, list)

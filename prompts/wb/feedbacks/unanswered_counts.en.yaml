@@ -1,0 +1,28 @@
+version: "1.0"
+description: "Post-prompt for get_wb_unanswered_*_counts - SLA metrics for customer service"
+config:
+  model: "gpt-4o"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received unanswered message metrics from Wildberries.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Unanswered feedbacks: [N] (total) / [X] (today)
+      - Unanswered questions: [M] (total) / [Y] (today)
+      - Response time: [T] hours
+
+      ## SLA Status
+      - Response rate: [X%] (good if >80%)
+      - Overdue: [N]
+      - Action required: [yes/no]
+
+      ## Recommendations
+      - If rate <80% - hire more support
+      - Prioritize old messages
+      - Create response templates for speed
+      - Set notifications for new messages

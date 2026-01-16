@@ -78,7 +78,7 @@ poncho-ai/
 | **6: Package Structure** | `pkg/` = reusable, `internal/` = app-specific, `cmd/` = test utilities only |
 | **7: Error Handling** | No `panic()` in business logic |
 | **8: Extensibility** | Add via tools, LLM adapters, config |
-| **9: Testing** | Use CLI utilities in `/cmd` (test purpose only) |
+| **9: Testing** | Use CLI utilities in `/examples` (test purpose only) |
 | **10: Documentation** | Godoc on public APIs |
 | **11: Context Propagation** | All long-running operations must accept and respect `context.Context` through all layers |
 | **12: Security & Secrets** | Never hardcode secrets. Use ENV vars `${VAR}`, validate inputs, redact sensitive data in logs, HTTPS only |

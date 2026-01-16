@@ -1,0 +1,30 @@
+version: "1.0"
+description: "Post-prompt for get_wb_tnved - TN VED codes for labeling"
+config:
+  model: "gpt-4o"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received TN VED codes from Wildberries.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Codes found: [N]
+      - Subject ID: [ID]
+
+      ## TN VED Codes
+      | Code | Description | Labeling (isKiz) | Applicability |
+      |------|-------------|------------------|--------------|
+      | ... | ... | Yes/No | ... |
+
+      ## Labeling Info
+      - Which products require Honest Mark (Честный ЗНАК)
+      - Most popular codes
+
+      ## Recommendations
+      - Use correct code for product card creation
+      - For isKiz=true: specify labeling code
+      - Verify code currency (changed since 2024?)

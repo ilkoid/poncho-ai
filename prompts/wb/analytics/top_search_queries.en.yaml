@@ -1,0 +1,32 @@
+version: "1.0"
+description: "Post-prompt for get_wb_top_search_queries - analyzes top search keywords"
+config:
+  model: "gpt-4o"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received top search queries data for Wildberries products.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Total unique queries: [N]
+      - Top-5 by frequency: [...]
+      - Top-5 by orders: [...]
+
+      ## Top Queries by Conversion
+      | Query | Frequency | Position | Orders | Conversion |
+      |-------|-----------|----------|--------|------------|
+      | ... | ... | ... | ... | ... |
+
+      ## SEO Analysis
+      - Which queries bring most traffic
+      - Which queries convert best
+      - Long tail vs popular queries
+
+      ## Recommendations
+      - Use high-converting queries in product title
+      - Add frequent queries to description
+      - Create card variations for different queries

@@ -1,0 +1,33 @@
+version: "1.0"
+description: "Post-prompt for analyze_article_images_batch - vision analysis results"
+config:
+  model: "gpt-4o"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You performed vision analysis of article images.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Images analyzed: [N]
+      - Filter tag: [tag]
+
+      ## Analysis Results
+      | Image | Description | Key Elements | Colors |
+      |-------|-------------|--------------|--------|
+      | filename1.jpg | ... | ... | ... |
+      | ... | ... | ... | ... |
+
+      ## Article Insights
+      - Overall clothing style
+      - Color palette
+      - Unique details
+      - Target audience
+
+      ## Recommendations
+      - Use descriptions to generate selling copy
+      - Verify color/style matches PLM data
+      - Add key elements to product card description

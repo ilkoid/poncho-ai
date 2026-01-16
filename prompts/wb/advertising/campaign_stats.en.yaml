@@ -1,0 +1,37 @@
+version: "1.0"
+description: "Post-prompt for get_wb_campaign_stats - analyzes advertising campaign performance"
+config:
+  model: "gpt-4o"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received advertising campaign stats from Wildberries.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Impressions: [N]
+      - Clicks: [M]
+      - CTR: [X%]
+      - CPC: [Y] ₽
+      - Spend: [Z] ₽
+      - Orders: [A]
+      - CPA: [B] ₽
+      - ROAS: [C] (good if >3)
+
+      ## Campaign Details
+      | Campaign | Impressions | Clicks | CTR | Spend | Orders | ROAS |
+      |----------|-------------|--------|-----|-------|--------|------|
+      | ... | ... | ... | ... | ... | ... | ... |
+
+      ## Performance Analysis
+      - Which campaigns are profitable
+      - Which need optimization
+      - Cost per order
+
+      ## Recommendations
+      - Increase budget for campaigns with ROAS >3
+      - Stop campaigns with ROAS <1
+      - Optimize ads with low CTR

@@ -1,0 +1,29 @@
+version: "1.0"
+description: "Post-prompt for search_wb_products - product search results"
+config:
+  model: "gpt-4o"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You searched for Wildberries products by vendor codes.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Products found: [N]
+      - With matches: [M]
+      - No matches: [K]
+
+      ## Found Products
+      | Vendor Code | nmID | Name | Brand | Category |
+      |-------------|------|------|-------|----------|
+      | ... | ... | ... | ... | ... |
+
+      ## Not Found
+      - Vendor codes without matches: [...]
+
+      ## Recommendations
+      - For found: use nmID for analytics
+      - For not found: verify vendor code or create product card

@@ -1,0 +1,32 @@
+version: "1.0"
+description: "Post-prompt for get_wb_product_funnel_history - analyzes daily funnel trends"
+config:
+  model: "gpt-4o"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received daily sales funnel history from Wildberries.
+
+      Present results in this format:
+
+      ## Key Metrics for Period
+      - Average views: [X]
+      - Average order conversion: [Y%]
+      - Trend: [📈 growing / 📉 declining / ➡️ stable]
+
+      ## Daily Details
+      | Date | Views | Cart | Orders | Conversion |
+      |------|-------|------|--------|------------|
+      | ... | ... | ... | ... | ... |
+
+      ## Trends and Dynamics
+      - Which days show best performance
+      - Any weekly seasonality patterns
+      - How conversion changed over period
+
+      ## Recommendations
+      - Optimize ads for best performing days
+      - Analyze reasons for declines
+      - Plan promotions based on patterns

@@ -1,0 +1,34 @@
+version: "1.0"
+description: "Post-prompt for get_wb_product_funnel - analyzes sales funnel data"
+config:
+  model: "gpt-4o"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received sales funnel data from Wildberries for products.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Views: [total views]
+      - Cart conversion: [X%]
+      - Order conversion: [Y%]
+
+      ## Product Details
+      | nmID | Views | Cart | Orders | Conversion |
+      |------|-------|------|--------|------------|
+      | ... | ... | ... | ... | ... |
+
+      ## Insights
+      - Which products have best conversion
+      - Where users drop off most
+      - Benchmark comparison (good if >3% to order, poor if <1%)
+
+      ## Recommendations
+      - How to improve conversion at each stage
+      - Which product cards need optimization
+      - Priorities for improvements
+
+      Compare with previous period if available.
