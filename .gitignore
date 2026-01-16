@@ -85,7 +85,7 @@ IMPLEMENTATION_PLAN_INTENT_CLASSIFICATION*.md
 # Expert opinion and temporary analysis docs
 expert_opinion.md
 INTERRUPTION_IMPLEMENTATION_PLAN.md
-USER_EXPERIENCE_IMPROVEMENTS.md
+# USER_EXPERIENCE_IMPROVEMENTS.md - REMOVED: implementation complete, now tracking
 
 # Temporary test directories
 interruptible-agent
