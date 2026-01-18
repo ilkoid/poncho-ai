@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -34,11 +35,92 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/ilkoid/poncho-ai/pkg/agent"
 	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/todo"
 )
+
+// debugLogFile - файл для debug логирования (без mutex для простоты)
+var debugLogFile *os.File
+
+// initDebugLog инициализирует debug логирование в файл
+// NOT USED ANYMORE - use debugLogIfEnabled() instead
+func initDebugLog() {
+	// Deprecated: kept for compatibility, but does nothing
+	// Log files are now created lazily when debug mode is enabled
+}
+
+// debugLog пишет сообщение в debug лог (без mutex для простоты)
+// NOT USED ANYMORE - use InterruptionModel.debugLogIfEnabled() instead
+func debugLog(format string, args ...interface{}) {
+	// Deprecated: kept for compatibility, but does nothing
+	// Use InterruptionModel.debugLogIfEnabled() to respect debug mode
+}
+
+// closeDebugLog закрывает debug лог (без mutex для простоты)
+func closeDebugLog() {
+	if debugLogFile != nil {
+		fmt.Fprintf(debugLogFile, "[%s] === TUI Debug Log Ended ===\n", time.Now().Format("15:04:05.000"))
+		debugLogFile.Close()
+		debugLogFile = nil
+	}
+}
+
+// clearLogs удаляет все лог-файлы в текущей директории и поддиректориях.
+//
+// Удаляет следующие типы логов:
+//   - poncho_log_*.md (Markdown логи от DebugManager, дампы экрана)
+//   - poncho-*.log (старые лог-файлы)
+//   - debug_*.json (JSON логи от pkg/debug)
+//   - tui_debug.log (TUI debug лог)
+//   - callback_debug.log (Callback debug лог)
+//
+// Returns количество удалённых файлов и ошибку (если есть).
+func clearLogs() (int, error) {
+	deleted := 0
+	patterns := []string{
+		"poncho_log_*.md",
+		"poncho-*.log",
+		"debug_*.json",
+		"tui_debug.log",
+		"callback_debug.log",
+	}
+
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return deleted, fmt.Errorf("glob pattern %s failed: %w", pattern, err)
+		}
+
+		for _, match := range matches {
+			// Удаляем файл
+			if err := os.Remove(match); err == nil {
+				deleted++
+			}
+			// Игнорируем ошибки удаления (файл может быть уже удалён)
+		}
+	}
+
+	// Также проверяем поддиректорию debug_logs/
+	debugLogsDir := "./debug_logs"
+	if entries, err := os.ReadDir(debugLogsDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			// Проверяем паттерны debug_*.json
+			if strings.HasPrefix(name, "debug_") && strings.HasSuffix(name, ".json") {
+				fullPath := filepath.Join(debugLogsDir, name)
+				if err := os.Remove(fullPath); err == nil {
+					deleted++
+				}
+			}
+		}
+	}
+
+	return deleted, nil
+}
 
 // ===== KEY MAP =====
 
@@ -52,6 +134,7 @@ type KeyMap struct {
 	SaveToFile    key.Binding
 	ToggleDebug   key.Binding
 	ShowDebugPath key.Binding // Shows path to last debug log file
+	ClearLogs     key.Binding // Clears all log files (Ctrl+K)
 }
 
 // ShortHelp реализует help.KeyMap интерфейс.
@@ -63,6 +146,7 @@ func (km KeyMap) ShortHelp() []key.Binding {
 		km.SaveToFile,
 		km.ToggleDebug,
 		km.ShowDebugPath,
+		km.ClearLogs,
 		km.ConfirmInput,
 	}
 }
@@ -80,6 +164,7 @@ func (km KeyMap) FullHelp() [][]key.Binding {
 			km.SaveToFile,
 			km.ToggleDebug,
 			km.ShowDebugPath,
+			km.ClearLogs,
 		},
 		{
 			km.Quit,
@@ -122,6 +207,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("ctrl+l"),
 			key.WithHelp("Ctrl+L", "show debug log path"),
 		),
+		ClearLogs: key.NewBinding(
+			key.WithKeys("ctrl+k"),
+			key.WithHelp("Ctrl+K", "clear all logs"),
+		),
 	}
 }
 
@@ -162,12 +251,6 @@ type Model struct {
 	todos []todo.Task
 	mu     sync.RWMutex
 
-	// Deprecated: Прямые зависимости (для backward compatibility)
-	// ⚠️ DEPRECATED: Используйте callback pattern вместо прямого доступа к агенту
-	// Rule 6: Эти поля нарушают принцип reusable кода, но сохранены для совместимости
-	agent     interface{} // agent.Agent - хранится как interface{} чтобы избежать импорта
-	coreState interface{} // *state.CoreState - хранится как interface{} чтобы избежать импорта
-
 	// Unique Model features (сохраняются после рефакторинга)
 	timeout time.Duration // Таймаут для agent execution
 	prompt  string          // Приглашение ввода (custom)
@@ -185,20 +268,20 @@ type Model struct {
 
 // NewModel создаёт новую TUI модель.
 //
-// ⚠️ REFACTORED (Phase 3A): Теперь использует BaseModel для primitives.
+// ⚠️ REFACTORED (Phase 3A+5): Теперь использует BaseModel для primitives.
+// Rule 6 compliant: Removed deprecated agent parameter.
 //
 // Rule 11: Принимает родительский контекст для распространения отмены.
 //
 // Parameters:
 //   - ctx: Родительский контекст для распространения отмены
-//   - agent: AI агент (реализует agent.Agent интерфейс) - DEPRECATED для Rule 6
-//   - coreState: Framework core состояние (явная зависимость для todo operations)
+//   - coreState: Framework core состояние (для todo operations)
 //   - eventSub: Подписчик на события агента
 //
 // Возвращает модель готовую к использованию с Bubble Tea.
 //
-// Rule 6 Note: Для новых приложений используйте callback pattern вместо прямого доступа к агенту.
-func NewModel(ctx context.Context, agent agent.Agent, coreState *state.CoreState, eventSub events.Subscriber) *Model {
+// Rule 6 Note: Для новых приложаний используйте callback pattern вместо прямого доступа к агенту.
+func NewModel(ctx context.Context, coreState *state.CoreState, eventSub events.Subscriber) *Model {
 	// Сначала создаём BaseModel через готовый конструктор
 	base := NewBaseModel(ctx, eventSub)
 
@@ -213,8 +296,6 @@ func NewModel(ctx context.Context, agent agent.Agent, coreState *state.CoreState
 
 	return &Model{
 		BaseModel:    base,
-		agent:       agent,      // DEPRECATED (Rule 6 violation)
-		coreState:   coreState, // Для todo operations (app-specific feature)
 		todos:       []todo.Task{},
 		mu:          sync.RWMutex{},
 		timeout:     5 * time.Minute,
@@ -257,6 +338,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case saveErrorMsg:
 		m.appendLog(errorStyle(fmt.Sprintf("✗ Failed to save: %v", msg.err)))
 		return m, nil
+
+	case tea.KeyMsg:
+		// Model не обрабатывает ConfirmInput - это сделает InterruptionModel или другие extended models
+		// Просто делегируем BaseModel для остальных клавиш
+		baseModel, baseCmd := m.BaseModel.Update(msg)
+		m.BaseModel = baseModel.(*BaseModel)
+		return m, baseCmd
 	}
 
 	// Все остальные сообщения делегируем BaseModel
@@ -546,22 +634,36 @@ func NewInterruptionModel(
 	eventSub events.Subscriber,
 	inputChan chan string,
 ) *InterruptionModel {
+	// NOT calling initDebugLog anymore - logs are created lazily
+
 	// Создаём BaseModel напрямую (без agent dependency)
 	base := NewBaseModel(ctx, eventSub)
 
-	return &InterruptionModel{
+	model := &InterruptionModel{
 		BaseModel:  base,
 		inputChan:  inputChan,
 		coreState:  coreState,
 		todos:      []todo.Task{},
 		mu:         sync.RWMutex{},
 	}
+
+	// Log creation only if debug mode is already enabled (edge case)
+	if model.GetDebugManager().IsEnabled() {
+		model.debugLogIfEnabled("NewInterruptionModel: Creating model")
+		model.debugLogIfEnabled("NewInterruptionModel: BaseModel created")
+		model.debugLogIfEnabled("NewInterruptionModel: InterruptionModel created")
+	}
+
+	return model
 }
 
 // Init реализует tea.Model интерфейс для InterruptionModel.
 //
 // ⚠️ REFACTORED (Phase 3B): Делегирует BaseModel.Init().
 func (m *InterruptionModel) Init() tea.Cmd {
+	m.debugLogIfEnabled("InterruptionModel.Init: called")
+	defer m.debugLogIfEnabled("InterruptionModel.Init: finished")
+
 	// Инициализируем BaseModel (блинк курсор, чтение событий)
 	return m.BaseModel.Init()
 }
@@ -575,6 +677,8 @@ func (m *InterruptionModel) Init() tea.Cmd {
 // - При Enter во время работы: отправляет прерывание в inputChan
 // - EventUserInterruption: отображает прерывание в UI
 func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.debugLogIfEnabled("InterruptionModel.Update: called, msg type=%T", msg)
+
 	switch msg := msg.(type) {
 	case saveSuccessMsg:
 		m.appendLog(systemStyle(fmt.Sprintf("✓ Saved to: %s", msg.filename)))
@@ -585,24 +689,42 @@ func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case EventMsg:
+		m.debugLogIfEnabled("InterruptionModel.Update: EventMsg received, type=%s", events.Event(msg).Type)
 		// ПЕРЕХВАТЫВАЕМ события агента - не даем базовой модели их обработать
 		return m.handleAgentEventWithInterruption(events.Event(msg))
 
 	case tea.KeyMsg:
+		m.debugLogIfEnabled("InterruptionModel.Update: KeyMsg received, key=%s", msg.String())
 		// ПЕРВЫЕ: проверяем key bindings для глобальных действий (quit, help, scroll)
 		// Эти клавиши должны работать всегда, независимо от фокуса textarea
+		matchesConfirm := key.Matches(msg, m.keys.ConfirmInput)
+		matchesQuit := key.Matches(msg, m.keys.Quit)
+		m.debugLogIfEnabled("InterruptionModel.Update: matchesConfirm=%v matchesQuit=%v", matchesConfirm, matchesQuit)
+
 		switch {
-		case key.Matches(msg, m.keys.Quit):
+		case matchesQuit:
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.ToggleHelp):
-			m.SetShowHelp(!m.ShowHelp())
-			return m, nil
+			// Делегируем BaseModel для обновления help
+			baseModel, baseCmd := m.BaseModel.Update(msg)
+			m.BaseModel = baseModel.(*BaseModel)
+			return m, baseCmd
 		case key.Matches(msg, m.keys.ScrollUp):
 			m.GetViewportMgr().ScrollUp(1)
 			return m, nil
 		case key.Matches(msg, m.keys.ScrollDown):
 			m.GetViewportMgr().ScrollDown(1)
 			return m, nil
+		case key.Matches(msg, m.keys.SaveToFile):
+			// Делегируем BaseModel для сохранения
+			baseModel, baseCmd := m.BaseModel.Update(msg)
+			m.BaseModel = baseModel.(*BaseModel)
+			return m, baseCmd
+		case key.Matches(msg, m.keys.ToggleDebug):
+			// Делегируем BaseModel для toggle debug
+			baseModel, baseCmd := m.BaseModel.Update(msg)
+			m.BaseModel = baseModel.(*BaseModel)
+			return m, baseCmd
 		case key.Matches(msg, m.keys.ShowDebugPath):
 			// Ctrl+L: показать путь к последнему debug-логу
 			m.mu.RLock()
@@ -615,15 +737,33 @@ func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appendLog(systemStyle("📁 No debug log available yet"))
 			}
 			return m, nil
-		case key.Matches(msg, m.keys.ConfirmInput):
+		case key.Matches(msg, m.keys.ClearLogs):
+			// Ctrl+K: удалить все лог-файлы
+			count, err := clearLogs()
+			if err != nil {
+				m.appendLog(errorStyle(fmt.Sprintf("✗ Failed to delete logs: %v", err)))
+			} else if count > 0 {
+				m.appendLog(systemStyle(fmt.Sprintf("🗑️ Deleted %d log file(s)", count)))
+			} else {
+				m.appendLog(systemStyle("🗑️ No log files found"))
+			}
+			return m, nil
+		case matchesConfirm:
 			return m.handleKeyPressWithInterruption(msg)
 		}
-		// Все остальные клавиши передаем в базовую модель для ввода текста
-		return m.BaseModel.Update(msg)
+
+		// Все остальные клавиши - обрабатываем ввод текста в textarea
+		// НЕ передаём в BaseModel.Update() чтобы избежать двойной обработки Enter
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(msg)
+		return m, cmd
 
 	default:
-		// Все остальные сообщения передаем в базовую модель
-		return m.BaseModel.Update(msg)
+		// Все остальные сообщения передаем в базовую модель, но ВСЕГДА возвращаем InterruptionModel
+		// Это критично! Если вернуть BaseModel, BubbleTea перестанет вызывать InterruptionModel.Update()
+		baseModel, baseCmd := m.BaseModel.Update(msg)
+		m.BaseModel = baseModel.(*BaseModel)
+		return m, baseCmd
 	}
 }
 
@@ -690,6 +830,28 @@ func (m *InterruptionModel) SetOnInput(handler func(query string) tea.Cmd) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onInput = handler
+}
+
+// debugLogIfEnabled пишет сообщение в tui_debug.log только если debug mode включён.
+// Лог-файл создаётся лениво при первой записи в debug mode.
+func (m *InterruptionModel) debugLogIfEnabled(format string, args ...interface{}) {
+	// Проверяем, включён ли debug mode
+	if !m.GetDebugManager().IsEnabled() {
+		return
+	}
+
+	// Lazy init: создаём файл только при первой записи в debug mode
+	if debugLogFile == nil {
+		f, err := os.OpenFile("tui_debug.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0644)
+		if err != nil {
+			return
+		}
+		debugLogFile = f
+		fmt.Fprintf(debugLogFile, "[%s] === TUI Debug Log Started (Debug Mode: ON) ===\n", time.Now().Format("15:04:05.000"))
+	}
+
+	timestamp := time.Now().Format("15:04:05.000")
+	fmt.Fprintf(debugLogFile, "[%s] %s\n", timestamp, fmt.Sprintf(format, args...))
 }
 
 // appendLog добавляет строку в лог через ViewportManager.
@@ -835,32 +997,42 @@ func (m *InterruptionModel) handleKeyPressWithInterruption(msg tea.KeyMsg) (tea.
 		return m, nil
 
 	case key.Matches(msg, m.keys.ConfirmInput):
+		m.debugLogIfEnabled("handleKeyPressWithInterruption: ConfirmInput matched")
 		ta := m.GetTextarea()
 		input := ta.Value()
+		m.debugLogIfEnabled("handleKeyPressWithInterruption: input=%q len=%d", input, len(input))
+
 		if input == "" {
+			m.debugLogIfEnabled("handleKeyPressWithInterruption: input is empty, returning")
 			return m, nil
 		}
 
 		ta.Reset()
 		m.SetTextarea(ta)
 		m.appendLog(userMessageStyle("USER: ") + input)
+		m.debugLogIfEnabled("handleKeyPressWithInterruption: USER message logged")
 
 		// Проверяем: установлен ли callback? (MANDATORY)
 		m.mu.RLock()
 		handler := m.onInput
 		m.mu.RUnlock()
+		m.debugLogIfEnabled("handleKeyPressWithInterruption: handler is nil: %v", handler == nil)
 
 		if handler == nil {
 			// Callback не установлен - это ошибка конфигурации
 			m.appendLog(errorStyle("ERROR: No input handler set. Call SetOnInput() first."))
+			m.debugLogIfEnabled("handleKeyPressWithInterruption: ERROR - no handler set")
 			return m, nil
 		}
 
 		// Устанавливаем флаг обработки для показа спиннера
 		m.GetStatusBarMgr().SetProcessing(true)
+		m.debugLogIfEnabled("handleKeyPressWithInterruption: calling handler")
 
 		// Используем callback для обработки ввода
-		return m, handler(input)
+		cmd := handler(input)
+		m.debugLogIfEnabled("handleKeyPressWithInterruption: handler returned, cmd is nil: %v", cmd == nil)
+		return m, cmd
 	}
 
 	return m, nil
@@ -900,17 +1072,17 @@ func (m *InterruptionModel) saveToMarkdown() tea.Cmd {
 // updateTodosFromState обновляет todo list из CoreState.
 //
 // ⚠️ MOVED to InterruptionModel (Phase 3B): Теперь является методом InterruptionModel.
+//
+// ⚠️ FIXED: Используем прямое приведение типа к *state.CoreState вместо сложного
+// interface type assertion, который мог отказать без сообщений об ошибке.
 func (m *InterruptionModel) updateTodosFromState() {
 	if m.coreState == nil {
 		return
 	}
 
-	// Type assertion для interface{} (Rule 6 compliance)
-	cs, ok := m.coreState.(interface {
-		GetTodoManager() interface {
-			GetTasks() []todo.Task
-		}
-	})
+	// Direct type assertion to *state.CoreState
+	// Используем прямой cast вместо анонимного интерфейса для надежности
+	cs, ok := m.coreState.(*state.CoreState)
 	if !ok || cs == nil {
 		return
 	}

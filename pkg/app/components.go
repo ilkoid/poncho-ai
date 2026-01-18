@@ -337,9 +337,12 @@ func Initialize(parentCtx context.Context, cfg *config.AppConfig, maxIters int, 
 		MaxResultSize:       cfg.App.DebugLogs.MaxResultSize,
 	})
 	if err != nil {
-		utils.Error("Failed to create debug recorder", "error", err)
+		// utils.Error("Failed to create debug recorder", "error", err)
 	} else if debugRecorder.Enabled() {
+		// utils.Info("Debug recorder attached", "logs_dir", cfg.App.DebugLogs.LogsDir)
 		reactCycle.AttachDebug(debugRecorder)
+	} else {
+		// utils.Info("Debug recorder NOT enabled", "enabled", cfg.App.DebugLogs.Enabled, "save_logs", cfg.App.DebugLogs.SaveLogs)
 	}
 
 	return &Components{

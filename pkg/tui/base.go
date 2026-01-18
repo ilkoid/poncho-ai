@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/tui/primitives"
@@ -122,12 +123,14 @@ func NewBaseModel(ctx context.Context, eventSub events.Subscriber) *BaseModel {
 // Возвращает команды для:
 //   - Фокуса на textarea (блинк курсора)
 //   - Чтения событий от агента
+//   - Запуска спиннера (анимация)
 func (m *BaseModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.textarea.Focus(),
 		ReceiveEventCmd(m.eventSub, func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		}),
+		m.statusMgr.Tick(), // Запускаем анимацию спиннера
 	)
 }
 
@@ -152,6 +155,11 @@ func (m *BaseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		})
+
+	case spinner.TickMsg:
+		// TickMsg для спиннера - обновляем через StatusBarManager
+		cmd := m.statusMgr.Update(msg)
+		return m, cmd
 
 	default:
 		// Передаём остальные сообщения в textarea
@@ -260,16 +268,8 @@ func (m *BaseModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case key.Matches(msg, m.keys.ConfirmInput):
-		// Базовая обработка Enter - должна быть переопределена в расширенных моделях
-		input := m.textarea.Value()
-		if input == "" {
-			return m, nil
-		}
-		m.textarea.Reset()
-		m.viewportMgr.Append(UserMessageStyle("USER: ") + input, true)
-		// Расширенные модели должны добавить свои cmd здесь
-		return m, nil
+	// ConfirmInput NOT handled here - must be handled by extended models
+	// (Model, InterruptionModel, etc.) to provide their own callback logic
 
 	default:
 		// Все остальные клавиши передаем в textarea

@@ -43,7 +43,8 @@ func Run(ctx context.Context, client *agent.Client) error {
 	coreState := client.GetState()
 
 	// Создаём модель с контекстом (Rule 11)
-	model := NewModel(ctx, client, coreState, sub)
+	// ⚠️ REFACTORED (Phase 3+5): Removed agent parameter - Rule 6 compliant
+	model := NewModel(ctx, coreState, sub)
 
 	// Запускаем Bubble Tea программу
 	p := tea.NewProgram(model)
@@ -83,7 +84,8 @@ func RunWithOpts(ctx context.Context, client *agent.Client, opts ...Option) erro
 	coreState := client.GetState()
 
 	// Создаём модель с опциями (Rule 11)
-	model := NewModel(ctx, client, coreState, sub)
+	// ⚠️ REFACTORED (Phase 3+5): Removed agent parameter - Rule 6 compliant
+	model := NewModel(ctx, coreState, sub)
 	for _, opt := range opts {
 		opt(model)
 	}
@@ -128,66 +130,6 @@ func WithTimeout(timeout time.Duration) Option {
 	return func(m *Model) {
 		m.timeout = timeout
 	}
-}
-
-// RunWithInterruptions запускает TUI с поддержкой прерываний.
-//
-// ⚠️ DEPRECATED: Эта функция оставлена для обратной совместимости,
-// но она БУДЕТ ВОЗВРАЩАТЬ ОШИБКУ при попытке ввода, так как не устанавливает
-// обязательный callback через SetOnInput().
-//
-// Рекомендуемый подход:
-//
-//	client, _ := agent.New(context.Background(), agent.Config{ConfigPath: "config.yaml"})
-//	inputChan := make(chan string, 10)
-//	chainCfg := tui.DefaultChainConfig()
-//	coreState := client.GetState()
-//	emitter := events.NewChanEmitter(100)
-//	client.SetEmitter(emitter)
-//	sub := emitter.Subscribe()
-//
-//	model := tui.NewInterruptionModel(ctx, client, coreState, sub, inputChan, chainCfg)
-//	model.SetOnInput(createAgentLauncher(client, chainCfg, inputChan, true)) // MANDATORY
-//
-//	p := tea.NewProgram(model, tea.WithAltScreen())
-//	p.Run()
-//
-// Пользователь может прервать выполнение агента, набрав команду и нажав Enter:
-//   - "todo: add <task>"     - Добавить задачу
-//   - "todo: complete <N>"   - Завершить задачу
-//   - "stop"                 - Остановить выполнение
-//   - Любой текст           - Задать вопрос агенту
-//
-// Правило 11: принимает и распространяет context.Context.
-// Approach 2: CoreState передаётся как явная зависимость.
-func RunWithInterruptions(ctx context.Context, client *agent.Client) error {
-	if client == nil {
-		return fmt.Errorf("client is nil")
-	}
-
-	// Создаём emitter
-	emitter := events.NewChanEmitter(100)
-	client.SetEmitter(emitter)
-	sub := emitter.Subscribe()
-
-	// Approach 2: получаем CoreState из client
-	coreState := client.GetState()
-
-	// Канал для прерываний
-	inputChan := make(chan string, 10)
-
-	// Создаём модель с поддержкой прерываний
-	// ⚠️ DEPRECATED (Phase 3B): RunWithInterruptions нарушает Rule 6 (pkg/tui imports pkg/agent)
-	// Рекомендуется использовать NewInterruptionModel напрямую из cmd/ слоя
-	model := NewInterruptionModel(ctx, coreState, sub, inputChan)
-
-	// Запускаем Bubble Tea
-	p := tea.NewProgram(model)
-	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("TUI error: %w", err)
-	}
-
-	return nil
 }
 
 // createDefaultChainConfig создаёт дефолтную конфигурацию ReAct цикла.

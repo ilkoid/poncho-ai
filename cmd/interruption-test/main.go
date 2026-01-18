@@ -35,7 +35,6 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/chain"
 	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/tui"
-	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 func main() {
@@ -48,8 +47,9 @@ func main() {
 func run() error {
 	ctx := context.Background()
 
-	// 0. Инициализируем логгер для debug output
-	_ = utils.InitLogger()
+	// 0. НЕ инициализируем файловый логгер (poncho-*.log не создаётся)
+	// utils.InitLogger() // Закомментировано: логи создаются только при debug mode (Ctrl+G)
+	// Utils логи всё равно выводятся в stderr как fallback
 
 	// 1. Определяем путь к конфигу
 	configPath := "openrouter_conf.yaml"
@@ -76,16 +76,9 @@ func run() error {
 	// 5. Создаём ChainConfig на основе дефолтной (из pkg/tui)
 	chainCfg := tui.DefaultChainConfig()
 
-	// Кастомизируем для interruption-test (debug logging включен)
-	chainCfg.Debug.Enabled = true
-	chainCfg.Debug.SaveLogs = true
-	chainCfg.Debug.LogsDir = "./debug_logs"
-	chainCfg.Debug.IncludeToolArgs = true
-	chainCfg.Debug.IncludeToolResults = true
-	chainCfg.Debug.MaxResultSize = 10000
-	chainCfg.MaxIterations = 30  // Увеличено для сложных multi-step задач
-	chainCfg.PostPromptsDir = "./prompts"
-	chainCfg.InterruptionPrompt = "./prompts/interruption_handler.yaml"
+	// Кастомизируем для interruption-test
+	// Примечание: Debug-логирование настраивается в openrouter_conf.yaml (app.debug_logs)
+	chainCfg.MaxIterations = 30 // Увеличено для сложных multi-step задач
 
 	// 6. Approach 2: получаем CoreState из client
 	coreState := client.GetState()
@@ -96,15 +89,12 @@ func run() error {
 	baseModel := tui.NewInterruptionModel(ctx, coreState, sub, inputChan)
 
 	// 8. Устанавливаем callback для запуска агента (Rule 6: бизнес-логика в cmd/)
-	baseModel.SetOnInput(createAgentLauncher(client, chainCfg, inputChan, true))
+	baseModel.SetOnInput(createAgentLauncher(client, chainCfg, inputChan, baseModel))
 
-	// 9. Включаем полное логирование LLM запросов для отладки
-	baseModel.SetFullLLMLogging(true)
-
-	// 10. Устанавливаем заголовок для TUI
+	// 9. Устанавливаем заголовок для TUI
 	baseModel.SetTitle("🧪 Interruption Test Utility")
 
-	// 11. Запускаем Bubble Tea с AltScreen для очистки экрана
+	// 10. Запускаем Bubble Tea с AltScreen для очистки экрана
 	p := tea.NewProgram(baseModel, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
@@ -122,48 +112,70 @@ func run() error {
 //   - client: AI клиент для выполнения запросов
 //   - chainCfg: Конфигурация ReAct цикла
 //   - inputChan: Канал для пользовательских прерываний
-//   - fullLLMLogging: Включить полное логирование LLM запросов
+//   - model: InterruptionModel для проверки debug mode
 //
 // Returns callback функцию которая запускает агента и возвращает Bubble Tea Cmd.
 func createAgentLauncher(
 	client *agent.Client,
 	chainCfg chain.ChainConfig,
 	inputChan chan string,
-	fullLLMLogging bool,
+	model *tui.InterruptionModel,
 ) func(query string) tea.Cmd {
-	return func(query string) tea.Cmd {
+	return func(queryCaptured string) tea.Cmd {
 		return func() tea.Msg {
+			// DEBUG LOG только если debug mode включён
+			if model.GetDebugManager().IsEnabled() {
+				logToDebugFile("[CALLBACK] START: query=%q", queryCaptured)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
 			// Создаём ChainInput с каналом прерываний
 			chainInput := chain.ChainInput{
-				UserQuery:      query,
-				State:          client.GetState(),
-				Registry:       client.GetToolsRegistry(),
-				Config:         chainCfg,
-				UserInputChan:  inputChan,
-				FullLLMLogging:  fullLLMLogging,
+				UserQuery:     queryCaptured,
+				State:         client.GetState(),
+				Registry:      client.GetToolsRegistry(),
+				Config:        chainCfg,
+				UserInputChan: inputChan,
+			}
+
+			if model.GetDebugManager().IsEnabled() {
+				logToDebugFile("[CALLBACK] ChainInput created, calling client.Execute()...")
 			}
 
 			// Выполняем через Execute (поддерживает прерывания)
 			output, err := client.Execute(ctx, chainInput)
 
+			if model.GetDebugManager().IsEnabled() {
+				logToDebugFile("[CALLBACK] Execute returned: err=%v, result len=%d", err, len(output.Result))
+			}
+
 			// Отправляем событие завершения
 			if err != nil {
 				return tui.EventMsg(events.Event{
-					Type:      events.EventError,
-					Data:      events.ErrorData{Err: err},
-					Timestamp: time.Now(),
+					Type: events.EventError,
+					Data: events.ErrorData{Err: err},
 				})
 			}
 
 			return tui.EventMsg(events.Event{
-				Type:      events.EventDone,
-				Data:      events.MessageData{Content: output.Result},
-				Timestamp: time.Now(),
+				Type: events.EventDone,
+				Data: events.MessageData{Content: output.Result},
 			})
 		}
 	}
+}
+
+// logToDebugFile пишет сообщение в debug файл
+func logToDebugFile(format string, args ...interface{}) {
+	f, err := os.OpenFile("callback_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	timestamp := time.Now().Format("15:04:05.000")
+	fmt.Fprintf(f, "[%s] %s\n", timestamp, fmt.Sprintf(format, args...))
 }
 

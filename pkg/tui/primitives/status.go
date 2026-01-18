@@ -1,6 +1,7 @@
 package primitives
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/lipgloss"
 	"sync"
@@ -151,4 +152,22 @@ func (sm *StatusBarManager) GetCustomExtra() func() string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.customExtra
+}
+
+// Update handles TickMsg for the spinner and returns the command
+func (sm *StatusBarManager) Update(msg spinner.TickMsg) tea.Cmd {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	var cmd tea.Cmd
+	sm.spinner, cmd = sm.spinner.Update(msg)
+	return cmd
+}
+
+// Tick returns the initial spinner tick command to start the animation
+// This should be included in the Model's Init() return value
+func (sm *StatusBarManager) Tick() tea.Cmd {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.spinner.Tick
 }

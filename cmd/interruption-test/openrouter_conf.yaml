@@ -216,11 +216,11 @@ app:
   #   max_result_size     - Max tool result size in characters (default: 5000)
   # --------------------------------------------------------------------------
   debug_logs:
-    enabled: true            # Enable recording of execution traces
-    save_logs: true          # Save traces to JSON files
+    enabled: false           # Enable recording of execution traces
+    save_logs: false         # Save traces to JSON files
     logs_dir: "./debug_logs" # Directory for log files
-    include_tool_args: true  # Include tool arguments
-    include_tool_results: true # Include tool results
+    include_tool_args: false # Include tool arguments
+    include_tool_results: false # Include tool results
     max_result_size: 10000   # Max result size to log (chars)
 
 # ==============================================================================
@@ -652,19 +652,19 @@ tools:
 
   list_s3_files:
     enabled: true
-    description: "Возвращает список файлов в S3 хранилище по указанному пути (префиксу). Используй это, чтобы найти артикулов или проверить наличие файлов."
+    description: "Возвращает список файлов в S3 хранилище по указанному пути (префиксу). Используй это, чтобы найти папки артикулов или проверить наличие файлов."
 
   read_s3_object:
     enabled: true
-    description: "Читает содержимое файла из S3. Поддерживает текстовые файлы (JSON, TXT, MD). Не используй для картинок."
+    description: "Читает содержимое текстового файла или json из S3. Поддерживает текстовые файлы (JSON, TXT, MD). Не используй для картинок."
 
   read_s3_image:
     enabled: true
-    description: "Скачивает изображение из S3, оптимизирует его (resize) и возвращает в формате Base64. Используй это для Vision-анализа."
+    description: "Скачивает изображение из S3, оптимизирует его через resize и возвращает в формате Base64. Используй это для анализа эскизов или фотографий товара."
 
   get_plm_data:
     enabled: true
-    description: "Загружает PLM данные (plm.json) артикула из S3 и возвращает очищенный JSON без технических полей, миниатюр и эскизов. Используй для получения информации о товаре: артикул, категория, сезон, цвета, материалы, размерный ряд."
+    description: "Загружает производственные характеристики товара для выбранного артикула (папки) из S3, и возвращает очищенный JSON без технических полей, миниатюр и эскизов. Используй для получения полезной информации о товаре. Знание производственных характеристик совместно с анализом эксиза или фото дают ценную информацию о товаре"
 
   download_s3_files:
     enabled: true
@@ -676,12 +676,12 @@ tools:
 
   classify_and_download_s3_files:
     enabled: true
-    description: "Списывает и классифицирует файлы артикула из S3 по тегам (sketch, plm_data, marketing). JSON файлы скачивает сразу, изображения — только метаданные. Для vision-анализа используй read_s3_image."
+    description: "Получает список файлов из папки артикула, классифицирует их по тегам (sketch, plm_data, marketing). JSON файлы скачивает сразу, изображения — только метаданные. Загрузку графического контента откладывает, для анализа изображений используй read_s3_image."
     post_prompt: "s3/classify_and_download.ru.yaml"
 
   analyze_article_images_batch:
     enabled: true
-    description: "Анализирует изображения из текущего артикула с помощью Vision LLM. Обрабатывает картинки параллельно в горутинах. Опционально фильтрует по тегу (sketch, plm_data, marketing). Используй это после classify_and_download_s3_files для анализа эскизов."
+    description: "Представляет собой умный цикл анализа всех изображений. Опционально фильтрует по тегу (sketch, plm_data, marketing), обрабатывает изображения одно за другим, что предотвращает накопление огромных base64 строк в контексте LLM. Анализирует изображения из текущего артикула с помощью Vision LLM). Возвращает полезный агрегированный результат для дальнейшего анализа. Использется после classify_and_download_s3_files для анализа эскизов."
     post_prompt: "s3/analyze_images_batch.ru.yaml"
 
   # ===========================================================================
@@ -690,7 +690,7 @@ tools:
 
   plan_add_task:
     enabled: true
-    description: "Добавляет новую задачу в план действий. Указывай четкое описание того, что нужно выполнить."
+    description: "Добавляет новую задачу в конец списка. Указывай четкое описание того, что нужно выполнить."
     post_prompt: "planner/task_management.ru.yaml"
 
   plan_mark_done:
@@ -710,7 +710,7 @@ tools:
 
   plan_set_tasks:
     enabled: true
-    description: "Создает или заменяет весь план задач за один вызов. Используй это когда нужно составить полный план действий с нуля или полностью пересмотреть существующий план. LLM видит текущий план через контекст и учитывает его при перезаписи."
+    description: "Создает или заменяет весь план задач за один вызов. Используй это когда нужно составить полный план действий с нуля, или когда надо вставить задачу в середину списка, или если надо полностью пересмотреть существующий план"
     post_prompt: "planner/task_management.ru.yaml"
 
 # ==============================================================================

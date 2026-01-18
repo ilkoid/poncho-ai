@@ -125,7 +125,8 @@ func NewPonchoModel(
 	eventSub events.Subscriber,
 ) *PonchoModel {
 	// Создаём базовую tui.Model
-	baseModel := tui.NewModel(context.Background(), client, coreState, eventSub)
+	// ⚠️ REFACTORED (Phase 3+5): Removed agent parameter - Rule 6 compliant
+	baseModel := tui.NewModel(context.Background(), coreState, eventSub)
 
 	return &PonchoModel{
 		Model:            baseModel,

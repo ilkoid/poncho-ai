@@ -68,12 +68,10 @@ func NewEventHandler(sub events.Subscriber, vm *ViewportManager, sm *StatusBarMa
 //   - EventError: "❌ Error: message"
 //   - EventDone: Final answer (full content)
 func (eh *EventHandler) registerDefaultRenderers() {
-	// EventThinking: shows spinner is already handled in HandleEvent
+	// EventThinking: spinner is handled by StatusBarManager, don't render in viewport
+	// This prevents duplicate "Thinking:" messages appearing in the viewport
 	eh.RegisterRenderer(events.EventThinking, func(event events.Event) (string, lipgloss.Style) {
-		if data, ok := event.Data.(events.ThinkingData); ok {
-			return "🤔 Thinking: " + data.Query, lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-		}
-		return "🤔 Thinking...", lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+		return "", lipgloss.Style{} // Let StatusBarManager handle the spinner
 	})
 
 	// EventThinkingChunk: streaming reasoning content (typically not displayed)
