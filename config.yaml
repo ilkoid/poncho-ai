@@ -1,12 +1,12 @@
 # Models Configuration
 models:
-  default_reasoning: "glm-4.6"  # Reasoning модель для orchestrator (планирование, tool selection)
-  default_chat: "glm-4.6"       # Chat модель (fallback, используется в post-prompts)
+  default_reasoning: "glm-4.7"  # Reasoning модель для orchestrator (планирование, tool selection)
+  default_chat: "glm-4.7"       # Chat модель (fallback, используется в post-prompts)
   default_vision: "glm-4.6v-flash" # Vision модель для анализа изображений
   definitions:
-    glm-4.6:
+    glm-4.7:
       provider: "zai"
-      model_name: "glm-4.6"
+      model_name: "z-ai/glm-4.7"
       api_key: "${ZAI_API_KEY}"
       base_url: "https://api.z.ai/api/paas/v4"
       max_tokens: 2000
@@ -153,12 +153,13 @@ tool_bundles:
 
   # === S3 Storage Tools ===
   s3-storage-tools:
-    description: "S3 хранилище: список файлов, чтение объектов, загрузка изображений"
+    description: "S3 хранилище: список файлов, чтение объектов, скачивание на диск"
     tools:
       - list_s3_files
       - read_s3_object
       - read_s3_image
       - get_plm_data
+      - download_s3_files
 
   # === S3 Batch Tools ===
   s3-batch-tools:
@@ -206,6 +207,11 @@ tool_resolution_mode: "bundle-first"
 # Если tool не указан в этом списке или enabled=false, он не регистрируется.
 
 tools:
+  # === LLM Provider Tools ===
+  ping_llm_provider:
+    enabled: false
+    description: "Проверяет доступность LLM провайдера (Zai, OpenAI, OpenRouter, DeepSeek). Возвращает статус сервиса, задержку, информацию об ошибках (например, неверный API ключ, недоступность сети). Используй для диагностики перед использованием других функций."
+
   # === WB Content API Tools ===
   search_wb_products:
     enabled: false
@@ -370,6 +376,10 @@ tools:
     enabled: true
     description: "Загружает PLM данные (plm.json) артикула из S3 и возвращает очищенный JSON без технических полей, миниатюр и эскизов. Используй для получения информации о товаре: артикул, категория, сезон, цвета, материалы, размерный ряд."
 
+  download_s3_files:
+    enabled: true
+    description: "Скачивает файлы или папку из S3 на локальный диск в папку ЗАГРУЗКИ. Можно скачать только конкретный файл или содержимое одной папки. Нельзя скачать весь бакет (защита от случайной выгрузки)."
+
   # === Planner Tools ===
   plan_add_task:
     enabled: false
@@ -462,7 +472,7 @@ chains:
     type: "react"
     description: "Стандартная ReAct цепочка для общих запросов"
     system_prompt: "You are a helpful AI assistant with access to tools."
-    model: "glm-4.6"
+    model: "glm-4.7"
     temperature: 0.5
     max_tokens: 2000
     max_iterations: 10

@@ -243,6 +243,14 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 		// 3e. Tool Execution
 		toolResult := exec.toolStep.Execute(ctx, exec.chainCtx)
 
+		// DEBUG: логируем результат tool execution
+		utils.Debug("Tool execution completed",
+			"iteration", iterations+1,
+			"action", toolResult.Action,
+			"signal", toolResult.Signal,
+			"error", toolResult.Error,
+			"will_continue", toolResult.Action == ActionContinue)
+
 		// Обрабатываем результат
 		if toolResult.Action == ActionError || toolResult.Error != nil {
 			err := toolResult.Error
@@ -250,6 +258,52 @@ func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (Chai
 				err = fmt.Errorf("tool execution failed")
 			}
 			return e.notifyFinishWithError(exec, err)
+		}
+
+		// 3e-a. ПРОВЕРКА: прерывание во время tool execution (быстрая реакция)
+		if toolResult.Signal == SignalUserInterruption {
+			// Пользователь прервал выполнение между tool calls
+			interruptMsg := fmt.Sprintf(`🛑 USER INTERRUPTION
+
+The user has interrupted the execution with the following message:
+
+--- USER MESSAGE ---
+%s
+-------------------
+
+Previous tool result is available in context. Please address the interruption and decide whether to continue or stop execution.`, toolResult.Interruption)
+
+			// Добавляем interruption message как user message
+			if err := exec.chainCtx.AppendMessage(llm.Message{
+				Role:    llm.RoleUser,
+				Content: interruptMsg,
+			}); err != nil {
+				return e.notifyFinishWithError(exec, fmt.Errorf("failed to append interruption message: %w", err))
+			}
+
+			// Загружаем interruption handler промпт
+			promptsDir := exec.chainCtx.Input.Config.PostPromptsDir
+			interruptionPath := exec.chainCtx.Input.Config.InterruptionPrompt
+
+			interruptPrompt, promptConfig := loadInterruptionPrompt(promptsDir, interruptionPath)
+
+			// Устанавливаем interruption handler как активный post-prompt
+			// Это заменит любой предыдущий post-prompt
+			exec.chainCtx.SetActivePostPrompt(interruptPrompt, promptConfig)
+
+			// Логируем прерывание
+			promptSource := "default"
+			if interruptionPath != "" {
+				promptSource = "yaml:" + interruptionPath
+			}
+
+			// Отправляем EventUserInterruption через iterationObserver
+			if e.iterationObserver != nil {
+				e.iterationObserver.EmitUserInterruption(ctx, toolResult.Interruption, iterations+1, promptSource)
+			}
+
+			// Продолжаем следующую итерацию (interruption handler обработает)
+			continue
 		}
 
 		// Отправляем EventToolResult через iterationObserver (PHASE 4)
@@ -321,6 +375,15 @@ Previous tool result is available in context. Please address the interruption an
 		for _, obs := range e.observers {
 			obs.OnIterationEnd(iterations + 1)
 		}
+
+		// DEBUG: логируем конец итерации
+		lastMsg = exec.chainCtx.GetLastMessage()
+		utils.Debug("Iteration ended",
+			"iteration", iterations+1,
+			"last_msg_role", lastMsg.Role,
+			"has_tool_calls", len(lastMsg.ToolCalls) > 0,
+			"max_iterations", exec.config.MaxIterations,
+			"will_continue", iterations+1 < exec.config.MaxIterations)
 	}
 
 	// 4. Формируем результат
@@ -332,12 +395,10 @@ Previous tool result is available in context. Please address the interruption an
 		"result_length", len(result),
 		"duration_ms", time.Since(exec.startTime).Milliseconds())
 
-	// 5. Отправляем EventMessage через iterationObserver (PHASE 4)
+	// 5. Отправляем EventMessage с полным результатом для отображения в TUI
 	if e.iterationObserver != nil {
 		e.iterationObserver.EmitMessage(ctx, result)
 	}
-
-	// 6. EventDone будет отправлен через EmitterObserver.OnFinish (PHASE 4)
 
 	// 7. Debug финализация теперь обрабатывается ChainDebugRecorder.OnFinish
 
@@ -354,6 +415,14 @@ Previous tool result is available in context. Please address the interruption an
 	// 9. Notify observers: OnFinish (EmitterObserver отправит EventDone, ChainDebugRecorder финализирует)
 	for _, obs := range e.observers {
 		obs.OnFinish(output, nil)
+	}
+
+	// 10. Fill DebugPath from ChainDebugRecorder (if available)
+	for _, obs := range e.observers {
+		if debugRec, ok := obs.(*ChainDebugRecorder); ok {
+			output.DebugPath = debugRec.GetLogPath()
+			break
+		}
 	}
 
 	return output, nil

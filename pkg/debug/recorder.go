@@ -6,9 +6,39 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 )
+
+// base64Pattern - регулярное выражение для поиска base64 строк
+// Находит строки которые выглядят как base64 (алфавитно-цифровые + / + =, минимум 100 символов)
+var base64Pattern = regexp.MustCompile(`[A-Za-z0-9+/]{100,}={0,2}`)
+
+// truncateBase64Data обрезает base64 данные в строке для уменьшения размера логов.
+//
+// Base64 encoded изображения могут занимать сотни килобайт. Эта функция
+// находит base64 строки и обрезает их до первых 100 символов, добавляя
+// маркер "[BASE64...]" чтобы показать что данные обрезаны.
+func truncateBase64Data(s string) string {
+	// Если строка короче 200 символов, скорее всего это не большое изображение
+	if len(s) < 200 {
+		return s
+	}
+
+	// Ищем base64 паттерны и заменяем их
+	result := base64Pattern.ReplaceAllStringFunc(s, func(match string) string {
+		// Дополнительная проверка - это похоже на base64?
+		// (алфавитно-цифровые + / + = в конце)
+		if len(match) < 100 {
+			return match
+		}
+		// Обрезаем до 100 символов и добавляем маркер
+		return match[:100] + "...[BASE64_TRUNCATED]"
+	})
+
+	return result
+}
 
 // Recorder записывает трейс выполнения агента и сохраняет в JSON файл.
 //
@@ -141,12 +171,22 @@ func (r *Recorder) RecordToolExecution(exec ToolExecution) {
 	// Применяем конфигурацию включения/обрезки данных
 	if !r.config.IncludeToolArgs {
 		exec.Args = ""
+	} else {
+		// Обрезаем base64 данные в аргументах (изображения)
+		exec.Args = truncateBase64Data(exec.Args)
 	}
+
 	if !r.config.IncludeToolResults {
 		exec.Result = ""
-	} else if r.config.MaxResultSize > 0 && len(exec.Result) > r.config.MaxResultSize {
-		exec.Result = exec.Result[:r.config.MaxResultSize] + "... (truncated)"
-		exec.ResultTruncated = true
+	} else {
+		// Обрезаем base64 данные в результатах (изображения)
+		exec.Result = truncateBase64Data(exec.Result)
+
+		// Применяем ограничение на размер результата если задано
+		if r.config.MaxResultSize > 0 && len(exec.Result) > r.config.MaxResultSize {
+			exec.Result = exec.Result[:r.config.MaxResultSize] + "... (truncated)"
+			exec.ResultTruncated = true
+		}
 	}
 
 	// Добавляем в текущую итерацию

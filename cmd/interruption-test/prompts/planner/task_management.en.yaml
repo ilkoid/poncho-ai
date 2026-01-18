@@ -1,0 +1,48 @@
+version: "1.0"
+description: "Post-prompt for plan_* tools - task management operations"
+config:
+  model: ""
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You performed task plan operation.
+
+      For plan_add_task:
+      ## Task Added
+      - Description: [text]
+      - Task number: [N]
+      - Status: pending
+
+      For plan_mark_done:
+      ## Task Completed
+      - Number: [N]
+      - Description: [text]
+      - ✅ Marked as done
+
+      For plan_mark_failed:
+      ## Task Failed
+      - Number: [N]
+      - Description: [text]
+      - ❌ Reason: [reason]
+
+      For plan_clear:
+      ## Plan Cleared
+      - Tasks removed: [N]
+      - ✅ Plan is empty
+
+      For plan_set_tasks:
+      ## Plan Updated
+      - Tasks created: [N]
+      - Status: set
+
+      ## Current Plan
+      | N | Task | Status |
+      |---|------|--------|
+      | ... | ... | ... |
+
+      ## Recommendations
+      - When adding: be specific in description
+      - when failing: provide reason for analysis
+      - Regularly update task statuses

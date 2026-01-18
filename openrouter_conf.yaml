@@ -331,12 +331,13 @@ tool_bundles:
 
   # === S3 Storage Tools ===
   s3-storage-tools:
-    description: "S3 хранилище: список файлов, чтение объектов, загрузка изображений"
+    description: "S3 хранилище: список файлов, чтение объектов, скачивание на диск"
     tools:
       - list_s3_files
       - read_s3_object
       - read_s3_image
       - get_plm_data
+      - download_s3_files
 
   # === S3 Batch Tools ===
   s3-batch-tools:
@@ -494,7 +495,7 @@ tools:
     endpoint: "https://feedbacks-api.wildberries.ru"
     path: "/api/v1/feedbacks"
     rate_limit: 60
-    burst: 3
+    burst: 1
     default_take: 100
     post_prompt: "wb/feedbacks/feedbacks_list.ru.yaml"
 
@@ -504,7 +505,7 @@ tools:
     endpoint: "https://feedbacks-api.wildberries.ru"
     path: "/api/v1/questions"
     rate_limit: 60
-    burst: 3
+    burst: 1
     default_take: 100
     post_prompt: "wb/feedbacks/questions_list.ru.yaml"
 
@@ -514,7 +515,7 @@ tools:
     endpoint: "https://feedbacks-api.wildberries.ru"
     path: "/api/v1/new-feedbacks-questions"
     rate_limit: 60
-    burst: 3
+    burst: 1
     post_prompt: "wb/feedbacks/new_notifications.ru.yaml"
 
   get_wb_unanswered_feedbacks_counts:
@@ -522,7 +523,7 @@ tools:
     description: "Возвращает количество неотвеченных отзывов на Wildberries (общее и за сегодня). Используй для мониторинга качества сервиса."
     endpoint: "https://feedbacks-api.wildberries.ru"
     rate_limit: 60
-    burst: 3
+    burst: 1
     post_prompt: "wb/feedbacks/unanswered_counts.ru.yaml"
 
   get_wb_unanswered_questions_counts:
@@ -530,7 +531,7 @@ tools:
     description: "Возвращает количество неотвеченных вопросов на Wildberries (общее и за сегодня). Используй для мониторинга качества сервиса."
     endpoint: "https://feedbacks-api.wildberries.ru"
     rate_limit: 60
-    burst: 3
+    burst: 1
     post_prompt: "wb/feedbacks/unanswered_counts.ru.yaml"
 
   # ===========================================================================
@@ -646,6 +647,10 @@ tools:
   get_plm_data:
     enabled: false
     description: "Загружает PLM данные (plm.json) артикула из S3 и возвращает очищенный JSON без технических полей, миниатюр и эскизов. Используй для получения информации о товаре: артикул, категория, сезон, цвета, материалы, размерный ряд."
+
+  download_s3_files:
+    enabled: false
+    description: "Скачивает файлы или папку из S3 на локальный диск в папку ЗАГРУЗКИ. Можно скачать только конкретный файл или содержимое одной папки. Нельзя скачать весь бакет (защита от случайной выгрузки)."
 
   # ===========================================================================
   # S3 BATCH TOOLS (2 tools)

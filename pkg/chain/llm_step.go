@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/debug"
 	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 // LLMInvocationStep — Step для вызова LLM.
@@ -95,13 +97,47 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 		if chainCtx.GetActivePostPrompt() != "" {
 			systemPromptUsed = "post_prompt"
 		}
-		s.debugRecorder.RecordLLMRequest(
-			actualModel,
-			opts.Temperature,
-			opts.MaxTokens,
-			systemPromptUsed,
-			messagesCount,
-		)
+
+		// Проверяем включено ли полное логирование
+		if chainCtx.Input.FullLLMLogging {
+			// Конвертируем tool definitions в debug format
+			debugTools := make([]debug.ToolDef, len(toolDefs))
+			for i, td := range toolDefs {
+				debugTools[i] = debug.ToolDef{
+					Name:        td.Name,
+					Description: td.Description,
+					Parameters:  td.Parameters,
+				}
+			}
+
+			// Получаем thinking параметр и parallel_tool_calls из opts
+			var thinking string
+			var parallelToolCalls *bool
+			// Note: эти параметры не хранятся в opts, но могут быть добавлены в будущем
+			// Для текущей реализации передаём nil
+
+			s.debugRecorder.RecordLLMRequestFull(
+				actualModel,
+				opts.Temperature,
+				opts.MaxTokens,
+				opts.Format,
+				systemPromptUsed,
+				messages,
+				debugTools,
+				nil, // rawRequest - можно добавить в будущем для полного HTTP запроса
+				thinking,
+				parallelToolCalls,
+			)
+		} else {
+			// Стандартное логирование (без полных сообщений)
+			s.debugRecorder.RecordLLMRequest(
+				actualModel,
+				opts.Temperature,
+				opts.MaxTokens,
+				systemPromptUsed,
+				messagesCount,
+			)
+		}
 	}
 
 	// 7. Подготавливаем opts для Generate (конвертируем в слайс any)
@@ -172,9 +208,8 @@ func (s *LLMInvocationStep) Execute(ctx context.Context, chainCtx *ChainContext)
 					return StepResult{}.WithError(fmt.Errorf("failed to append bundle expansion message: %w", err))
 				}
 
-				// Логируем bundle expansion
-				toolCount := s.countExpandedTools(bundleMsg.Content)
-				fmt.Printf("[Bundle Resolver] Expanded bundle: %s → %d tools\n", tc.Name, toolCount)
+				// Bundle expansion message добавлен в историю (toolCount только для информации)
+				_ = s.countExpandedTools(bundleMsg.Content) // toolCount не используется, но подсчитывается для будущего использования
 
 				// Re-run LLM call с расширенным контекстом
 				return s.reRunWithExpandedContext(ctx, chainCtx, provider, modelDef, actualModel, opts)
@@ -393,6 +428,22 @@ func (s *LLMInvocationStep) reRunWithExpandedContext(
 	var response llm.Message
 	var err error
 
+	// DEBUG: логируем bundle expansion re-run
+	utils.Debug("Bundle expansion re-run",
+		"messages_count", len(messages),
+		"tools_count", len(toolDefs),
+		"model", actualModel,
+		"temperature", opts.Temperature,
+		"max_tokens", opts.MaxTokens)
+
+	// DEBUG: покажем последнее сообщение с bundle expansion
+	if len(messages) > 0 {
+		lastMsg := messages[len(messages)-1]
+		utils.Debug("Bundle expansion last message",
+			"role", lastMsg.Role,
+			"content_preview", lastMsg.Content[:min(200, len(lastMsg.Content))])
+	}
+
 	if streamingProvider, ok := provider.(llm.StreamingProvider); ok && s.emitter != nil {
 		response, err = s.invokeStreamingLLM(ctx, streamingProvider, messages, generateOpts)
 	} else {
@@ -402,6 +453,21 @@ func (s *LLMInvocationStep) reRunWithExpandedContext(
 
 	if err != nil {
 		return StepResult{}.WithError(fmt.Errorf("LLM re-generation failed (after bundle expansion): %w", err))
+	}
+
+	// DEBUG: логируем результат bundle expansion re-run
+	utils.Debug("Bundle expansion re-run result",
+		"tool_calls_count", len(response.ToolCalls),
+		"content_length", len(response.Content),
+		"duration_ms", llmDuration,
+		"has_tools", len(toolDefs) > 0)
+
+	if len(response.ToolCalls) > 0 {
+		for _, tc := range response.ToolCalls {
+			utils.Debug("Bundle expansion tool call",
+				"tool_name", tc.Name,
+				"args_preview", tc.Args[:min(100, len(tc.Args))])
+		}
 	}
 
 	// 5. Записываем LLM response в debug
@@ -447,3 +513,5 @@ func (s *LLMInvocationStep) reRunWithExpandedContext(
 		Signal: SignalNone,
 	}
 }
+
+// min возвращает минимум из двух int

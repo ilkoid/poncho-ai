@@ -1,0 +1,32 @@
+version: "1.0"
+description: "Post-prompt for get_wb_attribution_summary - analyzes organic vs paid attribution"
+config:
+  model: "z-ai/glm-4.7"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received order attribution data from Wildberries (organic vs paid).
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Organic orders: [X] (Y%)
+      - Ad orders: [A] (B%)
+      - Ad ROAS: [Z]
+
+      ## Distribution by Products
+      | nmID | Organic | Ads | ROAS | Best Channel |
+      |------|---------|-----|------|--------------|
+      | ... | ... | ... | ... | ... |
+
+      ## Channel Analysis
+      - Which products sell best organically
+      - Which products need ads
+      - Cost per order (CPA)
+
+      ## Recommendations
+      - Optimize ad budget for products with low organic traffic
+      - Reduce spend on products with high organic conversion
+      - Improve product cards that depend on ads

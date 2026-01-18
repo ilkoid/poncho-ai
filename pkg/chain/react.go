@@ -200,8 +200,10 @@ func NewReActCycle(config ReActCycleConfig) *ReActCycle {
 
 	cycle.toolStep = &ToolExecutionStep{
 		promptLoader:        cycle,     // ReActCycle реализует PromptLoader
-		defaultToolTimeout:  30 * time.Second, // Дефолтный timeout для инструментов
-		toolTimeouts:        make(map[string]time.Duration),
+		defaultToolTimeout:  10 * time.Second, // Дефолтный timeout для инструментов (уменьшен для быстрой реакции на прерывания)
+		toolTimeouts: map[string]time.Duration{
+			"analyze_article_images_batch": 60 * time.Second, // Vision LLM анализ требует больше времени (до 3 картинок)
+		},
 	}
 
 	return cycle

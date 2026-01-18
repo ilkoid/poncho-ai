@@ -1,0 +1,26 @@
+version: "1.0"
+description: "Post-prompt for get_wb_subjects_by_name - category search results"
+config:
+  model: "z-ai/glm-4.7"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You searched for Wildberries categories (subjects) by name.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Categories found: [N]
+      - Search query: "[query]"
+
+      ## Found Categories
+      | ID | Name | Parent Category | Match |
+      |----|------|------------------|-------|
+      | ... | ... | ... | ... |
+
+      ## Recommendations
+      - Use subjectID to get characteristics
+      - For product creation: choose the most matching category
+      - If not found, try synonyms or broader query

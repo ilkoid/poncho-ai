@@ -1,0 +1,29 @@
+version: "1.0"
+description: "Post-prompt for classify_and_download_s3_files - file classification and download"
+config:
+  model: ""
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You classified article files from S3 storage.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Current article: [nmID]
+      - Total files: [N]
+      - By tags: sketch: [M], plm_data: [K], marketing: [L]
+
+      ## File Structure
+      | Tag | Files | Downloaded | Description |
+      |-----|-------|------------|-------------|
+      | sketch | N | Yes | Sketches for vision analysis |
+      | plm_data | M | Yes | Technical metadata |
+      | marketing | L | No | Marketing materials |
+
+      ## Recommendations
+      - For analysis: use analyze_article_images_batch for sketch
+      - For description: use get_plm_data for plm_data
+      - Verify all files downloaded correctly

@@ -1,0 +1,32 @@
+version: "1.0"
+description: "Post-prompt for get_wb_search_positions - analyzes SEO position metrics"
+config:
+  model: "z-ai/glm-4.7"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received search position data for Wildberries products.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Average position: [X]
+      - Products in top-100: [N]
+      - Products below 200: [M]
+
+      ## Product Details
+      | nmID | Avg Position | Top-100 | Visibility |
+      |------|--------------|---------|------------|
+      | ... | ... | ... | ... |
+
+      ## SEO Analysis
+      - Which products are in top and why
+      - Which need promotion
+      - Lost positions (if trend data available)
+
+      ## Recommendations
+      - Optimize product cards with poor positions
+      - Use keywords from top-100 products
+      - Improve images and descriptions to rank higher

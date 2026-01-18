@@ -4,7 +4,10 @@
 // анализа, отладки и оптимизации работы агента.
 package debug
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // DebugLog представляет полный трейс выполнения одной операции агента.
 //
@@ -76,6 +79,21 @@ type LLMRequest struct {
 
 	// MessagesCount — количество сообщений в запросе
 	MessagesCount int `json:"messages_count"`
+
+	// Messages — полная история сообщений (для отладки потери контекста)
+	Messages []MessageEntry `json:"messages,omitempty"`
+
+	// Tools — список доступных инструментов
+	Tools []ToolDef `json:"tools,omitempty"`
+
+	// RawRequest — сырой JSON запроса (полный API call)
+	RawRequest json.RawMessage `json:"raw_request,omitempty"`
+
+	// Thinking — параметр thinking для Zai GLM
+	Thinking string `json:"thinking,omitempty"`
+
+	// ParallelToolCalls — параметр parallel_tool_calls
+	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
 }
 
 // LLMResponse содержит ответ от LLM.
@@ -151,4 +169,20 @@ type Summary struct {
 
 	// VisitedTools — список уникальных инструментов, которые были вызваны
 	VisitedTools []string `json:"visited_tools,omitempty"`
+}
+
+// MessageEntry представляет одно сообщение в истории对话 для полного логирования.
+type MessageEntry struct {
+	Role      string   `json:"role"`
+	Content   string   `json:"content"`
+	ToolCalls []ToolCallInfo `json:"tool_calls,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Images    []string `json:"images,omitempty"`
+}
+
+// ToolDef представляет определение инструмента для логирования.
+type ToolDef struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty"`
 }

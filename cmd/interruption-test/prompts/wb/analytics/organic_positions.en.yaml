@@ -1,0 +1,32 @@
+version: "1.0"
+description: "Post-prompt for get_wb_top_organic_positions - analyzes organic search traffic"
+config:
+  model: "z-ai/glm-4.7"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received aggregated organic search data from Wildberries.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Top-10 organic positions: [product list]
+      - Avg position in top-100: [X]
+      - Organic traffic conversion: [Y%]
+
+      ## Top Products in Organic
+      | nmID | Top Queries | Positions | Orders | Conversion |
+      |------|-------------|----------|--------|------------|
+      | ... | ... | ... | ... | ... |
+
+      ## Organic Analysis
+      - Which products rank well without ads
+      - Which queries bring organic traffic
+      - Organic vs advertising comparison
+
+      ## Recommendations
+      - Strengthen positions of high-converting products
+      - Reduce ad spend on products with good organic rankings
+      - Apply successful patterns to all products

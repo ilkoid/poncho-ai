@@ -1,0 +1,35 @@
+version: "1.0"
+description: "Post-prompt for reload_wb_dictionaries - dictionary reload results"
+config:
+  model: "z-ai/glm-4.7"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You reloaded Wildberries dictionaries from API.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Status: [✅ success / ❌ error]
+      - Reload time: [timestamp]
+
+      ## Dictionaries
+      | Dictionary | Records | Status |
+      |-------------|---------|--------|
+      | Colors | N | ✅ |
+      | Countries | M | ✅ |
+      | Gender | K | ✅ |
+      | Seasons | L | ✅ |
+      | VAT | P | ✅ |
+
+      ## Result
+      ✅ All dictionaries successfully loaded
+      - Data current as of [timestamp]
+      - Ready for characteristic selection
+
+      ## Recommendations
+      - Reload dictionaries regularly (weekly)
+      - Use wb_colors, wb_countries for accurate card filling
+      - Verify dictionaries loaded before creating product card

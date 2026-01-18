@@ -36,6 +36,7 @@ poncho-ai/
 │   ├── wb-ping-util-v2/   # Example of new 2-line agent API
 │   ├── simple-agent/      # Minimal agent implementation example
 │   ├── streaming-test/    # Streaming functionality test
+│   ├── interruption-test/ # TUI for testing interruption mechanism (Rule 6 compliant)
 │   └── wb-tools-test/     # CLI utility for testing WB tools
 ├── examples/              # Usage examples (not utilities)
 │   └── interruptible-agent/ # NEW: Interruption mechanism demonstration
@@ -47,19 +48,24 @@ poncho-ai/
 │   ├── chain/            # Chain Pattern + ReAct implementation (modular agent execution)
 │   ├── classifier/       # File classification engine
 │   ├── config/           # YAML configuration with ENV support
-│   ├── debug/            # JSON debug logging system
+│   ├── debug/            # JSON debug logging system (with base64 truncation)
 │   ├── events/           # Port & Adapter: Event interfaces (Emitter, Subscriber)
 │   ├── factory/          # LLM provider factory
 │   ├── llm/              # LLM abstraction layer + options + streaming support
 │   ├── models/           # Model Registry (centralized LLM provider management)
 │   ├── prompt/           # Prompt loading and rendering + post-prompts
-│   ├── s3storage/        # S3-compatible storage client
+│   ├── s3storage/        # S3-compatible storage client (with DownloadToFile)
 │   ├── state/            # Framework core state (CoreState)
 │   ├── tui/              # Reusable TUI helpers (adapter for Bubble Tea)
 │   ├── todo/             # Thread-safe task manager
 │   ├── tools/            # Tool system (registry + std tools)
 │   ├── utils/            # JSON sanitization utilities
 │   └── wb/               # Wildberries API client
+├── prompts/              # Prompt templates
+│   ├── ru/               # Russian language prompts (NEW)
+│   ├── s3/               # S3-related prompts
+│   ├── wb/               # Wildberries API prompts
+│   └── interruption_handler.yaml  # Interruption mechanism prompt
 └── config.yaml           # Main configuration file
 ```
 
@@ -103,7 +109,7 @@ type Tool interface {
 }
 ```
 
-**Categories**: WB Content/Feedbacks API, WB Dictionaries, S3 Basic/Batch, Planner.
+**Categories**: WB Content/Feedbacks API, WB Dictionaries, S3 Basic/Batch/Download, Planner.
 
 **Key**: Registry Pattern, thread-safe, YAML-driven.
 
@@ -407,27 +413,90 @@ emitter.Emit(ctx, events.Event{Type: events.EventThinking, Data: "query"})
 
 **Purpose**: Adapter layer between `pkg/events` and Bubble Tea framework.
 
+**PHASE 6 REFACTOR COMPLETE**: Callback-based architecture with Rule 6 compliance.
+
 **Components**:
 - `adapter.go` - EventMsg type, ReceiveEventCmd, WaitForEvent
-- `model.go` - Base TUI Model with agent integration and context storage
-- `run.go` - Ready-to-use TUI runner
+- `model.go` - Base TUI Model with agent integration and InterruptionModel
+- `simple.go` - SimpleTui - minimalist UI component (callback pattern)
+- `viewport_helpers.go` - Smart scroll helpers (position preservation)
+- `components.go` - Shared styling functions (SystemStyle, AIMessageStyle, etc.)
+- `run.go` - Ready-to-use TUI runner, DefaultChainConfig export
 
-**Basic Usage**:
+**Architecture**:
+- `pkg/events.*` - Port (interfaces)
+- `pkg/tui.*` - Adapter helpers (reusable utilities)
+- `internal/ui.*` - Concrete TUI implementation (app-specific)
+
+**TUI Models**:
+1. **SimpleTui** - Minimalist "lego brick":
+   - Callback pattern via `OnInput()`
+   - Pure UI (no business logic)
+   - Smart scroll via `AppendToViewport()`
+   - Recommended for new applications
+
+2. **Model** - Full-featured base:
+   - All UI functions (help, debug, todo)
+   - Used as foundation for extensions
+   - Smart scroll behavior
+
+3. **InterruptionModel** - Interruption support:
+   - Extends Model via composition
+   - **Requires** `SetOnInput()` callback (mandatory)
+   - No embedded business logic (Rule 6 compliant)
+   - Ctrl+L for debug log path
+
+**Basic Usage** (SimpleTui):
 ```go
 import "github.com/ilkoid/poncho-ai/pkg/tui"
 
-client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
+tui := tui.NewSimpleTui(eventSub, tui.SimpleUIConfig{
+    Title:   "My AI App",
+    Prompt:  "> ",
+    Colors:  tui.DefaultColorScheme(),
+})
 
-// 1. Simple: use pre-built TUI
-if err := tui.Run(context.Background(), client); err != nil {
-    log.Fatal(err)
+// Set callback for input handling (business logic in cmd/)
+tui.OnInput(func(input string) {
+    result, _ := client.Run(ctx, input)
+    tui.AppendMessage(result.Result)
+})
+
+p := tea.NewProgram(tui)
+p.Run()
+```
+
+**With Interruptions** (InterruptionModel):
+```go
+// ⚠️ DEPRECATED: RunWithInterruptions() is deprecated
+// Use direct approach instead:
+
+inputChan := make(chan string, 10)
+chainCfg := tui.DefaultChainConfig()
+coreState := client.GetState()
+emitter := events.NewChanEmitter(100)
+client.SetEmitter(emitter)
+sub := emitter.Subscribe()
+
+model := tui.NewInterruptionModel(ctx, client, coreState, sub, inputChan, chainCfg)
+
+// MANDATORY: Set input handler callback
+model.SetOnInput(createAgentLauncher(client, chainCfg, inputChan, true))
+
+p := tea.NewProgram(model, tea.WithAltScreen())
+p.Run()
+```
+
+**Smart Scroll Behavior**:
+```go
+// viewport_helpers.go provides reusable scroll helpers
+func AppendToViewport(vp *viewport.Model, newContent string) {
+    wasAtBottom := shouldGotoBottom(*vp)
+    vp.SetContent(newContent)
+    if wasAtBottom {
+        vp.GotoBottom()
+    }
 }
-
-// 2. Advanced: customize
-err := tui.RunWithOpts(context.Background(), client,
-    tui.WithTitle("My AI App"),
-    tui.WithPrompt("> "),
-)
 ```
 
 **Context Handling** (Rule 11):
@@ -435,12 +504,8 @@ err := tui.RunWithOpts(context.Background(), client,
 - `Run()` accepts context as first parameter
 - Context propagated through all agent operations
 
-**Architecture**:
-- `pkg/events.*` - Port (interfaces)
-- `pkg/tui.*` - Adapter helpers (reusable utilities)
-- `internal/ui.*` - Concrete TUI implementation (app-specific)
-
 **Rule 6 Compliant**: Only reusable code in `pkg/tui`, no app-specific logic.
+Business logic (agent startup) lives in `cmd/` layer via callbacks.
 
 ### App Initialization (`pkg/app/`)
 
@@ -745,6 +810,115 @@ type WbParentCategoriesTool struct {
 | ModelRegistry | `sync.RWMutex` | Protects `models` map |
 | WB Client | `sync.RWMutex` | Protects `limiters` map (per-tool rate limiters) |
 
+### S3 Batch Tools (`pkg/tools/std/s3_batch.go`)
+
+**Purpose**: Batch operations on S3 files with classification and vision analysis.
+
+**Context Overflow Problem** (SOLVED):
+- **Issue**: Parallel `read_s3_image` calls accumulate base64 data in LLM context (~550KB → timeout)
+- **Root Cause**: LLM ignores `parallel_tool_calls: false`, calls 4+ images simultaneously
+- **Solution**: `analyze_article_images_batch` - sequential processing with result aggregation
+
+**Available Tools**:
+
+| Tool | Purpose | Key Features |
+|------|---------|--------------|
+| `classify_and_download_s3_files` | Classify files by tags (sketch, plm_data, marketing) | Content-on-demand, stores metadata only |
+| `analyze_article_images_batch` | Sequential vision analysis | max_images limit, tag filter, prevents overflow |
+
+**analyze_article_images_batch** — Image Batch Analysis:
+```go
+// Usage pattern
+classify_and_download_s3_files(article_id: "12612157")
+analyze_article_images_batch(max_images: 3, tag: "sketch")
+```
+
+**Parameters**:
+- `max_images` (int, default: 3, range: 1-10) — Prevents context overflow
+- `tag` (string, optional) — Filter by: sketch, plm_data, marketing, "" (all)
+
+**Rule 4 Exception** (Documented):
+- Tool directly calls `llm.Provider.Generate()` for vision analysis
+- Justification: Sequential processing with result aggregation required
+- See `dev_manifest.md`: "Исключения из правил → Правило 4"
+
+**Helper Functions**:
+```go
+// DownloadAndEncodeImage - exported for reuse (Phase 1)
+func DownloadAndEncodeImage(
+    ctx context.Context,
+    client *s3storage.Client,
+    key string,
+    cfg config.ImageProcConfig,
+) (string, error)
+```
+
+**Image Processing Pipeline**:
+1. YAML Config (`max_width: 400px`, `quality: 85`)
+2. Tool Creation with config
+3. Runtime: S3 Download → Resize(400px) → Base64 → Vision API
+
+**Files**:
+- [s3_batch.go:169-399](pkg/tools/std/s3_batch.go#L169-L399) - Tool implementation
+- [s3_tools.go:236-273](pkg/tools/std/s3_tools.go#L236-L273) - DownloadAndEncodeImage helper
+- [analyze_images_batch.ru.yaml](cmd/interruption-test/prompts/s3/analyze_images_batch.ru.yaml) - Post-prompt
+
+### S3 Download Tool (`pkg/tools/std/s3_download.go`)
+
+**Purpose**: Download files or folders from S3 to local disk.
+
+**Tool**: `download_s3_files`
+
+**Features**:
+- Downloads single file or entire folder
+- Creates `ЗАГРУЗКИ` directory next to executable
+- Preserves S3 file structure
+- Rule 11: Context propagation for cancellation
+- Rule 12: Input validation (path traversal protection, bucket download prevention)
+
+**Safety Rules**:
+- Key cannot be empty or "/" (prevents accidental bucket download)
+- Path traversal detection (blocks `../../etc/passwd`)
+- Maximum depth: 1 folder (recursive download not allowed)
+
+**Parameters**:
+```go
+{
+    "key": "12345/plm.json"     // Single file
+    // or
+    "key": "12345/"              // Folder (ends with /)
+}
+```
+
+**Usage**:
+```go
+tool := std.NewDownloadS3FilesTool(s3Client)
+
+result, err := tool.Execute(ctx, `{"key": "12345/plm.json"}`)
+// Returns: {"success": true, "type": "file", "dest_path": "ЗАГРУЗКИ/plm.json", ...}
+
+result, err = tool.Execute(ctx, `{"key": "12345/"}`)
+// Returns: {"success": true, "type": "folder", "files_count": 5, ...}
+```
+
+**Result Format**:
+```go
+type downloadResult struct {
+    Success     bool     // true if download succeeded
+    Type        string   // "file" or "folder"
+    SourcePath  string   // S3 path
+    DestPath    string   // Local path
+    FilesCount  int      // Number of files downloaded
+    TotalSize   int64    // Total bytes downloaded
+    Description string   // Human-readable description
+    Files       []string // List of downloaded files (folders only)
+}
+```
+
+**Files**:
+- [s3_download.go](pkg/tools/std/s3_download.go) - Tool implementation
+- [s3storage/client.go:140-164](pkg/s3storage/client.go#L140-L164) - `DownloadToFile()` method
+
 ### Chain Pattern (`pkg/chain/`)
 
 **PHASE 1-5 REFACTOR COMPLETE**: Template-Execution separation with Observer pattern.
@@ -910,13 +1084,49 @@ wg.Wait()
 
 ### Debug System (`pkg/debug/`)
 
-JSON trace recording. Configure in `config.yaml`:
+JSON trace recording with base64 truncation for large image data.
+
+**Configuration** (`config.yaml`):
 ```yaml
 app:
   debug_logs:
     enabled: true
     logs_dir: "./debug_logs"
     include_tool_args: true
+    include_tool_results: true
+    max_result_size: 10000  # Truncate results larger than 10KB
+```
+
+**RecorderConfig**:
+```go
+type RecorderConfig struct {
+    LogsDir           string  // Directory for log files
+    IncludeToolArgs   bool    // Include tool arguments in logs
+    IncludeToolResults bool   // Include tool results in logs
+    MaxResultSize     int     // Maximum result size (0 = unlimited)
+}
+```
+
+**Base64 Truncation** (NEW):
+- Automatically detects and truncates base64 encoded images (>100 chars)
+- Pattern: `[A-Za-z0-9+/]{100,}={0,2}`
+- Truncated to first 100 chars + `...[BASE64_TRUNCATED]`
+- Prevents debug logs from filling disk with large image data
+
+**Usage**:
+```go
+recorder, _ := debug.NewRecorder(debug.RecorderConfig{
+    LogsDir:           "./debug_logs",
+    IncludeToolArgs:   true,
+    IncludeToolResults: true,
+    MaxResultSize:     10000,
+})
+
+recorder.Start(userQuery)
+recorder.StartIteration(1)
+recorder.RecordToolExecution(debug.ToolExecution{...})
+recorder.EndIteration()
+filePath, _ := recorder.Finalize(result, duration)
 ```
 
 ### Configuration (`config.yaml`)
@@ -961,6 +1171,7 @@ s3:
 |---------|----------|---------|
 | **Facade** | `pkg/agent/Client` | Simple 2-line API over ReActCycle |
 | **Port & Adapter** | `pkg/events/`, `pkg/tui/` | Decouple agent from UI implementation |
+| **Callback** | `pkg/tui/` | Business logic injection from cmd/ to pkg/ (Rule 6) |
 | **Repository** | `pkg/state/` | Unified storage with domain interfaces |
 | **Registry** | `pkg/tools/`, `pkg/models/` | Tool and Model registration/discovery |
 | **Factory** | `pkg/models/` | LLM provider creation |
@@ -971,9 +1182,10 @@ s3:
 | **Chain of Responsibility** | `pkg/chain/` | Modular step-based execution |
 | **Template-Execution** | `pkg/chain/` | Immutable template + runtime state (Phase 1) |
 | **Observer** | `pkg/chain/` | Cross-cutting concerns (debug, events) (Phase 4) |
-| **Recorder** | `pkg/debug/` | JSON trace recording |
+| **Recorder** | `pkg/debug/` | JSON trace recording with base64 truncation |
 | **Streaming** | `pkg/llm/StreamingProvider` | Real-time response streaming |
-| **Fallback** | `pkg/chain/interruption.go` | Default prompt when YAML missing (NEW) |
+| **Fallback** | `pkg/chain/interruption.go` | Default prompt when YAML missing |
+| **Validation** | `pkg/tools/std/s3_download.go` | Input sanitization (Rule 12) |
 
 ---
 
@@ -1003,6 +1215,9 @@ go run cmd/wb-ping-util-v2/main.go
 
 # Streaming test (real-time events)
 go run cmd/streaming-test/main.go "Explain quantum computing"
+
+# Interruption test (TUI with interruption support, Rule 6 compliant)
+cd cmd/interruption-test && go run main.go
 
 # Interruptible agent (demonstrates interruption mechanism)
 cd examples/interruptible-agent && go run main.go "Show parent categories"
@@ -1070,5 +1285,31 @@ Each WB tool gets its own rate limiter instance (e.g., `get_wb_feedbacks`: 60/mi
 
 ---
 
-**Last Updated**: 2026-01-16
-**Version**: 6.0 (Interruption Mechanism, EventUserInterruption, agent.Execute() with ChainInput)
+**Last Updated**: 2026-01-18
+**Version**: 6.3 (Reference Post-Prompts System + S3 Download Tool)
+
+**Version 6.3 Changes**:
+- ✅ Reference post-prompts system for Poncho AI tools (latest commit)
+- ✅ `download_s3_files` tool - downloads files/folders from S3 to local disk
+- ✅ `pkg/s3storage/client.go`: Added `DownloadToFile()` method (Rule 11 compliant)
+- ✅ `pkg/debug/`: Enhanced with base64 truncation for large image data
+- ✅ `pkg/tui/viewport_helpers.go`: Smart scroll helpers exported
+- ✅ `pkg/chain/utils.go`: Added `min()` helper function
+- ✅ `prompts/ru/`: New directory for Russian language prompts
+- ✅ Debug log improvements: `MaxResultSize` config, base64 pattern truncation
+
+**Version 6.2 Changes** (retained):
+- ✅ `analyze_article_images_batch` tool implemented (sequential vision processing)
+- ✅ Context overflow problem solved (~550KB → sequential with aggregation)
+- ✅ `DownloadAndEncodeImage()` helper exported for code reuse
+- ✅ Image processing config: max_width 400px, quality 85%
+- ✅ Post-prompt with fallback instructions for token limits
+- ✅ Arch-Score: 82/100 (Poncho AI architectural compliance)
+
+**Phase 6 Changes** (retained):
+- ✅ InterruptionModel refactored to pure UI component (no embedded business logic)
+- ✅ Smart scroll behavior unified across all TUI models (viewport_helpers.go)
+- ✅ Ctrl+L for debug log path, Ctrl+G for debug mode toggle (fixed conflict)
+- ✅ DefaultChainConfig() exported to eliminate duplication
+- ✅ SetOnInput() callback mandatory for InterruptionModel
+- ✅ RunWithInterruptions() deprecated (breaking change, documented)

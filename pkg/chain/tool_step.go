@@ -102,6 +102,23 @@ func (s *ToolExecutionStep) Execute(ctx context.Context, chainCtx *ChainContext)
 
 	// 2. Выполняем каждый tool call
 	for _, tc := range lastMsg.ToolCalls {
+		// 2a. ПРОВЕРКА: прерывание между tool calls для быстрой реакции
+		// Это позволяет прервать выполнение до запуска следующего инструмента
+		if chainCtx.Input.UserInputChan != nil {
+			select {
+			case userInput := <-chainCtx.Input.UserInputChan:
+				// Пользователь прервал выполнение - возвращаем сигнал прерывания
+				// Executor обработает это и добавит сообщение в историю
+				return StepResult{
+					Action:       ActionBreak,
+					Signal:       SignalUserInterruption,
+					Interruption: userInput,
+				}
+			default:
+				// Нет прерывания - продолжаем выполнение инструмента
+			}
+		}
+
 		result, err := s.executeToolCall(ctx, tc, chainCtx)
 		s.toolResults = append(s.toolResults, result)
 

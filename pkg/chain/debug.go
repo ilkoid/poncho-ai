@@ -108,6 +108,61 @@ func (r *ChainDebugRecorder) RecordLLMRequest(model string, temperature float64,
 	})
 }
 
+// RecordLLMRequestFull записывает полный LLM запрос с историей сообщений и инструментами.
+//
+// Используется для отладки потери контекста в диалогах.
+func (r *ChainDebugRecorder) RecordLLMRequestFull(
+	model string,
+	temperature float64,
+	maxTokens int,
+	format string,
+	systemPromptUsed string,
+	messages []llm.Message,
+	toolDefs []debug.ToolDef,
+	rawRequest []byte,
+	thinking string,
+	parallelToolCalls *bool,
+) {
+	if !r.enabled {
+		return
+	}
+
+	// Конвертируем сообщения в debug format
+	debugMessages := make([]debug.MessageEntry, len(messages))
+	for i, msg := range messages {
+		debugMessages[i] = debug.MessageEntry{
+			Role:      string(msg.Role),
+			Content:   msg.Content,
+			ToolCallID: msg.ToolCallID,
+			Images:    msg.Images,
+		}
+		if len(msg.ToolCalls) > 0 {
+			debugMessages[i].ToolCalls = make([]debug.ToolCallInfo, len(msg.ToolCalls))
+			for j, tc := range msg.ToolCalls {
+				debugMessages[i].ToolCalls[j] = debug.ToolCallInfo{
+					ID:   tc.ID,
+					Name: tc.Name,
+					Args: tc.Args,
+				}
+			}
+		}
+	}
+
+	r.recorder.RecordLLMRequest(debug.LLMRequest{
+		Model:             model,
+		Temperature:       temperature,
+		MaxTokens:         maxTokens,
+		Format:            format,
+		SystemPromptUsed:  systemPromptUsed,
+		MessagesCount:     len(messages),
+		Messages:          debugMessages,
+		Tools:             toolDefs,
+		RawRequest:        rawRequest,
+		Thinking:          thinking,
+		ParallelToolCalls: parallelToolCalls,
+	})
+}
+
 // RecordLLMResponse записывает LLM ответ.
 func (r *ChainDebugRecorder) RecordLLMResponse(content string, toolCalls []llm.ToolCall, duration int64) {
 	if !r.enabled {

@@ -1,0 +1,29 @@
+version: "1.0"
+description: "Post-prompt for classify_and_download_s3_files - file classification and download"
+config:
+  model: ""
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      Ты классифицировал файлы артикула из S3 хранилища.
+
+      Представь результат в формате:
+
+      ## Ключевые метрики
+      - Текущий артикул: [nmID]
+      - Всего файлов: [N]
+      - По тегам: sketch: [M], plm_data: [K], marketing: [L]
+
+      ## Структура файлов
+      | Тег | Файлов | Загружено | Описание |
+      |-----|--------|-----------|----------|
+      | sketch | N | Да | Эскизы для vision-анализа |
+      | plm_data | M | Да | Технические метаданные |
+      | marketing | L | Нет | Маркетинговые материалы |
+
+      ## Рекомендации
+      - Для анализа: используй analyze_article_images_batch для sketch
+      - Для описания: используй get_plm_data для plm_data
+      - Проверь что все файлы скачались корректно

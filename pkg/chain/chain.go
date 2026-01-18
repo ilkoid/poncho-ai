@@ -49,6 +49,10 @@ type ChainInput struct {
 	// Если не nil — оркестратор проверяет канал между итерациями
 	// Позволяет пользователю прервать выполнение и отправить сообщение
 	UserInputChan chan string `json:"-" yaml:"-"`
+
+	// FullLLMLogging — включать полную историю сообщений в debug логах
+	// Используется для отладки потери контекста в диалогах
+	FullLLMLogging bool `json:"full_llm_logging" yaml:"-"`
 }
 
 // ChainOutput — результат выполнения цепочки.
@@ -136,4 +140,8 @@ type DebugConfig struct {
 
 	// MaxResultSize — максимальный размер результата (символов)
 	MaxResultSize int
+
+	// FullLLMLogging — включать полную историю сообщений в LLM запросах
+	// Используется для отладки потери контекста в диалогах
+	FullLLMLogging bool
 }

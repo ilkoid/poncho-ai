@@ -2,7 +2,6 @@
 package chain
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -62,16 +61,14 @@ func loadInterruptionPrompt(
 
 	// Проверяем существование файла
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-		// Файл не найден — используем fallback
-		fmt.Printf("⚠️  Interruption prompt not found: %s (using default)\n", fullPath)
+		// Файл не найден — используем fallback silently
 		return defaultInterruptionPrompt, nil
 	}
 
 	// Загружаем YAML промпт
 	promptFile, err := prompt.Load(fullPath)
 	if err != nil {
-		// Ошибка загрузки — используем fallback (Rule 7: no panic)
-		fmt.Printf("⚠️  Failed to load interruption prompt: %v (using default)\n", err)
+		// Ошибка загрузки — используем fallback silently (Rule 7: no panic)
 		return defaultInterruptionPrompt, nil
 	}
 

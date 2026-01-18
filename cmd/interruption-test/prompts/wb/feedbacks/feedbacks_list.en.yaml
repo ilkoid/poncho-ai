@@ -1,0 +1,32 @@
+version: "1.0"
+description: "Post-prompt for get_wb_feedbacks - analyzes customer feedback"
+config:
+  model: "z-ai/glm-4.7"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received customer feedback from Wildberries.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Total feedbacks: [N]
+      - Average rating: [X]/5
+      - Unanswered: [M]
+
+      ## Sentiment Analysis
+      - Positive: [X%] - main praise themes
+      - Negative: [Y%] - main complaint themes
+      - Neutral: [Z%]
+
+      ## Top Complaints
+      1. [Complaint 1] - N mentions
+      2. [Complaint 2] - N mentions
+      ...
+
+      ## Recommendations
+      - Respond to negative feedback
+      - Fix main quality issues
+      - Use positive feedback for marketing

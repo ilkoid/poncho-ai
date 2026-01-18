@@ -526,31 +526,31 @@ func setupWBTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.
 
 	// === WB Feedbacks API Tools ===
 	if toolCfg, exists := getToolCfg("get_wb_feedbacks"); exists && isEnabled("get_wb_feedbacks") {
-		if err := register("get_wb_feedbacks", std.NewWbFeedbacksTool(wbClient, toolCfg)); err != nil {
+		if err := register("get_wb_feedbacks", std.NewWbFeedbacksTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("get_wb_questions"); exists && isEnabled("get_wb_questions") {
-		if err := register("get_wb_questions", std.NewWbQuestionsTool(wbClient, toolCfg)); err != nil {
+		if err := register("get_wb_questions", std.NewWbQuestionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("get_wb_new_feedbacks_questions"); exists && isEnabled("get_wb_new_feedbacks_questions") {
-		if err := register("get_wb_new_feedbacks_questions", std.NewWbNewFeedbacksQuestionsTool(wbClient, toolCfg)); err != nil {
+		if err := register("get_wb_new_feedbacks_questions", std.NewWbNewFeedbacksQuestionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("get_wb_unanswered_feedbacks_counts"); exists && isEnabled("get_wb_unanswered_feedbacks_counts") {
-		if err := register("get_wb_unanswered_feedbacks_counts", std.NewWbUnansweredFeedbacksCountsTool(wbClient, toolCfg)); err != nil {
+		if err := register("get_wb_unanswered_feedbacks_counts", std.NewWbUnansweredFeedbacksCountsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
 
 	if toolCfg, exists := getToolCfg("get_wb_unanswered_questions_counts"); exists && isEnabled("get_wb_unanswered_questions_counts") {
-		if err := register("get_wb_unanswered_questions_counts", std.NewWbUnansweredQuestionsCountsTool(wbClient, toolCfg)); err != nil {
+		if err := register("get_wb_unanswered_questions_counts", std.NewWbUnansweredQuestionsCountsTool(wbClient, toolCfg, cfg.WB)); err != nil {
 			return err
 		}
 	}
@@ -776,6 +776,13 @@ func setupS3Tools(registry *tools.Registry, cfg *config.AppConfig, s3Client *s3s
 		}
 	}
 
+	if _, exists := cfg.Tools["download_s3_files"]; exists && isEnabled("download_s3_files") {
+		tool := std.NewDownloadS3FilesTool(s3Client)
+		if err := register("download_s3_files", tool); err != nil {
+			return err
+		}
+	}
+
 	// === S3 Batch Tools ===
 	if toolCfg, exists := cfg.Tools["classify_and_download_s3_files"]; exists && isEnabled("classify_and_download_s3_files") {
 		tool := std.NewClassifyAndDownloadS3Files(
@@ -810,9 +817,21 @@ func setupVisionTools(registry *tools.Registry, cfg *config.AppConfig, state *st
 
 	// === Vision Tools ===
 	if toolCfg, exists := cfg.Tools["analyze_article_images_batch"]; exists && isEnabled("analyze_article_images_batch") {
-		// Vision LLM обязателен для этого tool
-		if visionLLM == nil {
-			return fmt.Errorf("analyze_article_images_batch tool requires default_vision model to be configured")
+		// Rule 4: Vision LLM не должен знать про инструменты
+		// Создаём отдельный provider БЕЗ tools через factory (не через ModelRegistry)
+		// Это предотвращает проблему когда LLM пытается вызвать tool вместо возврата текста
+
+		// Получаем ModelDef для vision модели из конфига
+		visionModelDef, exists := cfg.Models.Definitions[cfg.Models.DefaultVision]
+		if !exists {
+			return fmt.Errorf("vision model '%s' not found in config definitions", cfg.Models.DefaultVision)
+		}
+
+		// Создаём отдельный Vision LLM provider БЕЗ tools через factory
+		// Rule 4: Используем CreateProvider() вместо ModelRegistry.Get()
+		visionLLMNoTools, err := models.CreateProvider(visionModelDef)
+		if err != nil {
+			return fmt.Errorf("failed to create vision LLM provider: %w", err)
 		}
 
 		// Load vision system prompt
@@ -824,7 +843,7 @@ func setupVisionTools(registry *tools.Registry, cfg *config.AppConfig, state *st
 		tool := std.NewAnalyzeArticleImagesBatch(
 			state,
 			state.GetStorage(), // S3 клиент для скачивания изображений
-			visionLLM,
+			visionLLMNoTools,  // Vision LLM БЕЗ tools (Rule 4 compliant)
 			visionPrompt,
 			cfg.ImageProcessing,
 			toolCfg,
@@ -1008,6 +1027,7 @@ func getAllKnownToolNames() []string {
 		"read_s3_object",
 		"read_s3_image",
 		"get_plm_data",
+		"download_s3_files",
 		// S3 Batch Tools
 		"classify_and_download_s3_files",
 		"analyze_article_images_batch",

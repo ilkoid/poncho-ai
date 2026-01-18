@@ -7,6 +7,7 @@ import (
 
 	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 // PHASE 4 REFACTOR: Observer implementations for isolating cross-cutting concerns.
@@ -174,8 +175,13 @@ func (o *EmitterIterationObserver) EmitToolResult(ctx context.Context, toolName,
 // EmitMessage отправляет EventMessage с текстом ответа.
 func (o *EmitterIterationObserver) EmitMessage(ctx context.Context, content string) {
 	if o.emitter == nil {
+		utils.Debug("EmitMessage skipped: emitter is nil",
+			"content_length", len(content))
 		return
 	}
+	utils.Debug("EmitMessage sending",
+		"content_length", len(content),
+		"content_preview", content[:min(200, len(content))])
 	o.emitter.Emit(ctx, events.Event{
 		Type:      events.EventMessage,
 		Data:      events.MessageData{Content: content},
@@ -198,3 +204,5 @@ func (o *EmitterIterationObserver) EmitUserInterruption(ctx context.Context, mes
 		Timestamp: time.Now(),
 	})
 }
+
+// min возвращает минимум из двух int

@@ -1,0 +1,42 @@
+version: "1.0"
+description: "Post-prompt for ping_llm_provider - LLM provider health check"
+config:
+  model: ""
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You checked LLM provider availability (OpenRouter, OpenAI, Zai, DeepSeek).
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Provider: [name]
+      - Status: [✅ available / ❌ unavailable]
+      - Latency: [X]ms
+      - Check time: [timestamp]
+
+      ## Check Details
+      - API key: [valid / invalid]
+      - Endpoint: [URL]
+      - Error: [if any]
+
+      ## Diagnostic Result
+      **If available:**
+      ✅ Provider working normally
+      - Ready to process requests
+      - Latency within normal range
+
+      **If unavailable:**
+      ❌ Issues detected
+
+      Possible reasons:
+      1. Invalid API key
+      2. Network problems
+      3. Provider temporarily down
+
+      Recommended actions:
+      1. Check API key in config.yaml
+      2. Verify internet connection
+      3. Retry later

@@ -220,27 +220,40 @@ func (t *S3ReadImageTool) Definition() tools.ToolDefinition {
 	}
 }
 
-func (t *S3ReadImageTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-	var args struct {
-		Key string `json:"key"`
-	}
-	_ = json.Unmarshal([]byte(argsJSON), &args)
-
+// DownloadAndEncodeImage скачивает изображение из S3, ресайзит (если настроено)
+// и возвращает Base64-encoded data URI для Vision API.
+//
+// Экспортированная helper-функция для переиспользования логики обработки изображений
+// между разными tools (read_s3_image, analyze_article_images_batch).
+//
+// Pipeline:
+//   1. Валидация расширения файла
+//   2. Скачивание из S3
+//   3. Ресайз (если cfg.MaxWidth > 0)
+//   4. Base64 encoding в data URI формат
+//
+// Rule 11: context.Context propagation для возможности отмены.
+func DownloadAndEncodeImage(
+	ctx context.Context,
+	client *s3storage.Client,
+	key string,
+	cfg config.ImageProcConfig,
+) (string, error) {
 	// 1. Проверяем расширение
-	ext := strings.ToLower(filepath.Ext(args.Key))
+	ext := strings.ToLower(filepath.Ext(key))
 	if !isImageExt(ext) {
-		return "", fmt.Errorf("file '%s' is not an image", args.Key)
+		return "", fmt.Errorf("file '%s' is not an image", key)
 	}
 
 	// 2. Скачиваем байты
-	rawBytes, err := t.client.DownloadFile(ctx, args.Key)
+	rawBytes, err := client.DownloadFile(ctx, key)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("download failed: %w", err)
 	}
 
 	// 3. Ресайзим (если включено в конфиге)
-	if t.cfg.MaxWidth > 0 {
-		rawBytes, err = utils.ResizeImage(rawBytes, t.cfg.MaxWidth, t.cfg.Quality)
+	if cfg.MaxWidth > 0 {
+		rawBytes, err = utils.ResizeImage(rawBytes, cfg.MaxWidth, cfg.Quality)
 		if err != nil {
 			return "", fmt.Errorf("resize error: %w", err)
 		}
@@ -248,16 +261,25 @@ func (t *S3ReadImageTool) Execute(ctx context.Context, argsJSON string) (string,
 
 	// 4. Base64 encode
 	b64 := base64.StdEncoding.EncodeToString(rawBytes)
-	
-	// Возвращаем как префикс Data URI (чтобы сразу вставлять в API)
-	// Или просто raw base64, зависит от того, что ждет провайдер.
-	// Обычно провайдеры (OpenAI) хотят data:image/jpeg;base64,...
+
+	// Возвращаем как data URI (для вставки в Vision API)
+	// Обычно провайдеры (OpenAI, GLM-4.6v) хотят data:image/jpeg;base64,...
 	mimeType := "image/jpeg" // Мы конвертировали в jpeg при ресайзе
-	if t.cfg.MaxWidth == 0 && ext == ".png" {
+	if cfg.MaxWidth == 0 && ext == ".png" {
 		mimeType = "image/png"
 	}
 
 	return fmt.Sprintf("data:%s;base64,%s", mimeType, b64), nil
+}
+
+func (t *S3ReadImageTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	var args struct {
+		Key string `json:"key"`
+	}
+	_ = json.Unmarshal([]byte(argsJSON), &args)
+
+	// Делегируем обработку helper-функции
+	return DownloadAndEncodeImage(ctx, t.client, args.Key, t.cfg)
 }
 
 func isImageExt(ext string) bool {

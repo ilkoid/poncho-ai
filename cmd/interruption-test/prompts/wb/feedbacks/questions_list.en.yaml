@@ -1,0 +1,33 @@
+version: "1.0"
+description: "Post-prompt for get_wb_questions - analyzes customer questions"
+config:
+  model: "z-ai/glm-4.7"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received customer questions from Wildberries.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Total questions: [N]
+      - Unanswered: [M]
+      - Response rate: [X%]
+
+      ## Question Categories
+      - Size: [N] questions
+      - Quality: [N] questions
+      - Delivery: [N] questions
+      - Other: [...]
+
+      ## Frequent Questions (FAQ)
+      1. [Question 1] - asked N times
+      2. [Question 2] - asked N times
+      ...
+
+      ## Recommendations
+      - Add FAQ answers to product description
+      - Create FAQ section
+      - Improve description to prevent questions

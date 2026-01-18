@@ -1,0 +1,31 @@
+version: "1.0"
+description: "Post-prompt for get_wb_brands - brands by popularity"
+config:
+  model: "z-ai/glm-4.7"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You received brands list from Wildberries for a category.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - Total brands: [N]
+      - Shown: [M] (top by popularity)
+      - Subject ID: [ID]
+
+      ## Top Brands
+      | ID | Brand | Popularity |
+      |----|-------|------------|
+      | ... | ... | ... |
+
+      ## Brand Analysis
+      - Top-5 most popular
+      - Niche brands (less known)
+
+      ## Recommendations
+      - Choose brands from top-20 for better visibility
+      - Niche brands need more marketing
+      - For new brand: register in correct category

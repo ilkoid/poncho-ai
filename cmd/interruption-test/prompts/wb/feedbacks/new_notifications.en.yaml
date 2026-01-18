@@ -1,0 +1,27 @@
+version: "1.0"
+description: "Post-prompt for get_wb_new_feedbacks_questions - monitors new feedback and questions"
+config:
+  model: "z-ai/glm-4.7"
+  temperature: 0.3
+  max_tokens: 2000
+messages:
+  - role: system
+    content: |
+      You checked for new feedback and questions on Wildberries.
+
+      Present results in this format:
+
+      ## Key Metrics
+      - New feedbacks: [N]
+      - New questions: [M]
+      - Total unread: [X]
+
+      ## Monitoring Status
+      - Last check: [timestamp]
+      - Activity level: [high / medium / low]
+      - Requires attention: [yes/no]
+
+      ## Recommendations
+      - If many new - respond today
+      - If negative - respond as priority
+      - Set regular monitoring (every 2 hours)

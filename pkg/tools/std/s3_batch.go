@@ -10,6 +10,7 @@ import (
 
 	"github.com/ilkoid/poncho-ai/pkg/classifier"
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
 	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/tools"
@@ -166,21 +167,43 @@ func (t *ClassifyAndDownloadS3FilesTool) Execute(ctx context.Context, argsJSON s
 	return string(result), nil
 }
 
-// AnalyzeArticleImagesBatchTool — заглушка для анализа изображений.
+// AnalyzeArticleImagesBatchTool — инструмент для последовательного анализа изображений.
+//
+// Загружает изображения артикула из CoreState (после classify_and_download_s3_files),
+// фильтрует по тегу и анализирует с помощью Vision LLM последовательно (одна за одной).
+//
+// ПАРАМЕТРЫ:
+//   - max_images (int, опционально): Максимум изображений для анализа (default: 3, range: 1-10)
+//   - tag (string, опционально): Фильтр по тегу (sketch, plm_data, marketing, "")
+//
+// SEQ-PROCESSING PATTER (избегает переполнения контекста):
+//   Вместо параллельных вызовов read_s3_image (которые накапливают base64 в контексте),
+//   этот tool делает последовательные вызовы Vision LLM и агрегирует результаты.
+//
+// ПРЯМОЙ ВЫЗОВ LLM (документированное исключение из dev_manifest.md):
+//   Tool напрямую вызывает llm.Provider.Generate() для vision-анализа.
+//   Это необходимо для последовательной обработки с агрегацией результатов.
+//
+// Rule 1: "Raw In, String Out" - Tool interface
+// Rule 5: Thread-safe через CoreState (только чтение)
+// Rule 11: context.Context propagation
 type AnalyzeArticleImagesBatchTool struct {
-	state      interface{} // GlobalState - не используется в stub
-	s3Client   *s3storage.Client
-	visionLLM  interface{} // LLM Provider - не используется в stub
-	visionPrompt string   // Vision system prompt - не используется в stub
-	imageCfg   config.ImageProcConfig
-	toolCfg    config.ToolConfig
+	state        *state.CoreState  // Rule 5: Thread-safe state management
+	s3Client     *s3storage.Client
+	visionLLM    llm.Provider       // Vision LLM Provider (прямой вызов - документированное исключение)
+	visionPrompt string            // System prompt для vision-анализа
+	imageCfg     config.ImageProcConfig
+	toolCfg      config.ToolConfig
 }
 
-// NewAnalyzeArticleImagesBatch создает заглушку для инструмента анализа изображений.
+// NewAnalyzeArticleImagesBatch создаёт инструмент для пакетного анализа изображений.
+//
+// Rule 3: Регистрация через Registry.Register()
+// Rule 5: Thread-safe через CoreState
 func NewAnalyzeArticleImagesBatch(
-	state interface{},
+	state *state.CoreState,
 	s3Client *s3storage.Client,
-	visionLLM interface{},
+	visionLLM llm.Provider,
 	visionPrompt string,
 	imageCfg config.ImageProcConfig,
 	toolCfg config.ToolConfig,
@@ -195,16 +218,26 @@ func NewAnalyzeArticleImagesBatch(
 	}
 }
 
+// Definition возвращает определение инструмента для function calling.
+//
+// Rule 1: Tool interface - Definition() не изменяется
 func (t *AnalyzeArticleImagesBatchTool) Definition() tools.ToolDefinition {
 	return tools.ToolDefinition{
 		Name: "analyze_article_images_batch",
-		Description: "Анализирует изображения из текущего артикула с помощью Vision LLM. Обрабатывает картинки параллельно в горутинах. Опционально фильтрует по тегу (sketch, plm_data, marketing). Используй это после classify_and_download_s3_files для анализа эскизов. [STUB - НЕ РЕАЛИЗОВАНО]",
+		Description: "Анализирует изображения текущего артикула с помощью Vision LLM. Последовательно обрабатывает изображения (одна за одной) чтобы избежать переполнения контекста. Опционально фильтрует по тегу. Используй это после classify_and_download_s3_files для анализа эскизов.",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"max_images": map[string]interface{}{
+					"type":        "integer",
+					"description": "Максимум изображений для анализа (default: 3, range: 1-10)",
+					"default":     3,
+					"minimum":     1,
+					"maximum":     10,
+				},
 				"tag": map[string]interface{}{
 					"type":        "string",
-					"description": "Фильтр по тегу (sketch, plm_data, marketing). Если не указан - анализирует все изображения.",
+					"description": "Фильтр по тегу (sketch, plm_data, marketing). Пусто для всех изображений.",
 					"enum":        []string{"sketch", "plm_data", "marketing", ""},
 				},
 			},
@@ -213,27 +246,156 @@ func (t *AnalyzeArticleImagesBatchTool) Definition() tools.ToolDefinition {
 	}
 }
 
+// Execute выполняет пакетный анализ изображений артикула.
+//
+// Rule 1: "Raw In, String Out" - получаем JSON строку, возвращаем строку
+// Rule 7: Возвращаем ошибки вместо panic
+// Rule 11: Распространяем context.Context во все вызовы
 func (t *AnalyzeArticleImagesBatchTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	// 1. Парсим аргументы
 	var args struct {
-		Tag string `json:"tag"`
+		MaxImages int    `json:"max_images"`
+		Tag       string `json:"tag"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	// STUB: Возврат заглушки
-	stub := map[string]interface{}{
-		"error":   "not_implemented",
-		"message": "analyze_article_images_batch tool is not implemented yet",
-		"tag":     args.Tag,
-		"results": []map[string]interface{}{
-			{
-				"file":     "example.jpg",
-				"analysis": "STUB: vision analysis not implemented",
-			},
-		},
+	// 2. Валидация
+	if t.visionLLM == nil {
+		return "", fmt.Errorf("vision LLM not configured")
 	}
-	result, _ := json.Marshal(stub)
+	if t.s3Client == nil {
+		return "", fmt.Errorf("S3 client not initialized")
+	}
+
+	// 3. Применяем дефолты и ограничения
+	maxImages := args.MaxImages
+	if maxImages <= 0 {
+		maxImages = 3 // default
+	}
+	if maxImages > 10 {
+		maxImages = 10 // hard limit
+	}
+
+	// 4. Получаем текущий артикул и файлы из CoreState
+	articleID, files := t.state.GetCurrentArticle()
+	if articleID == "NONE" || len(files) == 0 {
+		return "", fmt.Errorf("no article loaded. Call classify_and_download_s3_files first")
+	}
+
+	// 6. Фильтруем по тегу и типу (только изображения)
+	var imagesToAnalyze []*s3storage.FileMeta
+	if args.Tag != "" {
+		// Фильтр по тегу
+		if tagFiles, exists := files[args.Tag]; exists {
+			for _, f := range tagFiles {
+				if isImageFile(f.Filename) {
+					imagesToAnalyze = append(imagesToAnalyze, f)
+				}
+			}
+		}
+	} else {
+		// Все изображения из всех тегов
+		for _, tagFiles := range files {
+			for _, f := range tagFiles {
+				if isImageFile(f.Filename) {
+					imagesToAnalyze = append(imagesToAnalyze, f)
+				}
+			}
+		}
+	}
+
+	if len(imagesToAnalyze) == 0 {
+		return fmt.Sprintf(`{"article_id":"%s","status":"warning","message":"No images found for tag '%s'"}`,
+			articleID, args.Tag), nil
+	}
+
+	// 7. Ограничиваем количество
+	if len(imagesToAnalyze) > maxImages {
+		imagesToAnalyze = imagesToAnalyze[:maxImages]
+	}
+
+	// 8. Последовательно анализируем изображения
+	type imageResult struct {
+		Filename string
+		Key      string
+		Analysis string
+		Error    string
+	}
+
+	results := make([]imageResult, 0, len(imagesToAnalyze))
+
+	for _, img := range imagesToAnalyze {
+		// 8a. Скачиваем и кодируем изображение (переиспользуем helper из s3_tools.go)
+		dataURI, err := DownloadAndEncodeImage(ctx, t.s3Client, img.Key, t.imageCfg)
+		if err != nil {
+			results = append(results, imageResult{
+				Filename: img.Filename,
+				Key:      img.Key,
+				Error:    fmt.Sprintf("download failed: %v", err),
+			})
+			continue
+		}
+
+		// 8b. Формируем сообщение для Vision LLM
+		messages := []llm.Message{
+			{
+				Role:    llm.RoleSystem,
+				Content: t.visionPrompt,
+			},
+			{
+				Role:    llm.RoleUser,
+				Content: fmt.Sprintf("Проанализируй это изображение: %s", img.Filename),
+				Images:  []string{dataURI},
+			},
+		}
+
+		// 8c. Вызываем Vision LLM (ПРЯМОЙ ВЫЗОВ - документированное исключение)
+		response, err := t.visionLLM.Generate(ctx, messages)
+		if err != nil {
+			results = append(results, imageResult{
+				Filename: img.Filename,
+				Key:      img.Key,
+				Error:    fmt.Sprintf("vision analysis failed: %v", err),
+			})
+			continue
+		}
+
+		results = append(results, imageResult{
+			Filename: img.Filename,
+			Key:      img.Key,
+			Analysis: response.Content,
+		})
+	}
+
+	// 9. Формируем ответ для LLM
+	successCount := 0
+	errorCount := 0
+	for _, r := range results {
+		if r.Error != "" {
+			errorCount++
+		} else {
+			successCount++
+		}
+	}
+
+	summary := map[string]interface{}{
+		"article_id":  articleID,
+		"status":      "completed",
+		"tag":         args.Tag,
+		"total":       len(imagesToAnalyze),
+		"successful":  successCount,
+		"failed":      errorCount,
+		"results":     results,
+		"message":     fmt.Sprintf("Analyzed %d images (success: %d, failed: %d)", len(imagesToAnalyze), successCount, errorCount),
+	}
+
+	result, err := json.Marshal(summary)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal response: %w", err)
+	}
+
 	return string(result), nil
 }
 

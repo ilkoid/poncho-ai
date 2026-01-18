@@ -59,6 +59,10 @@ const (
 
 	// SignalError — произошла ошибка, требующая особой обработки.
 	SignalError
+
+	// SignalUserInterruption — пользователь прервал выполнение.
+	// Отправляется когда пользователь отправил сообщение во время выполнения tool calls.
+	SignalUserInterruption
 )
 
 // String возвращает строковое представление ExecutionSignal (для дебага).
@@ -72,6 +76,8 @@ func (s ExecutionSignal) String() string {
 		return "NeedUserInput"
 	case SignalError:
 		return "Error"
+	case SignalUserInterruption:
+		return "UserInterruption"
 	default:
 		return fmt.Sprintf("Unknown(%d)", s)
 	}
@@ -88,6 +94,7 @@ func (s ExecutionSignal) String() string {
 //   - StepResult{Action: ActionBreak, Signal: SignalFinalAnswer} — финальный ответ
 //   - StepResult{Action: ActionBreak, Signal: SignalNeedUserInput} — нужен ввод пользователя
 //   - StepResult{Action: ActionError, Signal: SignalError} — ошибка выполнения
+//   - StepResult{Action: ActionBreak, Signal: SignalUserInterruption, Interruption: "stop!"} — прерывание
 type StepResult struct {
 	// Action — что делать дальше (continue/break/error)
 	Action NextAction
@@ -97,6 +104,9 @@ type StepResult struct {
 
 	// Error — ошибка выполнения (если Action == ActionError)
 	Error error
+
+	// Interruption — сообщение прерывания от пользователя (если Signal == SignalUserInterruption)
+	Interruption string
 }
 
 // WithError создаёт StepResult с ошибкой.
@@ -110,6 +120,10 @@ func (r StepResult) WithError(err error) StepResult {
 
 // String возвращает строковое представление StepResult (для дебага).
 func (r StepResult) String() string {
+	if r.Interruption != "" {
+		return fmt.Sprintf("StepResult{Action: %s, Signal: %s, Interruption: %q, Error: %v}",
+			r.Action, r.Signal, r.Interruption, r.Error)
+	}
 	return fmt.Sprintf("StepResult{Action: %s, Signal: %s, Error: %v}",
 		r.Action, r.Signal, r.Error)
 }

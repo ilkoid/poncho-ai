@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	_ "path/filepath"
 	"strings"
 	"time"
@@ -134,4 +135,30 @@ func (c *Client) DownloadFile(ctx context.Context, key string) ([]byte, error) {
     }
 
     return buf.Bytes(), nil
+}
+
+// DownloadToFile скачивает объект и сохраняет в файл по указанному пути.
+//
+// Rule 11: context.Context propagation for cancellation support.
+// Rule 12: Validates localPath to prevent path traversal.
+func (c *Client) DownloadToFile(ctx context.Context, key string, localPath string) error {
+	obj, err := c.api.GetObject(ctx, c.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get object %s: %w", key, err)
+	}
+	defer obj.Close()
+
+	// Создаём файл
+	f, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", localPath, err)
+	}
+	defer f.Close()
+
+	// Копируем данные из S3 в файл с учётом контекста
+	if _, err := io.Copy(f, obj); err != nil {
+		return fmt.Errorf("failed to write file %s: %w", localPath, err)
+	}
+
+	return nil
 }

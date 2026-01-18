@@ -397,10 +397,9 @@ func (t *SimpleTui) appendMessage(msg string, showTimestamp bool) {
 		t.messages = t.messages[len(t.messages)-t.config.MaxMessages:]
 	}
 
-	// Обновляем viewport
+	// Обновляем viewport с умной прокруткой (сохраняет позицию пользователя)
 	content := strings.Join(t.messages, "\n")
-	t.viewport.SetContent(content)
-	t.viewport.GotoBottom()
+	AppendToViewport(&t.viewport, content)
 }
 
 // updateLastThinking обновляет последнюю строку с thinking content.
@@ -428,10 +427,9 @@ func (t *SimpleTui) updateLastThinking(chunk string) {
 		t.messages = t.messages[len(t.messages)-t.config.MaxMessages:]
 	}
 
-	// Обновляем viewport
+	// Обновляем viewport с умной прокруткой (сохраняет позицию пользователя)
 	content := strings.Join(t.messages, "\n")
-	t.viewport.SetContent(content)
-	t.viewport.GotoBottom()
+	AppendToViewport(&t.viewport, content)
 }
 
 // Ensure SimpleTui implements tea.Model
