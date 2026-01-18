@@ -90,3 +90,21 @@ INTERRUPTION_IMPLEMENTATION_PLAN.md
 # Temporary test directories
 interruptible-agent
 simple-tui-test
+
+# Project binaries in root
+poncho
+interruption-test
+maxiponcho
+
+# Cmd-specific binaries
+cmd/*/poncho
+cmd/*/interruption-test
+
+# Test artifacts in cmd/interruption-test/
+cmd/interruption-test/bak/
+cmd/interruption-test/ЗАГРУЗКИ/
+cmd/interruption-test/poncho_log_*.md
+
+# TUI audit reports (temporary)
+*_audit_report.md
+tui_audit_report.md
