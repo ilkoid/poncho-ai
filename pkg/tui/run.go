@@ -176,11 +176,10 @@ func RunWithInterruptions(ctx context.Context, client *agent.Client) error {
 	// Канал для прерываний
 	inputChan := make(chan string, 10)
 
-	// Создаём ChainConfig с настройками по умолчанию
-	chainCfg := createDefaultChainConfig()
-
 	// Создаём модель с поддержкой прерываний
-	model := NewInterruptionModel(ctx, client, coreState, sub, inputChan, chainCfg)
+	// ⚠️ DEPRECATED (Phase 3B): RunWithInterruptions нарушает Rule 6 (pkg/tui imports pkg/agent)
+	// Рекомендуется использовать NewInterruptionModel напрямую из cmd/ слоя
+	model := NewInterruptionModel(ctx, coreState, sub, inputChan)
 
 	// Запускаем Bubble Tea
 	p := tea.NewProgram(model)

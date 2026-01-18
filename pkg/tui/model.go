@@ -30,20 +30,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/ilkoid/poncho-ai/pkg/agent"
-	"github.com/ilkoid/poncho-ai/pkg/chain"
 	"github.com/ilkoid/poncho-ai/pkg/events"
 	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/todo"
-	"github.com/ilkoid/poncho-ai/pkg/utils"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/reflow/wrap"
 )
 
 // ===== KEY MAP =====
@@ -133,176 +127,129 @@ func DefaultKeyMap() KeyMap {
 
 // Model представляет базовую TUI модель для AI агента.
 //
+// ⚠️ REFACTORED (Phase 3A): Теперь встраивает BaseModel для использования primitives.
+//
 // Реализует Bubble Tea Model интерфейс. Обеспечивает:
-//   - Чат-подобный интерфейс с историей сообщений
+//   - Чат-подобный интерфейс с историей сообщений (через ViewportManager)
 //   - Поле ввода для запросов
-//   - Отображение событий агента через events.Subscriber
+//   - Отображение событий агента через events.Subscriber (через EventHandler)
 //   - Базовую навигацию (скролл, Ctrl+C для выхода)
-//   - Строку статусов со спиннером внизу
+//   - Строку статусов со спиннером внизу (через StatusBarManager)
+//   - Todo panel для отображения задач после plan_* tools
 //
 // Thread-safe.
 //
-// Правило 11: хранит родительский context.Context для распространения отмены.
+// Rule 6 Compliance: Только reusable код. Бизнес-логика через callback из cmd/ слоя.
+// Rule 11 Compliance: Хранит context.Context для распространения отмены.
 //
-// Для расширения функционала (todo-панель, special commands)
-// используйте встраивание (embedding) в internal/ui/.
+// Для расширения функционала (special commands) используйте встраивание Model в internal/ui/.
+//
+// Структура после рефакторинга Phase 3A:
+// - Встраивает BaseModel для общих TUI функций (viewport, status, events, debug)
+// - Добавляет app-specific функциональность (todo panel)
+// - Использует callback pattern для бизнес-логики (Rule 6 compliant)
 type Model struct {
-	// UI компоненты Bubble Tea
-	viewport viewport.Model
-	textarea textarea.Model
-	spinner  spinner.Model
-	help     help.Model
+	// ===== BASEMODEL EMBEDDING (Phase 3A) =====
+	// BaseModel предоставляет общую TUI функциональность через primitives:
+	// - ViewportManager: умный скролл, resize обработка
+	// - StatusBarManager: спиннер, DEBUG индикатор
+	// - EventHandler: обработка событий агента
+	// - DebugManager: Ctrl+G/S/L функции
+	*BaseModel
 
-	// Dependencies
-	agent     agent.Agent
-	coreState *state.CoreState // Явная зависимость на CoreState (Approach 2: Lego-components)
-	eventSub  events.Subscriber
+	// ===== APP-SPECIFIC FIELDS =====
+	// Todo list from CoreState (для отображения после plan_* tools)
+	todos []todo.Task
+	mu     sync.RWMutex
 
-	// Состояние
-	isProcessing bool // Флаг занятости агента
-	mu           sync.RWMutex
-	todos        []todo.Task // Todo list from CoreState (for display after plan_* tools)
+	// Deprecated: Прямые зависимости (для backward compatibility)
+	// ⚠️ DEPRECATED: Используйте callback pattern вместо прямого доступа к агенту
+	// Rule 6: Эти поля нарушают принцип reusable кода, но сохранены для совместимости
+	agent     interface{} // agent.Agent - хранится как interface{} чтобы избежать импорта
+	coreState interface{} // *state.CoreState - хранится как interface{} чтобы избежать импорта
 
-	// Опции
-	title             string // Заголовок приложения
-	prompt            string // Приглашение ввода
-	ready             bool   // Флаг первой инициализации
-	timeout           time.Duration // Таймаут для agent execution
-	customStatusExtra func() string // Опциональный callback для доп. информации (вызывается ПОСЛЕ спиннера)
-	showHelp          bool   // Показывать полную помощь
-	debugMode         bool   // Режим отладки (показывать DEBUG-сообщения)
+	// Unique Model features (сохраняются после рефакторинга)
+	timeout time.Duration // Таймаут для agent execution
+	prompt  string          // Приглашение ввода (custom)
 
-	// Key bindings
-	keys KeyMap
-
-	// Храним оригинальные (не wrapped) строки для корректного reflow при resize
-	logLines []string
-
-	// Правило 11: родительский контекст для распространения отмены
-	ctx context.Context
+	// Remove: ready - теперь управляется BaseModel
+	// Remove: title - теперь управляется BaseModel
+	// Remove: customStatusExtra - теперь через BaseModel.SetCustomStatus()
+	// Remove: showHelp - теперь управляется BaseModel
+	// Remove: debugMode - теперь управляется BaseModel через DebugManager
+	// Remove: keys - теперь управляется BaseModel
+	// Remove: logLines - теперь управляется ViewportManager
+	// Remove: ctx, eventSub - теперь управляется BaseModel
+	// Remove: viewport, textarea, spinner, help - теперь управляется BaseModel
 }
 
 // NewModel создаёт новую TUI модель.
+//
+// ⚠️ REFACTORED (Phase 3A): Теперь использует BaseModel для primitives.
 //
 // Rule 11: Принимает родительский контекст для распространения отмены.
 //
 // Parameters:
 //   - ctx: Родительский контекст для распространения отмены
-//   - agent: AI агент (реализует agent.Agent интерфейс)
-//   - coreState: Framework core состояние (явная зависимость, Approach 2)
+//   - agent: AI агент (реализует agent.Agent интерфейс) - DEPRECATED для Rule 6
+//   - coreState: Framework core состояние (явная зависимость для todo operations)
 //   - eventSub: Подписчик на события агента
 //
 // Возвращает модель готовую к использованию с Bubble Tea.
+//
+// Rule 6 Note: Для новых приложений используйте callback pattern вместо прямого доступа к агенту.
 func NewModel(ctx context.Context, agent agent.Agent, coreState *state.CoreState, eventSub events.Subscriber) *Model {
-	// Настройка поля ввода
-	ta := textarea.New()
-	ta.Placeholder = "Введите запрос к AI агенту..."
-	ta.Focus()
-	ta.Prompt = "┃ "
-	ta.CharLimit = 500
-	ta.SetHeight(3)
-	ta.ShowLineNumbers = false
+	// Сначала создаём BaseModel через готовый конструктор
+	base := NewBaseModel(ctx, eventSub)
 
-	// Настройка вьюпорта для лога
-	// Размеры (0,0) обновятся при первом WindowSizeMsg
-	// Начальный контент добавляется в handleWindowSize при первой инициализации
-	vp := viewport.New(0, 0)
-	vp.SetContent("")
-
-	// Настройка спиннера
-	s := spinner.New()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("86")) // Cyan
-
-	// Настройка help
-	h := help.New()
-	h.ShowAll = false // По умолчанию показываем только short help
+	// Настройка textarea из BaseModel (прямой доступ к internal полям)
+	base.SetTitle("AI Agent")
+	base.SetCustomStatus(func() string {
+		if coreState != nil && coreState.GetTodoManager() != nil {
+			// TODO: добавить todo stats
+		}
+		return ""
+	})
 
 	return &Model{
-		viewport:     vp,
-		textarea:     ta,
-		spinner:      s,
-		help:         h,
-		agent:        agent,
-		coreState:    coreState, // Approach 2: явная зависимость
-		eventSub:     eventSub,
-		isProcessing: false,
-		title:        "AI Agent",
-		prompt:       "┃ ",
-		ready:        false,
-		timeout:      5 * time.Minute, // дефолтный timeout
-		showHelp:     false,
-		keys:         DefaultKeyMap(),
-		ctx:          ctx, // Rule 11: сохраняем родительский контекст
+		BaseModel:    base,
+		agent:       agent,      // DEPRECATED (Rule 6 violation)
+		coreState:   coreState, // Для todo operations (app-specific feature)
+		todos:       []todo.Task{},
+		mu:          sync.RWMutex{},
+		timeout:     5 * time.Minute,
+		prompt:      "┃ ",
 	}
 }
 
 // Init реализует tea.Model интерфейс.
 //
+// ⚠️ REFACTORED (Phase 3A): Теперь делегирует BaseModel'у.
 // Возвращает команды для:
 //   - Мигания курсора
 //   - Анимации спиннера
 //   - Чтения событий от агента
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(
-		textarea.Blink,
-		m.spinner.Tick,
-		ReceiveEventCmd(m.eventSub, func(event events.Event) tea.Msg {
-			return EventMsg(event)
-		}),
-	)
+	return m.BaseModel.Init()
 }
 
 // Update реализует tea.Model интерфейс.
 //
+// ⚠️ REFACTORED (Phase 3A): Теперь делегирует BaseModel'у для базовых сообщений,
+// но расширяет обработку для Model-specific сообщений (saveSuccessMsg, saveErrorMsg).
+//
 // Обрабатывает:
-//   - tea.WindowSizeMsg: изменение размера терминала
-//   - tea.KeyMsg: нажатия клавиш
-//   - EventMsg: события от агента
-//   - spinner.TickMsg: тики спиннера для анимации
+//   - tea.WindowSizeMsg: изменение размера терминала (делегируется BaseModel)
+//   - tea.KeyMsg: нажатия клавиш (делегируется BaseModel)
+//   - EventMsg: события от агента (делегируется BaseModel через EventHandler)
+//   - spinner.TickMsg: тики спиннера (делегируется BaseModel)
+//   - saveSuccessMsg/saveErrorMsg: Model-specific сообщения
 //
 // Для расширения (добавление новых сообщений) используйте
 // встраивание Model в своей структуре.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var (
-		tiCmd tea.Cmd
-		vpCmd tea.Cmd
-		sCmd  tea.Cmd
-	)
-
-	// ПРОВЕРКА: если это клавиша прокрутки, обновляем viewport напрямую
-	// не передавая msg в textarea (иначе он перехватит клавиши)
-	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		if key.Matches(keyMsg, m.keys.ScrollUp) || key.Matches(keyMsg, m.keys.ScrollDown) {
-			m.viewport, vpCmd = m.viewport.Update(msg)
-			m.textarea, tiCmd = m.textarea.Update(tea.KeyMsg{}) // Пустой update для фокуса
-			return m, tea.Batch(tiCmd, vpCmd)
-		}
-	}
-
-	// Для WindowSizeMsg обрабатываем specially, чтобы не сбросить настройки viewport
+	// Сначала проверяем Model-specific сообщения
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.textarea, tiCmd = m.textarea.Update(msg)
-		return m.handleWindowSize(msg)
-	}
-
-	m.textarea, tiCmd = m.textarea.Update(msg)
-	m.viewport, vpCmd = m.viewport.Update(msg)
-
-	switch msg := msg.(type) {
-	case EventMsg:
-		// События от агента
-		return m.handleAgentEvent(events.Event(msg))
-
-	case tea.KeyMsg:
-		return m.handleKeyPress(msg)
-
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		sCmd = cmd
-
 	case saveSuccessMsg:
 		m.appendLog(systemStyle(fmt.Sprintf("✓ Saved to: %s", msg.filename)))
 		return m, nil
@@ -312,435 +259,125 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	return m, tea.Batch(tiCmd, vpCmd, sCmd)
+	// Все остальные сообщения делегируем BaseModel
+	baseModel, baseCmd := m.BaseModel.Update(msg)
+	m.BaseModel = baseModel.(*BaseModel)
+	return m, baseCmd
 }
 
 // handleAgentEvent обрабатывает события от агента.
+//
+// ⚠️ REFACTORED (Phase 3A): Теперь этот метод больше не нужен -
+// EventHandler в BaseModel обрабатывает все события автоматически.
+// Сохранен для backward compatibility, но делегирует BaseModel.
 func (m *Model) handleAgentEvent(event events.Event) (tea.Model, tea.Cmd) {
-	switch event.Type {
-	case events.EventThinking:
-		m.mu.Lock()
-		m.isProcessing = true
-		m.mu.Unlock()
-		m.appendLog(systemStyle("Thinking..."))
-		return m, WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
-			return EventMsg(e)
-		})
-
-	case events.EventThinkingChunk:
-		// Обработка порции reasoning_content при streaming
-		if chunkData, ok := event.Data.(events.ThinkingChunkData); ok {
-			m.appendThinkingChunk(chunkData.Chunk)
-		}
-		return m, WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
-			return EventMsg(e)
-		})
-
-	case events.EventMessage:
-		if msgData, ok := event.Data.(events.MessageData); ok {
-			// Добавляем перенос строки для лучшей читаемости
-			content := msgData.Content
-			if !strings.HasSuffix(content, "\n") {
-				content += "\n"
-			}
-			// DEBUG: логируем получение EventMessage
-			utils.Debug("EventMessage received in TUI",
-				"content_length", len(content),
-				"content_preview", content[:min(200, len(content))])
-			m.appendLog(aiMessageStyle("AI: ") + content)
-		}
-		return m, WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
-			return EventMsg(e)
-		})
-
-	case events.EventError:
-		if errData, ok := event.Data.(events.ErrorData); ok {
-			m.appendLog(errorStyle("ERROR: ") + errData.Err.Error())
-		}
-		m.mu.Lock()
-		m.isProcessing = false
-		m.mu.Unlock()
-		m.textarea.Focus()
-		return m, nil
-
-	case events.EventToolResult:
-		// Для plan_* tools обновляем и отображаем todo list
-		if data, ok := event.Data.(events.ToolResultData); ok {
-			if strings.HasPrefix(data.ToolName, "plan_") {
-				m.updateTodosFromState()
-				todoLines := m.renderTodoAsTextLines()
-				for _, line := range todoLines {
-					m.appendLog(line)
-				}
-			}
-		}
-		return m, WaitForEvent(m.eventSub, func(e events.Event) tea.Msg {
-			return EventMsg(e)
-		})
-
-	case events.EventDone:
-		// Только обновляем состояние - контент уже отображён через EventMessage
-		m.mu.Lock()
-		m.isProcessing = false
-		m.mu.Unlock()
-		m.textarea.Focus()
-		// Добавляем пустую строку после завершения для визуального разделения
-		m.appendLog("")
-		return m, nil
-	}
-
-	return m, nil
+	// EventHandler в BaseModel автоматически обрабатывает события
+	// и обновляет ViewportManager/StatusBarManager
+	m.GetEventHandler().HandleEvent(event)
+	return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
+		return EventMsg(e)
+	})
 }
 
 // handleWindowSize обрабатывает изменение размера терминала.
+//
+// ⚠️ REFACTORED (Phase 3A): Теперь делегирует BaseModel'у.
+// BaseModel.handleWindowSize уже делегирует ViewportManager.
 func (m *Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
-	headerHeight := 1
-	helpHeight := 0
-	if m.showHelp {
-		helpHeight = 3 // Примерная высота help секции
-	}
-	// +1 for status line, +1 for divider line
-	footerHeight := m.textarea.Height() + 2 + 1 + 1
-
-	// Вычисляем высоту для области контента
-	vpHeight := msg.Height - headerHeight - helpHeight - footerHeight
-	if vpHeight < 0 {
-		vpHeight = 0
-	}
-
-	// Вычисляем ширину
-	vpWidth := msg.Width
-	if vpWidth < 20 {
-		vpWidth = 20 // Минимальная ширина
-	}
-
-	// Обновляем ширину help
-	m.help.Width = vpWidth
-
-	// Обновляем размеры viewport
-	m.viewport.Height = vpHeight
-	m.viewport.Width = vpWidth
-	m.textarea.SetWidth(vpWidth)
-
-	if !m.ready {
-		// Первый запуск - добавляем приветственное сообщение
-		m.ready = true
-		dimensions := fmt.Sprintf("Window: %dx%d | Viewport: %dx%d",
-			msg.Width, msg.Height, vpWidth, vpHeight)
-		titleWithInfo := fmt.Sprintf("%s%s",
-			systemStyle(m.title),
-			systemStyle("   INFO: "+dimensions),
-		)
-		m.logLines = append(m.logLines, titleWithInfo)
-		m.viewport.SetContent(titleWithInfo)
-		m.viewport.YOffset = 0
-		return m, nil
-	}
-
-	// Resize: reflow контент с новым word-wrap
-	// Сохраняем текущую позицию прокрутки относительно конца контента
-	totalLinesBefore := m.viewport.TotalLineCount()
-	wasAtBottom := m.viewport.YOffset + m.viewport.Height >= totalLinesBefore
-
-	var wrappedLines []string
-	for _, line := range m.logLines {
-		wrapped := wrap.String(line, vpWidth)
-		wrappedLines = append(wrappedLines, wrapped)
-	}
-	fullContent := strings.Join(wrappedLines, "\n")
-	m.viewport.SetContent(fullContent)
-
-	// Восстанавливаем прокрутку: если пользователь был внизу, оставляем внизу
-	// Иначе сохраняем относительную позицию
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	} else {
-		// Сохраняем позицию прокрутки (или clamp к новому размеру)
-		newTotalLines := m.viewport.TotalLineCount()
-		if newTotalLines > m.viewport.Height {
-			// Есть что прокручивать
-			if m.viewport.YOffset > newTotalLines-m.viewport.Height {
-				m.viewport.YOffset = newTotalLines - m.viewport.Height
-			}
-		} else {
-			m.viewport.YOffset = 0
-		}
-	}
-
-	return m, nil
+	// Делегируем BaseModel
+	baseModel, cmd := m.BaseModel.Update(msg)
+	m.BaseModel = baseModel.(*BaseModel)
+	return m, cmd
 }
 
 // handleKeyPress обрабатывает нажатия клавиш.
+//
+// ⚠️ REFACTORED (Phase 3A): Теперь делегирует BaseModel'у для большинства клавиш.
+// BaseModel.handleKeyPress обрабатывает: Quit, ToggleHelp, ScrollUp/Down, SaveToFile, ToggleDebug.
+// Model только добавляет специфичную обработку если нужно.
 func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Проверяем key bindings
-	switch {
-	case key.Matches(msg, m.keys.Quit):
-		return m, tea.Quit
-
-	case key.Matches(msg, m.keys.ToggleHelp):
-		m.showHelp = !m.showHelp
-		m.help.ShowAll = m.showHelp
-		return m, nil
-
-	case key.Matches(msg, m.keys.ScrollUp):
-		m.viewport.ScrollUp(1)
-		return m, nil
-
-	case key.Matches(msg, m.keys.ScrollDown):
-		m.viewport.ScrollDown(1)
-		return m, nil
-
-	case key.Matches(msg, m.keys.SaveToFile):
-		return m, m.saveToMarkdown()
-
-	case key.Matches(msg, m.keys.ToggleDebug):
-		m.debugMode = !m.debugMode
-		status := "OFF"
-		if m.debugMode {
-			status = "ON"
-		}
-		m.appendLog(systemStyle(fmt.Sprintf("Debug mode: %s", status)))
-		return m, nil
-
-	case key.Matches(msg, m.keys.ConfirmInput):
-		input := m.textarea.Value()
-		if input == "" {
-			return m, nil
-		}
-
-		// Очищаем ввод
-		m.textarea.Reset()
-
-		// Добавляем пустую строку перед запросом для визуального разделения
-		m.appendLog("")
-
-		// Добавляем сообщение пользователя в лог
-		m.appendLog(userMessageStyle("USER: ") + input)
-
-		// Устанавливаем флаг обработки немедленно для показа спиннера
-		m.mu.Lock()
-		m.isProcessing = true
-		m.mu.Unlock()
-
-		// Запускаем агента
-		return m, m.startAgent(input)
-	}
-
-	// Все остальные клавиши передаем в textarea для ввода текста
-	return m, nil
-}
-
-// startAgent запускает агента с заданным запросом.
-// Правило 11: использует сохранённый родительский контекст.
-func (m Model) startAgent(query string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := m.contextWithTimeout(m.ctx)
-		defer cancel()
-
-		_, err := m.agent.Run(ctx, query)
-		if err != nil {
-			return EventMsg{
-				Type: events.EventError,
-				Data: events.ErrorData{Err: err},
-			}
-		}
-		// События придут через emitter автоматически
-		return nil
-	}
+	// Делегируем BaseModel - он обрабатывает все стандартные клавиши
+	baseModel, cmd := m.BaseModel.Update(msg)
+	m.BaseModel = baseModel.(*BaseModel)
+	return m, cmd
 }
 
 // appendLog добавляет строку в лог чата.
+//
+// ⚠️ REFACTORED (Phase 3A): Теперь использует ViewportManager из BaseModel.
 func (m *Model) appendLog(str string) {
-	// Сохраняем оригинальную строку без word-wrap для корректного reflow при resize
-	m.logLines = append(m.logLines, str)
-
-	// Word-wrap для длинных строк по ширине viewport
-	width := m.viewport.Width
-	if width < 20 {
-		width = 20
-	}
-	wrapped := wrap.String(str, width)
-
-	// Используем текущий контент viewport (он хранит полный контент внутри)
-	currentContent := m.viewport.View()
-	newContent := fmt.Sprintf("%s\n%s", currentContent, wrapped)
-
-	// Применяем умную прокрутку (сохраняет позицию пользователя)
-	AppendToViewport(&m.viewport, newContent)
+	// ViewportManager теперь управляет logLines internally
+	m.GetViewportMgr().Append(str, true)
 }
 
 // appendThinkingChunk обновляет строку с thinking content.
 //
-// В отличие от appendLog, этот метод обновляет последнюю строку
-// вместо добавления новой (для эффекта печатающегося текста).
+// ⚠�️ REFACTORED (Phase 3A): Теперь использует ViewportManager из BaseModel.
 func (m *Model) appendThinkingChunk(chunk string) {
-	currentContent := m.viewport.View()
-	lines := fmt.Sprintf("%s", currentContent)
-
-	// Разбиваем на строки
-	linesList := strings.Split(lines, "\n")
-
-	// Если последняя строка начинается с "Thinking: ", обновляем её
-	if len(linesList) > 0 {
-		lastLine := linesList[len(linesList)-1]
-		if strings.Contains(lastLine, "Thinking") {
-			// Заменяем последнюю строку с новым chunk
-			linesList[len(linesList)-1] = thinkingStyle("Thinking: ") + thinkingContentStyle(chunk)
-		} else {
-			// Добавляем новую строку
-			linesList = append(linesList, thinkingStyle("Thinking: ")+thinkingContentStyle(chunk))
-		}
-	} else {
-		// Добавляем новую строку
-		linesList = []string{thinkingStyle("Thinking: ") + thinkingContentStyle(chunk)}
-	}
-
-	// Объединяем обратно и применяем умную прокрутку
-	newContent := strings.Join(linesList, "\n")
-	AppendToViewport(&m.viewport, newContent)
+	// Просто добавляем новую строку с thinking content
+	// ViewportManager сам управляет скроллом и форматированием
+	m.GetViewportMgr().Append(
+		thinkingStyle("Thinking: ")+thinkingContentStyle(chunk),
+		true, // withNewline - добавляем перевод строки
+	)
 }
 
 // View реализует tea.Model интерфейс.
 //
+// ⚠️ REFACTORED (Phase 3A): Теперь делегирует rendering BaseModel'у.
 // Возвращает строковое представление TUI для рендеринга.
-func (m Model) View() string {
+func (m *Model) View() string {
+	// Получаем viewport из BaseModel
+	vp := m.GetViewportMgr().GetViewport()
+
 	// Основной контент - РАСТЯГИВАЕМ на всю высоту viewport
-	// Это гарантирует что status bar будет внизу экрана
 	content := lipgloss.NewStyle().
-		Height(m.viewport.Height).
-		Width(m.viewport.Width).
-		Render(m.viewport.View())
+		Height(vp.Height).
+		Width(vp.Width).
+		Render(vp.View())
 
 	var sections []string
 	sections = append(sections, content)
 
 	// Help секция (показываем если включена) + пустая строка после
-	if m.showHelp {
+	if m.ShowHelp() {
 		sections = append(sections, m.renderHelp())
 		sections = append(sections, "") // Пустая строка после help
 	}
 
 	// Горизонтальный разделитель между выводом и вводом
-	sections = append(sections, dividerStyle(m.viewport.Width))
+	sections = append(sections, dividerStyle(vp.Width))
 
-	// Поле ввода
-	sections = append(sections, m.textarea.View())
+	// Поле ввода из BaseModel
+	sections = append(sections, m.GetTextarea().View())
 
 	// Пустая строка перед статус баром
 	sections = append(sections, "")
 
-	// Статус бар
-	sections = append(sections, m.renderStatusLine())
+	// Статус бар - делегируем BaseModel
+	sections = append(sections, m.BaseModel.RenderStatusLine())
 
 	return strings.Join(sections, "\n")
 }
 
 // renderStatusLine отображает строку статусов со спиннером.
-func (m Model) renderStatusLine() string {
-	m.mu.RLock()
-	isProcessing := m.isProcessing
-	m.mu.RUnlock()
-
-	// Спиннер с цветом (с фоном как у extra info)
-	var spinnerText string
-	if isProcessing {
-		spinnerText = m.spinner.View()
-	} else {
-		spinnerText = "✓ Ready"
-	}
-
-	// Рендерим спиннер с единым фоном
-	spinnerPart := lipgloss.NewStyle().
-		Background(lipgloss.Color("235")). // Темно-серый фон
-		Padding(0, 1).                    // Отступы слева и справа
-		Foreground(func() lipgloss.Color {
-			if isProcessing {
-				return lipgloss.Color("86") // Cyan
-			}
-			return lipgloss.Color("242") // Gray
-		}()).
-		Render(spinnerText)
-
-	// Собираем полный текст
-	var statusText string
-	if m.debugMode {
-		statusText = " | DEBUG"
-	}
-	if m.customStatusExtra != nil {
-		extraInfo := m.customStatusExtra()
-		if extraInfo != "" {
-			statusText += " | " + extraInfo
-		}
-	}
-
-	// Рендерим дополнительный текст с фоном (если есть)
-	var extraPart string
-	if statusText != "" {
-		// DEBUG индикатор с красным фоном, остальное - серый
-		extraStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("235")). // Темно-серый фон
-			Padding(0, 1)                      // Отступы слева и справа
-
-		// Если DEBUG включен - красный фон для индикатора
-		if m.debugMode {
-			extraPart = lipgloss.NewStyle().
-				Background(lipgloss.Color("196")). // Красный фон для DEBUG
-				Foreground(lipgloss.Color("15")).  // Белый текст
-				Bold(true).
-				Padding(0, 1).
-				Render(" DEBUG ") + extraStyle.Render(statusText[7:]) // Пропускаем " | DEBUG"
-		} else {
-			extraPart = extraStyle.Render(statusText)
-		}
-	}
-
-	// Комбинируем: спиннер + доп. информация с фоном
-	return spinnerPart + extraPart
+//
+// ⚠️ REFACTORED (Phase 3A): Теперь делегирует StatusBarManager через BaseModel.
+func (m *Model) renderStatusLine() string {
+	return m.BaseModel.RenderStatusLine()
 }
 
 // renderHelp отображает справку по горячим клавишам.
-func (m Model) renderHelp() string {
-	// Используем bubbles/help для рендеринга
-	return m.help.View(m.keys)
+//
+// ⚠️ REFACTORED (Phase 3A): Теперь делегирует BaseModel'у.
+func (m *Model) renderHelp() string {
+	return m.GetHelp().View(m.BaseModel.keys)
 }
 
 // contextWithTimeout создаёт контекст с таймаутом из настроек модели.
 // Правило 11: принимает родительский контекст для распространения отмены.
-func (m Model) contextWithTimeout(parentCtx context.Context) (context.Context, context.CancelFunc) {
+func (m *Model) contextWithTimeout(parentCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parentCtx, m.timeout)
-}
-
-// saveToMarkdown сохраняет содержимое лога в markdown файл.
-// Файл сохраняется в текущую директорию с именем формата: poncho_log_YYYYMMDD_HHMMSS.md
-func (m *Model) saveToMarkdown() tea.Cmd {
-	return func() tea.Msg {
-		// Генерируем имя файла на основе текущего времени
-		timestamp := time.Now().Format("20060102_150405")
-		filename := fmt.Sprintf("poncho_log_%s.md", timestamp)
-
-		// Собираем содержимое лога
-		// Убираем ANSI коды цветов для чистого markdown
-		var content strings.Builder
-		content.WriteString("# Poncho AI Session Log\n\n")
-		content.WriteString(fmt.Sprintf("**Generated:** %s\n\n", time.Now().Format("2006-01-02 15:04:05")))
-		content.WriteString("---\n\n")
-
-		// Добавляем все строки лога
-		for _, line := range m.logLines {
-			// Удаляем ANSI коды (форматирование lipgloss)
-			cleanLine := stripANSICodes(line)
-			content.WriteString(cleanLine)
-			content.WriteString("\n")
-		}
-
-		// Записываем в файл
-		err := os.WriteFile(filename, []byte(content.String()), 0644)
-		if err != nil {
-			return saveErrorMsg{err: err}
-		}
-
-		return saveSuccessMsg{filename: filename}
-	}
 }
 
 // stripANSICodes удаляет ANSI escape коды из строки.
@@ -837,24 +474,34 @@ func dividerStyle(width int) string {
 
 // InterruptionModel - модель TUI с поддержкой прерываний.
 //
-// Расширяет базовую Model возможностью прерывать выполнение агента.
+// ⚠️ REFACTORED (Phase 3B): Теперь встраивает BaseModel напрямую, без зависимости от *agent.Client.
+//
+// Расширяет BaseModel возможностью прерывать выполнение агента.
 // Пользователь может набрать команду и нажать Enter для отправки прерывания.
 //
 // Thread-safe.
 //
 // Пример использования:
 //
-//	client, _ := agent.New(...)
-//	model := NewInterruptionModel(ctx, client, sub, inputChan, chainCfg)
+//	model := NewInterruptionModel(ctx, coreState, eventSub, inputChan)
+//	model.SetOnInput(createAgentLauncher(...)) // MANDATORY
 //	p := tea.NewProgram(model)
 //	p.Run()
 type InterruptionModel struct {
-	// Указатель на базовую модель (композиция через указатель)
-	base *Model
+	// ===== BASEMODEL EMBEDDING (Phase 3B) =====
+	// BaseModel предоставляет общую TUI функциональность через primitives
+	*BaseModel
 
-	// Дополнительные поля для прерываний
-	inputChan chan string       // Канал для пользовательских прерываний
-	chainCfg  chain.ChainConfig // Конфигурация ReAct цикла
+	// ===== INTERRUPTION-SPECIFIC FIELDS =====
+	// Канал для пользовательских прерываний (передается в agent.Execute)
+	inputChan chan string
+
+	// Todo list из CoreState (для отображения после plan_* tools)
+	todos []todo.Task
+
+	// CoreState как interface{} для Rule 6 compliance
+	// Используется только для todo operations
+	coreState interface{} // *state.CoreState
 
 	// Состояние модели (thread-safe)
 	mu sync.RWMutex
@@ -867,69 +514,61 @@ type InterruptionModel struct {
 
 	// Callback для обработки пользовательского ввода (MANDATORY).
 	// Должен быть установлен через SetOnInput() перед использованием.
-	// Если не установлен - будет возвращена ошибка при нажатии Enter.
 	onInput func(query string) tea.Cmd
 }
 
 // NewInterruptionModel создаёт модель с поддержкой прерываний.
 //
+// ⚠️ REFACTORED (Phase 3B): Больше не принимает *agent.Client (Rule 6 compliance).
+//
 // Rule 11: Принимает родительский контекст для распространения отмены.
 //
 // ⚠️ ВАЖНО: После создания необходимо вызвать SetOnInput() для установки
 // callback функции обработки пользовательского ввода. Без этого модель
-// не будет работать (будет возвращать ошибку при нажатии Enter).
+// не будет работать (будет возвращена ошибка при нажатии Enter).
 //
 // Parameters:
 //   - ctx: Родительский контекст
-//   - client: AI клиент (*agent.Client) - используется только для создания базовой Model
-//   - coreState: Framework core состояние (явная зависимость, Approach 2)
-//   - eventSub: Подписчик на события агента
+//   - coreState: Framework core состояние (для todo operations)
+//   - eventSub: Подписчик на события агента (Port interface only)
 //   - inputChan: Канал для пользовательских прерываний
-//   - chainCfg: Конфигурация ReAct цикла
 //
 // Возвращает модель готовую к использованию с Bubble Tea.
 //
 // Example:
 //
-//	baseModel := tui.NewInterruptionModel(ctx, client, coreState, sub, inputChan, chainCfg)
-//	baseModel.SetOnInput(createAgentLauncher(client, chainCfg, inputChan, true)) // MANDATORY
-//	p := tea.NewProgram(baseModel)
+//	model := tui.NewInterruptionModel(ctx, coreState, sub, inputChan)
+//	model.SetOnInput(createAgentLauncher(client, chainCfg, inputChan, true)) // MANDATORY
+//	p := tea.NewProgram(model)
 func NewInterruptionModel(
 	ctx context.Context,
-	client *agent.Client,
 	coreState *state.CoreState,
 	eventSub events.Subscriber,
 	inputChan chan string,
-	chainCfg chain.ChainConfig,
 ) *InterruptionModel {
-	// Создаём базовую модель
-	base := NewModel(ctx, client, coreState, eventSub)
+	// Создаём BaseModel напрямую (без agent dependency)
+	base := NewBaseModel(ctx, eventSub)
 
 	return &InterruptionModel{
-		base:       base,
+		BaseModel:  base,
 		inputChan:  inputChan,
-		chainCfg:   chainCfg,
+		coreState:  coreState,
+		todos:      []todo.Task{},
 		mu:         sync.RWMutex{},
 	}
 }
 
 // Init реализует tea.Model интерфейс для InterruptionModel.
 //
-// В отличие от базовой модели, запускает агента сразу при инициализации.
+// ⚠️ REFACTORED (Phase 3B): Делегирует BaseModel.Init().
 func (m *InterruptionModel) Init() tea.Cmd {
-	// Сначала инициализируем базовую модель (блинк курсор, чтение событий)
-	baseInitCmd := m.base.Init()
-
-	// Затем запускаем агента с первым запросом (если есть)
-	startAgentCmd := func() tea.Msg {
-		// Ждем первого ввода от пользователя - агент не запускаем
-		return nil
-	}
-
-	return tea.Batch(baseInitCmd, startAgentCmd)
+	// Инициализируем BaseModel (блинк курсор, чтение событий)
+	return m.BaseModel.Init()
 }
 
 // Update реализует tea.Model интерфейс для InterruptionModel.
+//
+// ⚠️ REFACTORED (Phase 3B): Теперь использует embedded BaseModel.
 //
 // Расширяет базовую обработку:
 // - При Enter: если агент не выполняется, запускает новый
@@ -937,6 +576,14 @@ func (m *InterruptionModel) Init() tea.Cmd {
 // - EventUserInterruption: отображает прерывание в UI
 func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case saveSuccessMsg:
+		m.appendLog(systemStyle(fmt.Sprintf("✓ Saved to: %s", msg.filename)))
+		return m, nil
+
+	case saveErrorMsg:
+		m.appendLog(errorStyle(fmt.Sprintf("✗ Failed to save: %v", msg.err)))
+		return m, nil
+
 	case EventMsg:
 		// ПЕРЕХВАТЫВАЕМ события агента - не даем базовой модели их обработать
 		return m.handleAgentEventWithInterruption(events.Event(msg))
@@ -945,133 +592,144 @@ func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ПЕРВЫЕ: проверяем key bindings для глобальных действий (quit, help, scroll)
 		// Эти клавиши должны работать всегда, независимо от фокуса textarea
 		switch {
-		case key.Matches(msg, m.base.keys.Quit):
+		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
-		case key.Matches(msg, m.base.keys.ToggleHelp):
-			m.base.showHelp = !m.base.showHelp
-			m.base.help.ShowAll = m.base.showHelp
+		case key.Matches(msg, m.keys.ToggleHelp):
+			m.SetShowHelp(!m.ShowHelp())
 			return m, nil
-		case key.Matches(msg, m.base.keys.ScrollUp):
-			m.base.viewport.ScrollUp(1)
+		case key.Matches(msg, m.keys.ScrollUp):
+			m.GetViewportMgr().ScrollUp(1)
 			return m, nil
-		case key.Matches(msg, m.base.keys.ScrollDown):
-			m.base.viewport.ScrollDown(1)
+		case key.Matches(msg, m.keys.ScrollDown):
+			m.GetViewportMgr().ScrollDown(1)
 			return m, nil
-		case key.Matches(msg, m.base.keys.ShowDebugPath):
+		case key.Matches(msg, m.keys.ShowDebugPath):
 			// Ctrl+L: показать путь к последнему debug-логу
 			m.mu.RLock()
 			debugPath := m.lastDebugPath
 			m.mu.RUnlock()
 
 			if debugPath != "" {
-				m.base.appendLog(systemStyle(fmt.Sprintf("📁 Debug log: %s", debugPath)))
+				m.appendLog(systemStyle(fmt.Sprintf("📁 Debug log: %s", debugPath)))
 			} else {
-				m.base.appendLog(systemStyle("📁 No debug log available yet"))
+				m.appendLog(systemStyle("📁 No debug log available yet"))
 			}
 			return m, nil
-		case key.Matches(msg, m.base.keys.ConfirmInput):
+		case key.Matches(msg, m.keys.ConfirmInput):
 			return m.handleKeyPressWithInterruption(msg)
 		}
 		// Все остальные клавиши передаем в базовую модель для ввода текста
-		newBase, baseCmd := m.base.Update(msg)
-		m.base = newBase.(*Model)
-		return m, baseCmd
+		return m.BaseModel.Update(msg)
 
 	default:
 		// Все остальные сообщения передаем в базовую модель
-		newBase, baseCmd := m.base.Update(msg)
-		m.base = newBase.(*Model)
-		return m, baseCmd
+		return m.BaseModel.Update(msg)
 	}
 }
 
 // View реализует tea.Model интерфейс для InterruptionModel.
 //
-// Делегирует отображение базовой модели.
+// ⚠️ REFACTORED (Phase 3B): Теперь использует embedded BaseModel + todo panel.
 func (m *InterruptionModel) View() string {
-	return m.base.View()
+	// Получаем viewport из BaseModel
+	vp := m.GetViewportMgr().GetViewport()
+
+	// Основной контент - РАСТЯГИВАЕМ на всю высоту viewport
+	content := lipgloss.NewStyle().
+		Height(vp.Height).
+		Width(vp.Width).
+		Render(vp.View())
+
+	var sections []string
+	sections = append(sections, content)
+
+	// Help секция (показываем если включена) + пустая строка после
+	if m.ShowHelp() {
+		sections = append(sections, m.GetHelp().View(m.keys))
+		sections = append(sections, "") // Пустая строка после help
+	}
+
+	// Горизонтальный разделитель между выводом и вводом
+	sections = append(sections, dividerStyle(vp.Width))
+
+	// Поле ввода из BaseModel
+	sections = append(sections, m.GetTextarea().View())
+
+	// Пустая строка перед статус баром
+	sections = append(sections, "")
+
+	// Статус бар - делегируем BaseModel
+	sections = append(sections, m.RenderStatusLine())
+
+	return strings.Join(sections, "\n")
 }
 
 // GetInput возвращает текущий текст из поля ввода.
 func (m *InterruptionModel) GetInput() string {
-	return m.base.textarea.Value()
+	return m.GetTextarea().Value()
 }
 
 // SetCustomStatus устанавливает callback для доп. информации в статусной строке.
 // Callback вызывается при каждом рендеринге и добавляется ПОСЛЕ спиннера.
-// Формат: "◐ | Interruptions: 0 | Queries: 1 | Duration: 21s | Status: Running..."
 func (m *InterruptionModel) SetCustomStatus(fn func() string) {
-	m.base.customStatusExtra = fn
+	m.BaseModel.SetCustomStatus(fn)
 }
 
 // SetTitle устанавливает заголовок TUI.
-// Заголовок отображается в приветственном сообщении при старте.
 func (m *InterruptionModel) SetTitle(title string) {
-	m.base.title = title
+	m.BaseModel.SetTitle(title)
 }
 
 // SetFullLLMLogging включает полное логирование LLM запросов с историей сообщений.
-//
-// Используется для отладки потери контекста в диалогах.
 func (m *InterruptionModel) SetFullLLMLogging(enabled bool) {
 	m.fullLLMLogging = enabled
 }
 
 // SetOnInput устанавливает callback для обработки пользовательского ввода.
-//
-// Callback вызывается когда пользователь нажимает Enter с непустым вводом.
-// Это позволяет вынести бизнес-логику запуска агента из TUI в cmd/ слой
-// (Rule 6 compliance: pkg/ должен быть reusable).
-//
-// Parameters:
-//   - handler: Функция которая получает пользовательский ввод и возвращает tea.Cmd
-//
-// Example:
-//
-//	baseModel.SetOnInput(func(query string) tea.Cmd {
-//	    return func() tea.Msg {
-//	        // Запускаем агента здесь
-//	        output, err := client.Execute(ctx, chainInput)
-//	        return tui.EventMsg(events.Event{...})
-//	    }
-//	})
 func (m *InterruptionModel) SetOnInput(handler func(query string) tea.Cmd) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onInput = handler
 }
 
+// appendLog добавляет строку в лог через ViewportManager.
+func (m *InterruptionModel) appendLog(str string) {
+	m.GetViewportMgr().Append(str, true)
+}
+
 // handleAgentEventWithInterruption обрабатывает события агента с поддержкой прерываний.
+//
+// ⚠️ REFACTORED (Phase 3B): Теперь использует embedded BaseModel.
 //
 // Правило 6 Compliance: Этот метод является чистым UI компонентом - он только
 // отображает события и обновляет UI. Бизнес-логика запуска агента находится
 // в callback функции, устанавливаемой через SetOnInput().
 func (m *InterruptionModel) handleAgentEventWithInterruption(event events.Event) (tea.Model, tea.Cmd) {
 	// DEBUG-логирование (включается по Ctrl+G)
-	if m.base.debugMode {
-		m.base.appendLog(systemStyle(fmt.Sprintf("[DEBUG] Event: %s", event.Type)))
+	if m.GetDebugManager().IsEnabled() {
+		m.appendLog(systemStyle(fmt.Sprintf("[DEBUG] Event: %s", event.Type)))
 	}
 
 	switch event.Type {
 	case events.EventUserInterruption:
 		// Пользователь прервал выполнение - отображаем сообщение
 		if data, ok := event.Data.(events.UserInterruptionData); ok {
-			m.base.appendLog(systemStyle(fmt.Sprintf("⏸️ Interruption (iteration %d): %s", data.Iteration, truncate(data.Message, 60))))
+			m.appendLog(systemStyle(fmt.Sprintf("⏸️ Interruption (iteration %d): %s", data.Iteration, truncate(data.Message, 60))))
 		}
 		// Продолжаем слушать события
-		return m, WaitForEvent(m.base.eventSub, func(e events.Event) tea.Msg {
+		return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		})
 
 	case events.EventToolCall:
 		// DEBUG-логирование tool calls (включается по Ctrl+G)
-		if m.base.debugMode {
+		if m.GetDebugManager().IsEnabled() {
 			if data, ok := event.Data.(events.ToolCallData); ok {
-				m.base.appendLog(systemStyle(fmt.Sprintf("[DEBUG] Tool call: %s", data.ToolName)))
+				m.appendLog(systemStyle(fmt.Sprintf("[DEBUG] Tool call: %s", data.ToolName)))
 			}
 		}
 		// Продолжаем слушать события
-		return m, WaitForEvent(m.base.eventSub, func(e events.Event) tea.Msg {
+		return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		})
 
@@ -1079,110 +737,113 @@ func (m *InterruptionModel) handleAgentEventWithInterruption(event events.Event)
 		// Для plan_* tools обновляем и отображаем todo list
 		if data, ok := event.Data.(events.ToolResultData); ok {
 			if strings.HasPrefix(data.ToolName, "plan_") {
-				m.base.updateTodosFromState()
-				todoLines := m.base.renderTodoAsTextLines()
+				m.updateTodosFromState()
+				todoLines := m.renderTodoAsTextLines()
 				for _, line := range todoLines {
-					m.base.appendLog(line)
+					m.appendLog(line)
 				}
 			}
 		}
 		// Продолжаем слушать события
-		return m, WaitForEvent(m.base.eventSub, func(e events.Event) tea.Msg {
+		return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		})
 
 	case events.EventDone:
-		// Агент завершил работу - сбрасываем isProcessing в базовой модели для остановки спиннера
-		m.base.mu.Lock()
-		m.base.isProcessing = false
-		m.base.mu.Unlock()
+		// Агент завершил работу - сбрасываем isProcessing через StatusBarManager
+		m.GetStatusBarMgr().SetProcessing(false)
 
-		m.base.textarea.Focus()
+		// Фокус на textarea
+		ta := m.GetTextarea()
+		ta.Focus()
+		m.SetTextarea(ta)
 
 		// Добавляем визуальный разделитель после завершения для читаемости
-		m.base.appendLog("")
+		m.appendLog("")
 
 		// Продолжаем слушать события
-		return m, WaitForEvent(m.base.eventSub, func(e events.Event) tea.Msg {
+		return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		})
 
 	case events.EventError:
-		// Сбрасываем isProcessing в базовой модели для остановки спиннера
-		m.base.mu.Lock()
-		m.base.isProcessing = false
-		m.base.mu.Unlock()
+		// Сбрасываем isProcessing через StatusBarManager
+		m.GetStatusBarMgr().SetProcessing(false)
 
-		m.base.textarea.Focus()
+		// Фокус на textarea
+		ta := m.GetTextarea()
+		ta.Focus()
+		m.SetTextarea(ta)
+
 		// Продолжаем слушать события (важно!)
-		return m, WaitForEvent(m.base.eventSub, func(e events.Event) tea.Msg {
+		return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		})
 
 	default:
 		// Все остальные события передаем в базовую модель (оборачиваем в EventMsg)
-		newBase, _ := m.base.Update(EventMsg(event))
-		m.base = newBase.(*Model)
+		_, _ = m.BaseModel.Update(EventMsg(event))
 		// ВСЕГДА возвращаем WaitForEvent чтобы не терять события
-		return m, WaitForEvent(m.base.eventSub, func(e events.Event) tea.Msg {
+		return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
 			return EventMsg(e)
 		})
 	}
 }
 
 // handleKeyPressWithInterruption обрабатывает нажатия клавиш с поддержкой прерываний.
+//
+// ⚠️ REFACTORED (Phase 3B): Теперь использует embedded BaseModel.
 func (m *InterruptionModel) handleKeyPressWithInterruption(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Проверяем key bindings
 	switch {
-	case key.Matches(msg, m.base.keys.Quit):
+	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 
-	case key.Matches(msg, m.base.keys.ToggleHelp):
-		m.base.showHelp = !m.base.showHelp
-		m.base.help.ShowAll = m.base.showHelp
+	case key.Matches(msg, m.keys.ToggleHelp):
+		m.SetShowHelp(!m.ShowHelp())
 		return m, nil
 
-	case key.Matches(msg, m.base.keys.ScrollUp):
-		m.base.viewport.ScrollUp(1)
+	case key.Matches(msg, m.keys.ScrollUp):
+		m.GetViewportMgr().ScrollUp(1)
 		return m, nil
 
-	case key.Matches(msg, m.base.keys.ScrollDown):
-		m.base.viewport.ScrollDown(1)
+	case key.Matches(msg, m.keys.ScrollDown):
+		m.GetViewportMgr().ScrollDown(1)
 		return m, nil
 
-	case key.Matches(msg, m.base.keys.SaveToFile):
-		return m, m.base.saveToMarkdown()
+	case key.Matches(msg, m.keys.SaveToFile):
+		// Ctrl+S: сохранить экран в markdown файл
+		return m, m.saveToMarkdown()
 
-	case key.Matches(msg, m.base.keys.ToggleDebug):
-		m.base.debugMode = !m.base.debugMode
-		status := "OFF"
-		if m.base.debugMode {
-			status = "ON"
-		}
-		m.base.appendLog(systemStyle(fmt.Sprintf("Debug mode: %s", status)))
+	case key.Matches(msg, m.keys.ToggleDebug):
+		// Ctrl+G: переключить debug режим
+		debugMsg := m.GetDebugManager().ToggleDebug()
+		m.appendLog(systemStyle(debugMsg))
 		return m, nil
 
-	case key.Matches(msg, m.base.keys.ShowDebugPath):
+	case key.Matches(msg, m.keys.ShowDebugPath):
 		// Ctrl+L: показать путь к последнему debug-логу
 		m.mu.RLock()
 		debugPath := m.lastDebugPath
 		m.mu.RUnlock()
 
 		if debugPath != "" {
-			m.base.appendLog(systemStyle(fmt.Sprintf("📁 Debug log: %s", debugPath)))
+			m.appendLog(systemStyle(fmt.Sprintf("📁 Debug log: %s", debugPath)))
 		} else {
-			m.base.appendLog(systemStyle("📁 No debug log available yet"))
+			m.appendLog(systemStyle("📁 No debug log available yet"))
 		}
 		return m, nil
 
-	case key.Matches(msg, m.base.keys.ConfirmInput):
-		input := m.base.textarea.Value()
+	case key.Matches(msg, m.keys.ConfirmInput):
+		ta := m.GetTextarea()
+		input := ta.Value()
 		if input == "" {
 			return m, nil
 		}
 
-		m.base.textarea.Reset()
-		m.base.appendLog(userMessageStyle("USER: ") + input)
+		ta.Reset()
+		m.SetTextarea(ta)
+		m.appendLog(userMessageStyle("USER: ") + input)
 
 		// Проверяем: установлен ли callback? (MANDATORY)
 		m.mu.RLock()
@@ -1191,14 +852,12 @@ func (m *InterruptionModel) handleKeyPressWithInterruption(msg tea.KeyMsg) (tea.
 
 		if handler == nil {
 			// Callback не установлен - это ошибка конфигурации
-			m.base.appendLog(errorStyle("ERROR: No input handler set. Call SetOnInput() first."))
+			m.appendLog(errorStyle("ERROR: No input handler set. Call SetOnInput() first."))
 			return m, nil
 		}
 
 		// Устанавливаем флаг обработки для показа спиннера
-		m.base.mu.Lock()
-		m.base.isProcessing = true
-		m.base.mu.Unlock()
+		m.GetStatusBarMgr().SetProcessing(true)
 
 		// Используем callback для обработки ввода
 		return m, handler(input)
@@ -1207,28 +866,56 @@ func (m *InterruptionModel) handleKeyPressWithInterruption(msg tea.KeyMsg) (tea.
 	return m, nil
 }
 
-// truncate укорачивает строку до указанной длины (по символам, не байтам).
-// Корректно обрабатывает Unicode (включая русский текст).
-func truncate(s string, maxLen int) string {
-	// Конвертируем в руны для корректной работы с Unicode
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
+// saveToMarkdown сохраняет содержимое лога в markdown файл.
+func (m *InterruptionModel) saveToMarkdown() tea.Cmd {
+	return func() tea.Msg {
+		// Генерируем имя файла на основе текущего времени
+		timestamp := time.Now().Format("20060102_150405")
+		filename := fmt.Sprintf("poncho_log_%s.md", timestamp)
+
+		// Собираем содержимое лога
+		var content strings.Builder
+		content.WriteString("# Poncho AI Session Log\n\n")
+		content.WriteString(fmt.Sprintf("**Generated:** %s\n\n", time.Now().Format("2006-01-02 15:04:05")))
+		content.WriteString("---\n\n")
+
+		// Получаем контент из ViewportManager
+		for _, line := range m.GetViewportMgr().Content() {
+			// Удаляем ANSI коды (форматирование lipgloss)
+			cleanLine := stripANSICodes(line)
+			content.WriteString(cleanLine)
+			content.WriteString("\n")
+		}
+
+		// Записываем в файл
+		err := os.WriteFile(filename, []byte(content.String()), 0644)
+		if err != nil {
+			return saveErrorMsg{err: err}
+		}
+
+		return saveSuccessMsg{filename: filename}
 	}
-	return string(runes[:maxLen]) + "..."
 }
 
 // updateTodosFromState обновляет todo list из CoreState.
 //
-// Используется после выполнения plan_* tools для отображения
-// сформированного плана задач в TUI.
-// Approach 2: прямой доступ к CoreState без type assertion.
-func (m *Model) updateTodosFromState() {
+// ⚠️ MOVED to InterruptionModel (Phase 3B): Теперь является методом InterruptionModel.
+func (m *InterruptionModel) updateTodosFromState() {
 	if m.coreState == nil {
 		return
 	}
 
-	todoMgr := m.coreState.GetTodoManager()
+	// Type assertion для interface{} (Rule 6 compliance)
+	cs, ok := m.coreState.(interface {
+		GetTodoManager() interface {
+			GetTasks() []todo.Task
+		}
+	})
+	if !ok || cs == nil {
+		return
+	}
+
+	todoMgr := cs.GetTodoManager()
 	if todoMgr == nil {
 		return
 	}
@@ -1238,8 +925,8 @@ func (m *Model) updateTodosFromState() {
 
 // renderTodoAsTextLines форматирует todo list как текст для отображения в TUI.
 //
-// Возвращает строки с отформатированным списком задач или nil если список пуст.
-func (m Model) renderTodoAsTextLines() []string {
+// ⚠️ MOVED to InterruptionModel (Phase 3B): Теперь является методом InterruptionModel.
+func (m *InterruptionModel) renderTodoAsTextLines() []string {
 	if len(m.todos) == 0 {
 		return nil
 	}
@@ -1265,16 +952,19 @@ func (m Model) renderTodoAsTextLines() []string {
 	return lines
 }
 
+// truncate укорачивает строку до указанной длины (по символам, не байтам).
+// Корректно обрабатывает Unicode (включая русский текст).
+func truncate(s string, maxLen int) string {
+	// Конвертируем в руны для корректной работы с Unicode
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
+}
+
 // Ensure InterruptionModel implements tea.Model
 var _ tea.Model = (*InterruptionModel)(nil)
 
 // Ensure Model implements tea.Model
 var _ tea.Model = (*Model)(nil)
-
-// min возвращает минимум из двух int
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

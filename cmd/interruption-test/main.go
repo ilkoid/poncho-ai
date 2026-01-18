@@ -91,7 +91,9 @@ func run() error {
 	coreState := client.GetState()
 
 	// 7. Создаём базовую InterruptionModel
-	baseModel := tui.NewInterruptionModel(ctx, client, coreState, sub, inputChan, chainCfg)
+	// ⚠️ REFACTORED (Phase 3B): NewInterruptionModel больше не принимает *agent.Client (Rule 6 compliance)
+	// client передается только в createAgentLauncher callback
+	baseModel := tui.NewInterruptionModel(ctx, coreState, sub, inputChan)
 
 	// 8. Устанавливаем callback для запуска агента (Rule 6: бизнес-логика в cmd/)
 	baseModel.SetOnInput(createAgentLauncher(client, chainCfg, inputChan, true))

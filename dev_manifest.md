@@ -28,6 +28,12 @@ type Tool interface {
 pkg/ - только библиотечный код, готовый к переиспользованию
 internal/ - внутренняя логика приложения
 cmd/ - точка входа, только инициализация и оркестрация
+- example: Library code (pkg/) should NOT depend on concrete implementations.
+
+    - ✅ Library defines Port interface (events.Emitter, events.Subscriber)
+    - ✅ UI implements Adapter (ChanEmitter, ChanSubscriber)
+    - ❌ Library (pkg/tui) should NOT import business logic (pkg/agent)
+
 7. Правило обработки ошибок
 Все ошибки должны возвращаться вверх по стеку вызовов. Никаких panic() в бизнес-логике. Фреймворк должен обеспечивать resilience против галлюцинаций LLM.
 
