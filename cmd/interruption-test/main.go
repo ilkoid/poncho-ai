@@ -34,6 +34,8 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/agent"
 	"github.com/ilkoid/poncho-ai/pkg/chain"
 	"github.com/ilkoid/poncho-ai/pkg/events"
+	"github.com/ilkoid/poncho-ai/pkg/questions"
+	"github.com/ilkoid/poncho-ai/pkg/tools/std"
 	"github.com/ilkoid/poncho-ai/pkg/tui"
 )
 
@@ -57,7 +59,12 @@ func run() error {
 		configPath = os.Args[1]
 	}
 
-	// 2. Создаём агент
+	// 2. Создаём QuestionManager для координации ask_user_question tool
+	// Shared state между tool и TUI (Polling Pattern)
+	// maxOptions: 5 вариантов, timeout: 5 минут
+	questionManager := questions.NewQuestionManager(5, 5*time.Minute)
+
+	// 3. Создаём агент
 	client, err := agent.New(ctx, agent.Config{
 		ConfigPath: configPath,
 	})
@@ -65,12 +72,26 @@ func run() error {
 		return fmt.Errorf("agent creation failed: %w", err)
 	}
 
-	// 3. Создаём emitter и подписываемся на события
+	// 4. Настраиваем ask_user_question tool с QuestionManager
+	// Получаем tool из registry и передаём QuestionManager
+	toolsRegistry := client.GetToolsRegistry()
+	if askTool, err := toolsRegistry.Get("ask_user_question"); err == nil {
+		if typedTool, ok := askTool.(*std.AskUserQuestionTool); ok {
+			typedTool.SetQuestionManager(questionManager)
+			fmt.Fprintf(os.Stderr, "[INIT] ✓ ask_user_question tool configured with QuestionManager\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "[INIT] ✗ Type assertion failed for ask_user_question\n")
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "[INIT] ✗ ask_user_question tool not found: %v\n", err)
+	}
+
+	// 5. Создаём emitter и подписываемся на события
 	emitter := events.NewChanEmitter(100)
 	client.SetEmitter(emitter)
 	sub := emitter.Subscribe()
 
-	// 4. Канал для прерываний
+	// 6. Канал для прерываний
 	inputChan := make(chan string, 10)
 
 	// 5. Создаём ChainConfig на основе дефолтной (из pkg/tui)
@@ -87,6 +108,9 @@ func run() error {
 	// ⚠️ REFACTORED (Phase 3B): NewInterruptionModel больше не принимает *agent.Client (Rule 6 compliance)
 	// client передается только в createAgentLauncher callback
 	baseModel := tui.NewInterruptionModel(ctx, coreState, sub, inputChan)
+
+	// 7.1. Передаём QuestionManager в InterruptionModel для polling
+	baseModel.SetQuestionManager(questionManager)
 
 	// 8. Устанавливаем callback для запуска агента (Rule 6: бизнес-логика в cmd/)
 	baseModel.SetOnInput(createAgentLauncher(client, chainCfg, inputChan, baseModel))

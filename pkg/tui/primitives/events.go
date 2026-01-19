@@ -82,23 +82,19 @@ func (eh *EventHandler) registerDefaultRenderers() {
 	// EventToolCall: shows tool invocation
 	eh.RegisterRenderer(events.EventToolCall, func(event events.Event) (string, lipgloss.Style) {
 		if data, ok := event.Data.(events.ToolCallData); ok {
-			args := data.Args
-			if len(args) > 50 {
-				args = args[:47] + "..."
-			}
-			return "🔧 Calling: " + data.ToolName + "(" + args + ")",
-				lipgloss.NewStyle().Foreground(lipgloss.Color("228")) // Yellow
+			return "- " + data.ToolName,
+				lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Dim gray
 		}
-		return "🔧 Calling...", lipgloss.NewStyle().Foreground(lipgloss.Color("228"))
+		return "- calling...", lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	})
 
 	// EventToolResult: shows tool execution result
 	eh.RegisterRenderer(events.EventToolResult, func(event events.Event) (string, lipgloss.Style) {
 		if data, ok := event.Data.(events.ToolResultData); ok {
-			return "✓ Result: " + data.ToolName + " (" + data.Duration.String() + ")",
-				lipgloss.NewStyle().Foreground(lipgloss.Color("86")) // Cyan
+			return "- " + data.ToolName,
+				lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Dim gray
 		}
-		return "✓ Result", lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
+		return "- done", lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	})
 
 	// EventUserInterruption: shows user interruption
@@ -129,6 +125,13 @@ func (eh *EventHandler) registerDefaultRenderers() {
 				lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // Red
 		}
 		return "❌ Error", lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	})
+
+	// EventUserQuestion: shows question from LLM to user
+	// Это событие обрабатывается specially в InterruptionModel для переключения в режим вопрос-ответ
+	// Здесь возвращаем пустую строку, так как TUI сам рендерит вопрос в специальном режиме
+	eh.RegisterRenderer(events.EventUserQuestion, func(event events.Event) (string, lipgloss.Style) {
+		return "", lipgloss.Style{} // TUI handles question mode specially
 	})
 
 	// EventDone: shows final answer

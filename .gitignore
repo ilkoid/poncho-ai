@@ -78,6 +78,9 @@ examples/
 # Personal notes
 mynotes.md
 
+# Git cheat sheet (local reference)
+GIT_CHEATSHEET.md
+
 # Intent classification docs (draft)
 ADR-001-intent-classification.md
 IMPLEMENTATION_PLAN_INTENT_CLASSIFICATION*.md

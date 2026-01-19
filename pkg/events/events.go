@@ -36,6 +36,8 @@ package events
 import (
 	"context"
 	"time"
+
+	"github.com/ilkoid/poncho-ai/pkg/questions"
 )
 
 // EventType представляет тип события от агента.
@@ -58,6 +60,10 @@ const (
 	// EventUserInterruption отправляется когда пользователь прерывает выполнение агента.
 	// Содержит сообщение пользователя и текущую итерацию.
 	EventUserInterruption EventType = "user_interruption"
+
+	// EventUserQuestion отправляется когда tool (ask_user_question) задает вопрос пользователю.
+	// Содержит вопрос и варианты ответов. TUI переключается в режим вопрос-ответ.
+	EventUserQuestion EventType = "user_question"
 
 	// EventMessage отправляется когда агент генерирует сообщение.
 	EventMessage EventType = "message"
@@ -128,6 +134,23 @@ type UserInterruptionData struct {
 
 func (UserInterruptionData) eventData() {}
 
+// QuestionData содержит данные для EventUserQuestion.
+//
+// Используется tool ask_user_question для задания вопросов пользователю
+// с вариантами ответов.
+type QuestionData struct {
+	// ID — уникальный идентификатор вопроса
+	ID string
+
+	// Question — текст вопроса
+	Question string
+
+	// Options — варианты ответов (1-5)
+	Options []questions.QuestionOption
+}
+
+func (QuestionData) eventData() {}
+
 // MessageData содержит данные для EventMessage и EventDone.
 type MessageData struct {
 	Content string
@@ -151,6 +174,7 @@ func (ErrorData) eventData() {}
 //   - EventToolCall: ToolCallData (имя инструмента, аргументы)
 //   - EventToolResult: ToolResultData (результат выполнения)
 //   - EventUserInterruption: UserInterruptionData (прерывание пользователем)
+//   - EventUserQuestion: QuestionData (вопрос пользователю с вариантами)
 //   - EventMessage: MessageData (ответ агента)
 //   - EventError: ErrorData (ошибка)
 //   - EventDone: MessageData (финальный ответ)

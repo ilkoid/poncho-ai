@@ -731,6 +731,14 @@ func setupLLMTools(registry *tools.Registry, cfg *config.AppConfig, modelRegistr
 		}
 	}
 
+	// === Ask User Question Tool ===
+	// QuestionManager will be set later via SetQuestionManager() in cmd/ layer
+	if toolCfg, exists := getToolCfg("ask_user_question"); exists && isEnabled("ask_user_question") {
+		if err := register("ask_user_question", std.NewAskUserQuestionTool(nil, toolCfg)); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -830,12 +838,25 @@ func setupVisionTools(registry *tools.Registry, cfg *config.AppConfig, state *st
 			return fmt.Errorf("vision model '%s' not found in config definitions", cfg.Models.DefaultVision)
 		}
 
+		// ОТКЛЮЧАЕМ thinking mode для vision задач!
+		// GLM-4.6 с thinking mode генерирует 335+ chunk'ов и может возвращать malformed tool calls
+		// Vision analysis должен быть быстрым и предсказуемым
+		originalThinking := visionModelDef.Thinking
+		visionModelDef.Thinking = "disabled" // Принудительно отключаем
+
 		// Создаём отдельный Vision LLM provider БЕЗ tools через factory
 		// Rule 4: Используем CreateProvider() вместо ModelRegistry.Get()
 		visionLLMNoTools, err := models.CreateProvider(visionModelDef)
 		if err != nil {
 			return fmt.Errorf("failed to create vision LLM provider: %w", err)
 		}
+
+		// Восстанавливаем оригинальное значение (не меняем конфиг)
+		visionModelDef.Thinking = originalThinking
+
+		utils.Debug("Created vision LLM provider with thinking mode disabled",
+			"model", cfg.Models.DefaultVision,
+			"original_thinking", originalThinking)
 
 		// Load vision system prompt
 		visionPrompt, err := prompt.LoadVisionSystemPrompt(cfg)
@@ -846,7 +867,7 @@ func setupVisionTools(registry *tools.Registry, cfg *config.AppConfig, state *st
 		tool := std.NewAnalyzeArticleImagesBatch(
 			state,
 			state.GetStorage(), // S3 клиент для скачивания изображений
-			visionLLMNoTools,  // Vision LLM БЕЗ tools (Rule 4 compliant)
+			visionLLMNoTools,  // Vision LLM БЕЗ tools и БЕЗ thinking mode
 			visionPrompt,
 			cfg.ImageProcessing,
 			toolCfg,
@@ -1040,6 +1061,8 @@ func getAllKnownToolNames() []string {
 		"plan_mark_failed",
 		"plan_clear",
 		"plan_set_tasks",
+		// Question Tool
+		"ask_user_question",
 	}
 }
 

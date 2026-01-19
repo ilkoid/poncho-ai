@@ -36,6 +36,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ilkoid/poncho-ai/pkg/events"
+	"github.com/ilkoid/poncho-ai/pkg/questions"
 	"github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/todo"
 )
@@ -603,6 +604,18 @@ type InterruptionModel struct {
 	// Callback для обработки пользовательского ввода (MANDATORY).
 	// Должен быть установлен через SetOnInput() перед использованием.
 	onInput func(query string) tea.Cmd
+
+	// ===== QUESTION MODE (ask_user_question tool) =====
+	// questionMode — активен когда LLM задает вопрос пользователю
+	questionMode bool
+	// currentQuestionID — ID текущего вопроса
+	currentQuestionID string
+	// questionManager — менеджер вопросов для polling
+	questionManager interface{} // *questions.QuestionManager
+
+	// ===== QUIT CONFIRMATION MODE =====
+	// quitting — true когда пользователь нажал Esc первый раз (требуется подтверждение)
+	quitting bool
 }
 
 // NewInterruptionModel создаёт модель с поддержкой прерываний.
@@ -676,7 +689,18 @@ func (m *InterruptionModel) Init() tea.Cmd {
 // - При Enter: если агент не выполняется, запускает новый
 // - При Enter во время работы: отправляет прерывание в inputChan
 // - EventUserInterruption: отображает прерывание в UI
+//
+// ⚠️ PANIC RECOVERY: Wrap with defer/recover to prevent WSL2 crash from nil pointer or race conditions
 func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Panic recovery to prevent WSL2 crashes
+	defer func() {
+		if r := recover(); r != nil {
+			m.appendLog(errorStyle(fmt.Sprintf("🔥 PANIC RECOVERED in Update: %v", r)))
+			m.debugLogIfEnabled("PANIC in Update: %v", r)
+			// Try to continue despite panic
+		}
+	}()
+
 	m.debugLogIfEnabled("InterruptionModel.Update: called, msg type=%T", msg)
 
 	switch msg := msg.(type) {
@@ -695,37 +719,57 @@ func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		m.debugLogIfEnabled("InterruptionModel.Update: KeyMsg received, key=%s", msg.String())
-		// ПЕРВЫЕ: проверяем key bindings для глобальных действий (quit, help, scroll)
+		// ПЕРВЫЕ: question mode обрабатывает цифры 1-5
+		if m.questionMode {
+			return m.handleQuestionKey(msg)
+		}
+
+		// Проверяем key bindings для глобальных действий (quit, help, scroll)
 		// Эти клавиши должны работать всегда, независимо от фокуса textarea
 		matchesConfirm := key.Matches(msg, m.keys.ConfirmInput)
 		matchesQuit := key.Matches(msg, m.keys.Quit)
-		m.debugLogIfEnabled("InterruptionModel.Update: matchesConfirm=%v matchesQuit=%v", matchesConfirm, matchesQuit)
+		m.debugLogIfEnabled("InterruptionModel.Update: matchesConfirm=%v matchesQuit=%v quitting=%v", matchesConfirm, matchesQuit, m.quitting)
 
 		switch {
 		case matchesQuit:
-			return m, tea.Quit
+			// ===== QUIT CONFIRMATION MODE =====
+			// Первый Esc: показать предупреждение, второй - выйти
+			if m.quitting {
+				// Второй Esc или Ctrl+C - подтверждение выхода
+				return m, tea.Quit
+			}
+			// Первый Esc - активируем режим подтверждения
+			m.quitting = true
+			return m, nil
 		case key.Matches(msg, m.keys.ToggleHelp):
+			// Отмена режима quit при любой другой клавише
+			m.quitting = false
 			// Делегируем BaseModel для обновления help
 			baseModel, baseCmd := m.BaseModel.Update(msg)
 			m.BaseModel = baseModel.(*BaseModel)
 			return m, baseCmd
 		case key.Matches(msg, m.keys.ScrollUp):
+			m.quitting = false
 			m.GetViewportMgr().ScrollUp(1)
 			return m, nil
 		case key.Matches(msg, m.keys.ScrollDown):
+			m.quitting = false
 			m.GetViewportMgr().ScrollDown(1)
 			return m, nil
 		case key.Matches(msg, m.keys.SaveToFile):
+			m.quitting = false
 			// Делегируем BaseModel для сохранения
 			baseModel, baseCmd := m.BaseModel.Update(msg)
 			m.BaseModel = baseModel.(*BaseModel)
 			return m, baseCmd
 		case key.Matches(msg, m.keys.ToggleDebug):
+			m.quitting = false
 			// Делегируем BaseModel для toggle debug
 			baseModel, baseCmd := m.BaseModel.Update(msg)
 			m.BaseModel = baseModel.(*BaseModel)
 			return m, baseCmd
 		case key.Matches(msg, m.keys.ShowDebugPath):
+			m.quitting = false
 			// Ctrl+L: показать путь к последнему debug-логу
 			m.mu.RLock()
 			debugPath := m.lastDebugPath
@@ -738,6 +782,7 @@ func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case key.Matches(msg, m.keys.ClearLogs):
+			m.quitting = false
 			// Ctrl+K: удалить все лог-файлы
 			count, err := clearLogs()
 			if err != nil {
@@ -749,11 +794,13 @@ func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case matchesConfirm:
+			m.quitting = false
 			return m.handleKeyPressWithInterruption(msg)
 		}
 
 		// Все остальные клавиши - обрабатываем ввод текста в textarea
 		// НЕ передаём в BaseModel.Update() чтобы избежать двойной обработки Enter
+		m.quitting = false // Отмена режима quit при текстовом вводе
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
@@ -782,6 +829,34 @@ func (m *InterruptionModel) View() string {
 
 	var sections []string
 	sections = append(sections, content)
+
+	// ===== QUIT CONFIRMATION BANNER =====
+	// Показываем warning когда пользователь нажал Esc первый раз
+	if m.quitting {
+		warningText := "⚠️ Press Esc again to quit (or any other key to cancel)"
+		warningBanner := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")). // White text
+			Background(lipgloss.Color("196")). // Red background
+			Bold(true).
+			Padding(0, 1).
+			Width(vp.Width).
+			Render(warningText)
+		sections = append(sections, warningBanner)
+	}
+
+	// ===== QUESTION MODE BANNER =====
+	// Показываем когда активен режим вопросов от ask_user_question tool
+	if m.questionMode {
+		questionText := "🤔 QUESTION MODE - Press 1-5 to answer, Esc to cancel"
+		questionBanner := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("0")).   // Black text for better contrast on yellow
+			Background(lipgloss.Color("226")). // Yellow background
+			Bold(true).
+			Padding(0, 1).
+			Width(vp.Width).
+			Render(questionText)
+		sections = append(sections, questionBanner)
+	}
 
 	// Help секция (показываем если включена) + пустая строка после
 	if m.ShowHelp() {
@@ -890,6 +965,15 @@ func (m *InterruptionModel) handleAgentEventWithInterruption(event events.Event)
 				m.appendLog(systemStyle(fmt.Sprintf("[DEBUG] Tool call: %s", data.ToolName)))
 			}
 		}
+		// ПРОВЕРКА QUESTIONS: Polling после EventToolCall
+		// ask_user_question tool создаёт вопрос БЛОКИРУЯСЬ на WaitForAnswer()
+		// TUI должен опросить QuestionManager ПРЕЖДЕ чем tool вернёт результат
+		if m.checkForPendingQuestions() {
+			m.debugLogIfEnabled("[QUESTION] ✓ Question detected after ToolCall, entering question mode")
+			return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
+				return EventMsg(e)
+			})
+		}
 		// Продолжаем слушать события
 		return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
 			return EventMsg(e)
@@ -945,6 +1029,18 @@ func (m *InterruptionModel) handleAgentEventWithInterruption(event events.Event)
 	default:
 		// Все остальные события передаем в базовую модель (оборачиваем в EventMsg)
 		_, _ = m.BaseModel.Update(EventMsg(event))
+
+		m.debugLogIfEnabled("[QUESTION] After event %s, checking for questions...", event.Type)
+
+		// ПРОВЕРКА QUESTIONS: Polling QuestionManager после каждого события
+		if m.checkForPendingQuestions() {
+			m.debugLogIfEnabled("[QUESTION] ✓ Entered question mode, waiting for user input")
+			// Переключились в question mode - продолжаем слушать события
+			return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
+				return EventMsg(e)
+			})
+		}
+
 		// ВСЕГДА возвращаем WaitForEvent чтобы не терять события
 		return m, WaitForEvent(m.GetSubscriber(), func(e events.Event) tea.Msg {
 			return EventMsg(e)
@@ -1105,7 +1201,6 @@ func (m *InterruptionModel) renderTodoAsTextLines() []string {
 
 	var lines []string
 	lines = append(lines, "")
-	lines = append(lines, "📋 План задач:")
 
 	for i, t := range m.todos {
 		prefix := "  "
@@ -1140,3 +1235,119 @@ var _ tea.Model = (*InterruptionModel)(nil)
 
 // Ensure Model implements tea.Model
 var _ tea.Model = (*Model)(nil)
+
+// checkForPendingQuestions проверяет есть ли вопросы от ask_user_question tool.
+func (m *InterruptionModel) checkForPendingQuestions() bool {
+	if m.questionManager == nil {
+		return false
+	}
+
+	qm, ok := m.questionManager.(*questions.QuestionManager)
+	if !ok || !qm.HasPendingQuestions() {
+		return false
+	}
+
+	id := qm.GetFirstPendingID()
+	pq, ok := qm.GetQuestion(id)
+	if !ok {
+		return false
+	}
+
+	m.questionMode = true
+	m.currentQuestionID = id
+	m.renderQuestionFromData(pq.Question, pq.Options)
+	return true
+}
+
+func (m *InterruptionModel) renderQuestionFromData(question string, options interface{}) {
+	opts := options.([]questions.QuestionOption)
+	optLen := len(opts)
+
+	var lines []string
+	lines = append(lines, "")
+	// Используем "лайтовый" голубовато-серый (152) для мягкого акцента
+	lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("152")).Render("🤔 Agent Question:"))
+	lines = append(lines, "")
+	lines = append(lines, question)
+	lines = append(lines, "")
+
+	for i, opt := range opts {
+		text := opt.Label
+		if opt.Description != "" {
+			text = opt.Label + " — " + opt.Description
+		}
+		line := fmt.Sprintf("  [%d] %s", i+1, text)
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("110")).Render(line))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, systemStyle("  Нажми 1-"+fmt.Sprint(optLen)+" для выбора"))
+
+	for _, line := range lines {
+		m.appendLog(line)
+	}
+}
+
+func (m *InterruptionModel) handleQuestionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ПРОВЕРКА: Отмена вопроса через Esc или Ctrl+C
+	// ДОЛЖНА быть первой проверкой, чтобы пользователь мог выйти из question mode
+	if key.Matches(msg, m.keys.Quit) {
+		m.exitQuestionMode()
+		m.appendLog(systemStyle("❌ Question cancelled"))
+		return m, nil
+	}
+
+	// Handle all keys in question mode - prevent any other processing
+	switch msg.String() {
+	case "1", "2", "3", "4", "5":
+		index := int(msg.String()[0] - '1')
+
+		qm, ok := m.questionManager.(*questions.QuestionManager)
+		if !ok {
+			m.appendLog(errorStyle("❌ QuestionManager not available"))
+			m.exitQuestionMode()
+			return m, nil
+		}
+
+		pq, ok := qm.GetQuestion(m.currentQuestionID)
+		if !ok || !pq.IsValidIndex(index) {
+			m.appendLog(errorStyle(fmt.Sprintf("❌ Неверный выбор: %s", msg.String())))
+			return m, nil
+		}
+
+		opt := pq.Options[index]
+		answer := questions.QuestionAnswer{
+			Index:       index,
+			Label:       opt.Label,
+			Description: opt.Description,
+			Timestamp:   time.Now(),
+		}
+
+		err := qm.SubmitAnswer(m.currentQuestionID, answer)
+		if err != nil {
+			m.appendLog(errorStyle(fmt.Sprintf("❌ Ошибка: %v", err)))
+		} else {
+			m.appendLog(systemStyle(fmt.Sprintf("✓ Выбран: %s", opt.Label)))
+		}
+
+		m.exitQuestionMode()
+		return m, nil
+
+	default:
+		// Ignore ALL other keys in question mode
+		// Debug log to help track what keys are being pressed
+		m.debugLogIfEnabled("handleQuestionKey: ignoring key '%s' in question mode", msg.String())
+		return m, nil
+	}
+}
+
+func (m *InterruptionModel) exitQuestionMode() {
+	m.questionMode = false
+	m.currentQuestionID = ""
+}
+
+func (m *InterruptionModel) SetQuestionManager(qm interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.questionManager = qm
+}

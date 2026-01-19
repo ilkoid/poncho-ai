@@ -1042,6 +1042,15 @@ func (c *Client) parseSSEStream(
 	if len(pendingToolCalls) > 0 {
 		result.ToolCalls = make([]llm.ToolCall, 0, len(pendingToolCalls))
 		for _, tc := range pendingToolCalls {
+			// ВАЛИДАЦИЯ: Пропускаем tool calls с пустым именем
+			// Это может происходить когда GLM-4.6 с thinking mode возвращает malformed response
+			// после долгого размышления (например, 335+ thinking chunks)
+			if tc.Name == "" {
+				utils.Warn("Skipping tool call with empty name (likely malformed LLM response after long thinking)",
+					"id", tc.ID,
+					"args_length", len(tc.Args))
+				continue
+			}
 			result.ToolCalls = append(result.ToolCalls, *tc)
 		}
 	}

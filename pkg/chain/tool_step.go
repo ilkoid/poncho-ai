@@ -190,6 +190,12 @@ func (s *ToolExecutionStep) executeToolCall(ctx context.Context, tc llm.ToolCall
 		timeout = customTimeout
 	}
 
+	// Special case: ask_user_question needs longer timeout (user interaction)
+	// Override default timeout to 5 minutes for interactive tools
+	if tc.Name == "ask_user_question" {
+		timeout = 5 * time.Minute
+	}
+
 	// 4. Создаём контекст с timeout для защиты от зависания
 	toolCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

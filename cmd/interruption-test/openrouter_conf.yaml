@@ -414,13 +414,18 @@ tool_resolution_mode: "flat" # или flat / bundle-first
 
 tools:
   # ===========================================================================
-  # LLM PROVIDER TOOLS (1 tool)
+  # LLM PROVIDER TOOLS (2 tools)
   # ===========================================================================
 
   ping_llm_provider:
     enabled: true
     description: "Проверяет доступность LLM провайдера (OpenRouter, OpenAI, Zai, DeepSeek). Возвращает статус сервиса, задержку, информацию об ошибках (например, неверный API ключ, недоступность сети). Используй для диагностики перед использованием других функций."
     post_prompt: "llm/ping_llm_provider.ru.yaml"
+
+  ask_user_question:
+    enabled: true
+    description: "Используй если надо задать вопросы пользователю с вариантами ответов (1-5) или получить подтверждение действия. Максимальное количество вариантов: 5."
+    post_prompt: "ask_user/ask_user_ru.yaml"
 
   # ===========================================================================
   # WB CONTENT API TOOLS (9 tools)
@@ -745,7 +750,7 @@ chains:
     prompts_dir: "./prompts"
     interruption_prompt: "interruption_handler.yaml"
     debug:
-      enabled: false
+      enabled: true
       save_logs: true
       logs_dir: "./logs"
       include_tool_args: true
