@@ -1,158 +1,200 @@
-# Незыблемые правила разработки
+# Immutable Development Rules
 
-## Правила для разработчиков
+## Core Rules
 
-0. Правило переиспользования кода фреймворка
-- любая разработка в рамках кодовой базы должна сначала использовать то, что разработано,но если существующее решение мешает развитию - его можно заменить (рефакторинг)
+### 0. Rule of Code Reuse
+Any development in the codebase should first use existing solutions. If existing code blocks development, it can be replaced (refactoring).
 
-1. Правило интерфейса инструментов
+### 1. Rule of Tool Interface
+```go
 type Tool interface {
     Definition() ToolDefinition
     Execute(ctx context.Context, argsJSON string) (string, error)
 }
-Никогда не изменять этот интерфейс. Все инструменты должны реализовывать только этот контракт. "Raw In, String Out" - принцип остается незыблемым.
+```
+**NEVER change this interface.** All tools must implement only this contract.
+"Raw In, String Out" - this principle remains immutable.
 
-2. Правило конфигурации
-Все настройки должны быть в единственном YAML с поддержкой ENV-переменных. Никакого хардкода в коде. Структура AppConfig может расширяться, но существующие поля не меняются. yaml конфиг лежит рядом с исполняемым файлом каждой утилиты
+### 2. Rule of Configuration
+All settings must be in a single YAML with ENV variable support. No hardcoding in code.
+AppConfig structure can extend, but existing fields don't change.
+YAML config lies next to the executable of each utility.
 
-3. Правило реестра инструментов
-Все инструменты регистрируются через Registry.Register(). Никаких прямых вызовов инструментов в обход реестра.
+### 3. Rule of Tool Registry
+All tools register via `Registry.Register()`. No direct tool calls bypassing the registry.
 
-4. Правило абстракции LLM
-Работа с AI-моделями только через интерфейс Provider. Никаких прямых вызовов API конкретных провайдеров в бизнес-логике.
+### 4. Rule of LLM Abstraction
+Work with AI models only through the `Provider` interface. No direct API calls to specific providers in business logic.
 
-5. Правило состояния приложения
-Глобальное состояние только через GlobalState с thread-safe доступом. Никаких глобальных переменных.
+### 5. Rule of State Management
+Global state only through `GlobalState` with thread-safe access. No global variables.
 
-6. Правило структуры пакетов
-pkg/ - только библиотечный код, готовый к переиспользованию
-internal/ - внутренняя логика приложения
-cmd/ - точка входа, только инициализация и оркестрация
-- example: Library code (pkg/) should NOT depend on concrete implementations.
+### 6. Rule of Package Structure ⭐ (Port & Adapter Pattern)
+```
+pkg/       - Library code, ready for reuse
+internal/  - Application-specific logic
+cmd/       - Entry points, only initialization and orchestration
+```
 
-    - ✅ Library defines Port interface (events.Emitter, events.Subscriber)
-    - ✅ UI implements Adapter (ChanEmitter, ChanSubscriber)
-    - ❌ Library (pkg/tui) should NOT import business logic (pkg/agent)
+**Port & Adapter Compliance:**
+- ✅ Library (`pkg/`) defines Port interface (`events.Emitter`, `events.Subscriber`)
+- ✅ Adapter (`pkg/tui`, `internal/ui`) implements Port
+- ❌ Library (`pkg/tui`) must NOT import business logic (`pkg/agent`, `pkg/chain`)
+- ✅ Business logic injection via **callback pattern** from `cmd/` layer
 
-7. Правило обработки ошибок
-Все ошибки должны возвращаться вверх по стеку вызовов. Никаких panic() в бизнес-логике. Фреймворк должен обеспечивать resilience против галлюцинаций LLM.
-
-8. Правило расширения функциональности
-Новые возможности добавляются только через:
-
-Новые инструменты в pkg/tools/std/ или пользовательские пакеты
-Новые адаптеры LLM в pkg/llm/
-Расширение конфигурации возможно через breaking changes но с уведомлением пользователя
-
-9. Правило тестирования
-Каждый инструмент должен иметь возможность мокирования зависимостей для юнит-тестов. Никаких прямых HTTP-вызовов без возможности абстрагирования. Но! никаких тестов изначально не пишем, вместо тестов готовим утилиту в /examples для проверки функционала. конфиг, промпты, логи - всё это должно лежать рядом с утилитой. запускается утилита всегда из своей папки
-
-10. Правило документации
-Все публичные API должны иметь godoc-комментарии. Изменения в интерфейсах должны сопровождаться обновлением примеров использования.
-
-11. Правило распространения контекста и отмены
-Все долгосрочные операции должны принимать и корректно обрабатывать context.Context. Контекст должен распространяться через все слои.
-
-**Требования**:
-- Все методы Tool.Execute() должны уважать отмену контекста
-- Вызовы LLM должны передавать контекст через все слои
-- HTTP клиенты должны использовать контекст для запросов
-- Фоновые горутины должны наследовать родительский контекст
-- Использовать select для проверки контекста в циклах
-
-**Пример**:
+**Example - Correct (Rule 6 compliant):**
 ```go
-// ✅ ХОРОШО: Распространение контекста
-func (t *MyTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-    // Передаем контекст во все вызовы
-    result, err := t.client.DoSomething(ctx, ...)
-    if err != nil {
-        return "", fmt.Errorf("operation failed: %w", err)
-    }
-    return result, nil
-}
+// pkg/tui/simple.go - Library code
+import "github.com/ilkoid/poncho-ai/pkg/events"  // ✅ Only Port interface
 
-// ❌ ПЛОХО: Игнорирование контекста
-func (t *MyTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-    // Используем context.Background() - теряем отмену
-    result, err := t.client.DoSomething(context.Background(), ...)
-    return result, err
-}
-
-12. Правило безопасности и управления секретами
-Никогда не хардкодить секреты. Использовать переменные окружения или управление секретами. Редактирование логов для чувствительных данных. Валидировать все входные данные.
-
-**Требования**:
-- Все секреты в config.yaml должны использовать синтаксис ${VAR}
-- Никогда не коммитить секреты в git (добавить в .gitignore)
-- Валидировать что секреты не являются дефолтными/шаблонными значениями
-- Редактировать чувствительные данные в логах (токены, пароли, PII)
-- Использовать HTTPS для всех внешних API вызовов
-- Валидировать и санитизировать все пользовательские входы
-
-**Пример**:
-```go
-// ✅ ХОРОШО: Переменные окружения для секретов
-type Config struct {
-    APIKey string `yaml:"api_key"` // Загружается из ${API_KEY}
-}
-
-// ✅ ХОРОШО: Валидация секретов
-func (c *Config) Validate() error {
-    if c.APIKey == "" || c.APIKey == "${API_KEY}" {
-        return errors.New("API_KEY environment variable not set")
-    }
-    
-    if len(c.APIKey) < 32 {
-        return errors.New("API_KEY appears invalid (too short)")
-    }
-    
-    return nil
-}
-
-// ✅ ХОРОШО: Редактирование логов
-func (t *MyTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-    var args struct {
-        Token string `json:"token"`
-        Data  string `json:"data"`
-    }
-    json.Unmarshal([]byte(argsJSON), &args)
-    
-    // Лог с редактированием
-    utils.Info("Processing request",
-        "token", redactToken(args.Token), // "abc...xyz"
-        "data_length", len(args.Data),
-    )
-    
-    return t.process(ctx, args)
-}
-
-func redactToken(token string) string {
-    if len(token) <= 8 {
-        return "***"
-    }
-    return token[:4] + "..." + token[len(token)-4:]
+type SimpleTui struct {
+    subscriber events.Subscriber  // ✅ Port interface only
+    onInput    func(input string) // Callback for business logic
 }
 ```
 
-13. Правило локализации ресурсов приложений
-Любое приложение в /cmd должно быть автономным и хранить свои ресурсы (yaml конфиги, логи и prompts) рядом с собой:
+**Example - Incorrect (Rule 6 violation):**
+```go
+// pkg/tui/model.go - Library code
+import "github.com/ilkoid/poncho-ai/pkg/agent"  // ❌ Violates Rule 6
 
-- **Промпты**: по умолчанию в {app_dir}/prompts/ (плоская структура без вложенных папок)
-- **Конфиг**: по умолчанию {app_dir}/config.yaml (ищется рядом с исполняемым файлом)
-- **Логи**: по умолчанию {app_dir}/logs/ (или stdout для CLI-утилит)
+type Model struct {
+    agent agent.Agent  // ❌ Tight coupling to business logic
+}
+```
 
-Каждое приложение в /cmd должно реализовывать ConfigPathFinder, который ищет config.yaml только в своей директории, и если это не так, то падает.
+### 7. Rule of Error Handling
+All errors must return up the call stack. No `panic()` in business logic.
+Framework must ensure resilience against LLM hallucinations.
 
-## Особые акценты
-Особенно хочу выделить несколько пунктов, почему этот манифест так хорош:
+### 8. Rule of Extensibility
+New features added only through:
+- New tools in `pkg/tools/std/` or custom packages
+- New LLM adapters in `pkg/llm/`
+- Config extensions (breaking changes allowed with user notification)
 
-"Raw In, String Out" (Правило 1): Это лучшее решение для LLM-инструментов. Попытка сделать типизированные аргументы на уровне интерфейса привела бы к аду с interface{} и рефлексией внутри ядра. А так — каждый инструмент сам знает, как распарсить свой JSON. Это делает систему бесконечно гибкой.
+### 9. Rule of Testing
+Each tool must have mockable dependencies for unit tests. No direct HTTP calls without abstraction.
+**Instead of tests initially:** Prepare utility in `/examples` for verification.
+Config, prompts, logs - all should lie next to the utility. Runs from its own folder.
 
-Реестр (Правило 3): Это превращает Poncho из простого скрипта в модульную систему. Можно собрать бинарник с одним набором тулов для админов, и с другим — для пользователей, просто изменив main.go, не трогая ядро.
+### 10. Rule of Documentation
+All public APIs must have godoc comments. Interface changes must update usage examples.
 
-Абстракция LLM (Правило 4): Критически важно. Сегодня моден OpenAI, завтра DeepSeek, послезавтра локальная Llama. Интерфейс Provider гарантирует, что фреймворк переживет смену хайпа.
+### 11. Rule of Context Propagation
+All long-running operations must accept and respect `context.Context` through all layers.
 
-Обработка ошибок и Resilience (Правило 7): Для AI-агентов это важнее, чем для веба. Модель будет ошибаться, будет выдавать битый JSON. Отсутствие паники и корректный возврат ошибки — единственный способ сделать стабильного робота.
+**Requirements:**
+- All `Tool.Execute()` methods must respect cancellation
+- LLM calls pass context through all layers
+- HTTP clients use context for requests
+- Background goroutines inherit parent context
+- Use `select` for context checks in loops
 
-Локализация ресурсов (Правило 13): Это превращает каждую утилиту в /cmd в самодостаточный артефакт, который можно скопировать в любую директорию и запускать независимо от основного проекта. Нет путаницы "где лежит конфиг?", нет зависимости от корня проекта. CLI-утилита должна работать как любой Linux tool — всё своё ношу с собой.
+### 12. Rule of Security & Secrets
+Never hardcode secrets. Use ENV variables `${VAR}` or secret management.
+Validate all inputs, redact sensitive data in logs, use HTTPS only.
+
+### 13. Rule of Resource Localization
+Any app in `/cmd` or in `/example` must be autonomous and store resources nearby:
+- **Prompts**: `{app_dir}/prompts/` (flat structure, no nested folders)
+- **Config**: `{app_dir}/config.yaml` (next to executable)
+- **Logs**: `{app_dir}/logs/` or stdout for CLI utilities
+
+Each `/cmd` app implements `ConfigPathFinder`, searching `config.yaml` only in its directory.
+
+---
+
+## Architectural Patterns
+
+### Port & Adapter Pattern
+Library depends on Port interface, Adapter implements Port:
+- `pkg/events` - Port (interfaces: `Emitter`, `Subscriber`)
+- `pkg/tui` - Adapter (implements `Subscriber`)
+- `pkg/agent` - Library (uses `Emitter` interface)
+
+**Dependency Direction:**
+```
+Library (pkg/agent) → Port (events.Emitter) ← Adapter (pkg/tui)
+```
+
+### Primitives-Based Architecture (TUI)
+UI components built from reusable primitives in `pkg/tui/primitives/`:
+
+| Primitive | Purpose | Pattern |
+|-----------|---------|---------|
+| **ViewportManager** | Smart scroll, resize handling | Repository |
+| **StatusBarManager** | Spinner, status bar, DEBUG indicator | State |
+| **EventHandler** | Pluggable event renderers | Strategy |
+| **InterruptionManager** | User input, channel, **MANDATORY callback** | Callback |
+| **DebugManager** | Screen save, debug mode, JSON logs | Facade |
+
+**Key Principles:**
+- Composition over inheritance
+- Each primitive has Single Responsibility
+- Thread-safe via `sync.RWMutex`
+- Callback pattern for business logic injection (Rule 6 compliant)
+
+### Event System Flow
+Six-phase flow from agent to UI:
+
+1. **Emission** - Agent emits events via `Emitter.Emit(ctx, Event)`
+2. **Transport** - `ChanEmitter` sends to buffered channel (size=100)
+3. **Subscription** - `Subscriber.Events()` returns read-only channel
+4. **Conversion** - `EventMsg` wraps `events.Event` as Bubble Tea message
+5. **Processing** - TUI `Update()` handles `EventMsg`, updates state
+6. **Rendering** - Bubble Tea renders updated `View()`
+
+**Event Types:**
+- `EventThinking` - Agent starts thinking
+- `EventThinkingChunk` - Streaming reasoning content
+- `EventToolCall` - Tool execution started
+- `EventToolResult` - Tool execution completed
+- `EventUserInterruption` - User interrupted execution
+- `EventMessage` - Agent generated message
+- `EventError` - Error occurred
+- `EventDone` - Agent finished
+
+### Interruption Mechanism
+User can interrupt agent execution in real-time:
+
+**Flow:**
+```
+User (types "todo: add test") → TUI → inputChan (size=10) →
+ReActExecutor (checks between iterations) →
+loadInterruptionPrompt() (YAML or fallback) →
+Emit EventUserInterruption → TUI displays interruption
+```
+
+**Key Features:**
+- Buffered channel (size=10) for inter-goroutine communication
+- Non-blocking checks via `select` with `default` case
+- YAML configuration: `chains.default.interruption_prompt`
+- Fallback to default prompt if YAML missing
+- Event emission via `EventUserInterruption`
+
+**Configuration (`config.yaml`):**
+```yaml
+chains:
+  default:
+    interruption_prompt: "prompts/interruption_handler.yaml"
+```
+
+---
+
+## Special Emphases
+
+**"Raw In, String Out" (Rule 1):** Best solution for LLM tools. Typed arguments at interface level would create hell with `interface{}` and reflection. Each tool knows how to parse its JSON - infinite flexibility.
+
+**Registry (Rule 3):** Transforms Poncho from script to modular system. Can build binary with one tool set for admins, another for users - just change `main.go`, no core changes.
+
+**LLM Abstraction (Rule 4):** Critical. Today OpenAI is trendy, tomorrow DeepSeek, day after local Llama. `Provider` interface guarantees framework survives hype changes.
+
+**Error Handling & Resilience (Rule 7):** More important for AI agents than web. Model will err, output broken JSON. No panic + proper error return = only way to build stable robot.
+
+**Port & Adapter (Rule 6):** **THE MOST CRITICAL RULE.** Eliminates circular dependencies, enables testing, makes `pkg/` truly reusable. TUI refactoring eliminated `pkg/tui` → `pkg/agent` dependency via callback pattern.
+
+---
+
+**Last Updated:** 2026-01-19
+**Version:** 7.0 (English, TUI-REFACTORING integration)

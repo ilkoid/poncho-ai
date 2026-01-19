@@ -136,7 +136,9 @@ Event Flow (Port & Adapter):
 
 | Tool | Purpose | Interface | Key Features |
 |------|---------|-----------|--------------|
-| **poncho** | Main TUI application | Bubble Tea | Full agent interface, file management, vision |
+| **poncho** | Main TUI application | Bubble Tea | Full agent interface, file management, vision, interruptions |
+| **interruption-test** | Interruption mechanism demo | Bubble Tea | Real-time user interruption, Rule 6 compliant |
+| **todo-agent** | Standalone task planner | Bubble Tea | Autonomous todo management |
 
 
 ### 2.2 Main Applications
@@ -147,11 +149,25 @@ Event Flow (Port & Adapter):
 **Usage**:
 ```bash
 go run cmd/poncho/main.go
-# or
-go build -o poncho cmd/poncho/main.go && ./poncho
 ```
 
-**Commands**: `todo`, `load <id>`, `render <file>`, `ask <query>`, or any natural language.
+**Commands**: `todo`, `load <id>`, `render <file>`, `ask <query>`, or natural language. Supports real-time interruptions via Ctrl+C during execution.
+
+#### interruption-test - Interruption Demo
+**Location**: `cmd/interruption-test/main.go`
+
+**Purpose**: Demonstrates Rule 6 compliant interruption mechanism.
+
+**Usage**:
+```bash
+cd cmd/interruption-test && go run main.go
+```
+
+**Features**:
+- Real-time user interruption during agent execution
+- Buffered channel (size=10) for inter-goroutine communication
+- YAML-first configuration with fallback
+- Event emission via `EventUserInterruption`
 
 #### maxiponcho - WB PLM Analysis
 **Location**: `cmd/maxiponcho/main.go`
@@ -195,6 +211,11 @@ cd cmd/tools-test && go run main.go           # Tests all enabled tools
 **todo-agent** (standalone TUI for todo management):
 ```bash
 cd cmd/todo-agent && go run main.go           # Autonomous task planner
+```
+
+**interruption-test** (Rule 6 compliant interruption demo):
+```bash
+cd cmd/interruption-test && go run main.go     # Real-time interruption
 ```
 
 **wb-ping-util-v2** (demonstrates new 2-line API):
@@ -801,9 +822,48 @@ chains:
 
 ---
 
-## 5. The 11 Immutable Rules
+## 5. The 13 Immutable Rules
 
-These rules are defined in [`dev_manifest.md`](dev_manifest.md).
+These rules are defined in [`dev_manifest.md`](dev_manifest.md). **Version 7.0** includes enhanced Rule 6 (Port & Adapter pattern) and new "Architectural Patterns" section.
+
+### Rule 6: Package Structure ⭐ THE MOST CRITICAL RULE
+
+**Port & Adapter Pattern** - Eliminates circular dependencies, enables testing, makes `pkg/` truly reusable.
+
+```
+pkg/       - Library code, ready for reuse
+internal/  - Application-specific logic
+cmd/       - Entry points, only initialization and orchestration
+```
+
+**Port & Adapter Compliance:**
+- ✅ Library (`pkg/`) defines Port interface (`events.Emitter`, `events.Subscriber`)
+- ✅ Adapter (`pkg/tui`, `internal/ui`) implements Port
+- ❌ Library (`pkg/tui`) must NOT import business logic (`pkg/agent`, `pkg/chain`)
+- ✅ Business logic injection via **callback pattern** from `cmd/` layer
+
+**Example - Correct (Rule 6 compliant):**
+```go
+// pkg/tui/simple.go - Library code
+import "github.com/ilkoid/poncho-ai/pkg/events"  // ✅ Only Port interface
+
+type SimpleTui struct {
+    subscriber events.Subscriber  // ✅ Port interface only
+    onInput    func(input string) // Callback for business logic
+}
+```
+
+**TUI Primitives** (created during TUI-REFACTORING 2026-01-19):
+
+| Primitive | Purpose | Pattern |
+|-----------|---------|---------|
+| **ViewportManager** | Smart scroll, resize handling | Repository |
+| **StatusBarManager** | Spinner, status bar, DEBUG indicator | State |
+| **EventHandler** | Pluggable event renderers | Strategy |
+| **InterruptionManager** | User input, channel, **MANDATORY callback** | Callback |
+| **DebugManager** | Screen save, debug mode, JSON logs | Facade |
+
+All primitives are thread-safe (`sync.RWMutex`) and independently testable.
 
 ### Rule 0: Code Reuse
 Use existing solutions first. Refactor when necessary.
@@ -853,10 +913,81 @@ Use CLI utilities for verification instead of unit tests during development.
 ### Rule 10: Documentation
 Godoc on all public APIs.
 
-### Rule 11: Resource Localization
-Applications in `/cmd` must be autonomous with resources nearby.
+### Rule 11: Context Propagation
+All long-running operations must accept and respect `context.Context` through all layers.
+
+**Requirements:**
+- All `Tool.Execute()` methods must respect cancellation
+- LLM calls pass context through all layers
+- HTTP clients use context for requests
+- Background goroutines inherit parent context
+- Use `select` for context checks in loops
+
+### Rule 12: Security & Secrets
+Never hardcode secrets. Use ENV variables `${VAR}` or secret management.
+
+**Requirements:**
+- All secrets in config.yaml use `${VAR}` syntax
+- Validate all inputs, redact sensitive data in logs, use HTTPS only
+
+### Rule 13: Resource Localization
+Applications in `/cmd` or `/examples` must be autonomous with resources nearby.
 
 **Why**: Turns utilities into self-contained artifacts that work like Linux tools.
+
+---
+
+## Architectural Patterns
+
+### Port & Adapter Pattern
+Library depends on Port interface, Adapter implements Port:
+
+```
+Library (pkg/agent) → Port (events.Emitter) ← Adapter (pkg/tui)
+```
+
+- `pkg/events` - Port (interfaces: `Emitter`, `Subscriber`)
+- `pkg/tui` - Adapter (implements `Subscriber`)
+- `pkg/agent` - Library (uses `Emitter` interface)
+
+### Primitives-Based Architecture (TUI)
+UI components built from reusable primitives in `pkg/tui/primitives/`:
+
+**Key Principles:**
+- Composition over inheritance
+- Each primitive has Single Responsibility
+- Thread-safe via `sync.RWMutex`
+- Callback pattern for business logic injection (Rule 6 compliant)
+
+**Refactoring Achievement**: TUI-REFACTORING (2026-01-19) successfully eliminated `pkg/tui` → `pkg/agent` dependency by creating these primitives.
+
+### Event System Flow
+Six-phase flow from agent to UI:
+
+1. **Emission** - Agent emits events via `Emitter.Emit(ctx, Event)`
+2. **Transport** - `ChanEmitter` sends to buffered channel (size=100)
+3. **Subscription** - `Subscriber.Events()` returns read-only channel
+4. **Conversion** - `EventMsg` wraps `events.Event` as Bubble Tea message
+5. **Processing** - TUI `Update()` handles `EventMsg`, updates state
+6. **Rendering** - Bubble Tea renders updated `View()`
+
+### Interruption Mechanism
+User can interrupt agent execution in real-time:
+
+**Flow:**
+```
+User (types "todo: add test") → TUI → inputChan (size=10) →
+ReActExecutor (checks between iterations) →
+loadInterruptionPrompt() (YAML or fallback) →
+Emit EventUserInterruption → TUI displays interruption
+```
+
+**Configuration (`config.yaml`):**
+```yaml
+chains:
+  default:
+    interruption_prompt: "prompts/interruption_handler.yaml"
+```
 
 ---
 
@@ -1052,6 +1183,63 @@ Easy to add tools, LLM adapters, commands, CLI utilities.
 
 ---
 
+## 9. Development Workflow Updates
+
+### 9.1 TUI Primitives Usage
+
+**When creating TUI components, use primitives instead of direct implementation:**
+
+```go
+// Create primitives
+vm := primitives.NewViewportManager(primitives.ViewportConfig{
+    MinWidth:  20,
+    MinHeight: 1,
+})
+
+sm := primitives.NewStatusBarManager(primitives.DefaultStatusBarConfig())
+
+sub := events.NewChanEmitter(100).Subscribe()
+
+eh := primitives.NewEventHandler(sub, vm, sm)
+
+// Create TUI with primitives
+model := tui.NewBaseModel(ctx, sub)
+```
+
+### 9.2 Interruption Mechanism Usage
+
+**Create interruption-aware agent:**
+
+```go
+// Create channel for interruptions
+inputChan := make(chan string, 10)
+
+// Execute with interruption support
+output, err := client.Execute(ctx, chain.ChainInput{
+    UserQuery:     "Analyze product data",
+    State:          client.GetState(),
+    Registry:       client.GetToolsRegistry(),
+    Config:         chainConfig,
+    UserInputChan:  inputChan,  // ← Interruption channel
+})
+
+// During execution, send interruptions:
+inputChan <- "todo: add verify SKU data"
+inputChan <- "What are you doing?"
+```
+
+### 9.3 Rule 6 Compliance Checklist
+
+Before committing code, verify:
+
+- [ ] `pkg/tui` does NOT import `pkg/agent` or `pkg/chain`
+- [ ] `pkg/tui` only imports `pkg/events` (Port interface)
+- [ ] Business logic injected via callbacks from `cmd/` layer
+- [ ] TUI models use `SetOnInput()` callback pattern
+- [ ] All primitives use `sync.RWMutex` for thread-safety
+
+---
+
 ## Conclusion
 
 Poncho AI is a **mature AI agent framework** with:
@@ -1071,7 +1259,22 @@ The framework follows **"Convention over Configuration"** - developers follow si
 
 ---
 
-**Last Updated**: 2026-01-14
-**Version**: 3.6 (Streaming, Expanded WB Tools, Chain Refactor)
+**Last Updated**: 2026-01-19
+**Version**: 4.0 (TUI-REFACTORING Integration, Rule 6 Enhanced, Architectural Patterns)
+
+**Version 4.0 Changes**:
+- ✅ Updated to **13 Immutable Rules** (added Rules 12-13)
+- ✅ **Rule 6 Enhanced** with Port & Adapter pattern details
+- ✅ **New "Architectural Patterns" section** added
+- ✅ **TUI Primitives documented**: ViewportManager, StatusBarManager, EventHandler, InterruptionManager, DebugManager
+- ✅ **Interruption Mechanism** documented with flow and configuration
+- ✅ **Event System Flow** documented (six-phase flow)
+- ✅ **Rule 6 Compliance Checklist** added
+
+**Version 3.6 Changes** (retained):
+- ✅ Streaming support via StreamingProvider
+- ✅ Expanded WB tools (analytics, attribution)
+- ✅ Chain refactored with Template/Execution pattern
+- ✅ Observer pattern for cross-cutting concerns
 
 **Maintainer**: Poncho AI Development Team

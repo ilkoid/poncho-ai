@@ -81,19 +81,139 @@ poncho-ai/
 | **3: Registry** | All tools via `Registry.Register()` |
 | **4: LLM Abstraction** | Work through `Provider` interface only |
 | **5: State** | Layered, thread-safe, no globals |
-| **6: Package Structure** | `pkg/` = reusable, `internal/` = app-specific, `cmd/` = test utilities only |
+| **6: Package Structure** ⭐ | `pkg/` = reusable, `internal/` = app-specific, `cmd/` = test utilities only. **See Port & Adapter details below** |
 | **7: Error Handling** | No `panic()` in business logic |
 | **8: Extensibility** | Add via tools, LLM adapters, config |
 | **9: Testing** | Use CLI utilities in `/examples` (test purpose only) |
 | **10: Documentation** | Godoc on public APIs |
 | **11: Context Propagation** | All long-running operations must accept and respect `context.Context` through all layers |
 | **12: Security & Secrets** | Never hardcode secrets. Use ENV vars `${VAR}`, validate inputs, redact sensitive data in logs, HTTPS only |
-| **13: Resource Localization** | Autonomous `/cmd` apps with local config/prompts |
+| **13: Resource Localization** | Autonomous `/cmd` and `/examples` apps with local config/prompts |
+
+### Rule 6: Package Structure (Port & Adapter Pattern) ⭐ THE MOST CRITICAL RULE
+
+```
+pkg/       - Library code, ready for reuse
+internal/  - Application-specific logic
+cmd/       - Entry points, only initialization and orchestration
+```
+
+**Port & Adapter Compliance:**
+- ✅ Library (`pkg/`) defines Port interface (`events.Emitter`, `events.Subscriber`)
+- ✅ Adapter (`pkg/tui`, `internal/ui`) implements Port
+- ❌ Library (`pkg/tui`) must NOT import business logic (`pkg/agent`, `pkg/chain`)
+- ✅ Business logic injection via **callback pattern** from `cmd/` layer
+
+**Example - Correct (Rule 6 compliant):**
+```go
+// pkg/tui/simple.go - Library code
+import "github.com/ilkoid/poncho-ai/pkg/events"  // ✅ Only Port interface
+
+type SimpleTui struct {
+    subscriber events.Subscriber  // ✅ Port interface only
+    onInput    func(input string) // Callback for business logic
+}
+```
+
+**Example - Incorrect (Rule 6 violation):**
+```go
+// pkg/tui/model.go - Library code
+import "github.com/ilkoid/poncho-ai/pkg/agent"  // ❌ Violates Rule 6
+
+type Model struct {
+    agent agent.Agent  // ❌ Tight coupling to business logic
+}
+```
 
 **Rule 11 Compliance Status**: ✅ **FULLY COMPLIANT** (2026-01-12)
 - `pkg/app/components.go`: `Initialize(parentCtx, ...)` and `Execute(parentCtx, ...)`
 - `pkg/tui/`: Context stored in Model struct for Bubble Tea integration
 - All entry points pass `context.Background()` or parent context
+
+---
+
+## Architectural Patterns
+
+### Port & Adapter Pattern
+Library depends on Port interface, Adapter implements Port:
+
+```
+Library (pkg/agent) → Port (events.Emitter) ← Adapter (pkg/tui)
+```
+
+- `pkg/events` - Port (interfaces: `Emitter`, `Subscriber`)
+- `pkg/tui` - Adapter (implements `Subscriber`)
+- `pkg/agent` - Library (uses `Emitter` interface)
+
+**Dependency Direction:**
+- ✅ Library (`pkg/`) defines Port interface
+- ✅ Adapter (`pkg/tui`, `internal/ui`) implements Port
+- ❌ Library (`pkg/tui`) must NOT import business logic (`pkg/agent`, `pkg/chain`)
+- ✅ Business logic injection via callback pattern from `cmd/` layer
+
+### Primitives-Based Architecture (TUI)
+UI components built from reusable primitives in `pkg/tui/primitives/`:
+
+| Primitive | Purpose | Pattern |
+|-----------|---------|---------|
+| **ViewportManager** | Smart scroll, resize handling | Repository |
+| **StatusBarManager** | Spinner, status bar, DEBUG indicator | State |
+| **EventHandler** | Pluggable event renderers | Strategy |
+| **InterruptionManager** | User input, channel, **MANDATORY callback** | Callback |
+| **DebugManager** | Screen save, debug mode, JSON logs | Facade |
+
+**Key Principles:**
+- Composition over inheritance
+- Each primitive has Single Responsibility
+- Thread-safe via `sync.RWMutex`
+- Callback pattern for business logic injection (Rule 6 compliant)
+
+**Refactoring Achievement:** TUI-REFACTORING (2026-01-19) successfully eliminated `pkg/tui` → `pkg/agent` dependency by creating these primitives.
+
+### Event System Flow
+Six-phase flow from agent to UI:
+
+1. **Emission** - Agent emits events via `Emitter.Emit(ctx, Event)`
+2. **Transport** - `ChanEmitter` sends to buffered channel (size=100)
+3. **Subscription** - `Subscriber.Events()` returns read-only channel
+4. **Conversion** - `EventMsg` wraps `events.Event` as Bubble Tea message
+5. **Processing** - TUI `Update()` handles `EventMsg`, updates state
+6. **Rendering** - Bubble Tea renders updated `View()`
+
+**Event Types:**
+- `EventThinking` - Agent starts thinking
+- `EventThinkingChunk` - Streaming reasoning content
+- `EventToolCall` - Tool execution started
+- `EventToolResult` - Tool execution completed
+- `EventUserInterruption` - User interrupted execution
+- `EventMessage` - Agent generated message
+- `EventError` - Error occurred
+- `EventDone` - Agent finished
+
+### Interruption Mechanism
+User can interrupt agent execution in real-time:
+
+**Flow:**
+```
+User (types "todo: add test") → TUI → inputChan (size=10) →
+ReActExecutor (checks between iterations) →
+loadInterruptionPrompt() (YAML or fallback) →
+Emit EventUserInterruption → TUI displays interruption
+```
+
+**Key Features:**
+- Buffered channel (size=10) for inter-goroutine communication
+- Non-blocking checks via `select` with `default` case
+- YAML configuration: `chains.default.interruption_prompt`
+- Fallback to default prompt if YAML missing
+- Event emission via `EventUserInterruption`
+
+**Configuration (`config.yaml`):**
+```yaml
+chains:
+  default:
+    interruption_prompt: "prompts/interruption_handler.yaml"
+```
 
 ---
 
@@ -413,7 +533,20 @@ emitter.Emit(ctx, events.Event{Type: events.EventThinking, Data: "query"})
 
 **Purpose**: Adapter layer between `pkg/events` and Bubble Tea framework.
 
-**PHASE 5 REFACTOR COMPLETE (2026-01-19)**: model.go split into 6 files by Single Responsibility Principle.
+**PHASE 5 REFACTOR COMPLETE (2026-01-19)**: model.go split into 11 files by Single Responsibility Principle.
+
+**TUI Primitives (`pkg/tui/primitives/`):**
+Created during TUI-REFACTORING to eliminate `pkg/tui` → `pkg/agent` dependency:
+
+| Primitive | File | Purpose |
+|-----------|------|---------|
+| **ViewportManager** | viewport.go | Smart scroll, resize handling (4 bug fixes!) |
+| **StatusBarManager** | status.go | Spinner, status bar, DEBUG indicator |
+| **EventHandler** | events.go | Pluggable event renderers (Strategy pattern) |
+| **InterruptionManager** | interruption.go | User input, channel, **MANDATORY callback** |
+| **DebugManager** | debug.go | Screen save, debug mode, JSON logs |
+
+All primitives are thread-safe (`sync.RWMutex`) and independently testable.
 
 **Components**:
 - `adapter.go` - EventMsg type, ReceiveEventCmd, WaitForEvent
@@ -1309,18 +1442,25 @@ Each WB tool gets its own rate limiter instance (e.g., `get_wb_feedbacks`: 60/mi
 
 ---
 
-**Last Updated**: 2026-01-18
-**Version**: 6.3 (Reference Post-Prompts System + S3 Download Tool)
+**Last Updated**: 2026-01-19
+**Version**: 7.0 (English, TUI-REFACTORING integration)
 
-**Version 6.3 Changes**:
-- ✅ Reference post-prompts system for Poncho AI tools (latest commit)
+**Version 7.0 Changes**:
+- ✅ **dev_manifest.md converted to English** with enhanced Rule 6 (Port & Adapter pattern)
+- ✅ **New "Architectural Patterns" section** added to dev_manifest.md
+- ✅ **TUI Primitives documented**: ViewportManager, StatusBarManager, EventHandler, InterruptionManager, DebugManager
+- ✅ **Rule 6 enhanced** with correct/incorrect code examples
+- ✅ **Event System Flow** documented (six-phase flow)
+- ✅ **Interruption Mechanism** documented with configuration examples
+
+**Version 6.3 Changes** (retained):
+- ✅ Reference post-prompts system for Poncho AI tools
 - ✅ `download_s3_files` tool - downloads files/folders from S3 to local disk
 - ✅ `pkg/s3storage/client.go`: Added `DownloadToFile()` method (Rule 11 compliant)
 - ✅ `pkg/debug/`: Enhanced with base64 truncation for large image data
 - ✅ `pkg/tui/viewport_helpers.go`: Smart scroll helpers exported
 - ✅ `pkg/chain/utils.go`: Added `min()` helper function
 - ✅ `prompts/ru/`: New directory for Russian language prompts
-- ✅ Debug log improvements: `MaxResultSize` config, base64 pattern truncation
 
 **Version 6.2 Changes** (retained):
 - ✅ `analyze_article_images_batch` tool implemented (sequential vision processing)
