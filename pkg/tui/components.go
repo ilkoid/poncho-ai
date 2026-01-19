@@ -4,7 +4,11 @@
 // Это позволяет избежать дублирования кода стилей между model.go и simple.go.
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // ===== SHARED STYLES =====
 // Эти функции используются в model.go и simple.go для консистентного рендеринга.
@@ -72,6 +76,20 @@ func ToolResultStyle(str string) string {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color("154")). // Green
 		Render(str)
+}
+
+// DividerStyle возвращает горизонтальную разделительную линию.
+func DividerStyle(width int) string {
+	line := strings.Repeat("─", width)
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")). // Тёмно-серый
+		Render(line)
+}
+
+// dividerStyle — внутренняя функция для использования в pkg/tui (неэкспортируемая).
+// Оставлена для обратной совместимости с существующим кодом.
+func dividerStyle(width int) string {
+	return DividerStyle(width)
 }
 
 // ===== COMPONENT BUILDERS =====

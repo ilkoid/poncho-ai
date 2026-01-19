@@ -96,3 +96,24 @@ When you need to use a tool, respond with a function call in the following forma
 
 After receiving tool results, analyze them and determine if you need more information or can provide a final answer.
 Be concise and helpful in your responses.`
+
+// DefaultChainConfig возвращает дефолтную конфигурацию ReAct цикла.
+//
+// Эта функция экспортирована для использования в cmd/ приложениях,
+// что позволяет избежать дублирования кода конфигурации.
+//
+// Provides sensible defaults for:
+//   - Type: "react"
+//   - MaxIterations: 10
+//   - PostPromptsDir: "./prompts"
+//   - InterruptionPrompt: "interruption_handler.yaml"
+//
+// Applications can override these values by modifying the returned ChainConfig.
+func DefaultChainConfig() ChainConfig {
+	return ChainConfig{
+		Type:               "react",
+		MaxIterations:      10,
+		PostPromptsDir:     "./prompts",
+		InterruptionPrompt: "interruption_handler.yaml",
+	}
+}

@@ -413,38 +413,62 @@ emitter.Emit(ctx, events.Event{Type: events.EventThinking, Data: "query"})
 
 **Purpose**: Adapter layer between `pkg/events` and Bubble Tea framework.
 
-**PHASE 6 REFACTOR COMPLETE**: Callback-based architecture with Rule 6 compliance.
+**PHASE 5 REFACTOR COMPLETE (2026-01-19)**: model.go split into 6 files by Single Responsibility Principle.
 
 **Components**:
 - `adapter.go` - EventMsg type, ReceiveEventCmd, WaitForEvent
-- `model.go` - Base TUI Model with agent integration and InterruptionModel
+- `base.go` - BaseModel (primitives-based, thread-safe)
 - `simple.go` - SimpleTui - minimalist UI component (callback pattern)
 - `viewport_helpers.go` - Smart scroll helpers (position preservation)
-- `components.go` - Shared styling functions (SystemStyle, AIMessageStyle, etc.)
-- `run.go` - Ready-to-use TUI runner, DefaultChainConfig export
+- `components.go` - Shared styling functions (SystemStyle, AIMessageStyle, DividerStyle)
+- `keys.go` - KeyMap definition and key bindings (NEW: Phase 5)
+- `utils.go` - Utilities (clearLogs, stripANSICodes, truncate) (NEW: Phase 5)
+- `messages.go` - Bubble Tea message types (saveSuccessMsg, saveErrorMsg) (NEW: Phase 5)
+- `interruption.go` - InterruptionModel (main logic) (NEW: Phase 5)
+- `todo.go` - Todo operations (InterruptionModel methods) (NEW: Phase 5)
+- `questions.go` - Question handling (ask_user_question) (NEW: Phase 5)
+
+**File Structure** (Phase 5):
+```
+pkg/tui/
+├── adapter.go              # EventMsg, ReceiveEventCmd, WaitForEvent
+├── base.go                 # BaseModel (primitives-based)
+├── base_test.go            # BaseModel tests
+├── colors.go               # Color schemes
+├── components.go           # Shared styles + DividerStyle
+├── simple.go               # SimpleTui (minimalist UI)
+├── viewport_helpers.go     # Smart scroll helpers
+├── keys.go                 # KeyMap definition ✨ NEW (Phase 5)
+├── utils.go                # Utilities ✨ NEW (Phase 5)
+├── messages.go             # Message types ✨ NEW (Phase 5)
+├── interruption.go         # InterruptionModel ✨ NEW (Phase 5)
+├── todo.go                 # Todo operations ✨ NEW (Phase 5)
+└── questions.go            # Question handling ✨ NEW (Phase 5)
+```
 
 **Architecture**:
 - `pkg/events.*` - Port (interfaces)
 - `pkg/tui.*` - Adapter helpers (reusable utilities)
-- `internal/ui.*` - Concrete TUI implementation (app-specific)
+- `pkg/tui/primitives.*` - Low-level building blocks (ViewportManager, etc.)
 
 **TUI Models**:
-1. **SimpleTui** - Minimalist "lego brick":
+1. **BaseModel** - Primitives-based foundation:
+   - Embeds all 5 primitives (ViewportManager, StatusBarManager, etc.)
+   - Thread-safe, Rule 6 compliant
+   - Used as foundation for extensions
+
+2. **SimpleTui** - Minimalist "lego brick":
    - Callback pattern via `OnInput()`
    - Pure UI (no business logic)
    - Smart scroll via `AppendToViewport()`
    - Recommended for new applications
 
-2. **Model** - Full-featured base:
-   - All UI functions (help, debug, todo)
-   - Used as foundation for extensions
-   - Smart scroll behavior
-
 3. **InterruptionModel** - Interruption support:
-   - Extends Model via composition
+   - Embeds BaseModel
    - **Requires** `SetOnInput()` callback (mandatory)
    - No embedded business logic (Rule 6 compliant)
-   - Ctrl+L for debug log path
+   - Ctrl+L for debug log path, Ctrl+G for debug mode
+   - Question handling via `questions.go` (ask_user_question tool)
 
 **Basic Usage** (SimpleTui):
 ```go

@@ -94,8 +94,8 @@ func run() error {
 	// 6. Канал для прерываний
 	inputChan := make(chan string, 10)
 
-	// 5. Создаём ChainConfig на основе дефолтной (из pkg/tui)
-	chainCfg := tui.DefaultChainConfig()
+	// 5. Создаём ChainConfig на основе дефолтной (из pkg/chain)
+	chainCfg := chain.DefaultChainConfig()
 
 	// Кастомизируем для interruption-test
 	// Примечание: Debug-логирование настраивается в openrouter_conf.yaml (app.debug_logs)

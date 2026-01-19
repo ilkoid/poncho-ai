@@ -157,7 +157,7 @@ func NewSimpleTui(subscriber events.Subscriber, config SimpleUIConfig) *SimpleTu
 	// Настройка viewport
 	vp := viewport.New(0, 0)
 	vp.SetContent(fmt.Sprintf("%s\n",
-		systemStyle("AI Agent initialized. Type your query..."),
+		SystemStyle("AI Agent initialized. Type your query..."),
 	))
 
 	return &SimpleTui{
@@ -324,7 +324,7 @@ func (t *SimpleTui) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd)
 	if !t.ready {
 		t.ready = true
 		dimensions := fmt.Sprintf("Window: %dx%d", msg.Width, msg.Height)
-		t.appendMessage(systemStyle(dimensions), false)
+		t.appendMessage(SystemStyle(dimensions), false)
 	}
 
 	return t, nil

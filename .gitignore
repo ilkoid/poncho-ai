@@ -111,3 +111,5 @@ cmd/interruption-test/poncho_log_*.md
 # TUI audit reports (temporary)
 *_audit_report.md
 tui_audit_report.md
+TUI-REFACTORING-AUDIT.md
+TUI-CLEANUP-PLAN.md
