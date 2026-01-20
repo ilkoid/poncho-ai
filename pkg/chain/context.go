@@ -113,9 +113,9 @@ func (c *ChainContext) AppendMessage(msg llm.Message) error {
 // REFACTORED 2026-01-04: Теперь очищает историю в CoreState и добавляет новые сообщения.
 // Используется для восстановления состояния.
 func (c *ChainContext) SetMessages(msgs []llm.Message) error {
-	// Очищаем текущую историю через Update с возвратом пустого слайса
-	// REFACTORED 2026-01-04: ClearHistory() удален, используем Set напрямую
-	if err := c.State.Set(state.KeyHistory, []llm.Message{}); err != nil {
+	// Очищаем текущую историю через type-safe SetType
+	// REFACTORED 2026-01-20: Используем SetType для типобезопасности
+	if err := state.SetType[[]llm.Message](c.State, state.KeyHistory, []llm.Message{}); err != nil {
 		return fmt.Errorf("failed to clear history: %w", err)
 	}
 

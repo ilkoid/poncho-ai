@@ -86,11 +86,14 @@ func (s *CoreState) Get(key Key) (any, bool) {
 	return val, ok
 }
 
-// Set сохраняет значение по ключу.
+// set сохраняет значение по ключу (internal, untyped).
+//
+// ПЕРЕД ПРИМЕНЕНИЕМ: Используйте SetType[T]() для type-safe операций!
+// Этот метод приватный для внутренних нужд фреймворка.
 //
 // Перезаписывает существующее значение или создает новое.
 // Thread-safe: запись защищена мьютексом.
-func (s *CoreState) Set(key Key, value any) error {
+func (s *CoreState) set(key Key, value any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.store[string(key)] = value
@@ -248,7 +251,11 @@ func (s *CoreState) Append(msg llm.Message) error {
 		if val == nil {
 			return []llm.Message{msg}
 		}
-		history := val.([]llm.Message)
+		history, ok := val.([]llm.Message)
+		if !ok {
+			utils.Error("Append: type assertion failed", "key", KeyHistory)
+			return []llm.Message{msg}
+		}
 		return append(history, msg)
 	})
 }
@@ -263,7 +270,11 @@ func (s *CoreState) GetHistory() []llm.Message {
 		return []llm.Message{}
 	}
 
-	history := val.([]llm.Message)
+	history, ok := val.([]llm.Message)
+	if !ok {
+		utils.Error("GetHistory: type assertion failed", "key", KeyHistory)
+		return []llm.Message{}
+	}
 	dst := make([]llm.Message, len(history))
 	copy(dst, history)
 	return dst
@@ -280,7 +291,7 @@ func (s *CoreState) GetHistory() []llm.Message {
 //
 // Thread-safe: атомарная замена всей map файлов.
 func (s *CoreState) SetFiles(files map[string][]*s3storage.FileMeta) error {
-	return s.Set(KeyFiles, files)
+	return s.set(KeyFiles, files)
 }
 
 // GetFiles возвращает копию текущих файлов.
@@ -292,7 +303,11 @@ func (s *CoreState) GetFiles() map[string][]*s3storage.FileMeta {
 		return make(map[string][]*s3storage.FileMeta)
 	}
 
-	files := val.(map[string][]*s3storage.FileMeta)
+	files, ok := val.(map[string][]*s3storage.FileMeta)
+	if !ok {
+		utils.Error("GetFiles: type assertion failed", "key", KeyFiles)
+		return make(map[string][]*s3storage.FileMeta)
+	}
 	result := make(map[string][]*s3storage.FileMeta, len(files))
 	for k, v := range files {
 		result[k] = append([]*s3storage.FileMeta{}, v...)
@@ -356,7 +371,7 @@ func (s *CoreState) SetCurrentArticle(articleID string, files map[string][]*s3st
 	if err := s.SetFiles(files); err != nil {
 		return err
 	}
-	return s.Set(KeyCurrentArticle, articleID)
+	return s.set(KeyCurrentArticle, articleID)
 }
 
 // GetCurrentArticleID возвращает ID текущего артикула.
@@ -396,7 +411,7 @@ func (s *CoreState) AddTask(description string, metadata ...map[string]interface
 	if manager == nil {
 		// Создаем новый менеджер если не существует
 		manager = todo.NewManager()
-		if err := s.Set(KeyTodo, manager); err != nil {
+		if err := s.set(KeyTodo, manager); err != nil {
 			return 0, fmt.Errorf("failed to create todo manager: %w", err)
 		}
 	}
@@ -471,7 +486,7 @@ func (s *CoreState) GetTodoManager() *todo.Manager {
 //
 // Thread-safe: изменение защищено мьютексом.
 func (s *CoreState) SetTodoManager(manager *todo.Manager) error {
-	return s.Set(KeyTodo, manager)
+	return s.set(KeyTodo, manager)
 }
 
 // getTodoManager — вспомогательный метод для получения todo.Manager.
@@ -490,7 +505,7 @@ func (s *CoreState) getTodoManager() *todo.Manager {
 //
 // Thread-safe: изменение защищено мьютексом.
 func (s *CoreState) SetDictionaries(dicts *wb.Dictionaries) error {
-	return s.Set(KeyDictionaries, dicts)
+	return s.set(KeyDictionaries, dicts)
 }
 
 // GetDictionaries возвращает справочники маркетплейсов.
@@ -513,7 +528,7 @@ func (s *CoreState) SetStorage(client *s3storage.Client) error {
 	if client == nil {
 		return s.Delete(KeyStorage)
 	}
-	return s.Set(KeyStorage, client)
+	return s.set(KeyStorage, client)
 }
 
 // GetStorage возвращает S3 клиент.
@@ -543,7 +558,7 @@ func (s *CoreState) HasStorage() bool {
 // Rule 3: Все инструменты регистрируются через Registry.Register().
 // Rule 5: Thread-safe доступ к полям структуры.
 func (s *CoreState) SetToolsRegistry(registry *tools.Registry) error {
-	return s.Set(KeyToolsRegistry, registry)
+	return s.set(KeyToolsRegistry, registry)
 }
 
 // GetToolsRegistry возвращает реестр инструментов.
@@ -587,11 +602,16 @@ func (s *CoreState) BuildAgentContext(systemPrompt string) []llm.Message {
 	var visualContext string
 	files, hasFiles := s.store[string(KeyFiles)]
 	if hasFiles {
-		filesMap := files.(map[string][]*s3storage.FileMeta)
-		for tag, filesList := range filesMap {
-			for _, f := range filesList {
-				if f.VisionDescription != "" {
-					visualContext += fmt.Sprintf("- Файл [%s] %s: %s\n", tag, f.Filename, f.VisionDescription)
+		filesMap, ok := files.(map[string][]*s3storage.FileMeta)
+		if !ok {
+			utils.Error("BuildAgentContext: invalid files type", "key", KeyFiles)
+			visualContext = ""
+		} else {
+			for tag, filesList := range filesMap {
+				for _, f := range filesList {
+					if f.VisionDescription != "" {
+						visualContext += fmt.Sprintf("- Файл [%s] %s: %s\n", tag, f.Filename, f.VisionDescription)
+					}
 				}
 			}
 		}
@@ -606,15 +626,26 @@ func (s *CoreState) BuildAgentContext(systemPrompt string) []llm.Message {
 	var todoContext string
 	todoVal, hasTodo := s.store[string(KeyTodo)]
 	if hasTodo {
-		manager := todoVal.(*todo.Manager)
-		todoContext = manager.String()
+		manager, ok := todoVal.(*todo.Manager)
+		if !ok {
+			utils.Error("BuildAgentContext: invalid todo type", "key", KeyTodo)
+			todoContext = ""
+		} else {
+			todoContext = manager.String()
+		}
 	}
 
 	// 3. Получаем историю
 	var history []llm.Message
 	historyVal, hasHistory := s.store[string(KeyHistory)]
 	if hasHistory {
-		history = historyVal.([]llm.Message)
+		typedHistory, ok := historyVal.([]llm.Message)
+		if !ok {
+			utils.Error("BuildAgentContext: invalid history type", "key", KeyHistory)
+			history = make([]llm.Message, 0)
+		} else {
+			history = typedHistory
+		}
 	} else {
 		history = make([]llm.Message, 0)
 	}

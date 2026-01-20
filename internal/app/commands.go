@@ -148,8 +148,8 @@ func SetupTodoCommands(registry *CommandRegistry, state *AppState) {
 				return CommandResultMsg{Output: fmt.Sprintf("❌ Задача %d провалена: %s", id, reason)}
 
 			case "clear":
-				// REFACTORED 2026-01-04: ClearTodo() удален, используем Set напрямую
-				if err := state.Set(stpkg.KeyTodo, todo.NewManager()); err != nil {
+				// REFACTORED 2026-01-20: Используем type-safe SetType
+				if err := stpkg.SetType[*todo.Manager](state.CoreState, stpkg.KeyTodo, todo.NewManager()); err != nil {
 					return CommandResultMsg{Err: err}
 				}
 				return CommandResultMsg{Output: "🗑️ План очищен"}
