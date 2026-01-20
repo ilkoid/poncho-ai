@@ -1,14 +1,14 @@
 // Package tui предоставляет color schemes и стили для TUI компонентов.
 //
 // ColorSchemes позволяют пользователям кастомизировать внешний вид TUI
-// через SimpleUIConfig без изменения кода.
+// через TUIConfig (в pkg/app) без изменения кода.
 package tui
 
 import "github.com/charmbracelet/lipgloss"
 
 // ColorScheme определяет цвета для различных элементов TUI.
 //
-// Используется для кастомизации внешнего вида SimpleTui через SimpleUIConfig.
+// Используется для кастомизации внешнего вида InterruptionModel и BaseModel.
 // Каждое поле - это lipgloss.Color (может быть hex, ANSI, или named color).
 type ColorScheme struct {
 	// Status Bar

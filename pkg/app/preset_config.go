@@ -67,7 +67,7 @@ type PresetConfig struct {
 
 	// UI — конфигурация TUI (только для AppTypeTUI).
 	// Определяется локально для избежания циклического импорта с pkg/tui.
-	UI SimpleUIConfig
+	UI TUIConfig
 }
 
 // ===== UI CONFIG STRUCTURES (локальные копии для избежания циклического импорта) =====
@@ -91,11 +91,11 @@ type ColorScheme struct {
 	Border           lipgloss.Color
 }
 
-// SimpleUIConfig конфигурирует SimpleTui.
+// TUIConfig конфигурирует TUI (InterruptionModel).
 //
-// Это упрощенная копия из pkg/tui/simple.go для использования в PresetConfig.
-// Полная версия с методами доступна в pkg/tui.
-type SimpleUIConfig struct {
+// Используется в PresetConfig для настройки TUI параметров.
+// Локальная копия для избежания циклического импорта с pkg/tui.
+type TUIConfig struct {
 	Colors           ColorScheme
 	StatusHeight     int
 	InputHeight      int

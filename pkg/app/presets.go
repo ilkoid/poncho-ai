@@ -64,7 +64,7 @@ var Presets = map[string]*PresetConfig{
 		Models: ModelSelection{
 			Chat: "glm-4.6",
 		},
-		UI: SimpleUIConfig{
+		UI: TUIConfig{
 			Title:       "AI CLI",
 			InputPrompt: "AI> ",
 		},
@@ -80,7 +80,7 @@ var Presets = map[string]*PresetConfig{
 		Models: ModelSelection{
 			Reasoning: "glm-4.6",
 		},
-		UI: SimpleUIConfig{
+		UI: TUIConfig{
 			Title:          "Poncho AI",
 			InputPrompt:    "> ",
 			ShowTimestamp:  true,
@@ -111,7 +111,7 @@ var Presets = map[string]*PresetConfig{
 			Reasoning: "glm-4.6",
 			Vision:    "glm-4.6v-flash",
 		},
-		UI: SimpleUIConfig{
+		UI: TUIConfig{
 			Title:          "Poncho AI (Debug)",
 			InputPrompt:    "DEBUG> ",
 			ShowTimestamp:  true,

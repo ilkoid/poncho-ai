@@ -474,13 +474,13 @@ func runTUIFromAgent(ctx context.Context, client *Client, tuiErr *app.TUIRequire
 
 // runTUIImpl — реализация запуска TUI (определена ниже для избежания цикла).
 // Инициализируется через init() с фактической реализацией из pkg/tui.
-var runTUIImpl func(ctx context.Context, client *Client, emitter events.Emitter, uiConfig app.SimpleUIConfig) error
+var runTUIImpl func(ctx context.Context, client *Client, emitter events.Emitter, uiConfig app.TUIConfig) error
 
 func init() {
 	// Устанавливаем фактическую реализацию runTUIImpl
 	// Это избегает циклического импорта: pkg/agent может ссылаться на pkg/app,
 	// а pkg/app может вызывать этот callback.
-	runTUIImpl = func(ctx context.Context, client *Client, emitter events.Emitter, uiConfig app.SimpleUIConfig) error {
+	runTUIImpl = func(ctx context.Context, client *Client, emitter events.Emitter, uiConfig app.TUIConfig) error {
 		// Здесь нужен импорт pkg/tui, но мы не можем сделать это напрямую
 		// из-за возможного цикла. Вместо этого используем type assertion
 		// или defer фактическую реализацию в момент первого вызова.
@@ -491,12 +491,14 @@ func init() {
 		// ПРИМЕЧАНИЕ: Для TUI пресетов пользователь должен использовать:
 		//   client, _ := agent.NewFromPreset(ctx, "interactive-tui")
 		//   sub := client.Subscribe() // или через emitter
-		//   tui := tui.NewSimpleTui(sub, ...)
-		//   tui.Run()
+		//   model := tui.NewInterruptionModel(ctx, coreState, sub, inputChan)
+		//   model.SetOnInput(...)
+		//   p := tea.NewProgram(model)
+		//   p.Run()
 		//
 		// Либо использовать app.RunPreset() напрямую из main.go.
 
-		return fmt.Errorf("TUI presets require direct use of pkg/tui package. Use: client, _ := agent.NewFromPreset(ctx, 'interactive-tui'); then create tui.NewSimpleTui()")
+		return fmt.Errorf("TUI presets require manual setup. See cmd/interruption-test for example")
 	}
 }
 
