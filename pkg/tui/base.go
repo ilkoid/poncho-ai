@@ -156,6 +156,10 @@ func (m *BaseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return EventMsg(e)
 		})
 
+	case tea.MouseMsg:
+		// Обработка событий мыши (включая колесико)
+		return m.handleMouseMsg(msg)
+
 	case spinner.TickMsg:
 		// TickMsg для спиннера - обновляем через StatusBarManager
 		cmd := m.statusMgr.Update(msg)
@@ -238,11 +242,15 @@ func (m *BaseModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.ScrollUp):
-		m.viewportMgr.ScrollUp(1)
+		// Scroll up by one full page (viewport height)
+		vp := m.viewportMgr.GetViewport()
+		m.viewportMgr.ScrollUp(vp.Height)
 		return m, nil
 
 	case key.Matches(msg, m.keys.ScrollDown):
-		m.viewportMgr.ScrollDown(1)
+		// Scroll down by one full page (viewport height)
+		vp := m.viewportMgr.GetViewport()
+		m.viewportMgr.ScrollDown(vp.Height)
 		return m, nil
 
 	case key.Matches(msg, m.keys.SaveToFile):
@@ -277,6 +285,30 @@ func (m *BaseModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
 	}
+}
+
+// handleMouseMsg обрабатывает события мыши.
+//
+// Поддерживает прокрутку колёсиком мыши:
+//   - MouseButtonWheelUp: прокрутка вверх (3 линии за тик)
+//   - MouseButtonWheelDown: прокрутка вниз (3 линии за тик)
+//
+// Потокобезопасно через ViewportManager (sync.RWMutex).
+func (m *BaseModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Прокрутка колёсиком вверх
+	if msg.Button == tea.MouseButtonWheelUp {
+		m.viewportMgr.ScrollUp(3)
+		return m, nil
+	}
+
+	// Прокрутка колёсиком вниз
+	if msg.Button == tea.MouseButtonWheelDown {
+		m.viewportMgr.ScrollDown(3)
+		return m, nil
+	}
+
+	// Другие события мыши игнорируруем (клики, движения и т.д.)
+	return m, nil
 }
 
 // View реализует tea.Model интерфейс.

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ilkoid/poncho-ai/pkg/events"
@@ -134,6 +135,24 @@ func (m *InterruptionModel) Init() tea.Cmd {
 	return m.BaseModel.Init()
 }
 
+// shouldLogMsg returns true if the message type should be logged to debug.
+// Filters out high-frequency UI animation events (TickMsg, BlinkMsg, etc.)
+// that provide zero debugging value but create massive log files.
+func shouldLogMsg(msg tea.Msg) bool {
+	switch msg.(type) {
+	case spinner.TickMsg:
+		return false // Spinner animation (every ~100ms, 97% of log spam)
+	default:
+		// Check for cursor-related messages by type name
+		// Note: cursor.BlinkMsg is not exported separately in bubbletea
+		msgType := fmt.Sprintf("%T", msg)
+		if strings.HasPrefix(msgType, "cursor.") {
+			return false // Cursor animation (every ~500ms, 0.3% of log spam)
+		}
+		return true
+	}
+}
+
 // Update реализует tea.Model интерфейс для InterruptionModel.
 //
 // ⚠️ REFACTORED (Phase 3B): Теперь использует embedded BaseModel.
@@ -154,7 +173,10 @@ func (m *InterruptionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}()
 
-	m.debugLogIfEnabled("InterruptionModel.Update: called, msg type=%T", msg)
+	// Filter out high-frequency animation events (TickMsg, BlinkMsg, etc.) from debug logs
+	if shouldLogMsg(msg) {
+		m.debugLogIfEnabled("InterruptionModel.Update: called, msg type=%T", msg)
+	}
 
 	switch msg := msg.(type) {
 	case saveSuccessMsg:

@@ -118,8 +118,8 @@ func run() error {
 	// 9. Устанавливаем заголовок для TUI
 	baseModel.SetTitle("🧪 Interruption Test Utility")
 
-	// 10. Запускаем Bubble Tea с AltScreen для очистки экрана
-	p := tea.NewProgram(baseModel, tea.WithAltScreen())
+	// 10. Запускаем Bubble Tea с AltScreen и поддержкой мыши
+	p := tea.NewProgram(baseModel, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
