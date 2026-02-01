@@ -160,110 +160,157 @@ func (e *ReActExecutor) SetIterationObserver(observer *EmitterIterationObserver)
 //
 // Thread-safe: Использует изолированный ReActExecution.
 func (e *ReActExecutor) Execute(ctx context.Context, exec *ReActExecution) (ChainOutput, error) {
-	// 0. Notify observers: OnStart
+	// Initialize execution
+	if err := e.initializeExecution(ctx, exec); err != nil {
+		return e.notifyFinishWithError(exec, err)
+	}
+
+	// ReAct loop
+	iterations := 0
+	for iterations = 0; iterations < exec.config.MaxIterations; iterations++ {
+		e.notifyIterationStart(iterations)
+
+		// LLM step
+		llmResult, lastMsg, err := e.executeLLMStep(ctx, exec, iterations)
+		if err != nil {
+			return e.notifyFinishWithError(exec, err)
+		}
+
+		// Check for final answer or user input signal
+		if llmResult.Signal == SignalFinalAnswer || llmResult.Signal == SignalNeedUserInput {
+			exec.finalSignal = llmResult.Signal
+			e.notifyIterationEnd(iterations)
+			break
+		}
+
+		// Check for tool calls
+		if len(lastMsg.ToolCalls) == 0 {
+			if exec.finalSignal == SignalNone {
+				exec.finalSignal = SignalFinalAnswer
+			}
+			e.notifyIterationEnd(iterations)
+			break
+		}
+
+		// Tool execution
+		toolResult, err := e.handleToolExecution(ctx, exec, iterations)
+		if err != nil {
+			return e.notifyFinishWithError(exec, err)
+		}
+
+		// Check for interruption during tool execution
+		if toolResult.Signal == SignalUserInterruption {
+			if err := e.handleToolInterruption(ctx, exec, toolResult.Interruption, iterations); err != nil {
+				return e.notifyFinishWithError(exec, err)
+			}
+			continue
+		}
+
+		// Check for interruption between iterations
+		if err := e.checkUserInterruption(ctx, exec, iterations); err != nil {
+			return e.notifyFinishWithError(exec, err)
+		}
+
+		e.notifyIterationEnd(iterations)
+	}
+
+	return e.finalizeExecution(ctx, exec, iterations)
+}
+
+// initializeExecution инициализирует выполнение ReAct цикла.
+//
+// Уведомляет наблюдателей и добавляет user message в историю.
+func (e *ReActExecutor) initializeExecution(ctx context.Context, exec *ReActExecution) error {
+	// Notify observers: OnStart
 	for _, obs := range e.observers {
 		obs.OnStart(ctx, exec)
 	}
 
-	// 1. Добавляем user message в историю
+	// Добавляем user message в историю
 	if err := exec.chainCtx.AppendMessage(llm.Message{
 		Role:    llm.RoleUser,
 		Content: exec.chainCtx.Input.UserQuery,
 	}); err != nil {
-		return e.notifyFinishWithError(exec, fmt.Errorf("failed to append user message: %w", err))
+		return fmt.Errorf("failed to append user message: %w", err)
 	}
 
-	// 2. Debug запись теперь обрабатывается ChainDebugRecorder observer
-	// (была добавлена в ReActCycle.Execute())
+	return nil
+}
 
-	// 3. ReAct цикл
-	iterations := 0
-	for iterations = 0; iterations < exec.config.MaxIterations; iterations++ {
-		// Notify observers: OnIterationStart
-		for _, obs := range e.observers {
-			obs.OnIterationStart(iterations + 1)
+// executeLLMStep выполняет LLM шаг итерации.
+//
+// Возвращает (llmResult, lastMessage, error).
+func (e *ReActExecutor) executeLLMStep(ctx context.Context, exec *ReActExecution, iteration int) (StepResult, *llm.Message, error) {
+	// LLM Invocation
+	llmResult := exec.llmStep.Execute(ctx, exec.chainCtx)
+
+	// Обрабатываем результат
+	if llmResult.Action == ActionError || llmResult.Error != nil {
+		err := llmResult.Error
+		if err == nil {
+			err = fmt.Errorf("LLM step failed")
 		}
+		return StepResult{}, nil, err
+	}
 
-		// 3a. LLM Invocation
-		llmResult := exec.llmStep.Execute(ctx, exec.chainCtx)
+	// Отправляем события через iterationObserver
+	lastMsg := exec.chainCtx.GetLastMessage()
 
-		// Обрабатываем результат
-		if llmResult.Action == ActionError || llmResult.Error != nil {
-			err := llmResult.Error
-			if err == nil {
-				err = fmt.Errorf("LLM step failed")
-			}
-			return e.notifyFinishWithError(exec, err)
+	shouldSendThinking := true
+	if exec.emitter != nil && exec.streamingEnabled {
+		shouldSendThinking = false
+	}
+
+	if shouldSendThinking && e.iterationObserver != nil {
+		e.iterationObserver.EmitThinking(ctx, lastMsg.Content)
+	}
+
+	if e.iterationObserver != nil {
+		for _, tc := range lastMsg.ToolCalls {
+			e.iterationObserver.EmitToolCall(ctx, tc)
 		}
+	}
 
-		// 3b. Отправляем события через iterationObserver (PHASE 4)
-		lastMsg := exec.chainCtx.GetLastMessage()
+	return llmResult, lastMsg, nil
+}
 
-		// Проверяем: был ли streaming?
-		shouldSendThinking := true
-		if exec.emitter != nil && exec.streamingEnabled {
-			// Streaming был включен, EventThinkingChunk уже отправляли
-			shouldSendThinking = false
+// handleToolExecution выполняет tool execution шаг.
+//
+// Возвращает (toolResult, error).
+func (e *ReActExecutor) handleToolExecution(ctx context.Context, exec *ReActExecution, iteration int) (StepResult, error) {
+	// Tool Execution
+	toolResult := exec.toolStep.Execute(ctx, exec.chainCtx)
+
+	utils.Debug("Tool execution completed",
+		"iteration", iteration+1,
+		"action", toolResult.Action,
+		"signal", toolResult.Signal,
+		"error", toolResult.Error,
+		"will_continue", toolResult.Action == ActionContinue)
+
+	if toolResult.Action == ActionError || toolResult.Error != nil {
+		err := toolResult.Error
+		if err == nil {
+			err = fmt.Errorf("tool execution failed")
 		}
+		return StepResult{}, err
+	}
 
-		if shouldSendThinking && e.iterationObserver != nil {
-			e.iterationObserver.EmitThinking(ctx, lastMsg.Content)
+	// Отправляем EventToolResult через iterationObserver
+	if e.iterationObserver != nil {
+		for _, tr := range exec.toolStep.GetToolResults() {
+			e.iterationObserver.EmitToolResult(ctx, tr.Name, tr.Result, time.Duration(tr.Duration)*time.Millisecond)
 		}
+	}
 
-		// Отправляем EventToolCall для каждого tool call
-		if e.iterationObserver != nil {
-			for _, tc := range lastMsg.ToolCalls {
-				e.iterationObserver.EmitToolCall(ctx, tc)
-			}
-		}
+	return toolResult, nil
+}
 
-		// 3c. Проверяем сигнал от LLM шага
-		if llmResult.Signal == SignalFinalAnswer || llmResult.Signal == SignalNeedUserInput {
-			exec.finalSignal = llmResult.Signal
-			// Notify observers: OnIterationEnd (для записи финального LLM call с post-prompt)
-			for _, obs := range e.observers {
-				obs.OnIterationEnd(iterations + 1)
-			}
-			break
-		}
-
-		// 3d. Проверяем есть ли tool calls
-		if len(lastMsg.ToolCalls) == 0 {
-			// Финальный ответ - нет tool calls
-			if exec.finalSignal == SignalNone {
-				exec.finalSignal = SignalFinalAnswer
-			}
-			// Notify observers: OnIterationEnd (для записи финального LLM call с post-prompt)
-			for _, obs := range e.observers {
-				obs.OnIterationEnd(iterations + 1)
-			}
-			break
-		}
-
-		// 3e. Tool Execution
-		toolResult := exec.toolStep.Execute(ctx, exec.chainCtx)
-
-		// DEBUG: логируем результат tool execution
-		utils.Debug("Tool execution completed",
-			"iteration", iterations+1,
-			"action", toolResult.Action,
-			"signal", toolResult.Signal,
-			"error", toolResult.Error,
-			"will_continue", toolResult.Action == ActionContinue)
-
-		// Обрабатываем результат
-		if toolResult.Action == ActionError || toolResult.Error != nil {
-			err := toolResult.Error
-			if err == nil {
-				err = fmt.Errorf("tool execution failed")
-			}
-			return e.notifyFinishWithError(exec, err)
-		}
-
-		// 3e-a. ПРОВЕРКА: прерывание во время tool execution (быстрая реакция)
-		if toolResult.Signal == SignalUserInterruption {
-			// Пользователь прервал выполнение между tool calls
-			interruptMsg := fmt.Sprintf(`🛑 USER INTERRUPTION
+// handleToolInterruption обрабатывает прерывание во время tool execution.
+//
+// Добавляет interruption message и устанавливает interruption handler.
+func (e *ReActExecutor) handleToolInterruption(ctx context.Context, exec *ReActExecution, interruptionMsg string, iteration int) error {
+	interruptMsg := fmt.Sprintf(`🛑 USER INTERRUPTION
 
 The user has interrupted the execution with the following message:
 
@@ -271,122 +318,57 @@ The user has interrupted the execution with the following message:
 %s
 -------------------
 
-Previous tool result is available in context. Please address the interruption and decide whether to continue or stop execution.`, toolResult.Interruption)
+Previous tool result is available in context. Please address the interruption and decide whether to continue or stop execution.`, interruptionMsg)
 
-			// Добавляем interruption message как user message
-			if err := exec.chainCtx.AppendMessage(llm.Message{
-				Role:    llm.RoleUser,
-				Content: interruptMsg,
-			}); err != nil {
-				return e.notifyFinishWithError(exec, fmt.Errorf("failed to append interruption message: %w", err))
-			}
-
-			// Загружаем interruption handler промпт
-			promptsDir := exec.chainCtx.Input.Config.PostPromptsDir
-			interruptionPath := exec.chainCtx.Input.Config.InterruptionPrompt
-
-			interruptPrompt, promptConfig := loadInterruptionPrompt(promptsDir, interruptionPath)
-
-			// Устанавливаем interruption handler как активный post-prompt
-			// Это заменит любой предыдущий post-prompt
-			exec.chainCtx.SetActivePostPrompt(interruptPrompt, promptConfig)
-
-			// Логируем прерывание
-			promptSource := "default"
-			if interruptionPath != "" {
-				promptSource = "yaml:" + interruptionPath
-			}
-
-			// Отправляем EventUserInterruption через iterationObserver
-			if e.iterationObserver != nil {
-				e.iterationObserver.EmitUserInterruption(ctx, toolResult.Interruption, iterations+1, promptSource)
-			}
-
-			// Продолжаем следующую итерацию (interruption handler обработает)
-			continue
-		}
-
-		// Отправляем EventToolResult через iterationObserver (PHASE 4)
-		if e.iterationObserver != nil {
-			for _, tr := range exec.toolStep.GetToolResults() {
-				e.iterationObserver.EmitToolResult(ctx, tr.Name, tr.Result, time.Duration(tr.Duration)*time.Millisecond)
-			}
-		}
-
-		// 3f. Check for user interruption between iterations (INTERRUPTION MECHANISM)
-		if exec.chainCtx.Input.UserInputChan != nil {
-			select {
-			case userInput := <-exec.chainCtx.Input.UserInputChan:
-				// Пользователь прервал выполнение
-				interruptMsg := fmt.Sprintf(`🛑 USER INTERRUPTION
-
-The user has interrupted the execution with the following message:
-
---- USER MESSAGE ---
-%s
--------------------
-
-Previous tool result is available in context. Please address the interruption and decide whether to continue or stop execution.`, userInput)
-
-				// Добавляем interruption message как user message
-				if err := exec.chainCtx.AppendMessage(llm.Message{
-					Role:    llm.RoleUser,
-					Content: interruptMsg,
-				}); err != nil {
-					return e.notifyFinishWithError(exec, fmt.Errorf("failed to append interruption message: %w", err))
-				}
-
-				// Загружаем interruption handler промпт
-				promptsDir := exec.chainCtx.Input.Config.PostPromptsDir
-				interruptionPath := exec.chainCtx.Input.Config.InterruptionPrompt
-
-				interruptPrompt, promptConfig := loadInterruptionPrompt(promptsDir, interruptionPath)
-
-				// Устанавливаем interruption handler как активный post-prompt
-				// Это заменит любой предыдущий post-prompt
-				exec.chainCtx.SetActivePostPrompt(interruptPrompt, promptConfig)
-
-				// Логируем прерывание
-				promptSource := "default"
-				if interruptionPath != "" {
-					promptSource = "yaml:" + interruptionPath
-				}
-
-				utils.Debug("User interruption received",
-					"iteration", iterations+1,
-					"user_input", userInput,
-					"prompt_source", promptSource)
-
-				// Отправляем событие прерывания
-				if e.iterationObserver != nil {
-					e.iterationObserver.EmitUserInterruption(ctx, userInput, iterations+1, promptSource)
-				}
-
-			case <-ctx.Done():
-				// Context cancelled
-				return e.notifyFinishWithError(exec, ctx.Err())
-
-			default:
-				// Нет пользовательского ввода — продолжаем
-			}
-		}
-
-		// Notify observers: OnIterationEnd
-		for _, obs := range e.observers {
-			obs.OnIterationEnd(iterations + 1)
-		}
-
-		// DEBUG: логируем конец итерации
-		lastMsg = exec.chainCtx.GetLastMessage()
-		utils.Debug("Iteration ended",
-			"iteration", iterations+1,
-			"last_msg_role", lastMsg.Role,
-			"has_tool_calls", len(lastMsg.ToolCalls) > 0,
-			"max_iterations", exec.config.MaxIterations,
-			"will_continue", iterations+1 < exec.config.MaxIterations)
+	if err := exec.chainCtx.AppendMessage(llm.Message{
+		Role:    llm.RoleUser,
+		Content: interruptMsg,
+	}); err != nil {
+		return fmt.Errorf("failed to append interruption message: %w", err)
 	}
 
-	// 4. Формируем результат
+	promptsDir := exec.chainCtx.Input.Config.PostPromptsDir
+	interruptionPath := exec.chainCtx.Input.Config.InterruptionPrompt
+
+	interruptPrompt, promptConfig := loadInterruptionPrompt(promptsDir, interruptionPath)
+	exec.chainCtx.SetActivePostPrompt(interruptPrompt, promptConfig)
+
+	promptSource := "default"
+	if interruptionPath != "" {
+		promptSource = "yaml:" + interruptionPath
+	}
+
+	if e.iterationObserver != nil {
+		e.iterationObserver.EmitUserInterruption(ctx, interruptionMsg, iteration+1, promptSource)
+	}
+
+	return nil
+}
+
+// checkUserInterruption проверяет прерывание между итерациями.
+//
+// Возвращает error если произошла ошибка или nil если продолжаем.
+func (e *ReActExecutor) checkUserInterruption(ctx context.Context, exec *ReActExecution, iteration int) error {
+	if exec.chainCtx.Input.UserInputChan == nil {
+		return nil
+	}
+
+	select {
+	case userInput := <-exec.chainCtx.Input.UserInputChan:
+		return e.handleToolInterruption(ctx, exec, userInput, iteration)
+
+	case <-ctx.Done():
+		return ctx.Err()
+
+	default:
+		return nil
+	}
+}
+
+// finalizeSession финализирует выполнение и возвращает результат.
+//
+// Формирует ChainOutput и уведомляет наблюдателей.
+func (e *ReActExecutor) finalizeExecution(ctx context.Context, exec *ReActExecution, iterations int) (ChainOutput, error) {
 	lastMsg := exec.chainCtx.GetLastMessage()
 	result := lastMsg.Content
 
@@ -395,29 +377,26 @@ Previous tool result is available in context. Please address the interruption an
 		"result_length", len(result),
 		"duration_ms", time.Since(exec.startTime).Milliseconds())
 
-	// 5. Отправляем EventMessage с полным результатом для отображения в TUI
+	// Отправляем EventMessage с полным результатом
 	if e.iterationObserver != nil {
 		e.iterationObserver.EmitMessage(ctx, result)
 	}
 
-	// 7. Debug финализация теперь обрабатывается ChainDebugRecorder.OnFinish
-
-	// 8. Возвращаем результат
 	output := ChainOutput{
 		Result:     result,
 		Iterations: iterations + 1,
 		Duration:   time.Since(exec.startTime),
 		FinalState: exec.chainCtx.GetMessages(),
-		DebugPath:  "", // Будет заполнен в ChainDebugObserver.OnFinish
+		DebugPath:  "",
 		Signal:     exec.finalSignal,
 	}
 
-	// 9. Notify observers: OnFinish (EmitterObserver отправит EventDone, ChainDebugRecorder финализирует)
+	// Notify observers: OnFinish
 	for _, obs := range e.observers {
 		obs.OnFinish(output, nil)
 	}
 
-	// 10. Fill DebugPath from ChainDebugRecorder (if available)
+	// Fill DebugPath from ChainDebugRecorder
 	for _, obs := range e.observers {
 		if debugRec, ok := obs.(*ChainDebugRecorder); ok {
 			output.DebugPath = debugRec.GetLogPath()
@@ -426,6 +405,20 @@ Previous tool result is available in context. Please address the interruption an
 	}
 
 	return output, nil
+}
+
+// Helper methods for observer notifications
+
+func (e *ReActExecutor) notifyIterationStart(iteration int) {
+	for _, obs := range e.observers {
+		obs.OnIterationStart(iteration + 1)
+	}
+}
+
+func (e *ReActExecutor) notifyIterationEnd(iteration int) {
+	for _, obs := range e.observers {
+		obs.OnIterationEnd(iteration + 1)
+	}
 }
 
 // notifyFinishWithError завершает выполнение с ошибкой и уведомляет наблюдателей.

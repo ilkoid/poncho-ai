@@ -443,3 +443,265 @@ func (c *Client) Ping(ctx context.Context, baseURL string, rateLimit int, burst 
 
 	return &resp, nil
 }
+
+// ReportDetailByPeriodPageResult представляет результат одной страницы пагинации.
+type ReportDetailByPeriodPageResult struct {
+	Rows        []RealizationReportRow // Строки отчета
+	HasMore     bool                    // Есть ли еще данные
+	LastRrdID   int                     // Последний rrd_id (для следующей страницы)
+	StatusCode int                     // HTTP статус код
+}
+
+// ReportDetailByPeriodPage получает одну страницу отчета реализации.
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - baseURL: базовый URL Statistics API
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - dateFrom: начало периода (формат: YYYY-MM-DD)
+//   - dateTo: конец периода (формат: YYYY-MM-DD)
+//   - rrdid: ID последней записи для пагинации (0 при первом запросе)
+//
+// Возвращает страницу данных или ошибку. HTTP 204 означает конец пагинации.
+func (c *Client) ReportDetailByPeriodPage(
+	ctx context.Context,
+	baseURL string,
+	rateLimit int,
+	burst int,
+	dateFrom int,
+	dateTo int,
+	rrdid int,
+) (*ReportDetailByPeriodPageResult, error) {
+	// Формируем параметры запроса
+	// Преобразуем YYYYMMDD в YYYY-MM-DD
+	dateFromStr := fmt.Sprintf("%04d-%02d-%02d", dateFrom/10000, (dateFrom%10000)/100, dateFrom%100)
+	dateToStr := fmt.Sprintf("%04d-%02d-%02d", dateTo/10000, (dateTo%10000)/100, dateTo%100)
+
+	params := url.Values{}
+	params.Set("dateFrom", dateFromStr)
+	params.Set("dateTo", dateToStr)
+	params.Set("limit", "100000")
+	if rrdid > 0 {
+		params.Set("rrdid", fmt.Sprintf("%d", rrdid))
+	}
+
+	// Выполняем запрос
+	var rows []RealizationReportRow
+
+	// Создаем HTTP запрос вручную для обработки 204
+	limiter := c.getOrCreateLimiter("report_detail_by_period", rateLimit, burst)
+	if err := limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter wait: %w", err)
+	}
+
+	reqURL, err := url.Parse(baseURL + "/api/v5/supplier/reportDetailByPeriod")
+	if err != nil {
+		return nil, fmt.Errorf("invalid url: %w", err)
+	}
+	reqURL.RawQuery = params.Encode()
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq.Header.Set("Authorization", c.apiKey)
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// HTTP 204 = конец пагинации
+	if resp.StatusCode == http.StatusNoContent {
+		return &ReportDetailByPeriodPageResult{
+			Rows:        nil,
+			HasMore:     false,
+			LastRrdID:   rrdid,
+			StatusCode:  204,
+		}, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Парсим JSON ответ
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, fmt.Errorf("unmarshal error: %w", err)
+	}
+
+	// Определяем последний rrd_id для следующей страницы
+	lastRrdID := rrdid
+	if len(rows) > 0 {
+		lastRrdID = rows[len(rows)-1].RrdID
+	}
+
+	return &ReportDetailByPeriodPageResult{
+		Rows:        rows,
+		HasMore:     len(rows) > 0,
+		LastRrdID:   lastRrdID,
+		StatusCode:  200,
+	}, nil
+}
+
+// ReportDetailByPeriodPageWithTime получает одну страницу отчета реализации с поддержкой времени.
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - baseURL: базовый URL Statistics API
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - dateFrom: начало периода (формат RFC3339: "2026-01-25T12:00:00")
+//   - dateTo: конец периода (формат RFC3339: "2026-01-25T23:59:59")
+//   - rrdid: ID последней записи для пагинации (0 при первом запросе)
+//   - limit: лимит строк на странице (по умолчанию 100000)
+//
+// Возвращает страницу данных или ошибку. HTTP 204 означает конец пагинации.
+func (c *Client) ReportDetailByPeriodPageWithTime(
+	ctx context.Context,
+	baseURL string,
+	rateLimit int,
+	burst int,
+	dateFrom string,
+	dateTo string,
+	rrdid int,
+	limit int,
+) (*ReportDetailByPeriodPageResult, error) {
+	// Формируем параметры запроса
+	params := url.Values{}
+	params.Set("dateFrom", dateFrom)
+	params.Set("dateTo", dateTo)
+	params.Set("limit", fmt.Sprintf("%d", limit))
+	params.Set("period", "daily")  // Периодичность: daily для поддержки времени
+	if rrdid > 0 {
+		params.Set("rrdid", fmt.Sprintf("%d", rrdid))
+	}
+
+	// Выполняем запрос
+	var rows []RealizationReportRow
+
+	// Создаем HTTP запрос вручную для обработки 204
+	limiter := c.getOrCreateLimiter("report_detail_by_period_with_time", rateLimit, burst)
+	if err := limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter wait: %w", err)
+	}
+
+	reqURL, err := url.Parse(baseURL + "/api/v5/supplier/reportDetailByPeriod")
+	if err != nil {
+		return nil, fmt.Errorf("invalid url: %w", err)
+	}
+	reqURL.RawQuery = params.Encode()
+
+	// DEBUG: логируем URL для отладки
+	fmt.Printf("[DEBUG] Request URL: %s\n", reqURL.String())
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq.Header.Set("Authorization", c.apiKey)
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// HTTP 204 = конец пагинации
+	if resp.StatusCode == http.StatusNoContent {
+		return &ReportDetailByPeriodPageResult{
+			Rows:        nil,
+			HasMore:     false,
+			LastRrdID:   rrdid,
+			StatusCode:  204,
+		}, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Парсим JSON ответ
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, fmt.Errorf("unmarshal error: %w", err)
+	}
+
+	// Определяем последний rrd_id для следующей страницы
+	lastRrdID := rrdid
+	if len(rows) > 0 {
+		lastRrdID = rows[len(rows)-1].RrdID
+	}
+
+	return &ReportDetailByPeriodPageResult{
+		Rows:        rows,
+		HasMore:     len(rows) > 0,
+		LastRrdID:   lastRrdID,
+		StatusCode:  200,
+	}, nil
+}
+
+// ReportDetailByPeriodIterator - итератор по всем страницам отчета.
+// Использует callback для обработки каждой порции данных (stream processing).
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - baseURL: базовый URL Statistics API
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - dateFrom: начало периода (формат: YYYYMMDD)
+//   - dateTo: конец периода (формат: YYYYMMDD)
+//   - callback: функция для обработки каждой страницы (возвращает ошибку для прерывания)
+//
+// Возвращает общее количество обработанных строк или ошибку.
+func (c *Client) ReportDetailByPeriodIterator(
+	ctx context.Context,
+	baseURL string,
+	rateLimit int,
+	burst int,
+	dateFrom int,
+	dateTo int,
+	callback func([]RealizationReportRow) error,
+) (int, error) {
+	totalCount := 0
+	rrdid := 0
+
+	for {
+		page, err := c.ReportDetailByPeriodPage(ctx, baseURL, rateLimit, burst, dateFrom, dateTo, rrdid)
+		if err != nil {
+			return totalCount, err
+		}
+
+		// Конец пагинации
+		if !page.HasMore {
+			break
+		}
+
+		// Обрабатываем строки через callback (stream processing)
+		if err := callback(page.Rows); err != nil {
+			return totalCount, err
+		}
+
+		totalCount += len(page.Rows)
+		rrdid = page.LastRrdID
+	}
+
+	return totalCount, nil
+}

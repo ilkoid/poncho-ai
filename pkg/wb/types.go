@@ -285,3 +285,40 @@ type ProductPhoto struct {
 	Square   string `json:"square"`
 }
 
+// ============================================================================
+// Financial API Types (for reportDetailByPeriod)
+// ============================================================================
+
+// RealizationReportRow представляет строку из отчета реализации.
+// Используется для подсчета транзакций и возвратов.
+type RealizationReportRow struct {
+	RrdID           int     `json:"rrd_id"`                      // Уникальный ID записи (для пагинации)
+	DocTypeName     string  `json:"doc_type_name"`               // "Продажа", "Возврат"
+	SaleID          string  `json:"sale_id"`                     // ID продажи
+	DateFrom        string  `json:"date_from"`                   // Начало периода
+	DateTo          string  `json:"date_to"`                     // Конец периода
+	SupplierArticle string  `json:"supplier_article"`            // Артикул поставщика
+	SubjectName     string  `json:"subject_name"`                // Предмет
+	NmID            int     `json:"nm_id"`                       // ID товара на WB
+	BrandName       string  `json:"brand_name"`                  // Бренд
+	TechSize        string  `json:"tech_size"`                   // Размер
+	IncomeWT        int     `json:"income_wt"`                   // Количество
+	IsCancel        bool    `json:"is_cancel"`                   // Отменен
+	CancelDateTime  *string `json:"cancel_date_time,omitempty"`  // Дата отмены
+}
+
+// ReportDetailByPeriodRequest представляет запрос к API отчета реализации.
+type ReportDetailByPeriodRequest struct {
+	DateFrom int    `json:"dateFrom"` // YYYYMMDD
+	DateTo   int    `json:"dateTo"`   // YYYYMMDD
+	Limit    int    `json:"limit"`    // Макс. 100000
+	RrdID    int    `json:"rrdid"`    // Для пагинации (0 при первом запросе)
+}
+
+// ReportDetailByPeriodResponse представляет ответ от API отчета реализации.
+// WB API возвращает либо массив строк, либо HTTP 204 (No Content) при конце пагинации.
+type ReportDetailByPeriodResponse struct {
+	Rows  []RealizationReportRow `json:"rows"`  // Массив строк отчета
+	Total int                    `json:"total"` // Общее количество (если есть)
+	Error *string                `json:"error"` // Ошибка если есть
+}

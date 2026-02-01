@@ -130,6 +130,249 @@ func InitializeConfig(finder ConfigPathFinder) (*config.AppConfig, string, error
 	return cfg, cfgPath, nil
 }
 
+// createS3Client создаёт S3 клиент (опционально).
+//
+// S3 является опциональным компонентом - ошибка не прерывает инициализацию.
+// Возвращает (client, nil) при успехе, (nil, nil) при ошибке.
+func createS3Client(ctx context.Context, cfg *config.AppConfig) (*s3storage.Client, error) {
+	client, err := s3storage.New(cfg.S3)
+	if err != nil {
+		utils.Warn("S3 client creation failed, continuing without S3", "error", err)
+		return nil, nil // S3 опционален
+	}
+	utils.Info("S3 client initialized", "bucket", cfg.S3.Bucket)
+	return client, nil
+}
+
+// createWBClient создаёт Wildberries API клиент.
+//
+// Создаёт клиент только если включены WB tools. Пингует API для проверки.
+func createWBClient(ctx context.Context, cfg *config.AppConfig) (*wb.Client, error) {
+	if !hasWBTools(cfg) {
+		return nil, nil
+	}
+
+	if cfg.WB.APIKey == "" {
+		log.Println("Warning: WB tools enabled but API key not set")
+		utils.Error("WB tools enabled but API key not set - WB tools will fail")
+		return nil, nil
+	}
+
+	client, err := wb.NewFromConfig(cfg.WB)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create WB client: %w", err)
+	}
+
+	wbCfg := cfg.WB.GetDefaults()
+	if _, err := client.Ping(ctx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit); err != nil {
+		log.Printf("Warning: WB API ping failed: %v", err)
+		utils.Error("WB API ping failed", "error", err)
+	}
+
+	utils.Info("WB client initialized",
+		"rate_limit", cfg.WB.RateLimit,
+		"burst_limit", cfg.WB.BurstLimit)
+	return client, nil
+}
+
+// loadWBDictionaries загружает справочники Wildberries.
+//
+// Кэширует справочники при старте для быстрого доступа.
+func loadWBDictionaries(ctx context.Context, client *wb.Client, cfg *config.AppConfig) (*wb.Dictionaries, error) {
+	if client == nil {
+		return nil, nil
+	}
+
+	wbCfg := cfg.WB.GetDefaults()
+	dicts, err := client.LoadDictionaries(ctx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit)
+	if err != nil {
+		log.Printf("Warning: failed to load WB dictionaries: %v", err)
+		utils.Error("WB dictionaries loading failed", "error", err)
+		return nil, nil // Продолжаем без справочников
+	}
+
+	utils.Info("WB dictionaries loaded",
+		"colors", len(dicts.Colors),
+		"genders", len(dicts.Genders),
+		"countries", len(dicts.Countries),
+		"seasons", len(dicts.Seasons),
+		"vats", len(dicts.Vats))
+	return dicts, nil
+}
+
+// createModelRegistry создаёт реестр LLM моделей.
+//
+// Определяет и валидирует дефолтную модель для reasoning.
+func createModelRegistry(cfg *config.AppConfig) (*models.Registry, string, error) {
+	registry, err := models.NewRegistryFromConfig(cfg)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create model registry: %w", err)
+	}
+
+	utils.Info("Model registry created", "models", registry.ListNames())
+
+	// Определяем дефолтную модель для reasoning
+	defaultReasoning := cfg.Models.DefaultReasoning
+	if defaultReasoning == "" {
+		defaultReasoning = cfg.Models.DefaultChat
+	}
+	if defaultReasoning == "" {
+		return nil, "", fmt.Errorf("neither default_reasoning nor default_chat configured")
+	}
+
+	// Валидируем что дефолтная модель существует
+	if _, _, err := registry.Get(defaultReasoning); err != nil {
+		return nil, "", fmt.Errorf("default reasoning model '%s' not found: %w", defaultReasoning, err)
+	}
+
+	return registry, defaultReasoning, nil
+}
+
+// createCoreState создаёт CoreState с TodoManager.
+//
+// Инициализирует CoreState и устанавливает TodoManager.
+func createCoreState(cfg *config.AppConfig, dicts *wb.Dictionaries) *state.CoreState {
+	coreState := state.NewCoreState(cfg)
+	coreState.SetDictionaries(dicts)
+
+	todoManager := todo.NewManager()
+	if err := coreState.SetTodoManager(todoManager); err != nil {
+		log.Printf("Warning: failed to set todo manager: %v", err)
+	}
+
+	utils.Info("Todo manager initialized")
+	return coreState
+}
+
+// getVisionLLM получает vision LLM из реестра.
+//
+// Возвращает nil если vision модель не настроена.
+func getVisionLLM(cfg *config.AppConfig, registry *models.Registry) (llm.Provider, error) {
+	if cfg.Models.DefaultVision == "" {
+		return nil, nil
+	}
+
+	visionLLM, _, err := registry.Get(cfg.Models.DefaultVision)
+	if err != nil {
+		return nil, fmt.Errorf("vision model '%s' not found: %w", cfg.Models.DefaultVision, err)
+	}
+
+	utils.Info("Vision LLM retrieved from registry", "model", cfg.Models.DefaultVision)
+	return visionLLM, nil
+}
+
+// loadAgentPrompts загружает системный и tool post-prompts.
+//
+// Возвращает (systemPrompt, toolPostPrompts, error).
+func loadAgentPrompts(cfg *config.AppConfig, systemPrompt string) (string, *prompt.ToolPostPromptConfig, error) {
+	// Загружаем системный промпт
+	agentSystemPrompt := systemPrompt
+	if agentSystemPrompt == "" {
+		agentPrompt, err := prompt.LoadAgentSystemPrompt(cfg)
+		if err != nil {
+			log.Printf("Warning: failed to load agent prompt: %v", err)
+			agentSystemPrompt = ""
+		} else {
+			agentSystemPrompt = agentPrompt
+		}
+	}
+
+	// Загружаем post-prompts для tools
+	toolPostPrompts, err := prompt.LoadToolPostPrompts(cfg)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to load tool post-prompts: %w", err)
+	}
+	if len(toolPostPrompts.Tools) > 0 {
+		utils.Info("Tool post-prompts loaded", "count", len(toolPostPrompts.Tools))
+	}
+
+	return agentSystemPrompt, toolPostPrompts, nil
+}
+
+// setupReActCycleDependencies устанавливает зависимости для ReActCycle.
+//
+// Устанавливает registry, state и bundle resolver.
+func setupReActCycleDependencies(cycle *chain.ReActCycle, cfg *config.AppConfig, state *state.CoreState, registry *models.Registry, defaultReasoning string) {
+	cycle.SetModelRegistry(registry, defaultReasoning)
+	cycle.SetRegistry(state.GetToolsRegistry())
+	cycle.SetState(state)
+
+	// Инициализируем BundleResolver для токен-оптимизации
+	bundleResolver := chain.NewBundleResolver(
+		cfg,
+		state.GetToolsRegistry(),
+		chain.ResolutionMode(cfg.ToolResolutionMode),
+	)
+	cycle.SetBundleResolver(bundleResolver)
+}
+
+// createReActCycle создаёт и настраивает ReActCycle.
+//
+// Создаёт ReActCycle и устанавливает все зависимости (registry, state, bundle resolver).
+func createReActCycle(
+	cfg *config.AppConfig,
+	state *state.CoreState,
+	registry *models.Registry,
+	defaultReasoning string,
+	maxIters int,
+	systemPrompt string,
+	toolPostPrompts *prompt.ToolPostPromptConfig,
+) *chain.ReActCycle {
+	cycleConfig := chain.ReActCycleConfig{
+		SystemPrompt:    systemPrompt,
+		ToolPostPrompts: toolPostPrompts,
+		PromptsDir:      cfg.App.PromptsDir,
+		MaxIterations:   maxIters,
+		Timeout:         cfg.GetChainTimeout("default"),
+	}
+
+	reactCycle := chain.NewReActCycle(cycleConfig)
+	setupReActCycleDependencies(reactCycle, cfg, state, registry, defaultReasoning)
+	return reactCycle
+}
+
+// configureReActCycle конфигурирует ReActCycle.
+//
+// Создаёт и настраивает ReActCycle со всеми зависимостями.
+func configureReActCycle(
+	cfg *config.AppConfig,
+	state *state.CoreState,
+	registry *models.Registry,
+	defaultReasoning string,
+	maxIters int,
+	systemPrompt string,
+) (*chain.ReActCycle, error) {
+	agentSystemPrompt, toolPostPrompts, err := loadAgentPrompts(cfg, systemPrompt)
+	if err != nil {
+		return nil, err
+	}
+
+	reactCycle := createReActCycle(cfg, state, registry, defaultReasoning, maxIters, agentSystemPrompt, toolPostPrompts)
+	return reactCycle, nil
+}
+
+// attachDebugRecorder прикрепляет debug recorder к ReActCycle.
+//
+// Создаёт и прикрепляет recorder если включён в конфиге.
+func attachDebugRecorder(cycle *chain.ReActCycle, cfg *config.AppConfig) error {
+	recorder, err := chain.NewChainDebugRecorder(chain.DebugConfig{
+		Enabled:             cfg.App.DebugLogs.Enabled,
+		SaveLogs:            cfg.App.DebugLogs.SaveLogs,
+		LogsDir:             cfg.App.DebugLogs.LogsDir,
+		IncludeToolArgs:     cfg.App.DebugLogs.IncludeToolArgs,
+		IncludeToolResults:  cfg.App.DebugLogs.IncludeToolResults,
+		MaxResultSize:       cfg.App.DebugLogs.MaxResultSize,
+	})
+	if err != nil {
+		return err
+	}
+
+	if recorder.Enabled() {
+		cycle.AttachDebug(recorder)
+	}
+	return nil
+}
+
 // Initialize создаёт и инициализирует все компоненты приложения.
 //
 // Эта функция является переиспользуемой - она может быть вызвана
@@ -147,212 +390,54 @@ func InitializeConfig(finder ConfigPathFinder) (*config.AppConfig, string, error
 func Initialize(parentCtx context.Context, cfg *config.AppConfig, maxIters int, systemPrompt string) (*Components, error) {
 	utils.Info("Initializing components", "maxIters", maxIters)
 
-	// 1. Инициализируем S3 клиент (ОПЦИОНАЛЬНО)
-	// REFACTORED 2026-01-04: S3 теперь опционален, ошибка не прерывает инициализацию
-	var s3Client *s3storage.Client
-	s3Client, err := s3storage.New(cfg.S3)
-	if err != nil {
-		utils.Warn("S3 client creation failed, continuing without S3", "error", err)
-		// НЕ прерываем инициализацию - S3 опционален
-		s3Client = nil
-	} else {
-		utils.Info("S3 client initialized", "bucket", cfg.S3.Bucket)
-	}
+	// Create clients
+	s3Client, _ := createS3Client(parentCtx, cfg)
+	wbClient, _ := createWBClient(parentCtx, cfg)
+	dicts, _ := loadWBDictionaries(parentCtx, wbClient, cfg)
 
-	// 2. Инициализируем WB клиент ТОЛЬКО если включены WB tools
-	// Rule 13: Автономные утилиты могут работать без WB (только S3, Ozon и т.д.)
-	var wbClient *wb.Client
-	var dicts *wb.Dictionaries
+	// Create core state
+	coreState := createCoreState(cfg, dicts)
 
-	if hasWBTools(cfg) {
-		if cfg.WB.APIKey != "" {
-			var err error
-			wbClient, err = wb.NewFromConfig(cfg.WB)
-			if err != nil {
-				utils.Error("WB client creation failed", "error", err)
-				return nil, fmt.Errorf("failed to create WB client: %w", err)
-			}
-			// Ping с параметрами из конфига
-			wbCfg := cfg.WB.GetDefaults()
-			if _, err := wbClient.Ping(parentCtx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit); err != nil {
-				log.Printf("Warning: WB API ping failed: %v", err)
-				utils.Error("WB API ping failed", "error", err)
-			} else {
-				utils.Info("WB API ping successful")
-			}
-		} else {
-			log.Println("Warning: WB tools enabled but API key not set")
-			utils.Error("WB tools enabled but API key not set - WB tools will fail")
-		}
-
-		utils.Info("WB client initialized",
-			"api_key_set", cfg.WB.APIKey != "",
-			"rate_limit", cfg.WB.RateLimit,
-			"burst_limit", cfg.WB.BurstLimit)
-
-		// 3. Загружаем справочники WB (кэшируем при старте)
-		if wbClient != nil {
-			// Применяем defaults для WB секции
-			wbCfg := cfg.WB.GetDefaults()
-			dicts, err = wbClient.LoadDictionaries(parentCtx, wbCfg.BaseURL, wbCfg.RateLimit, wbCfg.BurstLimit)
-			if err != nil {
-				log.Printf("Warning: failed to load WB dictionaries: %v", err)
-				utils.Error("WB dictionaries loading failed", "error", err)
-				// Продолжаем работу со справочниками = nil (dictionary tools вернут ошибку)
-			} else {
-				utils.Info("WB dictionaries loaded",
-					"colors", len(dicts.Colors),
-					"genders", len(dicts.Genders),
-					"countries", len(dicts.Countries),
-					"seasons", len(dicts.Seasons),
-					"vats", len(dicts.Vats))
-			}
-		}
-	} else {
-		utils.Info("WB tools not enabled - skipping WB initialization")
-	}
-
-	// 4. Создаём CoreState (thread-safe)
-	// REFACTORED 2025-01-07: Используем state.NewCoreState вместо app.NewAppState
-	state := state.NewCoreState(cfg)
-	state.SetDictionaries(dicts) // Сохраняем справочники в CoreState
-
-	// 5. Создаём Todo Manager для управления задачами
-	// Rule 3: Registry pattern через TodoRepository interface
-	todoManager := todo.NewManager()
-	if err := state.SetTodoManager(todoManager); err != nil {
-		return nil, fmt.Errorf("failed to set todo manager: %w", err)
-	}
-	utils.Info("Todo manager initialized")
-
-	// 6. Устанавливаем S3 клиент опционально
+	// Set S3 client
 	if s3Client != nil {
-		if err := state.SetStorage(s3Client); err != nil {
-			utils.Warn("Failed to set S3 client in state", "error", err)
-		} else {
-			utils.Info("S3 client set in CoreState")
+		if err := coreState.SetStorage(s3Client); err != nil {
+			utils.Warn("Failed to set S3 client", "error", err)
 		}
 	}
 
-	// 6. Создаём Model Registry со всеми моделями из config.yaml
-	// Rule 3: Registry pattern для централизованного управления моделями
-	modelRegistry, err := models.NewRegistryFromConfig(cfg)
+	// Create model registry
+	modelRegistry, defaultReasoning, err := createModelRegistry(cfg)
 	if err != nil {
-		utils.Error("Model registry creation failed", "error", err)
-		return nil, fmt.Errorf("failed to create model registry: %w", err)
-	}
-	utils.Info("Model registry created", "models", modelRegistry.ListNames())
-
-	// Определяем дефолтную модель для reasoning
-	defaultReasoning := cfg.Models.DefaultReasoning
-	if defaultReasoning == "" {
-		defaultReasoning = cfg.Models.DefaultChat
-	}
-	if defaultReasoning == "" {
-		return nil, fmt.Errorf("neither default_reasoning nor default_chat configured")
+		return nil, err
 	}
 
-	// Валидируем что дефолтная модель существует
-	if _, _, err := modelRegistry.Get(defaultReasoning); err != nil {
-		return nil, fmt.Errorf("default reasoning model '%s' not found: %w", defaultReasoning, err)
+	// Get vision LLM
+	visionLLM, _ := getVisionLLM(cfg, modelRegistry)
+
+	// Register tools
+	if err := SetupTools(coreState, wbClient, visionLLM, cfg, modelRegistry); err != nil {
+		return nil, err
 	}
 
-	// Vision LLM (для batch image analysis) - получаем из registry
-	var visionLLM llm.Provider
-	if cfg.Models.DefaultVision != "" {
-		visionLLM, _, err = modelRegistry.Get(cfg.Models.DefaultVision)
-		if err != nil {
-			utils.Warn("Vision model not found in registry", "model", cfg.Models.DefaultVision, "error", err)
-		} else {
-			utils.Info("Vision LLM retrieved from registry", "model", cfg.Models.DefaultVision)
-		}
-	}
-
-	// 7. Создаём Tools Registry и сохраняем в CoreState
-	// Rule 3: Registry pattern для управления инструментами
-	toolsRegistry := tools.NewRegistry()
-	if err := state.SetToolsRegistry(toolsRegistry); err != nil {
-		return nil, fmt.Errorf("failed to set tools registry: %w", err)
-	}
-
-	// 8. Регистрируем инструменты из YAML конфигурации
-	// Передаем CoreState для регистрации инструментов (Rule 6: framework logic)
-	if err := SetupTools(state, wbClient, visionLLM, cfg, modelRegistry); err != nil {
-		utils.Error("Tools registration failed", "error", err)
-		return nil, fmt.Errorf("failed to register tools: %w", err)
-	}
-
-	// 9. Загружаем системный промпт
-	agentSystemPrompt := systemPrompt
-	if agentSystemPrompt == "" {
-		agentPrompt, err := prompt.LoadAgentSystemPrompt(cfg)
-		if err != nil {
-			log.Printf("Warning: failed to load agent prompt: %v", err)
-			agentSystemPrompt = "" // Используем дефолтный из orchestrator
-		} else {
-			agentSystemPrompt = agentPrompt
-		}
-	}
-
-	// 10. Загружаем post-prompts для tools
-	toolPostPrompts, err := prompt.LoadToolPostPrompts(cfg)
+	// Configure ReAct cycle
+	orchestrator, err := configureReActCycle(cfg, coreState, modelRegistry, defaultReasoning, maxIters, systemPrompt)
 	if err != nil {
-		utils.Error("Failed to load tool post-prompts", "error", err)
-		return nil, fmt.Errorf("failed to load tool post-prompts: %w", err)
-	}
-	if len(toolPostPrompts.Tools) > 0 {
-		utils.Info("Tool post-prompts loaded", "count", len(toolPostPrompts.Tools))
+		return nil, err
 	}
 
-	// 11. Создаём ReActCycle напрямую (Rule 6 compliance)
-	// Timeout берётся из конфигурации chains.default.timeout с fallback на дефолт
-	cycleConfig := chain.ReActCycleConfig{
-		SystemPrompt:    agentSystemPrompt,
-		ToolPostPrompts: toolPostPrompts,
-		PromptsDir:      cfg.App.PromptsDir,
-		MaxIterations:   maxIters,
-		Timeout:         cfg.GetChainTimeout("default"),
-	}
-
-	reactCycle := chain.NewReActCycle(cycleConfig)
-	reactCycle.SetModelRegistry(modelRegistry, defaultReasoning)
-	reactCycle.SetRegistry(state.GetToolsRegistry())
-	reactCycle.SetState(state)
-
-	// Инициализируем BundleResolver для токен-оптимизации (Phase 3)
-	bundleResolver := chain.NewBundleResolver(
-		cfg,
-		state.GetToolsRegistry(),
-		chain.ResolutionMode(cfg.ToolResolutionMode),
-	)
-	reactCycle.SetBundleResolver(bundleResolver)
-
-	// Создаём debug recorder если включён
-	debugRecorder, err := chain.NewChainDebugRecorder(chain.DebugConfig{
-		Enabled:             cfg.App.DebugLogs.Enabled,
-		SaveLogs:            cfg.App.DebugLogs.SaveLogs,
-		LogsDir:             cfg.App.DebugLogs.LogsDir,
-		IncludeToolArgs:     cfg.App.DebugLogs.IncludeToolArgs,
-		IncludeToolResults:  cfg.App.DebugLogs.IncludeToolResults,
-		MaxResultSize:       cfg.App.DebugLogs.MaxResultSize,
-	})
-	if err != nil {
-		// utils.Error("Failed to create debug recorder", "error", err)
-	} else if debugRecorder.Enabled() {
-		// utils.Info("Debug recorder attached", "logs_dir", cfg.App.DebugLogs.LogsDir)
-		reactCycle.AttachDebug(debugRecorder)
-	} else {
-		// utils.Info("Debug recorder NOT enabled", "enabled", cfg.App.DebugLogs.Enabled, "save_logs", cfg.App.DebugLogs.SaveLogs)
+	// Attach debug recorder
+	if err := attachDebugRecorder(orchestrator, cfg); err != nil {
+		utils.Warn("Failed to attach debug recorder", "error", err)
 	}
 
 	return &Components{
 		Config:        cfg,
-		State:         state,
+		State:         coreState,
 		ModelRegistry: modelRegistry,
 		LLM:           nil, // DEPRECATED: Используйте ModelRegistry
 		VisionLLM:     visionLLM,
 		WBClient:      wbClient,
-		Orchestrator:  reactCycle,
+		Orchestrator:  orchestrator,
 	}, nil
 }
 
@@ -477,168 +562,233 @@ func getEnabledTools(cfg *config.AppConfig) map[string]bool {
 // setupWBTools регистрирует все Wildberries API инструменты.
 // Зависимости: wb.Client, cfg.WB
 func setupWBTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.Client) error {
-	// Helper для регистрации
-	register := func(name string, tool tools.Tool) error {
+	if err := setupWBContentTools(registry, cfg, wbClient); err != nil {
+		return err
+	}
+	if err := setupWBFeedbacksTools(registry, cfg, wbClient); err != nil {
+		return err
+	}
+	if err := setupWBCharacteristicsTools(registry, cfg, wbClient); err != nil {
+		return err
+	}
+	if err := setupWBServiceTools(registry, cfg, wbClient); err != nil {
+		return err
+	}
+	if err := setupWBAnalyticsTools(registry, cfg, wbClient); err != nil {
+		return err
+	}
+	return nil
+}
+
+// setupWBContentTools регистрирует WB Content API инструменты.
+// Инструменты: поиск товаров, категории, предметы, пинг API.
+func setupWBContentTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.Client) error {
+	enabledTools := getEnabledTools(cfg)
+
+	toolNames := []string{
+		"search_wb_products",
+		"get_wb_parent_categories",
+		"get_wb_subjects",
+		"ping_wb_api",
+	}
+
+	for _, name := range toolNames {
+		if !enabledTools[name] {
+			continue
+		}
+		toolCfg, exists := cfg.Tools[name]
+		if !exists {
+			continue
+		}
+
+		var tool tools.Tool
+		var err error
+
+		switch name {
+		case "search_wb_products":
+			tool = std.NewWbProductSearchTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_parent_categories":
+			tool = std.NewWbParentCategoriesTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_subjects":
+			tool = std.NewWbSubjectsTool(wbClient, toolCfg, cfg.WB)
+		case "ping_wb_api":
+			tool = std.NewWbPingTool(wbClient, toolCfg, cfg.WB)
+		default:
+			continue
+		}
+
+		if err != nil {
+			return fmt.Errorf("failed to create tool '%s': %w", name, err)
+		}
+
 		if err := registry.Register(tool); err != nil {
 			return fmt.Errorf("failed to register tool '%s': %w", name, err)
 		}
+	}
+	return nil
+}
+
+// setupWBFeedbacksTools регистрирует WB Feedbacks API инструменты.
+// Инструменты: отзывы, вопросы, новые отзывы/вопросы, счётчики неотвеченных.
+func setupWBFeedbacksTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.Client) error {
+	enabledTools := getEnabledTools(cfg)
+
+	toolNames := []string{
+		"get_wb_feedbacks",
+		"get_wb_questions",
+		"get_wb_new_feedbacks_questions",
+		"get_wb_unanswered_feedbacks_counts",
+		"get_wb_unanswered_questions_counts",
+	}
+
+	for _, name := range toolNames {
+		if !enabledTools[name] {
+			continue
+		}
+		toolCfg, exists := cfg.Tools[name]
+		if !exists {
+			continue
+		}
+
+		var tool tools.Tool
+
+		switch name {
+		case "get_wb_feedbacks":
+			tool = std.NewWbFeedbacksTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_questions":
+			tool = std.NewWbQuestionsTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_new_feedbacks_questions":
+			tool = std.NewWbNewFeedbacksQuestionsTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_unanswered_feedbacks_counts":
+			tool = std.NewWbUnansweredFeedbacksCountsTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_unanswered_questions_counts":
+			tool = std.NewWbUnansweredQuestionsCountsTool(wbClient, toolCfg, cfg.WB)
+		default:
+			continue
+		}
+
+		if err := registry.Register(tool); err != nil {
+			return fmt.Errorf("failed to register tool '%s': %w", name, err)
+		}
+	}
+	return nil
+}
+
+// setupWBCharacteristicsTools регистрирует WB Characteristics инструменты.
+// Инструменты: предметы по имени, характеристики, ТНВЭД, бренды.
+func setupWBCharacteristicsTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.Client) error {
+	enabledTools := getEnabledTools(cfg)
+
+	toolNames := []string{
+		"get_wb_subjects_by_name",
+		"get_wb_characteristics",
+		"get_wb_tnved",
+		"get_wb_brands",
+	}
+
+	for _, name := range toolNames {
+		if !enabledTools[name] {
+			continue
+		}
+		toolCfg, exists := cfg.Tools[name]
+		if !exists {
+			continue
+		}
+
+		var tool tools.Tool
+
+		switch name {
+		case "get_wb_subjects_by_name":
+			tool = std.NewWbSubjectsByNameTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_characteristics":
+			tool = std.NewWbCharacteristicsTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_tnved":
+			tool = std.NewWbTnvedTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_brands":
+			tool = std.NewWbBrandsTool(wbClient, toolCfg, cfg.WB)
+		default:
+			continue
+		}
+
+		if err := registry.Register(tool); err != nil {
+			return fmt.Errorf("failed to register tool '%s': %w", name, err)
+		}
+	}
+	return nil
+}
+
+// setupWBServiceTools регистрирует WB Service инструменты.
+// Инструменты: перезагрузка словарей.
+func setupWBServiceTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.Client) error {
+	enabledTools := getEnabledTools(cfg)
+
+	if !enabledTools["reload_wb_dictionaries"] {
 		return nil
 	}
 
-	// Helper для получения конфигурации tool
-	getToolCfg := func(name string) (config.ToolConfig, bool) {
-		tc, exists := cfg.Tools[name]
-		if !exists {
-			return config.ToolConfig{Enabled: false}, false
-		}
-		return tc, true
+	toolCfg, exists := cfg.Tools["reload_wb_dictionaries"]
+	if !exists {
+		return nil
 	}
 
-	// Получаем карту включенных инструментов (с учетом bundles)
+	if err := registry.Register(std.NewReloadWbDictionariesTool(wbClient, toolCfg)); err != nil {
+		return fmt.Errorf("failed to register tool 'reload_wb_dictionaries': %w", err)
+	}
+	return nil
+}
+
+// setupWBAnalyticsTools регистрирует WB Analytics инструменты.
+// Инструменты: воронка продукта, позиции, ключевые слова, статистика кампаний.
+func setupWBAnalyticsTools(registry *tools.Registry, cfg *config.AppConfig, wbClient *wb.Client) error {
 	enabledTools := getEnabledTools(cfg)
 
-	// Helper для проверки включен ли tool
-	isEnabled := func(name string) bool {
-		return enabledTools[name]
+	toolNames := []string{
+		"get_wb_product_funnel",
+		"get_wb_product_funnel_history",
+		"get_wb_search_positions",
+		"get_wb_top_search_queries",
+		"get_wb_top_organic_positions",
+		"get_wb_campaign_stats",
+		"get_wb_keyword_stats",
+		"get_wb_attribution_summary",
 	}
 
-	// === WB Content API Tools ===
-	if toolCfg, exists := getToolCfg("search_wb_products"); exists && isEnabled("search_wb_products") {
-		if err := register("search_wb_products", std.NewWbProductSearchTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
+	for _, name := range toolNames {
+		if !enabledTools[name] {
+			continue
+		}
+		toolCfg, exists := cfg.Tools[name]
+		if !exists {
+			continue
+		}
+
+		var tool tools.Tool
+
+		switch name {
+		case "get_wb_product_funnel":
+			tool = std.NewWbProductFunnelTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_product_funnel_history":
+			tool = std.NewWbProductFunnelHistoryTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_search_positions":
+			tool = std.NewWbSearchPositionsTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_top_search_queries":
+			tool = std.NewWbTopSearchQueriesTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_top_organic_positions":
+			tool = std.NewWbTopOrganicPositionsTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_campaign_stats":
+			tool = std.NewWbCampaignStatsTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_keyword_stats":
+			tool = std.NewWbKeywordStatsTool(wbClient, toolCfg, cfg.WB)
+		case "get_wb_attribution_summary":
+			tool = std.NewWbAttributionSummaryTool(wbClient, toolCfg, cfg.WB)
+		default:
+			continue
+		}
+
+		if err := registry.Register(tool); err != nil {
+			return fmt.Errorf("failed to register tool '%s': %w", name, err)
 		}
 	}
-
-	if toolCfg, exists := getToolCfg("get_wb_parent_categories"); exists && isEnabled("get_wb_parent_categories") {
-		if err := register("get_wb_parent_categories", std.NewWbParentCategoriesTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_subjects"); exists && isEnabled("get_wb_subjects") {
-		if err := register("get_wb_subjects", std.NewWbSubjectsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("ping_wb_api"); exists && isEnabled("ping_wb_api") {
-		if err := register("ping_wb_api", std.NewWbPingTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	// === WB Feedbacks API Tools ===
-	if toolCfg, exists := getToolCfg("get_wb_feedbacks"); exists && isEnabled("get_wb_feedbacks") {
-		if err := register("get_wb_feedbacks", std.NewWbFeedbacksTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_questions"); exists && isEnabled("get_wb_questions") {
-		if err := register("get_wb_questions", std.NewWbQuestionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_new_feedbacks_questions"); exists && isEnabled("get_wb_new_feedbacks_questions") {
-		if err := register("get_wb_new_feedbacks_questions", std.NewWbNewFeedbacksQuestionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_unanswered_feedbacks_counts"); exists && isEnabled("get_wb_unanswered_feedbacks_counts") {
-		if err := register("get_wb_unanswered_feedbacks_counts", std.NewWbUnansweredFeedbacksCountsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_unanswered_questions_counts"); exists && isEnabled("get_wb_unanswered_questions_counts") {
-		if err := register("get_wb_unanswered_questions_counts", std.NewWbUnansweredQuestionsCountsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	// === WB Characteristics Tools ===
-	if toolCfg, exists := getToolCfg("get_wb_subjects_by_name"); exists && isEnabled("get_wb_subjects_by_name") {
-		if err := register("get_wb_subjects_by_name", std.NewWbSubjectsByNameTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_characteristics"); exists && isEnabled("get_wb_characteristics") {
-		if err := register("get_wb_characteristics", std.NewWbCharacteristicsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_tnved"); exists && isEnabled("get_wb_tnved") {
-		if err := register("get_wb_tnved", std.NewWbTnvedTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_brands"); exists && isEnabled("get_wb_brands") {
-		if err := register("get_wb_brands", std.NewWbBrandsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	// === WB Service Tools ===
-	if toolCfg, exists := getToolCfg("reload_wb_dictionaries"); exists && isEnabled("reload_wb_dictionaries") {
-		if err := register("reload_wb_dictionaries", std.NewReloadWbDictionariesTool(wbClient, toolCfg)); err != nil {
-			return err
-		}
-	}
-
-	// === WB Analytics Tools ===
-	if toolCfg, exists := getToolCfg("get_wb_product_funnel"); exists && isEnabled("get_wb_product_funnel") {
-		if err := register("get_wb_product_funnel", std.NewWbProductFunnelTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_product_funnel_history"); exists && isEnabled("get_wb_product_funnel_history") {
-		if err := register("get_wb_product_funnel_history", std.NewWbProductFunnelHistoryTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_search_positions"); exists && isEnabled("get_wb_search_positions") {
-		if err := register("get_wb_search_positions", std.NewWbSearchPositionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_top_search_queries"); exists && isEnabled("get_wb_top_search_queries") {
-		if err := register("get_wb_top_search_queries", std.NewWbTopSearchQueriesTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_top_organic_positions"); exists && isEnabled("get_wb_top_organic_positions") {
-		if err := register("get_wb_top_organic_positions", std.NewWbTopOrganicPositionsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_campaign_stats"); exists && isEnabled("get_wb_campaign_stats") {
-		if err := register("get_wb_campaign_stats", std.NewWbCampaignStatsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_keyword_stats"); exists && isEnabled("get_wb_keyword_stats") {
-		if err := register("get_wb_keyword_stats", std.NewWbKeywordStatsTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
-	if toolCfg, exists := getToolCfg("get_wb_attribution_summary"); exists && isEnabled("get_wb_attribution_summary") {
-		if err := register("get_wb_attribution_summary", std.NewWbAttributionSummaryTool(wbClient, toolCfg, cfg.WB)); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
