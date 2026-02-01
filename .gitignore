@@ -116,3 +116,7 @@ TUI-CLEANUP-PLAN.md
 
 # Python virtual environments
 venv/
+
+# Tools - Python virtual environments
+tools/*/venv/
+
