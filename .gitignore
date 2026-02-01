@@ -113,3 +113,6 @@ cmd/interruption-test/poncho_log_*.md
 tui_audit_report.md
 TUI-REFACTORING-AUDIT.md
 TUI-CLEANUP-PLAN.md
+
+# Python virtual environments
+venv/
