@@ -142,6 +142,17 @@ type Tool interface {
 
 **Categories**: WB API, S3 (basic/batch/download), Vision, Planner.
 
+**WB Tools Registration** (SRP Refactored):
+The `setupWBTools()` function (lines 564-596) has been refactored from 166 lines to 20 lines by extracting category-specific functions:
+
+| Function | Tools Registered |
+|----------|------------------|
+| `setupWBContentTools()` | search_wb_products, get_wb_parent_categories, get_wb_subjects, ping_wb_api |
+| `setupWBFeedbacksTools()` | get_wb_feedbacks, get_wb_questions, get_wb_new_feedbacks_questions, etc. |
+| `setupWBCharacteristicsTools()` | get_wb_subjects_by_name, get_wb_characteristics, get_wb_tnved, get_wb_brands |
+| `setupWBServiceTools()` | reload_wb_dictionaries |
+| `setupWBAnalyticsTools()` | get_wb_product_funnel, get_wb_search_positions, get_wb_campaign_stats, etc. |
+
 ### Model Registry (`pkg/models/`)
 Centralized LLM provider management with dynamic switching.
 
@@ -233,12 +244,25 @@ app.RegisterPreset("my-ecommerce", &app.PresetConfig{
 ### ReActCycle (`pkg/chain/`)
 **PHASE 1-5 COMPLETE**: Template-Execution separation with Observer pattern.
 
-**Architecture**:
+**Architecture** (SRP Refactored):
 ```
 ReActCycle (Immutable Template) → Execute() →
 ReActExecution (Runtime State) → Execute() →
 ReActExecutor (Orchestrator) → Observer Notifications
 ```
+
+**Executor Methods** (Extracted from 268-line `Execute()`):
+| Method | Purpose |
+|--------|---------|
+| `initializeExecution()` | Initialize execution, notify observers |
+| `executeLLMStep()` | Execute LLM invocation, emit events |
+| `handleToolExecution()` | Execute tools, emit results |
+| `handleToolInterruption()` | Process user interruption |
+| `checkUserInterruption()` | Non-blocking interruption check |
+| `finalizeExecution()` | Build output, notify observers |
+| `notifyIterationStart()` | Observer notification helper |
+| `notifyIterationEnd()` | Observer notification helper |
+| `notifyFinishWithError()` | Error handling helper |
 
 **Key**:
 - Template immutable (thread-safe for concurrent Execute())
@@ -314,6 +338,24 @@ Adapter between `pkg/events` and Bubble Tea.
 ### App Initialization (`pkg/app/`)
 **Rule 11**: Context propagation through all layers.
 
+**Architecture** (SRP Refactored):
+The `Initialize()` function (lines 390-442) has been refactored from 211 lines to 35 lines by extracting focused helper functions:
+
+| Helper Function | Purpose |
+|-----------------|---------|
+| `createS3Client()` | Creates optional S3 client |
+| `createWBClient()` | Creates WB API client with ping check |
+| `loadWBDictionaries()` | Loads e-commerce dictionaries |
+| `createModelRegistry()` | Creates LLM model registry |
+| `createCoreState()` | Creates CoreState with TodoManager |
+| `getVisionLLM()` | Retrieves vision model from registry |
+| `loadAgentPrompts()` | Loads system and tool post-prompts |
+| `createReActCycle()` | Creates ReActCycle instance |
+| `setupReActCycleDependencies()` | Sets registry, state, bundle resolver |
+| `configureReActCycle()` | Full ReActCycle configuration |
+| `attachDebugRecorder()` | Attaches debug recorder |
+
+**Usage**:
 ```go
 components, err := app.Initialize(ctx, cfg, 10, "")
 result, err := app.Execute(ctx, components, query, timeout)
@@ -470,5 +512,22 @@ cd examples/interruptible-agent && go run main.go "Show parent categories"
 
 ---
 
+## Code Quality Notes
+
+**SRP Refactoring Completed** (2026-02-01):
+- `Initialize()`: 211 → 35 lines (83% reduction)
+- `Execute()`: 268 → 57 lines (79% reduction)
+- `setupWBTools()`: 166 → 20 lines (88% reduction)
+- Total: 645 → 112 lines (83% reduction)
+- All refactoring focused on extracting focused, single-responsibility functions
+- Maintained compilation and functionality throughout
+
+**Design Philosophy**:
+- SOLID principles as best practices, not dogmatic rules
+- Reasonable balance between clean code and practicality
+- Functions should have clear, single purposes without excessive complexity
+
+---
+
 **Last Updated**: 2026-02-01
-**Version**: 7.1 (Bundle system, Preset system, Primitives-based TUI, Enhanced streaming)
+**Version**: 7.2 (SRP refactoring complete, improved code organization)
