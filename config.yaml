@@ -188,6 +188,150 @@ enable_bundles: []
 #   - "flat": все tools отправляются в LLM сразу (без оптимизации токенов)
 tool_resolution_mode: "bundle-first"
 
+# Tool Categories Configuration (OCP)
+#
+# Категории инструментов для OCP-расширяемости.
+# Позволяет добавлять новые e-commerce API (Ozon, Yandex) без изменения core кода.
+#
+# Каждая категория имеет:
+#   - enabled: включена ли категория
+#   - client: имя зависимости (wb_client, s3_client, vision_llm, etc.)
+#   - tools: список инструментов в категории
+#
+# Пример добавления Ozon (без изменения core кода):
+#   tool_categories:
+#     ozon:
+#       enabled: true
+#       client: ozon_client
+#       tools:
+#         - search_ozon_products
+#         - get_ozon_categories
+tool_categories:
+  # === Wildberries API Tools ===
+  wb-content:
+    enabled: false  # Set to true to enable
+    client: wb_client
+    tools:
+      - search_wb_products
+      - get_wb_parent_categories
+      - get_wb_subjects
+      - get_wb_subjects_by_name
+      - get_wb_characteristics
+      - get_wb_tnved
+      - get_wb_brands
+      - ping_wb_api
+      - reload_wb_dictionaries
+
+  wb-feedbacks:
+    enabled: false
+    client: wb_client
+    tools:
+      - get_wb_feedbacks
+      - get_wb_questions
+      - get_wb_new_feedbacks_questions
+      - get_wb_unanswered_feedbacks_counts
+      - get_wb_unanswered_questions_counts
+
+  wb-analytics:
+    enabled: false
+    client: wb_client
+    tools:
+      - get_wb_product_funnel
+      - get_wb_product_funnel_history
+      - get_wb_search_positions
+      - get_wb_top_search_queries
+      - get_wb_top_organic_positions
+      - get_wb_campaign_stats
+      - get_wb_keyword_stats
+      - get_wb_attribution_summary
+
+  wb-dictionaries:
+    enabled: false
+    client: ""  # No client needed, uses state.GetDictionaries()
+    tools:
+      - wb_colors
+      - wb_countries
+      - wb_genders
+      - wb_seasons
+      - wb_vat_rates
+
+  # === S3 Storage Tools ===
+  s3:
+    enabled: false
+    client: s3_client
+    tools:
+      - list_s3_files
+      - read_s3_object
+      - read_s3_image
+      - get_plm_data
+      - download_s3_files
+      - classify_and_download_s3_files
+
+  # === Vision Tools ===
+  vision:
+    enabled: false
+    client: vision_llm  # Requires special handling (multiple dependencies)
+    tools:
+      - analyze_article_images_batch
+
+  # === LLM Tools ===
+  llm:
+    enabled: false
+    client: model_registry
+    tools:
+      - ping_llm_provider
+
+  # === Todo/Planner Tools ===
+  todo:
+    enabled: false
+    client: todo_manager
+    tools:
+      - plan_add_task
+      - plan_mark_done
+      - plan_mark_failed
+      - plan_clear
+      - plan_set_tasks
+
+# Prompt Sources Configuration (OCP)
+#
+# Источники промптов для OCP-расширяемости.
+# Позволяет загружать промпты из YAML файлов, базы данных или API без изменения loader кода.
+#
+# Fallback Chain: Источники пробуются по порядку.
+#   1. File source (YAML файлы из cfg.App.PromptsDir)
+#   2. Default source (Go defaults как fallback)
+#
+# Добавление нового источника (без изменения loader):
+#   prompt_sources:
+#     - type: database
+#       config:
+#         connection_string: "${DB_URL}"
+#         table: "prompts"
+#
+# YAML-first философия: Файлы приоритетны, Go defaults — резерв.
+prompt_sources:
+  # === File Source (Primary) ===
+  - type: file
+    config:
+      # base_dir берётся из cfg.App.PromptsDir (YAML-first)
+      # ВАЖНО: "." или относительный путь разрешается относительно рабочей директории
+      base_dir: "${PROMPTS_DIR:-./prompts}"
+
+  # === Default Source (Fallback) ===
+  # Go defaults — резервный источник когда YAML файлы недоступны
+  # Автоматически добавляется в коде, не нужно указывать здесь
+  #
+  # Примеры других источников (неактивны):
+  # - type: database
+  #   config:
+  #     connection_string: "${DB_URL}"
+  #     table: "prompts"
+  #
+  # - type: api
+  #   config:
+  #     endpoint: "${PROMPT_API_URL}"
+  #     auth_token: "${PROMPT_API_TOKEN}"
+
 # Tools Configuration
 #
 # Каждый tool имеет свою конфигурацию с параметрами:

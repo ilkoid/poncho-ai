@@ -12,17 +12,19 @@ import (
 // AppConfig — корневая структура конфигурации.
 // Она зеркалит структуру твоего config.yaml.
 type AppConfig struct {
-	Models             ModelsConfig         `yaml:"models"`
-	Tools              map[string]ToolConfig `yaml:"tools"`
-	ToolBundles        map[string]ToolBundle `yaml:"tool_bundles"`         // NEW: Группы инструментов
-	EnableBundles      []string             `yaml:"enable_bundles"`         // NEW: Какие bundles включить
-	ToolResolutionMode string               `yaml:"tool_resolution_mode"`  // NEW: Режим резолюции (bundle-first, flat)
-	S3                 S3Config             `yaml:"s3"`
-	ImageProcessing ImageProcConfig      `yaml:"image_processing"`
-	App             AppSpecific          `yaml:"app"`
-	FileRules       []FileRule           `yaml:"file_rules"`
-	WB              WBConfig             `yaml:"wb"`
-	Chains          map[string]ChainConfig `yaml:"chains"`
+	Models             ModelsConfig               `yaml:"models"`
+	Tools              map[string]ToolConfig      `yaml:"tools"`
+	ToolBundles        map[string]ToolBundle      `yaml:"tool_bundles"`         // NEW: Группы инструментов
+	EnableBundles      []string                   `yaml:"enable_bundles"`         // NEW: Какие bundles включить
+	ToolResolutionMode string                     `yaml:"tool_resolution_mode"`  // NEW: Режим резолюции (bundle-first, flat)
+	ToolCategories     map[string]ToolCategoryConfig `yaml:"tool_categories"`   // OCP: Конфигурация категорий инструментов
+	PromptSources      []PromptSourceConfig       `yaml:"prompt_sources"`        // OCP: Источники промптов
+	S3                 S3Config                   `yaml:"s3"`
+	ImageProcessing    ImageProcConfig            `yaml:"image_processing"`
+	App                AppSpecific                `yaml:"app"`
+	FileRules          []FileRule                 `yaml:"file_rules"`
+	WB                 WBConfig                   `yaml:"wb"`
+	Chains             map[string]ChainConfig     `yaml:"chains"`
 }
 
 // ChainConfig — базовая конфигурация цепочки.
@@ -132,6 +134,39 @@ type ToolConfig struct {
 type ToolBundle struct {
 	Description string   `yaml:"description"` // Описание bundle для LLM
 	Tools       []string `yaml:"tools"`       // Список инструментов в bundle
+}
+
+// ToolCategoryConfig — конфигурация категории инструментов для OCP-расширяемости.
+//
+// Категория объединяет инструменты с общими зависимостями (клиенты).
+// Позволяет добавлять новые e-commerce API (Ozon, Yandex) без изменения core кода.
+//
+// Пример:
+//   tool_categories:
+//     wb:
+//       enabled: true
+//       client: wb_client
+//       tools:
+//         - search_wb_products
+//         - get_wb_parent_categories
+type ToolCategoryConfig struct {
+	Enabled bool     `yaml:"enabled"` // Включена ли категория
+	Client  string   `yaml:"client"`  // Имя зависимости (wb_client, ozon_client, etc.)
+	Tools   []string `yaml:"tools"`   // Список инструментов в категории
+}
+
+// PromptSourceConfig — конфигурация источника промптов.
+//
+// Позволяет загружать промпты из разных источников (файлы, БД, API).
+//
+// Пример:
+//   prompt_sources:
+//     - type: file
+//       config:
+//         base_dir: "./prompts"
+type PromptSourceConfig struct {
+	Type   string            `yaml:"type"`   // Тип источника: file, database, api
+	Config map[string]string `yaml:"config"` // Конфигурация источника
 }
 
 // S3Config — настройки объектного хранилища.

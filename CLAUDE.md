@@ -13,9 +13,11 @@ Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI
 - `pkg/tui/` - TUI components with primitives layer (BaseModel, InterruptionModel)
 - `pkg/chain/ReActCycle` - Chain + Agent interfaces
 - `pkg/app/components.go` - Context propagation (Rule 11)
+- `pkg/app/tool_setup.go` - **OCP: Config-driven tool setup** (2026-02-01)
 - `pkg/app/presets.go` - Preset system for quick launch
 - `pkg/agent/Client` - Simple 2-line agent API (Facade)
 - `pkg/events/` - Port & Adapter for UI decoupling
+- `pkg/prompts/` - **OCP: Prompt loading with source pattern** (2026-02-01)
 - `pkg/chain/bundle_resolver.go` - Token optimization (98% savings)
 - Rule 6 Compliant: `pkg/` has NO imports from `internal/`
 
@@ -142,16 +144,34 @@ type Tool interface {
 
 **Categories**: WB API, S3 (basic/batch/download), Vision, Planner.
 
-**WB Tools Registration** (SRP Refactored):
-The `setupWBTools()` function (lines 564-596) has been refactored from 166 lines to 20 lines by extracting category-specific functions:
+**Tool Registration** (OCP Refactored - 2026-02-01):
+Config-driven via `pkg/app/tool_setup.go` with factory pattern in `registerTool()`:
 
-| Function | Tools Registered |
-|----------|------------------|
-| `setupWBContentTools()` | search_wb_products, get_wb_parent_categories, get_wb_subjects, ping_wb_api |
-| `setupWBFeedbacksTools()` | get_wb_feedbacks, get_wb_questions, get_wb_new_feedbacks_questions, etc. |
-| `setupWBCharacteristicsTools()` | get_wb_subjects_by_name, get_wb_characteristics, get_wb_tnved, get_wb_brands |
-| `setupWBServiceTools()` | reload_wb_dictionaries |
-| `setupWBAnalyticsTools()` | get_wb_product_funnel, get_wb_search_positions, get_wb_campaign_stats, etc. |
+```go
+// pkg/app/tool_setup.go
+func SetupToolsFromConfig(
+    st *state.CoreState,
+    cfg *config.AppConfig,
+    clients map[string]any,  // Dependency injection container
+) error {
+    // Iterates cfg.ToolCategories, calls registerTool() for each tool
+}
+
+func registerTool(name string, ...) error {
+    switch name {
+    case "search_wb_products":
+        tool = std.NewWbProductSearchTool(client.(*wb.Client), toolCfg, cfg.WB)
+    // ... 50+ tools covered
+    }
+}
+```
+
+**Adding Ozon** (without modifying core code):
+1. Add `ozon` category to `config.yaml`
+2. Add `ozon_client` to clients map
+3. Add cases to `registerTool()` switch
+
+**No setupOzonTools() function needed!**
 
 ### Model Registry (`pkg/models/`)
 Centralized LLM provider management with dynamic switching.
@@ -431,6 +451,33 @@ JSON trace recording with base64 truncation.
 - Configurable `max_result_size`
 - Includes tool args/results in logs
 
+### Prompt System (`pkg/prompts/`)
+**OCP Refactored** (2026-02-01): Source pattern with fallback chain.
+
+**PromptSource Interface**:
+```go
+type PromptSource interface {
+    Load(promptID string) (*PromptFile, error)
+}
+```
+
+**Source Registry** with fallback chain:
+1. File sources (YAML files from `cfg.App.PromptsDir`)
+2. Default source (Go defaults)
+
+**Implementations**:
+- `FileSource` - YAML files (`<base_dir>/<promptID>.yaml`)
+- `DefaultSource` - Go hardcoded defaults (fallback)
+- `APISource` - HTTP REST API (example)
+- `DatabaseSource` - SQL database (example)
+
+**Usage**:
+```go
+registry, _ := prompts.CreateSourceRegistry(cfg)
+file, err := registry.Load("agent_system")
+// Fallback: file.yaml → Go default
+```
+
 ---
 
 ## Design Patterns
@@ -442,7 +489,8 @@ JSON trace recording with base64 truncation.
 | **Callback** | `pkg/tui/` | Business logic injection (Rule 6) |
 | **Repository** | `pkg/state/` | Unified storage |
 | **Registry** | `pkg/tools/`, `pkg/models/` | Registration/discovery |
-| **Factory** | `pkg/models/` | LLM provider creation |
+| **Factory** | `pkg/models/`, `pkg/app/tool_setup.go` | LLM/tool creation |
+| **Adapter** | `pkg/prompts/registry_factory.go` | Source pattern adapters |
 | **Options** | `pkg/llm/` | Runtime parameter overrides |
 | **Dependency Injection** | `pkg/app/`, `pkg/tools/std/` | DI for WB client |
 | **ReAct** | `pkg/chain/` | Agent reasoning |
@@ -450,7 +498,8 @@ JSON trace recording with base64 truncation.
 | **Template-Execution** | `pkg/chain/` | Immutable + runtime state |
 | **Observer** | `pkg/chain/` | Cross-cutting concerns |
 | **Streaming** | `pkg/llm/StreamingProvider` | Real-time responses |
-| **Fallback** | `pkg/chain/interruption.go` | Default prompt |
+| **Fallback** | `pkg/prompts/source_registry.go` | Prompt source chain |
+| **Source** | `pkg/prompts/` | OCP: Extensible prompt loading |
 
 ---
 
@@ -529,5 +578,92 @@ cd examples/interruptible-agent && go run main.go "Show parent categories"
 
 ---
 
+## OCP Refactoring (2026-02-01)
+
+**Open/Closed Principle**: Open for extension, closed for modification.
+
+### Tool Categories — Config-Driven (No Interface)
+
+**Rationale**: Only 1 category type exists → interface not justified (dev_solid.md principle).
+
+**Adding Ozon now requires only:**
+1. Add `ozon` section to `config.yaml`
+2. Add `ozon_client` to clients map in `Initialize()`
+3. Add cases to `registerTool()` switch in `pkg/app/tool_setup.go`
+
+**No `setupOzonTools()` function needed!**
+
+```yaml
+# config.yaml
+tool_categories:
+  ozon:
+    enabled: true
+    client: ozon_client
+    tools:
+      - search_ozon_products
+      - get_ozon_categories
+```
+
+```go
+// pkg/app/tool_setup.go - registerTool()
+switch name {
+// ... existing cases ...
+case "search_ozon_products":
+    tool = std.NewOzonProductSearchTool(client.(*ozon.Client), toolCfg, cfg.Ozon)
+}
+```
+
+**Files**: [pkg/app/tool_setup.go](pkg/app/tool_setup.go), [config.yaml](config.yaml)
+
+### Prompt Loading — Source Pattern (Interface Justified)
+
+**Rationale**: ≥3 implementations (File, Database, API) → interface justified.
+
+**Fallback Chain**: File sources (YAML) → Default source (Go code)
+
+```yaml
+# config.yaml
+prompt_sources:
+  - type: file
+    config:
+      base_dir: "${PROMPTS_DIR:-./prompts}"
+  # Optional: Database source
+  # - type: database
+  #   config:
+  #     connection_string: "${DB_URL}"
+  #     table: "prompts"
+```
+
+**Adding new prompt source:**
+1. Implement `Load(promptID) (*PromptData, error)` in `pkg/prompts/sources/`
+2. Add adapter in `pkg/prompts/registry_factory.go` (3 lines)
+3. Add type to `config.yaml`
+
+**No loader functions need modification!**
+
+**Files**:
+- [pkg/prompts/source.go](pkg/prompts/source.go) - PromptSource interface
+- [pkg/prompts/types.go](pkg/prompts/types.go) - PromptFile, ErrNotFound
+- [pkg/prompts/source_registry.go](pkg/prompts/source_registry.go) - SourceRegistry with fallback
+- [pkg/prompts/registry_factory.go](pkg/prompts/registry_factory.go) - Factory + adapters
+- [pkg/prompts/sources/file_source.go](pkg/prompts/sources/file_source.go) - YAML files
+- [pkg/prompts/sources/default_source.go](pkg/prompts/sources/default_source.go) - Go defaults
+- [pkg/prompts/sources/api_source.go](pkg/prompts/sources/api_source.go) - HTTP API (example)
+- [pkg/prompts/sources/database_source.go](pkg/prompts/sources/database_source.go) - SQL DB (example)
+
+### OCP Benefits Summary
+
+| Aspect | Before | After |
+|--------|--------|-------|
+| **Adding new e-commerce API** | Modify `SetupTools()`, add `setupXxxTools()` | Add to config.yaml, add switch cases |
+| **Adding new prompt source** | Rewrite loader functions | Implement PromptSource interface |
+| **Configuration** | Partially hardcoded | Fully declarative YAML |
+| **Rule 6 compliance** | Partial | Full (pkg/ independent) |
+| **Interface justification** | N/A | Source: ≥3 impl, Category: no interface |
+
+**YAML-first Philosophy**: All configuration through YAML, Go code provides sensible defaults.
+
+---
+
 **Last Updated**: 2026-02-01
-**Version**: 7.2 (SRP refactoring complete, improved code organization)
+**Version**: 8.0 (OCP refactoring complete - Tool Categories & Prompt Sources)

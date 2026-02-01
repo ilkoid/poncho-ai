@@ -414,8 +414,18 @@ func Initialize(parentCtx context.Context, cfg *config.AppConfig, maxIters int, 
 	// Get vision LLM
 	visionLLM, _ := getVisionLLM(cfg, modelRegistry)
 
-	// Register tools
-	if err := SetupTools(coreState, wbClient, visionLLM, cfg, modelRegistry); err != nil {
+	// Register tools using config-driven approach (OCP)
+	// Dependency injection container for tool categories
+	clients := map[string]any{
+		"wb_client":      wbClient,
+		"s3_client":      s3Client,
+		"vision_llm":     visionLLM,
+		"model_registry": modelRegistry,
+		"state":          coreState,
+		"todo_manager":   coreState.GetTodoManager(),
+	}
+
+	if err := SetupToolsFromConfig(coreState, cfg, clients); err != nil {
 		return nil, err
 	}
 
