@@ -1,0 +1,17 @@
+# Конфигурация для WB Analytics Funnel Demo
+#
+# Эта утилита демонстрирует работу с WB Analytics API v3
+# для получения расширенных метрик воронки продаж.
+
+wb:
+  # API ключ для доступа к Wildberries Analytics API
+  # Можно переопределить через переменную окружения WB_API_KEY
+  api_key: "${WB_API_KEY:-demo_key}"
+
+tools:
+  get_wb_product_funnel:
+    enabled: true
+    description: "Воронка продаж Wildberries API v3: просмотры, корзина, заказы, выкупы, отмены, избранное, WB Club, остатки, рейтинги, финансы, время готовности"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 3  # 3 req/min (лимит WB Analytics API)
+    burst: 3

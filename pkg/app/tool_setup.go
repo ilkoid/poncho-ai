@@ -22,6 +22,8 @@ import (
 // 2. Добавить клиента в clients map
 // 3. Добавить case в registerTool()
 //
+// FALLBACK: Если tool_categories пустой, использует legacy tools секцию для backward compatibility.
+//
 // Rule 3: Все инструменты регистрируются через Registry.Register().
 // Rule 6: pkg/app может импортировать бизнес-логику (это app-specific слой).
 func SetupToolsFromConfig(
@@ -31,6 +33,13 @@ func SetupToolsFromConfig(
 ) error {
 	registry := st.GetToolsRegistry()
 
+	// Fallback: если tool_categories пустой, используем legacy подход
+	if len(cfg.ToolCategories) == 0 {
+		utils.Debug("tool_categories empty, using legacy tools registration")
+		return setupToolsFromLegacy(st, cfg, clients)
+	}
+
+	// OCP approach: tool categories
 	for categoryName, categoryCfg := range cfg.ToolCategories {
 		if !categoryCfg.Enabled {
 			utils.Debug("Tool category disabled, skipping", "category", categoryName)
@@ -59,6 +68,123 @@ func SetupToolsFromConfig(
 	}
 
 	return nil
+}
+
+// setupToolsFromLegacy регистрирует инструменты из legacy tools секции.
+//
+// Fallback функция для обратной совместимости с конфигами без tool_categories.
+func setupToolsFromLegacy(
+	st *state.CoreState,
+	cfg *config.AppConfig,
+	clients map[string]any,
+) error {
+	registry := st.GetToolsRegistry()
+
+	// Собираем все включенные инструменты
+	var enabledTools []string
+	for toolName, toolCfg := range cfg.Tools {
+		if toolCfg.Enabled {
+			enabledTools = append(enabledTools, toolName)
+		}
+	}
+
+	utils.Info("Registering tools from legacy config", "count", len(enabledTools))
+
+	// Регистрируем каждый инструмент через registerTool
+	for _, toolName := range enabledTools {
+		// Определяем клиента по имени инструмента (legacy mapping)
+		var client any
+		switch {
+		case isWBTool(toolName):
+			client = clients["wb_client"]
+		case isS3Tool(toolName):
+			client = clients["s3_client"]
+		case isLLMTool(toolName):
+			client = clients["model_registry"]
+		case isTodoTool(toolName):
+			client = clients["todo_manager"]
+		case isDictionaryTool(toolName):
+			client = nil // tools используют state напрямую
+		default:
+			// Для неизвестных инструментов пробуем без клиента
+			client = nil
+		}
+
+		if err := registerTool(toolName, registry, cfg, st, client); err != nil {
+			// Логируем ошибку, но продолжаем регистрацию других инструментов
+			utils.Warn("Failed to register tool", "name", toolName, "error", err)
+		}
+	}
+
+	return nil
+}
+
+// isWBTool проверяет, что инструмент относится к WB API
+func isWBTool(name string) bool {
+	wbTools := []string{
+		"search_wb_products", "get_wb_parent_categories", "get_wb_subjects",
+		"ping_wb_api", "get_wb_feedbacks", "get_wb_questions",
+		"get_wb_new_feedbacks_questions", "get_wb_unanswered_feedbacks_counts",
+		"get_wb_unanswered_questions_counts", "get_wb_subjects_by_name",
+		"get_wb_characteristics", "get_wb_tnved", "get_wb_brands",
+		"reload_wb_dictionaries", "get_wb_product_funnel",
+		"get_wb_product_funnel_history", "get_wb_search_positions",
+		"get_wb_top_search_queries", "get_wb_top_organic_positions",
+		"get_wb_campaign_stats", "get_wb_keyword_stats", "get_wb_attribution_summary",
+	}
+	for _, t := range wbTools {
+		if name == t {
+			return true
+		}
+	}
+	return false
+}
+
+// isS3Tool проверяет, что инструмент относится к S3 хранилищу
+func isS3Tool(name string) bool {
+	s3Tools := []string{
+		"list_s3_files", "read_s3_object", "read_s3_image",
+		"get_plm_data", "download_s3_files",
+		"classify_and_download_s3_files", "analyze_article_images_batch",
+	}
+	for _, t := range s3Tools {
+		if name == t {
+			return true
+		}
+	}
+	return false
+}
+
+// isLLMTool проверяет, что инструмент относится к LLM провайдерам
+func isLLMTool(name string) bool {
+	return name == "ping_llm_provider" || name == "ask_user_question"
+}
+
+// isTodoTool проверяет, что инструмент относится к планировщику задач
+func isTodoTool(name string) bool {
+	todoTools := []string{
+		"plan_add_task", "plan_mark_done", "plan_mark_failed",
+		"plan_clear", "plan_set_tasks",
+	}
+	for _, t := range todoTools {
+		if name == t {
+			return true
+		}
+	}
+	return false
+}
+
+// isDictionaryTool проверяет, что инструмент относится к словарям
+func isDictionaryTool(name string) bool {
+	dictTools := []string{
+		"wb_colors", "wb_countries", "wb_genders", "wb_seasons", "wb_vat_rates",
+	}
+	for _, t := range dictTools {
+		if name == t {
+			return true
+		}
+	}
+	return false
 }
 
 // registerTool регистрирует отдельный инструмент через factory pattern.

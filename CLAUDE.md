@@ -30,12 +30,15 @@ Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI
 ```
 poncho-ai/
 ├── cmd/                    # Entry points (autonomous utilities)
-├── examples/              # Usage examples (not utilities)
+├── examples/              # Verification utilities (Rule 9)
+│   └── wb-funnel-demo/    # WB Analytics API v3 demo
 ├── internal/              # App-specific logic (ui/)
 ├── pkg/                   # Reusable library packages
 ├── prompts/              # Prompt templates
 └── config.yaml           # Main config
 ```
+
+**Rule 9 Compliance**: Verification via `/examples` utilities, not unit tests initially.
 
 ---
 
@@ -52,7 +55,8 @@ poncho-ai/
 | **6: Package Structure** ⭐ | `pkg/` = reusable, `internal/` = app-specific, `cmd/` = test utilities |
 | **7: Error Handling** | No `panic()` in business logic |
 | **8: Extensibility** | Add via tools, LLM adapters, config |
-| **9: Testing** | Use CLI utilities in `/examples` |
+| **9: Testing** | Use CLI utilities in `/examples` for verification |
+  - Examples: `examples/wb-funnel-demo/` - autonomous WB Analytics v3 verification |
 | **10: Documentation** | Godoc on public APIs |
 | **11: Context Propagation** | All long-running ops accept `context.Context` |
 | **12: Security & Secrets** | Never hardcode secrets, use ENV, HTTPS only |
@@ -142,7 +146,20 @@ type Tool interface {
 }
 ```
 
-**Categories**: WB API, S3 (basic/batch/download), Vision, Planner.
+**Categories**: WB API (Content, Analytics v3, Feedbacks, Advertising), S3 (basic/batch/download), Vision, Planner.
+
+**WB Analytics API v3 Tools** (2026-02-10):
+- `get_wb_product_funnel` - Sales funnel with 15+ metrics (buyouts, cancellations, WB Club, stocks, ratings)
+- `get_wb_product_funnel_history` - Daily funnel trends (1-7 days free, up to 365 with subscription)
+- `get_wb_search_positions` - Product search visibility
+- `get_wb_top_search_queries` - Top search queries by product
+- `get_wb_top_organic_positions` - Organic search positions
+
+**Critical Rate Limits**: WB Analytics API has strict limits:
+- **3 requests/minute** (not 180!)
+- **20 second interval** between requests
+- **Burst: 3 requests**
+- Using higher limits will result in account bans
 
 **Tool Registration** (OCP Refactored - 2026-02-01):
 Config-driven via `pkg/app/tool_setup.go` with factory pattern in `registerTool()`:
@@ -419,10 +436,19 @@ type Components struct {
 | **LLM Providers** | `ModelRegistry` | Registry | `modelRegistry.Get()` |
 | **WB Client** | ❌ NOT in State | DI | Passed to tools |
 
+**WB Client Factory**:
+```go
+// pkg/wb/client.go
+client := wb.New(apiKey)                    // Simple creation
+client, err := wb.NewFromConfig(cfg.WB)    // Config-based
+```
+
+**Demo Mode**: `client.IsDemoKey()` returns `true` for `demo_key`, enabling mock responses.
+
 **Thread Safety**:
 - CoreState: `sync.RWMutex`
 - ModelRegistry: `sync.RWMutex`
-- WB Client: `sync.RWMutex`
+- WB Client: `sync.RWMutex` (rate limiters map)
 
 ### S3 Batch Tools (`pkg/tools/std/s3_batch.go`)
 **Purpose**: Batch operations with classification and vision analysis.
@@ -520,7 +546,23 @@ go run cmd/streaming-test/main.go "Explain quantum computing"
 
 # Interruptible agent
 cd examples/interruptible-agent && go run main.go "Show parent categories"
+
+# WB Analytics Funnel Demo (API v3 verification)
+cd examples/wb-funnel-demo
+go run main.go                              # Mock mode (demo_key)
+WB_API_KEY=your_key go run main.go         # Real API
+WB_API_KEY=your_key go run main.go --nmIds 123456 --days 30  # Custom args
 ```
+
+### Examples Directory
+
+The `examples/` directory contains autonomous utilities for verification and demonstration:
+
+- **`wb-funnel-demo/`** - WB Analytics API v3 verification utility
+  - Demonstrates 15+ v3 metrics (buyouts, cancellations, WB Club, stocks, ratings)
+  - Mock mode with `demo_key` for testing
+  - Custom nmIDs and period support
+  - Standalone go.mod with local replace
 
 ---
 
@@ -530,7 +572,55 @@ cd examples/interruptible-agent && go run main.go "Show parent categories"
 |----------|---------|
 | `ZAI_API_KEY` | LLM provider |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | Storage |
-| `WB_API_KEY` | Wildberries API |
+| `WB_API_KEY` | Wildberries API (Content, Analytics, Advertising) |
+
+---
+
+## WB Analytics API v3
+
+### Migration from API v2 (2026-02-10)
+
+**What Changed**: Migrated from `/api/v2/nm-report/detail` to `/api/analytics/v3/sales-funnel/products`
+
+**New Metrics** (15+ additions):
+| Metric | API v2 | API v3 |
+|--------|--------|--------|
+| Views | ✅ | ✅ |
+| Cart | ✅ | ✅ |
+| Orders | ✅ | ✅ |
+| **Buyouts** | ❌ | ✅ |
+| **Cancellations** | ❌ | ✅ |
+| **Wishlist** | ❌ | ✅ |
+| **Order Sums** | ❌ | ✅ |
+| **Average Price** | ❌ | ✅ |
+| **WB Club** | ❌ | ✅ |
+| **Stocks (WB/MP)** | ❌ | ✅ |
+| **Product Rating** | ❌ | ✅ |
+| **Feedback Rating** | ❌ | ✅ |
+| **Time to Ready** | ❌ | ✅ |
+| **Localization %** | ❌ | ✅ |
+
+**Updated Tools**:
+- `get_wb_product_funnel` - Sales funnel with full v3 metrics
+- `get_wb_product_funnel_history` - Daily trends (1-7 days free, 365 with subscription)
+- `get_wb_search_positions` - Search visibility
+- `get_wb_top_search_queries` - Top search queries
+- `get_wb_top_organic_positions` - Organic positions
+
+**Rate Limits** (CRITICAL):
+```
+Period: 1 minute
+Limit:  3 requests
+Interval: 20 seconds
+Burst:  3 requests
+```
+⚠️ **Using `rate_limit: 180` will cause account bans!** Correct value is `rate_limit: 3`.
+
+**Post-Prompts**:
+- `prompts/wb/analytics/product_funnel.ru.yaml` - Funnel analysis with insights
+- `prompts/wb/analytics/funnel_history.ru.yaml` - Daily trends with seasonality
+
+**Implementation**: [pkg/tools/std/wb_analytics.go](pkg/tools/std/wb_analytics.go)
 
 ---
 
@@ -665,5 +755,5 @@ prompt_sources:
 
 ---
 
-**Last Updated**: 2026-02-01
-**Version**: 8.0 (OCP refactoring complete - Tool Categories & Prompt Sources)
+**Last Updated**: 2026-02-10
+**Version**: 8.1 (WB Analytics API v3 migration + examples directory)

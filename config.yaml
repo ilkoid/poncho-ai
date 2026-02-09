@@ -130,7 +130,7 @@ tool_bundles:
 
   # === Wildberries Analytics API ===
   wb-analytics-tools:
-    description: "Wildberries Analytics API: воронки продаж, позиции в поиске, рекламные кампании, ключевые слова"
+    description: "Wildberries Analytics API v3: воронки продаж (выкупы, отмены, WB Club, остатки, рейтинги), позиции в поиске, рекламные кампании, ключевые слова"
     tools:
       - get_wb_product_funnel
       - get_wb_product_funnel_history
@@ -558,37 +558,37 @@ tools:
   # === WB Analytics Tools ===
   get_wb_product_funnel:
     enabled: true
-    description: "Воронка продаж по товарам за период (просмотры→корзина→заказ, конверсии)"
+    description: "Воронка продаж Wildberries API v3: просмотры, корзина, заказы, выкупы, отмены, избранное, WB Club, остатки, рейтинги, финансы, время готовности"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180  # 3 req/min (лимит WB Analytics API)
+    rate_limit: 3  # 3 req/min (лимит WB Analytics API)
     burst: 3
 
   get_wb_product_funnel_history:
     enabled: true
-    description: "История воронки по дням (до 7 дней бесплатно, до 365 с Джем)"
+    description: "История воронки Wildberries API v3 по дням: все метрики воронки с ежедневной детализацией"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3
     burst: 3
 
   get_wb_search_positions:
     enabled: true
     description: "Позиции товаров в поиске и видимость (средняя позиция, топ-100)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3  # 3 req/min (лимит WB Analytics API)
     burst: 3
 
   get_wb_top_search_queries:
     enabled: true
     description: "Топ поисковых запросов по товару (до 100 фраз, сортировка по заказам)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3  # 3 req/min (лимит WB Analytics API)
     burst: 3
 
   get_wb_top_organic_positions:
     enabled: true
     description: "Топ-10 позиций в органическом поиске по запросам (агрегирует данные из get_wb_top_search_queries)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3  # 3 req/min (лимит WB Analytics API)
     burst: 3
 
   get_wb_campaign_stats:

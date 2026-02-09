@@ -72,8 +72,11 @@ debug_logs/
 s3-download/
 cmd/s3-download/
 
-# Examples directory (local utilities and demos)
-examples/
+# Examples are now part of the repository (Rule 9: verification utilities)
+# Local demo/test files should be in a separate directory
+examples/*/bin/
+examples/*/*.exe
+**/wb-funnel-demo
 
 # Personal notes
 mynotes.md

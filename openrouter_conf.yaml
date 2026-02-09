@@ -571,7 +571,7 @@ tools:
     enabled: false
     description: "Воронка продаж по товарам за период (просмотры→корзина→заказ, конверсии)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3
     burst: 3
     post_prompt: "wb/analytics/product_funnel.ru.yaml"
 
@@ -579,7 +579,7 @@ tools:
     enabled: false
     description: "История воронки по дням (до 7 дней бесплатно, до 365 с Джем)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3
     burst: 3
     post_prompt: "wb/analytics/funnel_history.ru.yaml"
 
@@ -587,7 +587,7 @@ tools:
     enabled: false
     description: "Позиции товаров в поиске и видимость (средняя позиция, топ-100)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3
     burst: 3
     post_prompt: "wb/analytics/search_positions.ru.yaml"
 
@@ -595,7 +595,7 @@ tools:
     enabled: false
     description: "Топ поисковых запросов по товару (до 100 фраз, сортировка по заказам)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3
     burst: 3
     post_prompt: "wb/analytics/top_search_queries.ru.yaml"
 
@@ -603,7 +603,7 @@ tools:
     enabled: false
     description: "Топ-10 позиций в органическом поиске по запросам (агрегирует данные из get_wb_top_search_queries)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3
     burst: 3
     post_prompt: "wb/analytics/organic_positions.ru.yaml"
 

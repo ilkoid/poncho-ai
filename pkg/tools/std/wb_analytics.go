@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
@@ -18,8 +19,8 @@ import (
 
 // WbProductFunnelTool — инструмент для получения воронки продаж товаров.
 //
-// Использует Analytics API: POST /api/v2/nm-report/detail
-// Возвращает просмотры, добавления в корзину, заказы и конверсии.
+// Использует Analytics API v3: POST /api/analytics/v3/sales-funnel/products
+// Возвращает просмотры, корзину, заказы, выкупы, отмены, избранное, WB Club, остатки, рейтинги, финансы.
 type WbProductFunnelTool struct {
 	client      *wb.Client
 	toolID      string
@@ -67,6 +68,10 @@ func (t *WbProductFunnelTool) Definition() tools.ToolDefinition {
 					"type":        "integer",
 					"description": "Количество дней для анализа (1-365)",
 				},
+				"top": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Вернуть только топовые товары (опционально)",
+				},
 			},
 			"required": []string{"nmIDs", "days"},
 		},
@@ -103,86 +108,198 @@ func (t *WbProductFunnelTool) Execute(ctx context.Context, argsJSON string) (str
 	now := time.Now()
 	begin := now.AddDate(0, 0, -args.Days)
 
-	// Формируем запрос к WB API
+	// Формируем запрос к WB API v3
 	reqBody := map[string]interface{}{
-		"nmIDs": args.NmIDs,
-		"period": map[string]string{
-			"begin": begin.Format("2006-01-02"),
+		"nmIds": args.NmIDs,
+		"selectedPeriod": map[string]string{
+			"start": begin.Format("2006-01-02"),
 			"end":   now.Format("2006-01-02"),
 		},
-		"page": 1,
 	}
 
 	var response struct {
 		Data struct {
-			Cards []struct {
-				NMID  int `json:"nmID"`
-				Statistics struct {
-					SelectedPeriod struct {
-						OpenCardCount  int  `json:"openCardCount"`
-						AddToCartCount int  `json:"addToCartCount"`
-						OrdersCount    int  `json:"ordersCount"`
-						Conversions    struct {
-							AddToCartPercent     float64 `json:"addToCartPercent"`
-							CartToOrderPercent   float64 `json:"cartToOrderPercent"`
-							OpenCardToOrderPercent float64 `json:"openCardToOrderPercent"`
+			Products []struct {
+				Product struct {
+					NmID          int     `json:"nmId"`
+					Title         string  `json:"title"`
+					VendorCode    string  `json:"vendorCode"`
+					BrandName     string  `json:"brandName"`
+					SubjectID     int     `json:"subjectId"`
+					SubjectName   string  `json:"subjectName"`
+					ProductRating float64 `json:"productRating"`
+					FeedbackRating float64 `json:"feedbackRating"`
+					Stocks        struct {
+						WB         int `json:"wb"`
+						MP         int `json:"mp"`
+						BalanceSum int `json:"balanceSum"`
+					} `json:"stocks"`
+				} `json:"product"`
+				Statistic struct {
+					Selected struct {
+						Period struct {
+							Start string `json:"start"`
+							End   string `json:"end"`
+						} `json:"period"`
+						OpenCount        int     `json:"openCount"`
+						CartCount        int     `json:"cartCount"`
+						OrderCount       int     `json:"orderCount"`
+						OrderSum         int     `json:"orderSum"`
+						BuyoutCount      int     `json:"buyoutCount"`
+						BuyoutSum        int     `json:"buyoutSum"`
+						CancelCount      int     `json:"cancelCount"`
+						CancelSum        int     `json:"cancelSum"`
+						AvgPrice         int     `json:"avgPrice"`
+						AddToWishlist    int     `json:"addToWishlist"`
+						TimeToReady      struct {
+							Days  int `json:"days"`
+							Hours int `json:"hours"`
+							Mins  int `json:"mins"`
+						} `json:"timeToReady"`
+						LocalizationPercent float64 `json:"localizationPercent"`
+						WBClub              struct {
+							OrderCount          int     `json:"orderCount"`
+							OrderSum            int     `json:"orderSum"`
+							BuyoutSum           int     `json:"buyoutSum"`
+							BuyoutCount         int     `json:"buyoutCount"`
+							CancelSum           int     `json:"cancelSum"`
+							CancelCount         int     `json:"cancelCount"`
+							AvgPrice            int     `json:"avgPrice"`
+							BuyoutPercent       float64 `json:"buyoutPercent"`
+							AvgOrderCountPerDay float64 `json:"avgOrderCountPerDay"`
+						} `json:"wbClub"`
+						Conversions struct {
+							AddToCartPercent   float64 `json:"addToCartPercent"`
+							CartToOrderPercent float64 `json:"cartToOrderPercent"`
+							BuyoutPercent      float64 `json:"buyoutPercent"`
 						} `json:"conversions"`
-					} `json:"selectedPeriod"`
-				} `json:"statistics"`
-			} `json:"cards"`
+					} `json:"selected"`
+					Past *struct {
+						Period struct {
+							Start string `json:"start"`
+							End   string `json:"end"`
+						} `json:"period"`
+						OpenCount     int     `json:"openCount"`
+						CartCount     int     `json:"cartCount"`
+						OrderCount    int     `json:"orderCount"`
+						OrderSum      int     `json:"orderSum"`
+						BuyoutCount   int     `json:"buyoutCount"`
+						BuyoutSum     int     `json:"buyoutSum"`
+						CancelCount   int     `json:"cancelCount"`
+						CancelSum     int     `json:"cancelSum"`
+						AvgPrice      int     `json:"avgPrice"`
+						AddToWishlist int     `json:"addToWishlist"`
+					} `json:"past,omitempty"`
+					Comparison *struct {
+						OpenCountDiff     int     `json:"openCountDiff"`
+						OpenCountPercent  float64 `json:"openCountPercent"`
+						CartCountDiff     int     `json:"cartCountDiff"`
+						CartCountPercent  float64 `json:"cartCountPercent"`
+						OrderCountDiff    int     `json:"orderCountDiff"`
+						OrderCountPercent float64 `json:"orderCountPercent"`
+						OrderSumDiff      int     `json:"orderSumDiff"`
+						OrderSumPercent   float64 `json:"orderSumPercent"`
+					} `json:"comparison,omitempty"`
+				} `json:"statistic"`
+			} `json:"products"`
+			Currency string `json:"currency"`
 		} `json:"data"`
 	}
 
 	err := t.client.Post(ctx, t.toolID, t.endpoint, t.rateLimit, t.burst,
-		"/api/v2/nm-report/detail", reqBody, &response)
+		"/api/analytics/v3/sales-funnel/products", reqBody, &response)
 	if err != nil {
 		return "", fmt.Errorf("failed to get product funnel: %w", err)
 	}
 
 	// Форматируем ответ для LLM
-	result, _ := json.Marshal(response.Data.Cards)
+	result, _ := json.Marshal(response.Data.Products)
 	return string(result), nil
 }
 
 // executeMock возвращает mock данные для demo режима.
 func (t *WbProductFunnelTool) executeMock(nmIDs []int, days int) (string, error) {
-	mockCards := make([]map[string]interface{}, 0, len(nmIDs))
+	mockProducts := make([]map[string]interface{}, 0, len(nmIDs))
 
 	now := time.Now()
 	begin := now.AddDate(0, 0, -days)
 
 	for _, nmID := range nmIDs {
-		views := 1000 + (nmID % 500)
-		addToCart := views / 10
-		orders := addToCart / 5
+		openCount := 1000 + (nmID % 500)
+		cartCount := openCount / 10
+		orderCount := cartCount / 3
+		buyoutCount := int(float64(orderCount) * 0.85)
+		cancelCount := orderCount - buyoutCount
+		avgPrice := 1500 + (nmID % 500)
 
-		mockCards = append(mockCards, map[string]interface{}{
-			"nmID": nmID,
-			"period": map[string]string{
-				"begin": begin.Format("2006-01-02"),
-				"end":   now.Format("2006-01-02"),
-			},
-			"funnel": map[string]interface{}{
-				"views":      views,
-				"addToCart":  addToCart,
-				"orders":     orders,
-				"conversions": map[string]interface{}{
-					"toCartPercent":   float64(addToCart) / float64(views) * 100,
-					"toOrderPercent":  float64(orders) / float64(addToCart) * 100,
+		mockProducts = append(mockProducts, map[string]interface{}{
+			"product": map[string]interface{}{
+				"nmId":          nmID,
+				"title":         "Mock Product " + strconv.Itoa(nmID),
+				"vendorCode":    "ART" + strconv.Itoa(nmID),
+				"brandName":     "Mock Brand",
+				"subjectName":   "Mock Subject",
+				"productRating": 4.5,
+				"feedbackRating": 4.2,
+				"stocks": map[string]interface{}{
+					"wb":         50,
+					"mp":         20,
+					"balanceSum": 70000,
 				},
 			},
-			"mock": true,
+			"statistic": map[string]interface{}{
+				"selected": map[string]interface{}{
+					"period": map[string]string{
+						"start": begin.Format("2006-01-02"),
+						"end":   now.Format("2006-01-02"),
+					},
+					"openCount": openCount,
+					"cartCount": cartCount,
+					"orderCount": orderCount,
+					"orderSum":  orderCount * avgPrice,
+					"buyoutCount": buyoutCount,
+					"buyoutSum":   buyoutCount * avgPrice,
+					"cancelCount": cancelCount,
+					"cancelSum":   cancelCount * avgPrice,
+					"avgPrice":    avgPrice,
+					"addToWishlist": openCount / 3,
+					"localizationPercent": 45.0,
+					"timeToReady": map[string]interface{}{
+						"days":  1,
+						"hours": 8,
+						"mins":  30,
+					},
+					"wbClub": map[string]interface{}{
+						"orderCount":           orderCount / 2,
+						"orderSum":             (orderCount / 2) * avgPrice,
+						"buyoutCount":          buyoutCount / 2,
+						"buyoutSum":            (buyoutCount / 2) * avgPrice,
+						"cancelCount":          cancelCount / 2,
+						"cancelSum":            (cancelCount / 2) * avgPrice,
+						"avgPrice":             avgPrice,
+						"buyoutPercent":        85.0,
+						"avgOrderCountPerDay":  float64(orderCount) / float64(days),
+					},
+					"conversions": map[string]interface{}{
+						"addToCartPercent":   float64(cartCount) / float64(openCount) * 100,
+						"cartToOrderPercent": float64(orderCount) / float64(cartCount) * 100,
+						"buyoutPercent":      float64(buyoutCount) / float64(orderCount) * 100,
+					},
+				},
+			},
+			"currency": "RUB",
+			"mock":     true,
 		})
 	}
 
-	result, _ := json.Marshal(mockCards)
+	result, _ := json.Marshal(mockProducts)
 	return string(result), nil
 }
 
 // WbProductFunnelHistoryTool — инструмент для получения истории воронки по дням.
 //
-// Использует Analytics API: POST /api/v2/nm-report/detail/history
-// Возвращает историю по дням (до 7 дней бесплатно).
+// Использует Analytics API v3: POST /api/analytics/v3/sales-funnel/products/history
+// Возвращает историю по дням (1-7 бесплатно, до 365 с подпиской Джем).
 type WbProductFunnelHistoryTool struct {
 	client      *wb.Client
 	toolID      string
@@ -266,80 +383,161 @@ func (t *WbProductFunnelHistoryTool) Execute(ctx context.Context, argsJSON strin
 	now := time.Now()
 	begin := now.AddDate(0, 0, -args.Days)
 
-	// Формируем запрос к WB API
+	// Формируем запрос к WB API v3
 	reqBody := map[string]interface{}{
-		"nmIDs": args.NmIDs,
-		"period": map[string]string{
-			"begin": begin.Format("2006-01-02"),
+		"nmIds": args.NmIDs,
+		"selectedPeriod": map[string]string{
+			"start": begin.Format("2006-01-02"),
 			"end":   now.Format("2006-01-02"),
 		},
-		"page": 1,
 	}
 
 	var response struct {
 		Data struct {
-			Cards []struct {
-				NMID  int `json:"nmID"`
-				Statistics []struct {
-					Date           string `json:"date"`
-					OpenCardCount  int    `json:"openCardCount"`
-					AddToCartCount int    `json:"addToCartCount"`
-					OrdersCount    int    `json:"ordersCount"`
-					Conversions    struct {
-						AddToCartPercent     float64 `json:"addToCartPercent"`
-						CartToOrderPercent   float64 `json:"cartToOrderPercent"`
-						OpenCardToOrderPercent float64 `json:"openCardToOrderPercent"`
-					} `json:"conversions"`
-				} `json:"statistics"`
-			} `json:"cards"`
+			Products []struct {
+				Product struct {
+					NmID          int     `json:"nmId"`
+					Title         string  `json:"title"`
+					VendorCode    string  `json:"vendorCode"`
+					BrandName     string  `json:"brandName"`
+					SubjectID     int     `json:"subjectId"`
+					SubjectName   string  `json:"subjectName"`
+					ProductRating float64 `json:"productRating"`
+					FeedbackRating float64 `json:"feedbackRating"`
+					Stocks        struct {
+						WB         int `json:"wb"`
+						MP         int `json:"mp"`
+						BalanceSum int `json:"balanceSum"`
+					} `json:"stocks"`
+				} `json:"product"`
+				Statistic struct {
+					History []struct {
+						Date            string  `json:"date"`
+						OpenCount       int     `json:"openCount"`
+						CartCount       int     `json:"cartCount"`
+						OrderCount      int     `json:"orderCount"`
+						OrderSum        int     `json:"orderSum"`
+						BuyoutCount     int     `json:"buyoutCount"`
+						BuyoutSum       int     `json:"buyoutSum"`
+						CancelCount     int     `json:"cancelCount"`
+						CancelSum       int     `json:"cancelSum"`
+						AvgPrice        int     `json:"avgPrice"`
+						AddToWishlist   int     `json:"addToWishlist"`
+						TimeToReady     struct {
+							Days  int `json:"days"`
+							Hours int `json:"hours"`
+							Mins  int `json:"mins"`
+						} `json:"timeToReady"`
+						LocalizationPercent float64 `json:"localizationPercent"`
+						WBClub              struct {
+							OrderCount          int     `json:"orderCount"`
+							OrderSum            int     `json:"orderSum"`
+							BuyoutSum           int     `json:"buyoutSum"`
+							BuyoutCount         int     `json:"buyoutCount"`
+							CancelSum           int     `json:"cancelSum"`
+							CancelCount         int     `json:"cancelCount"`
+							AvgPrice            int     `json:"avgPrice"`
+							BuyoutPercent       float64 `json:"buyoutPercent"`
+						} `json:"wbClub"`
+						Conversions struct {
+							AddToCartPercent   float64 `json:"addToCartPercent"`
+							CartToOrderPercent float64 `json:"cartToOrderPercent"`
+							BuyoutPercent      float64 `json:"buyoutPercent"`
+						} `json:"conversions"`
+					} `json:"history"`
+				} `json:"statistic"`
+			} `json:"products"`
+			Currency string `json:"currency"`
 		} `json:"data"`
 	}
 
 	err := t.client.Post(ctx, t.toolID, t.endpoint, t.rateLimit, t.burst,
-		"/api/v2/nm-report/detail/history", reqBody, &response)
+		"/api/analytics/v3/sales-funnel/products/history", reqBody, &response)
 	if err != nil {
 		return "", fmt.Errorf("failed to get product funnel history: %w", err)
 	}
 
 	// Форматируем ответ для LLM
-	result, _ := json.Marshal(response.Data.Cards)
+	result, _ := json.Marshal(response.Data.Products)
 	return string(result), nil
 }
 
 // executeMock возвращает mock данные для demo режима.
 func (t *WbProductFunnelHistoryTool) executeMock(nmIDs []int, days int) (string, error) {
-	mockCards := make([]map[string]interface{}, 0, len(nmIDs))
+	mockProducts := make([]map[string]interface{}, 0, len(nmIDs))
 	now := time.Now()
 
 	for _, nmID := range nmIDs {
 		history := make([]map[string]interface{}, 0, days)
+		avgPrice := 1500 + (nmID % 500)
 
 		for i := days - 1; i >= 0; i-- {
 			date := now.AddDate(0, 0, -i)
-			views := 100 + (nmID % 50) + i*10
-			addToCart := views / 10
-			orders := addToCart / 5
+			openCount := 100 + (nmID % 50) + i*10
+			cartCount := openCount / 10
+			orderCount := cartCount / 3
+			buyoutCount := int(float64(orderCount) * 0.85)
+			cancelCount := orderCount - buyoutCount
 
 			history = append(history, map[string]interface{}{
-				"date":           date.Format("2006-01-02"),
-				"openCardCount":  views,
-				"addToCartCount": addToCart,
-				"ordersCount":    orders,
+				"date":             date.Format("2006-01-02"),
+				"openCount":        openCount,
+				"cartCount":        cartCount,
+				"orderCount":       orderCount,
+				"orderSum":         orderCount * avgPrice,
+				"buyoutCount":      buyoutCount,
+				"buyoutSum":        buyoutCount * avgPrice,
+				"cancelCount":      cancelCount,
+				"cancelSum":        cancelCount * avgPrice,
+				"avgPrice":         avgPrice,
+				"addToWishlist":    openCount / 3,
+				"timeToReady": map[string]interface{}{
+					"days":  1,
+					"hours": 8,
+					"mins":  30,
+				},
+				"localizationPercent": 45.0,
+				"wbClub": map[string]interface{}{
+					"orderCount":    orderCount / 2,
+					"orderSum":      (orderCount / 2) * avgPrice,
+					"buyoutCount":   buyoutCount / 2,
+					"buyoutSum":     (buyoutCount / 2) * avgPrice,
+					"cancelCount":   cancelCount / 2,
+					"cancelSum":     (cancelCount / 2) * avgPrice,
+					"avgPrice":      avgPrice,
+					"buyoutPercent": 85.0,
+				},
 				"conversions": map[string]interface{}{
-					"addToCartPercent":     float64(addToCart) / float64(views) * 100,
-					"cartToOrderPercent":   float64(orders) / float64(addToCart) * 100,
-					"openCardToOrderPercent": float64(orders) / float64(views) * 100,
+					"addToCartPercent":   float64(cartCount) / float64(openCount) * 100,
+					"cartToOrderPercent": float64(orderCount) / float64(cartCount) * 100,
+					"buyoutPercent":      float64(buyoutCount) / float64(orderCount) * 100,
 				},
 			})
 		}
 
-		mockCards = append(mockCards, map[string]interface{}{
-			"nmID":       nmID,
-			"statistics": history,
-			"mock":       true,
+		mockProducts = append(mockProducts, map[string]interface{}{
+			"product": map[string]interface{}{
+				"nmId":          nmID,
+				"title":         "Mock Product " + strconv.Itoa(nmID),
+				"vendorCode":    "ART" + strconv.Itoa(nmID),
+				"brandName":     "Mock Brand",
+				"subjectName":   "Mock Subject",
+				"productRating": 4.5,
+				"feedbackRating": 4.2,
+				"stocks": map[string]interface{}{
+					"wb":         50,
+					"mp":         20,
+					"balanceSum": 70000,
+				},
+			},
+			"statistic": map[string]interface{}{
+				"history": history,
+			},
+			"currency": "RUB",
+			"mock":     true,
 		})
 	}
 
-	result, _ := json.Marshal(mockCards)
+	result, _ := json.Marshal(mockProducts)
 	return string(result), nil
 }

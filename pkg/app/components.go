@@ -414,6 +414,13 @@ func Initialize(parentCtx context.Context, cfg *config.AppConfig, maxIters int, 
 	// Get vision LLM
 	visionLLM, _ := getVisionLLM(cfg, modelRegistry)
 
+	// Create and set tools registry BEFORE registering tools
+	// This is required because SetupToolsFromConfig calls st.GetToolsRegistry()
+	toolsRegistry := tools.NewRegistry()
+	if err := coreState.SetToolsRegistry(toolsRegistry); err != nil {
+		return nil, fmt.Errorf("failed to set tools registry: %w", err)
+	}
+
 	// Register tools using config-driven approach (OCP)
 	// Dependency injection container for tool categories
 	clients := map[string]any{

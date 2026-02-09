@@ -335,35 +335,35 @@ tools:
     enabled: true
     description: "Воронка продаж по товарам за период (просмотры→корзина→заказ, конверсии)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180  # 3 req/min (лимит WB Analytics API)
+    rate_limit: 3  # 3 req/min (лимит WB Analytics API)
     burst: 3
 
   get_wb_product_funnel_history:
     enabled: true
     description: "История воронки по дням (до 7 дней бесплатно, до 365 с Джем)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3
     burst: 3
 
   get_wb_search_positions:
     enabled: true
     description: "Позиции товаров в поиске и видимость (средняя позиция, топ-100)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3  # 3 req/min (лимит WB Analytics API)
     burst: 3
 
   get_wb_top_search_queries:
     enabled: true
     description: "Топ поисковых запросов по товару (до 100 фраз, сортировка по заказам)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3  # 3 req/min (лимит WB Analytics API)
     burst: 3
 
   get_wb_top_organic_positions:
     enabled: true
     description: "Топ-10 позиций в органическом поиске по запросам (агрегирует данные из get_wb_top_search_queries)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
-    rate_limit: 180
+    rate_limit: 3  # 3 req/min (лимит WB Analytics API)
     burst: 3
 
   get_wb_campaign_stats:
