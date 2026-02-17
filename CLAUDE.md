@@ -155,11 +155,7 @@ type Tool interface {
 - `get_wb_top_search_queries` - Top search queries by product
 - `get_wb_top_organic_positions` - Organic search positions
 
-**Critical Rate Limits**: WB Analytics API has strict limits:
-- **3 requests/minute** (not 180!)
-- **20 second interval** between requests
-- **Burst: 3 requests**
-- Using higher limits will result in account bans
+**Rate Limits** (Analytics API): 3 req/min, 20s interval. Content API uses higher limits (100).
 
 **Tool Registration** (OCP Refactored - 2026-02-01):
 Config-driven via `pkg/app/tool_setup.go` with factory pattern in `registerTool()`:
@@ -607,14 +603,14 @@ The `examples/` directory contains autonomous utilities for verification and dem
 - `get_wb_top_search_queries` - Top search queries
 - `get_wb_top_organic_positions` - Organic positions
 
-**Rate Limits** (CRITICAL):
+**Rate Limits** (Analytics API — CRITICAL):
 ```
 Period: 1 minute
 Limit:  3 requests
 Interval: 20 seconds
 Burst:  3 requests
 ```
-⚠️ **Using `rate_limit: 180` will cause account bans!** Correct value is `rate_limit: 3`.
+> ⚠️ Note: Content API uses higher limits (`rate_limit: 100`). Analytics tools override this in config.yaml.
 
 **Post-Prompts**:
 - `prompts/wb/analytics/product_funnel.ru.yaml` - Funnel analysis with insights

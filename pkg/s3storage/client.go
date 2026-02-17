@@ -82,6 +82,37 @@ func New(cfg config.S3Config) (*Client, error) {
     }, nil
 }
 
+// ListTopLevelFolders возвращает список папок первого уровня (артикулов).
+// Использует Recursive: false для эффективности.
+func (c *Client) ListTopLevelFolders(ctx context.Context) ([]StoredObject, error) {
+	var folders []StoredObject
+
+	opts := minio.ListObjectsOptions{
+		Prefix:    "",
+		Recursive: false,
+	}
+
+	for obj := range c.api.ListObjects(ctx, c.bucket, opts) {
+		if obj.Err != nil {
+			return nil, obj.Err
+		}
+		// Фильтруем только папки (ключи заканчивающиеся на /)
+		if strings.HasSuffix(obj.Key, "/") {
+			folders = append(folders, StoredObject{
+				Key:          obj.Key,
+				Size:         obj.Size,
+				LastModified: obj.LastModified,
+			})
+		}
+	}
+
+	if len(folders) == 0 {
+		return nil, fmt.Errorf("no folders found in bucket '%s'", c.bucket)
+	}
+
+	return folders, nil
+}
+
 // ListFiles возвращает ВСЕ файлы по префиксу (артикулу)
 func (c *Client) ListFiles(ctx context.Context, prefix string) ([]StoredObject, error) {
 	// Нормализация префикса (добавляем слеш, если это "папка")

@@ -122,7 +122,7 @@ func setupToolsFromLegacy(
 // isWBTool проверяет, что инструмент относится к WB API
 func isWBTool(name string) bool {
 	wbTools := []string{
-		"search_wb_products", "get_wb_parent_categories", "get_wb_subjects",
+		"search_wb_products", "list_wb_seller_products", "get_wb_parent_categories", "get_wb_subjects",
 		"ping_wb_api", "get_wb_feedbacks", "get_wb_questions",
 		"get_wb_new_feedbacks_questions", "get_wb_unanswered_feedbacks_counts",
 		"get_wb_unanswered_questions_counts", "get_wb_subjects_by_name",
@@ -216,6 +216,8 @@ func registerTool(
 	// ========================================
 	case "search_wb_products":
 		tool = std.NewWbProductSearchTool(client.(*wb.Client), toolCfg, cfg.WB)
+	case "list_wb_seller_products":
+		tool = std.NewWbSellerProductsTool(client.(*wb.Client), toolCfg, cfg.WB)
 	case "get_wb_parent_categories":
 		tool = std.NewWbParentCategoriesTool(client.(*wb.Client), toolCfg, cfg.WB)
 	case "get_wb_subjects":

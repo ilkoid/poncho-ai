@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -163,11 +164,36 @@ func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 		return nil, fmt.Errorf("invalid wb.timeout format: %w", err)
 	}
 
+	// Создаем HTTP Transport с расширенными настройками таймаута
+	// Это необходимо для больших ответов от WB API (100K+ строк)
+	transport := &http.Transport{
+		// DialContextTimeout - таймаут на установление TCP соединения
+		// Используем 30 секунд для установки соединения
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+
+		// MaxIdleConns - максимальное количество idle соединений
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+
+		// ResponseHeaderTimeout - таймаут на ожидание заголовков ответа
+		// Это критично для больших ответов - даем серверу время начать отправку
+		ResponseHeaderTimeout: timeout,
+
+		// Отключаем принудительное закрытие idle соединений
+		ForceAttemptHTTP2:     true,
+	}
+
 	return &Client{
 		apiKey:        cfg.APIKey,
 		retryAttempts: cfg.RetryAttempts,
 		httpClient: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
+			Transport: transport,
 		},
 		limiters: make(map[string]*rate.Limiter),
 	}, nil
@@ -509,11 +535,17 @@ func (c *Client) ReportDetailByPeriodPage(
 	httpReq.Header.Set("Authorization", c.apiKey)
 	httpReq.Header.Set("Accept", "application/json")
 
+	// DEBUG: логируем URL для отладки
+	fmt.Printf("[DEBUG ReportDetailByPeriodPage] Request URL: %s\n", reqURL.String())
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// DEBUG: логируем статус ответа
+	fmt.Printf("[DEBUG ReportDetailByPeriodPage] Response Status: %d, ContentLength: %d\n", resp.StatusCode, resp.ContentLength)
 
 	// HTTP 204 = конец пагинации
 	if resp.StatusCode == http.StatusNoContent {
@@ -525,20 +557,26 @@ func (c *Client) ReportDetailByPeriodPage(
 		}, nil
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	// Парсим JSON ответ
+	// Читаем тело ответа один раз
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 
+	// DEBUG: логируем размер тела
+	fmt.Printf("[DEBUG ReportDetailByPeriodPage] Body size: %d bytes\n", len(body))
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Парсим JSON ответ
 	if err := json.Unmarshal(body, &rows); err != nil {
 		return nil, fmt.Errorf("unmarshal error: %w", err)
 	}
+
+	// DEBUG: логируем количество строк
+	fmt.Printf("[DEBUG ReportDetailByPeriodPage] Rows parsed: %d\n", len(rows))
 
 	// Определяем последний rrd_id для следующей страницы
 	lastRrdID := rrdid
@@ -629,20 +667,26 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 		}, nil
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	// Парсим JSON ответ
+	// Читаем тело ответа один раз
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 
+	// DEBUG: логируем размер тела
+	fmt.Printf("[DEBUG ReportDetailByPeriodPage] Body size: %d bytes\n", len(body))
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Парсим JSON ответ
 	if err := json.Unmarshal(body, &rows); err != nil {
 		return nil, fmt.Errorf("unmarshal error: %w", err)
 	}
+
+	// DEBUG: логируем количество строк
+	fmt.Printf("[DEBUG ReportDetailByPeriodPage] Rows parsed: %d\n", len(rows))
 
 	// Определяем последний rrd_id для следующей страницы
 	lastRrdID := rrdid
@@ -685,6 +729,59 @@ func (c *Client) ReportDetailByPeriodIterator(
 
 	for {
 		page, err := c.ReportDetailByPeriodPage(ctx, baseURL, rateLimit, burst, dateFrom, dateTo, rrdid)
+		if err != nil {
+			return totalCount, err
+		}
+
+		// Конец пагинации
+		if !page.HasMore {
+			break
+		}
+
+		// Обрабатываем строки через callback (stream processing)
+		if err := callback(page.Rows); err != nil {
+			return totalCount, err
+		}
+
+		totalCount += len(page.Rows)
+		rrdid = page.LastRrdID
+	}
+
+	return totalCount, nil
+}
+
+// ReportDetailByPeriodIteratorWithTime - итератор по всем страницам отчета с поддержкой времени.
+// Использует callback для обработки каждой порции данных (stream processing).
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - baseURL: базовый URL Statistics API
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - dateFrom: начало периода (формат RFC3339: "2026-01-25T00:00:00")
+//   - dateTo: конец периода (формат RFC3339: "2026-01-25T12:00:00")
+//   - callback: функция для обработки каждой страницы (возвращает ошибку для прерывания)
+//
+// Возвращает общее количество обработанных строк или ошибку.
+//
+// Примеры:
+//   - Полдень: dateFrom="2025-01-01T00:00:00", dateTo="2025-01-01T12:00:00"
+//   - Один час: dateFrom="2025-01-01T10:00:00", dateTo="2025-01-01T11:00:00"
+func (c *Client) ReportDetailByPeriodIteratorWithTime(
+	ctx context.Context,
+	baseURL string,
+	rateLimit int,
+	burst int,
+	dateFrom string,
+	dateTo string,
+	callback func([]RealizationReportRow) error,
+) (int, error) {
+	totalCount := 0
+	rrdid := 0
+	limit := 100000
+
+	for {
+		page, err := c.ReportDetailByPeriodPageWithTime(ctx, baseURL, rateLimit, burst, dateFrom, dateTo, rrdid, limit)
 		if err != nil {
 			return totalCount, err
 		}

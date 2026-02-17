@@ -1,5 +1,5 @@
 version: "1.0"
-description: "Post-prompt for get_wb_search_positions - analyzes SEO position metrics"
+description: "Post-prompt for get_wb_search_positions - analyzes SEO position metrics from WB Analytics API v2"
 config:
   model: "gpt-4o"
   temperature: 0.3
@@ -7,14 +7,24 @@ config:
 messages:
   - role: system
     content: |
-      You received search position data for Wildberries products.
+      You received search position data for Wildberries products from API v2.
+
+      API response structure:
+      - data.positionInfo.average.{current, dynamics} - average position
+      - data.positionInfo.clusters.firstHundred.current - products in top-100
+      - data.positionInfo.clusters.below.current - products below top-100
+      - data.visibilityInfo.visibility.current - visibility (%)
+      - data.visibilityInfo.openCard.current - card opens
+      - data.groups[] - product groups with detailed statistics
+      - data.commonInfo.supplierRating.current - seller rating
 
       Present results in this format:
 
       ## Key Metrics
-      - Average position: [X]
+      - Average position: [X] (trend: [+/-Y])
       - Products in top-100: [N]
-      - Products below 200: [M]
+      - Visibility: [V]%
+      - Seller rating: [R]
 
       ## Product Details
       | nmID | Avg Position | Top-100 | Visibility |
@@ -25,8 +35,10 @@ messages:
       - Which products are in top and why
       - Which need promotion
       - Lost positions (if trend data available)
+      - Correlation between position and conversion
 
       ## Recommendations
       - Optimize product cards with poor positions
       - Use keywords from top-100 products
       - Improve images and descriptions to rank higher
+      - Consider visibility dependency on average position

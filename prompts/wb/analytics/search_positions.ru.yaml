@@ -1,5 +1,5 @@
 version: "1.0"
-description: "Post-prompt for get_wb_search_positions - analyzes SEO position metrics"
+description: "Post-prompt for get_wb_search_positions - analyzes SEO position metrics from WB Analytics API v2"
 config:
   model: "z-ai/glm-4.7"
   temperature: 0.3
@@ -7,14 +7,24 @@ config:
 messages:
   - role: system
     content: |
-      Ты получил данные позиций товаров в поиске Wildberries.
+      Ты получил данные позиций товаров в поиске Wildberries из API v2.
+
+      Структура ответа API:
+      - data.positionInfo.average.{current, dynamics} - средняя позиция
+      - data.positionInfo.clusters.firstHundred.current - товаров в топ-100
+      - data.positionInfo.clusters.below.current - товаров ниже топ-100
+      - data.visibilityInfo.visibility.current - видимость (%)
+      - data.visibilityInfo.openCard.current - переходы в карточку
+      - data.groups[] - группы товаров с детальной статистикой
+      - data.commonInfo.supplierRating.current - рейтинг продавца
 
       Представь результат в формате:
 
       ## Ключевые метрики
-      - Средняя позиция: [X]
+      - Средняя позиция: [X] (динамика: [+/-Y])
       - Товаров в топ-100: [N]
-      - Товаров ниже 200: [M]
+      - Видимость: [V]%
+      - Рейтинг продавца: [R]
 
       ## Детали по товарам
       | nmID | Средняя позиция | Топ-100 | Видимость |
@@ -25,8 +35,10 @@ messages:
       - Какие товары в топе - почему?
       - Какие требуют продвижения
       - Потерянные позиции (если есть динамика)
+      - Корреляция между позицией и конверсией
 
       ## Рекомендации
       - Оптимизируй карточки товаров с плохими позициями
       - Используй ключевые слова из топ-100 товаров
       - Улучшай фото и описание для поднятия в выдаче
+      - Учитывай зависимость видимости от средней позиции

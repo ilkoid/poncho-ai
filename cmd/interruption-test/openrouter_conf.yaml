@@ -423,21 +423,23 @@ tools:
     post_prompt: "llm/ping_llm_provider.ru.yaml"
 
   ask_user_question:
-    enabled: true
+    enabled: false  # TODO: not implemented yet, requires QuestionManager
     description: "Используй если надо задать вопросы пользователю с вариантами ответов (1-5) или получить подтверждение действия. Максимальное количество вариантов: 5."
     post_prompt: "ask_user/ask_user_ru.yaml"
 
   # ===========================================================================
-  # WB CONTENT API TOOLS (9 tools)
+  # WB CONTENT API TOOLS (10 tools)
   # ===========================================================================
 
   search_wb_products:
     enabled: true
-    description: "Ищет товары Wildberries по артикулам поставщика (vendor code/supplier article) и возвращает их nmID. Использует Content API (категория Promotion). ВАЖНО: видит только товары продавца, которому принадлежит API токен (до 100 карточек). Для поиска товаров других продавцов используйте get_wb_feedbacks или get_wb_questions."
-    endpoint: "https://content-api.wildberries.ru"
-    rate_limit: 100
+
+  list_wb_seller_products:
+    enabled: true
+    description: "Получает список товаров продавца с информацией о ценах, скидках и остатках. Использует Prices & Discounts API. ВАЖНО: видит только товары продавца, которому принадлежит API токен (до 1000 карточек за запрос). Поддерживает пагинацию (limit/offset) и фильтрацию по предмету (subject_id) или бренду. Для получения товаров других продавцов используйте get_wb_feedbacks или get_wb_questions."
+    endpoint: "https://discounts-prices-api.wildberries.ru"
+    rate_limit: 10
     burst: 5
-    post_prompt: "wb/content/products_search.ru.yaml"
 
   get_wb_parent_categories:
     enabled: true
@@ -591,7 +593,7 @@ tools:
   # ===========================================================================
 
   get_wb_product_funnel:
-    enabled: false
+    enabled: true
     description: "Воронка продаж Wildberries API v3: просмотры, корзина, заказы, выкупы, отмены, избранное, WB Club, остатки, рейтинги, финансы, время готовности"
     endpoint: "https://seller-analytics-api.wildberries.ru"
     rate_limit: 3
@@ -599,7 +601,7 @@ tools:
     post_prompt: "wb/analytics/product_funnel.ru.yaml"
 
   get_wb_product_funnel_history:
-    enabled: false
+    enabled: true
     description: "История воронки Wildberries API v3 по дням: все метрики воронки с ежедневной детализацией"
     endpoint: "https://seller-analytics-api.wildberries.ru"
     rate_limit: 3
@@ -607,7 +609,7 @@ tools:
     post_prompt: "wb/analytics/funnel_history.ru.yaml"
 
   get_wb_search_positions:
-    enabled: false
+    enabled: true
     description: "Позиции товаров в поиске и видимость (средняя позиция, топ-100)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
     rate_limit: 3
@@ -615,7 +617,7 @@ tools:
     post_prompt: "wb/analytics/search_positions.ru.yaml"
 
   get_wb_top_search_queries:
-    enabled: false
+    enabled: true
     description: "Топ поисковых запросов по товару (до 100 фраз, сортировка по заказам)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
     rate_limit: 3
@@ -623,7 +625,7 @@ tools:
     post_prompt: "wb/analytics/top_search_queries.ru.yaml"
 
   get_wb_top_organic_positions:
-    enabled: false
+    enabled: true
     description: "Топ-10 позиций в органическом поиске по запросам (агрегирует данные из get_wb_top_search_queries)"
     endpoint: "https://seller-analytics-api.wildberries.ru"
     rate_limit: 3

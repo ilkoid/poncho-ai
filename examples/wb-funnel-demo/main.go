@@ -79,6 +79,15 @@ func main() {
 	// Получаем API ключ из переменной окружения или из конфига
 	apiKey := os.Getenv("WB_API_KEY")
 	if apiKey == "" {
+		apiKey = os.Getenv("WB_API_ANALYTICS_AND_PROMO_KEY") // Analytics API ключ
+	}
+	if apiKey == "" {
+		apiKey = os.Getenv("WB_STAT") // Statistics key
+	}
+	if apiKey == "" {
+		apiKey = os.Getenv("WB_API_CONTENT_KEY") // Content API ключ
+	}
+	if apiKey == "" {
 		apiKey = cfg.WB.APIKey
 	}
 	if apiKey == "" {
@@ -103,6 +112,9 @@ func main() {
 	// Создаём инструмент
 	toolCfg := config.ToolConfig{
 		Description: cfg.Tools.GetWbProductFunnel.Description,
+		Endpoint:    cfg.Tools.GetWbProductFunnel.Endpoint,
+		RateLimit:   cfg.Tools.GetWbProductFunnel.RateLimit,
+		Burst:       cfg.Tools.GetWbProductFunnel.Burst,
 	}
 
 	tool := std.NewWbProductFunnelTool(client, toolCfg, wbCfg)
@@ -143,8 +155,11 @@ func loadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
 
+	// Expand environment variables like ${VAR} or $VAR
+	dataWithEnv := []byte(os.ExpandEnv(string(data)))
+
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.Unmarshal(dataWithEnv, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 

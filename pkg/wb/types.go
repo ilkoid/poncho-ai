@@ -291,20 +291,36 @@ type ProductPhoto struct {
 
 // RealizationReportRow представляет строку из отчета реализации.
 // Используется для подсчета транзакций и возвратов.
+// Поля, которые могут быть null, представлены как указатели или float64.
 type RealizationReportRow struct {
-	RrdID           int     `json:"rrd_id"`                      // Уникальный ID записи (для пагинации)
-	DocTypeName     string  `json:"doc_type_name"`               // "Продажа", "Возврат"
-	SaleID          string  `json:"sale_id"`                     // ID продажи
-	DateFrom        string  `json:"date_from"`                   // Начало периода
-	DateTo          string  `json:"date_to"`                     // Конец периода
-	SupplierArticle string  `json:"supplier_article"`            // Артикул поставщика
-	SubjectName     string  `json:"subject_name"`                // Предмет
-	NmID            int     `json:"nm_id"`                       // ID товара на WB
-	BrandName       string  `json:"brand_name"`                  // Бренд
-	TechSize        string  `json:"tech_size"`                   // Размер
-	IncomeWT        int     `json:"income_wt"`                   // Количество
-	IsCancel        bool    `json:"is_cancel"`                   // Отменен
-	CancelDateTime  *string `json:"cancel_date_time,omitempty"`  // Дата отмены
+	RrdID              int     `json:"rrd_id"`                        // Уникальный ID записи (для пагинации)
+	DocTypeName        string  `json:"doc_type_name"`                 // "Продажа", "Возврат"
+	SaleID             string  `json:"sale_id"`                       // ID продажи
+	DateFrom           string  `json:"date_from"`                     // Начало периода
+	DateTo             string  `json:"date_to"`                       // Конец периода
+	SupplierArticle    string  `json:"sa_name"`                       // Артикул поставщика (API: sa_name)
+	SubjectName        string  `json:"subject_name"`                  // Предмет
+	NmID               int     `json:"nm_id"`                         // ID товара на WB
+	BrandName          string  `json:"brand_name"`                    // Бренд
+	TechSize           string  `json:"ts_name"`                       // Размер (API: ts_name)
+	Barcode            string  `json:"barcode,omitempty"`             // Штрихкод
+	Quantity           int     `json:"quantity"`                      // Количество (API: quantity)
+	IsCancel           bool    `json:"is_cancel"`                     // Отменен
+	CancelDateTime     *string `json:"cancel_date_time,omitempty"`    // Дата отмены
+
+	// Новые поля для FBW фильтрации и более полной информации
+	DeliveryMethod     string  `json:"delivery_method,omitempty"`     // Способ доставки: "FBS, (МГТ)", "FBW" и т.д.
+	GiBoxTypeName      string  `json:"gi_box_type_name,omitempty"`    // Тип короба: "Монопаллета", "Короб" и т.д.
+	OfficeName         string  `json:"office_name,omitempty"`         // Офис/склад
+	PPVzForPay         float64 `json:"ppvz_for_pay,omitempty"`        // К выплате продавцу
+	RetailPrice        float64 `json:"retail_price,omitempty"`        // Розничная цена
+	RetailAmount       float64 `json:"retail_amount,omitempty"`       // Розничная сумма
+	SalePercent        float64 `json:"sale_percent,omitempty"`        // Процент продажи
+	CommissionPercent  float64 `json:"commission_percent,omitempty"`  // Процент комиссии
+	DeliveryRub        float64 `json:"delivery_rub,omitempty"`        // Стоимость доставки
+	OrderDT            string  `json:"order_dt,omitempty"`            // Дата заказа
+	SaleDT             string  `json:"sale_dt,omitempty"`             // Дата продажи
+	RRDT               string  `json:"rr_dt,omitempty"`                // Дата отчета
 }
 
 // ReportDetailByPeriodRequest представляет запрос к API отчета реализации.

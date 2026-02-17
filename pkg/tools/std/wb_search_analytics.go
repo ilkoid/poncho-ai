@@ -101,37 +101,39 @@ func (t *WbSearchPositionsTool) Execute(ctx context.Context, argsJSON string) (s
 	}
 
 	// Формируем период
+	// currentPeriod: [now - days, now]
+	// pastPeriod: [now - days*2, now - days - 1] - прошлый период СТРОГО до текущего
 	now := time.Now()
-	begin := now.AddDate(0, 0, -args.Days)
-	end := now.AddDate(0, 0, -args.Days*2) // pastPeriod для сравнения
+	currentStart := now.AddDate(0, 0, -args.Days)
+	pastStart := now.AddDate(0, 0, -args.Days*2)
+	pastEnd := currentStart.AddDate(0, 0, -1) // прошлый период заканчивается за 1 день до текущего
 
 	// Формируем запрос к WB API
+	// API v2 search-report требует: start/end, orderBy (object), positionCluster (string), limit, offset
 	reqBody := map[string]interface{}{
 		"nmIds": args.NmIDs,
 		"currentPeriod": map[string]string{
-			"begin": begin.Format("2006-01-02"),
+			"start": currentStart.Format("2006-01-02"),
 			"end":   now.Format("2006-01-02"),
 		},
 		"pastPeriod": map[string]string{
-			"begin": end.Format("2006-01-02"),
-			"end":   begin.Format("2006-01-02"),
+			"start": pastStart.Format("2006-01-02"),
+			"end":   pastEnd.Format("2006-01-02"),
 		},
-		"page": 1,
+		"orderBy": map[string]string{
+			"field": "orders", // поле сортировки: orders, openCard, avgPosition
+			"mode":  "desc",   // направление: asc, desc
+		},
+		"positionCluster":       "all", // "all" - все, "top100" - топ-100
+		"includeSubstitutedSKUs": true,
+		"includeSearchTexts":    false,
+		"limit":                 100,
+		"offset":                0,
 	}
 
-	var response struct {
-		Data struct {
-			Clusters struct {
-				FirstHundred int `json:"firstHundred"` // Количество товаров в топ-100
-			} `json:"clusters"`
-			Items []struct {
-				NMID         int     `json:"nmId"`
-				AvgPosition  float64 `json:"avgPosition"`
-				OpenCard     int     `json:"openCard"`
-				Orders       int     `json:"orders"`
-			} `json:"items"`
-		} `json:"data"`
-	}
+	// API возвращает сложную структуру с positionInfo, visibilityInfo, groups и т.д.
+	// Для простоты парсим весь ответ как map и передаём в LLM
+	var response map[string]interface{}
 
 	err := t.client.Post(ctx, t.toolID, t.endpoint, t.rateLimit, t.burst,
 		"/api/v2/search-report/report", reqBody, &response)
@@ -140,7 +142,7 @@ func (t *WbSearchPositionsTool) Execute(ctx context.Context, argsJSON string) (s
 	}
 
 	// Форматируем ответ для LLM
-	result, _ := json.Marshal(response.Data)
+	result, _ := json.Marshal(response)
 	return string(result), nil
 }
 

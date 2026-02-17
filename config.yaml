@@ -365,6 +365,13 @@ tools:
     burst: 5
     post_prompt: "agent_system.yaml"
 
+  list_wb_seller_products:
+    enabled: false
+    description: "Получает список товаров продавца с информацией о ценах, скидках и остатках. Использует Prices & Discounts API. ВАЖНО: видит только товары продавца, которому принадлежит API токен (до 1000 карточек за запрос). Поддерживает пагинацию (limit/offset) и фильтрацию по предмету (subject_id) или бренду. Для получения товаров других продавцов используйте get_wb_feedbacks или get_wb_questions."
+    endpoint: "https://discounts-prices-api.wildberries.ru"
+    rate_limit: 10
+    burst: 5
+
   get_wb_parent_categories:
     enabled: false
     description: "Возвращает список родительских категорий Wildberries (например: Женщинам, Электроника). Используй это, чтобы найти ID категории."
