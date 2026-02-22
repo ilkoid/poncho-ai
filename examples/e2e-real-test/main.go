@@ -29,7 +29,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -472,15 +472,3 @@ func maskAPIKey(key string) string {
 	return key[:4] + "..." + key[len(key)-4:]
 }
 
-// strings package implementation
-var strings = struct {
-	Repeat func(string, int) string
-}{
-	Repeat: func(s string, n int) string {
-		result := ""
-		for i := 0; i < n; i++ {
-			result += s
-		}
-		return result
-	},
-}

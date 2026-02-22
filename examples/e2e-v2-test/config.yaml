@@ -1,0 +1,57 @@
+# E2E V2 Test Configuration
+#
+# This config is used for Stage A testing: verifying V2 tools work correctly
+# with data collected by e2e-mock-collector.
+
+# Database settings
+database:
+  path: "../e2e-twodays.db"
+
+# Test settings
+tests:
+  # Funnel tests
+  funnel:
+    enabled: true
+    min_products: 1        # Minimum products expected
+    check_conversions: true
+
+  # Funnel history tests
+  funnel_history:
+    enabled: true
+    min_days: 2
+
+  # Search positions tests
+  search_positions:
+    enabled: true
+
+  # Fullstats tests
+  fullstats:
+    enabled: true
+    min_campaigns: 1
+    check_daily: true
+
+  # Feedbacks tests
+  feedbacks:
+    enabled: true
+    min_items: 1
+
+  # Questions tests
+  questions:
+    enabled: true
+    min_items: 1
+
+  # Attribution tests
+  attribution:
+    enabled: true
+
+# Validation rules
+validation:
+  # Conversion rates should be 0-100%
+  conversion_max: 100.0
+  conversion_min: 0.0
+
+  # Prices should be positive
+  price_min: 0
+
+  # Counts should be non-negative
+  count_min: 0
