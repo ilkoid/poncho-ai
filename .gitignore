@@ -138,3 +138,8 @@ download-wb-sales
 cmd/test-wb-*/
 cmd/fix-fake-png/
 
+# Downloaded data folders
+cmd/download-all-articles/ЗАГРУЗКИ/
+cmd/download-all-articles/download-all-articles
+cmd/download-all-articles/fix-fake-png
+
