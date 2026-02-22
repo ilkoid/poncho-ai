@@ -548,6 +548,14 @@ cd examples/wb-funnel-demo
 go run main.go                              # Mock mode (demo_key)
 WB_API_KEY=your_key go run main.go         # Real API
 WB_API_KEY=your_key go run main.go --nmIds 123456 --days 30  # Custom args
+
+# E2E Mock Collector (create snapshot database)
+cd examples/e2e-mock-collector
+go run main.go --days 7 --output ../e2e-snapshot.db
+
+# Download utilities
+cd cmd/download-wb-sales && go run main.go --days 7
+cd cmd/download-wb-promotion && go run main.go --begin 2025-01-01 --end 2025-01-31
 ```
 
 ### Examples Directory
@@ -560,6 +568,17 @@ The `examples/` directory contains autonomous utilities for verification and dem
   - Custom nmIDs and period support
   - Standalone go.mod with local replace
 
+- **`e2e-mock-collector/`** - Data collection for E2E snapshots
+  - Collects from Sales, Analytics, Adverts, Feedbacks APIs
+  - Proper rate limiting between calls
+  - Output to SQLite for SnapshotDBClient
+
+- **`e2e-snapshot-test/`** - SnapshotDBClient verification
+  - Tests all service implementations
+  - Validates data integrity
+
+- **`e2e-real-test/`** - Compare real API vs snapshot data
+
 ---
 
 ## Environment Variables
@@ -569,6 +588,8 @@ The `examples/` directory contains autonomous utilities for verification and dem
 | `ZAI_API_KEY` | LLM provider |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | Storage |
 | `WB_API_KEY` | Wildberries API (Content, Analytics, Advertising) |
+| `WB_API_FEEDBACK_KEY` | Wildberries Feedbacks API (separate key) |
+| `WB_STAT_API_KEY` | Wildberries Statistics API (optional) |
 
 ---
 
@@ -751,5 +772,123 @@ prompt_sources:
 
 ---
 
-**Last Updated**: 2026-02-10
-**Version**: 8.1 (WB Analytics API v3 migration + examples directory)
+## E2E Testing Infrastructure
+
+### SnapshotDBClient (`pkg/wb/snapshot_client.go`)
+
+**Purpose**: Fast, deterministic E2E tests without API rate limits.
+
+SnapshotDBClient reads data from SQLite database instead of WB API.
+
+**Services**:
+- `Sales()` - funnel metrics, sales data
+- `Advertising()` - campaigns, daily stats
+- `Feedbacks()` - feedbacks, questions
+
+**Required Tables**:
+```
+sales, funnel_metrics_daily, products,
+campaigns, campaign_stats_daily,
+feedbacks_items, questions_items
+```
+
+**Usage**:
+```go
+client, _ := wb.NewSnapshotDBClient("e2e-snapshot.db")
+defer client.Close()
+
+// Use like regular Service
+svc := wb.NewServiceFromSnapshot(client)
+funnel, _ := svc.Sales().GetFunnel(ctx, nmIDs, dateFrom, dateTo)
+```
+
+**Files**:
+- [pkg/wb/snapshot_client.go](pkg/wb/snapshot_client.go) - Main client
+- [pkg/wb/snapshot_sales.go](pkg/wb/snapshot_sales.go) - SalesService impl
+- [pkg/wb/snapshot_advertising.go](pkg/wb/snapshot_advertising.go) - AdvertisingService impl
+- [pkg/wb/snapshot_feedbacks.go](pkg/wb/snapshot_feedbacks.go) - FeedbackService impl
+
+### E2E Mock Collector (`examples/e2e-mock-collector/`)
+
+**Purpose**: Collect real data from WB APIs and store in SQLite for testing.
+
+**Collection Order** (CRITICAL):
+1. **Sales FIRST** - extracts real nmIDs for the period
+2. Funnel metrics (uses nmIDs from sales)
+3. Search positions, organic positions
+4. Campaigns and daily stats
+5. Feedbacks (answered + unanswered)
+6. Questions (answered + unanswered)
+
+**Rate Limits**:
+| API | Delay | Limit |
+|-----|-------|-------|
+| Analytics | 21s | 3 req/min |
+| Adverts | 21s | 3 req/min |
+| Feedbacks | 1.1s | 1 req/sec |
+| Content | 0.6s | 100 req/min |
+
+**Usage**:
+```bash
+cd examples/e2e-mock-collector
+go run main.go --days 7 --output ../e2e-snapshot.db
+```
+
+### Download Utilities (`cmd/download-*`)
+
+| Utility | Purpose |
+|---------|---------|
+| `download-wb-sales` | Sales + funnel metrics by period |
+| `download-wb-promotion` | Campaigns + daily stats |
+| `download-all-articles` | S3 article processing |
+
+**Example**:
+```bash
+# Download 7 days of sales data
+cd cmd/download-wb-sales
+go run main.go --days 7 --output sales.db
+
+# Download promotion data with resume
+cd cmd/download-wb-promotion
+go run main.go --begin 2025-01-01 --end 2025-01-31 --resume
+```
+
+---
+
+## WB API Endpoints Reference
+
+### Content API (`suppliers-api.wildberries.ru`)
+| Endpoint | Purpose | Rate Limit |
+|----------|---------|------------|
+| `/api/v3/stocks` | Product stocks | 100/min |
+| `/api/v2/parent-categories` | Category tree | 100/min |
+| `/api/v2/cards/filter` | Product list | 100/min |
+
+### Analytics API (`analytics-api.wildberries.ru`)
+| Endpoint | Purpose | Rate Limit |
+|----------|---------|------------|
+| `/api/analytics/v3/sales-funnel/products` | Product funnel | 3/min |
+| `/api/analytics/v3/sales-funnel/products/history` | Daily trends | 3/min |
+| `/api/v2/search-positions` | Search positions | 3/min |
+
+### Advertising API (`advert-api.wildberries.ru`)
+| Endpoint | Purpose | Rate Limit |
+|----------|---------|------------|
+| `/adv/v1/promotion/count` | Campaign list | 100/min |
+| `/adv/v3/fullstats` | Daily campaign stats | 20/min |
+
+### Feedbacks API (`feedbacks-api.wildberries.ru`)
+| Endpoint | Purpose | Rate Limit |
+|----------|---------|------------|
+| `/api/v1/feedbacks` | Product feedbacks | 60/min |
+| `/api/v1/questions` | Customer questions | 60/min |
+
+**API Keys**:
+- `WB_API_KEY` - Content, Analytics, Advertising APIs
+- `WB_API_FEEDBACK_KEY` - Feedbacks API (separate key)
+- `WB_STAT_API_KEY` - Statistics API (optional, for sales data)
+
+---
+
+**Last Updated**: 2026-02-23
+**Version**: 8.2 (E2E testing infrastructure + WB API endpoints reference)

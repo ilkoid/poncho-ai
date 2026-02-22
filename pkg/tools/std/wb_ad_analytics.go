@@ -505,3 +505,241 @@ func (t *WbAttributionSummaryTool) Execute(ctx context.Context, argsJSON string)
 	data, _ := json.Marshal(results)
 	return string(data), nil
 }
+
+// WbCampaignFullstatsTool — инструмент для детальной статистики кампаний (API v3).
+//
+// Использует Promotion API: GET /adv/v3/fullstats
+// Возвращает статистику с детализацией по дням, приложениям и товарам.
+// Позволяет запросить до 50 кампаний за раз, период до 31 дня.
+type WbCampaignFullstatsTool struct {
+	client      *wb.Client
+	toolID      string
+	endpoint    string
+	rateLimit   int
+	burst       int
+	description string
+}
+
+// NewWbCampaignFullstatsTool создает инструмент для детальной статистики кампаний (v3).
+//
+// Параметры:
+//   - c: экземпляр клиента Wildberries API
+//   - cfg: конфигурация tool из YAML
+//   - wbDefaults: дефолтные значения из wb секции config.yaml
+//
+// Возвращает инструмент, готовый к регистрации в реестре.
+func NewWbCampaignFullstatsTool(c *wb.Client, cfg config.ToolConfig, wbDefaults config.WBConfig) *WbCampaignFullstatsTool {
+	endpoint, rateLimit, burst := applyWbDefaults(cfg, wbDefaults)
+
+	return &WbCampaignFullstatsTool{
+		client:      c,
+		toolID:      "get_wb_campaign_fullstats",
+		endpoint:    endpoint,
+		rateLimit:   rateLimit,
+		burst:       burst,
+		description: cfg.Description,
+	}
+}
+
+// Definition возвращает определение инструмента для function calling.
+func (t *WbCampaignFullstatsTool) Definition() tools.ToolDefinition {
+	return tools.ToolDefinition{
+		Name:        "get_wb_campaign_fullstats",
+		Description: t.description,
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"ids": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "integer"},
+					"description": "Список ID рекламных кампаний (максимум 50)",
+				},
+				"beginDate": map[string]interface{}{
+					"type":        "string",
+					"description": "Дата начала интервала (YYYY-MM-DD)",
+				},
+				"endDate": map[string]interface{}{
+					"type":        "string",
+					"description": "Дата окончания интервала (YYYY-MM-DD)",
+				},
+			},
+			"required": []string{"ids", "beginDate", "endDate"},
+		},
+	}
+}
+
+// CampaignFullstatsDay — статистика за один день.
+type CampaignFullstatsDay struct {
+	Date    string  `json:"date"`
+	Atbs    int     `json:"atbs"`
+	Canceled int    `json:"canceled"`
+	Clicks  int     `json:"clicks"`
+	CPC     float64 `json:"cpc"`
+	CR      float64 `json:"cr"`
+	CTR     float64 `json:"ctr"`
+	Orders  int     `json:"orders"`
+	Shks    int     `json:"shks"`
+	Sum     float64 `json:"sum"`
+	SumPrice float64 `json:"sum_price"`
+	Views   int     `json:"views"`
+	Apps    []struct {
+		AppType int `json:"appType"` // 1=сайт, 32=Android, 64=iOS
+		Atbs    int `json:"atbs"`
+		Canceled int `json:"canceled"`
+		Clicks  int `json:"clicks"`
+		CPC     float64 `json:"cpc"`
+		CR      float64 `json:"cr"`
+		CTR     float64 `json:"ctr"`
+		Orders  int `json:"orders"`
+		Shks    int `json:"shks"`
+		Sum     float64 `json:"sum"`
+		SumPrice float64 `json:"sum_price"`
+		Views   int `json:"views"`
+		Nms     []struct {
+			NmID    int     `json:"nmId"`
+			Name    string  `json:"name"`
+			Atbs    int     `json:"atbs"`
+			Canceled int    `json:"canceled"`
+			Clicks  int     `json:"clicks"`
+			CPC     float64 `json:"cpc"`
+			CR      float64 `json:"cr"`
+			CTR     float64 `json:"ctr"`
+			Orders  int     `json:"orders"`
+			Shks    int     `json:"shks"`
+			Sum     float64 `json:"sum"`
+			SumPrice float64 `json:"sum_price"`
+			Views   int     `json:"views"`
+		} `json:"nms"`
+	} `json:"apps"`
+}
+
+// CampaignFullstatsBooster — статистика бустера.
+type CampaignFullstatsBooster struct {
+	AvgPosition float64 `json:"avg_position"`
+	Date        string  `json:"date"`
+	Nm          int     `json:"nm"`
+}
+
+// CampaignFullstatsResponse — ответ API v3 fullstats.
+type CampaignFullstatsResponse struct {
+	AdvertID     int                         `json:"advertId"`
+	Atbs         int                         `json:"atbs"`       // Возвраты
+	Canceled     int                         `json:"canceled"`   // Отмены
+	Clicks       int                         `json:"clicks"`
+	CPC          float64                     `json:"cpc"`
+	CR           float64                     `json:"cr"`         // Конверсия
+	CTR          float64                     `json:"ctr"`
+	Orders       int                         `json:"orders"`
+	Shks         int                         `json:"shks"`       // Выкупы
+	Sum          float64                     `json:"sum"`        // Затраты на рекламу
+	SumPrice     float64                     `json:"sum_price"`  // Сумма заказов
+	Views        int                         `json:"views"`
+	BoosterStats []CampaignFullstatsBooster `json:"boosterStats"`
+	Days         []CampaignFullstatsDay     `json:"days"`
+}
+
+// Execute выполняет инструмент согласно контракту "Raw In, String Out".
+func (t *WbCampaignFullstatsTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	var args struct {
+		IDs       []string `json:"ids"`       // API принимает строки
+		BeginDate string   `json:"beginDate"`
+		EndDate   string   `json:"endDate"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	// Валидация
+	if len(args.IDs) == 0 {
+		return "", fmt.Errorf("ids cannot be empty")
+	}
+	if len(args.IDs) > 50 {
+		return "", fmt.Errorf("maximum 50 campaign IDs allowed")
+	}
+
+	// Проверка формата дат
+	_, err := time.Parse("2006-01-02", args.BeginDate)
+	if err != nil {
+		return "", fmt.Errorf("invalid beginDate format: use YYYY-MM-DD")
+	}
+	_, err = time.Parse("2006-01-02", args.EndDate)
+	if err != nil {
+		return "", fmt.Errorf("invalid endDate format: use YYYY-MM-DD")
+	}
+
+	// Mock режим для demo ключа
+	if t.client.IsDemoKey() {
+		return t.executeMock(args.IDs, args.BeginDate, args.EndDate)
+	}
+
+	// Формируем GET запрос к WB API
+	// Параметры: ids=123,456&beginDate=2025-09-01&endDate=2025-09-07
+	idsParam := ""
+	for i, id := range args.IDs {
+		if i > 0 {
+			idsParam += ","
+		}
+		idsParam += id
+	}
+
+	path := fmt.Sprintf("/adv/v3/fullstats?ids=%s&beginDate=%s&endDate=%s",
+		idsParam, args.BeginDate, args.EndDate)
+
+	var response []CampaignFullstatsResponse
+
+	err = t.client.Get(ctx, t.toolID, t.endpoint, t.rateLimit, t.burst, path, nil, &response)
+	if err != nil {
+		return "", fmt.Errorf("failed to get campaign fullstats: %w", err)
+	}
+
+	// Форматируем ответ для LLM
+	result, _ := json.Marshal(response)
+	return string(result), nil
+}
+
+// executeMock возвращает mock данные для demo режима.
+func (t *WbCampaignFullstatsTool) executeMock(ids []string, beginDate, endDate string) (string, error) {
+	results := make([]map[string]interface{}, 0, len(ids))
+
+	for _, id := range ids {
+		views := 1000 + len(id)*100
+		clicks := views / 20 // CTR ~5%
+
+		results = append(results, map[string]interface{}{
+			"advertId": id,
+			"views":    views,
+			"clicks":   clicks,
+			"ctr":      5.0 + float64(len(id)%10)/10,
+			"cpc":      4.5 + float64(len(id)%5),
+			"cr":       2.0 + float64(len(id)%3),
+			"orders":   clicks / 10,
+			"atbs":     clicks / 50,
+			"canceled": clicks / 100,
+			"shks":     clicks / 15,
+			"sum":      float64(clicks) * 5.0,
+			"sum_price": float64(clicks) * 500.0,
+			"period": map[string]string{
+				"begin": beginDate,
+				"end":   endDate,
+			},
+			"days": []map[string]interface{}{
+				{
+					"date":   beginDate,
+					"views":  views / 2,
+					"clicks": clicks / 2,
+					"orders": clicks / 20,
+				},
+				{
+					"date":   endDate,
+					"views":  views / 2,
+					"clicks": clicks / 2,
+					"orders": clicks / 20,
+				},
+			},
+			"mock": true,
+		})
+	}
+
+	result, _ := json.Marshal(results)
+	return string(result), nil
+}

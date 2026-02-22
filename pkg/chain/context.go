@@ -114,8 +114,8 @@ func (c *ChainContext) AppendMessage(msg llm.Message) error {
 // Используется для восстановления состояния.
 func (c *ChainContext) SetMessages(msgs []llm.Message) error {
 	// Очищаем текущую историю через type-safe SetType
-	// REFACTORED 2026-01-20: Используем SetType для типобезопасности
-	if err := state.SetType[[]llm.Message](c.State, state.KeyHistory, []llm.Message{}); err != nil {
+	// REFACTORED 2026-02-21: Используем c.State.Store после рефакторинга CoreState
+	if err := state.SetType[[]llm.Message](c.State.Store, state.KeyHistory, []llm.Message{}); err != nil {
 		return fmt.Errorf("failed to clear history: %w", err)
 	}
 

@@ -130,7 +130,12 @@ func isWBTool(name string) bool {
 		"reload_wb_dictionaries", "get_wb_product_funnel",
 		"get_wb_product_funnel_history", "get_wb_search_positions",
 		"get_wb_top_search_queries", "get_wb_top_organic_positions",
-		"get_wb_campaign_stats", "get_wb_keyword_stats", "get_wb_attribution_summary",
+		"get_wb_campaign_stats", "get_wb_campaign_fullstats", "get_wb_keyword_stats", "get_wb_attribution_summary",
+		// V2 tools (service layer)
+		"get_wb_product_funnel2", "get_wb_product_funnel_history2",
+		"get_wb_search_positions2", "get_wb_top_search_queries2",
+		"get_wb_campaign_fullstats2", "get_wb_attribution_summary2",
+		"get_wb_feedbacks2", "get_wb_questions2",
 	}
 	for _, t := range wbTools {
 		if name == t {
@@ -272,10 +277,40 @@ func registerTool(
 		tool = std.NewWbTopOrganicPositionsTool(client.(*wb.Client), toolCfg, cfg.WB)
 	case "get_wb_campaign_stats":
 		tool = std.NewWbCampaignStatsTool(client.(*wb.Client), toolCfg, cfg.WB)
+	case "get_wb_campaign_fullstats":
+		tool = std.NewWbCampaignFullstatsTool(client.(*wb.Client), toolCfg, cfg.WB)
 	case "get_wb_keyword_stats":
 		tool = std.NewWbKeywordStatsTool(client.(*wb.Client), toolCfg, cfg.WB)
 	case "get_wb_attribution_summary":
 		tool = std.NewWbAttributionSummaryTool(client.(*wb.Client), toolCfg, cfg.WB)
+
+	// ========================================
+	// WB Analytics V2 Tools (Service Layer)
+	// ========================================
+	case "get_wb_product_funnel2":
+		wbSvc := client.(wb.WbService)
+		tool = std.NewWbProductFunnel2Tool(wbSvc.Sales(), toolCfg)
+	case "get_wb_product_funnel_history2":
+		wbSvc := client.(wb.WbService)
+		tool = std.NewWbProductFunnelHistory2Tool(wbSvc.Sales(), toolCfg)
+	case "get_wb_search_positions2":
+		wbSvc := client.(wb.WbService)
+		tool = std.NewWbSearchPositions2Tool(wbSvc.Sales(), toolCfg)
+	case "get_wb_top_search_queries2":
+		wbSvc := client.(wb.WbService)
+		tool = std.NewWbTopSearchQueries2Tool(wbSvc.Sales(), toolCfg)
+	case "get_wb_campaign_fullstats2":
+		wbSvc := client.(wb.WbService)
+		tool = std.NewWbCampaignFullstats2Tool(wbSvc.Advertising(), toolCfg)
+	case "get_wb_attribution_summary2":
+		wbSvc := client.(wb.WbService)
+		tool = std.NewWbAttributionSummary2Tool(wbSvc.Attribution(), toolCfg)
+	case "get_wb_feedbacks2":
+		wbSvc := client.(wb.WbService)
+		tool = std.NewWbFeedbacks2Tool(wbSvc.Feedbacks(), toolCfg)
+	case "get_wb_questions2":
+		wbSvc := client.(wb.WbService)
+		tool = std.NewWbQuestions2Tool(wbSvc.Feedbacks(), toolCfg)
 
 	// ========================================
 	// Dictionary Tools (клиент не нужен, используем state)

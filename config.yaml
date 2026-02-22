@@ -138,6 +138,7 @@ tool_bundles:
       - get_wb_top_search_queries
       - get_wb_top_organic_positions
       - get_wb_campaign_stats
+      - get_wb_campaign_fullstats
       - get_wb_keyword_stats
       - get_wb_attribution_summary
 
@@ -242,8 +243,23 @@ tool_categories:
       - get_wb_top_search_queries
       - get_wb_top_organic_positions
       - get_wb_campaign_stats
+      - get_wb_campaign_fullstats
       - get_wb_keyword_stats
       - get_wb_attribution_summary
+
+  # === WB Analytics V2 Tools (Service Layer) ===
+  wb-analytics-v2:
+    enabled: false  # Opt-in - V2 tools disabled by default
+    client: wb_service
+    tools:
+      - get_wb_product_funnel2
+      - get_wb_product_funnel_history2
+      - get_wb_search_positions2
+      - get_wb_top_search_queries2
+      - get_wb_campaign_fullstats2
+      - get_wb_attribution_summary2
+      - get_wb_feedbacks2
+      - get_wb_questions2
 
   wb-dictionaries:
     enabled: false
@@ -605,6 +621,14 @@ tools:
     rate_limit: 60   # 1 req/min (строгий лимит Promotion API)
     burst: 1
 
+  get_wb_campaign_fullstats:
+    enabled: true
+    description: "Детальная статистика рекламных кампаний с разбивкой по дням, приложениям и товарам (API v3)"
+    endpoint: "https://advert-api.wildberries.ru"
+    rate_limit: 20   # 3 req/min → 20s interval
+    burst: 1
+    post_prompt: "wb/advertising/campaign_fullstats.ru.yaml"
+
   get_wb_keyword_stats:
     enabled: true
     description: "Статистика по ключевым фразам кампании (за 7 дней, максимум)"
@@ -615,6 +639,63 @@ tools:
   get_wb_attribution_summary:
     enabled: true
     description: "Атрибуция заказов: органика vs реклама по товару (агрегирует данные из воронки и кампаний)"
+
+  # === WB Analytics V2 Tools (Service Layer) ===
+  get_wb_product_funnel2:
+    enabled: false  # Opt-in
+    description: "Воронка продаж V2: просмотры, корзина, заказы, выкупы через service layer (улучшенная обработка ошибок)"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 3
+    burst: 3
+
+  get_wb_product_funnel_history2:
+    enabled: false
+    description: "История воронки V2: ежедневная детализация через service layer"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 3
+    burst: 3
+
+  get_wb_search_positions2:
+    enabled: false
+    description: "Позиции в поиске V2: средняя позиция, видимость через service layer"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 3
+    burst: 3
+
+  get_wb_top_search_queries2:
+    enabled: false
+    description: "Топ поисковых запросов V2 через service layer"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 3
+    burst: 3
+
+  get_wb_campaign_fullstats2:
+    enabled: false
+    description: "Детальная статистика кампаний V2 с разбивкой по дням, приложениям, товарам через service layer"
+    endpoint: "https://advert-api.wildberries.ru"
+    rate_limit: 20
+    burst: 1
+
+  get_wb_attribution_summary2:
+    enabled: false
+    description: "Атрибуция V2: органика vs реклама через service layer"
+    endpoint: "https://seller-analytics-api.wildberries.ru"
+    rate_limit: 3
+    burst: 3
+
+  get_wb_feedbacks2:
+    enabled: false
+    description: "Отзывы V2 через service layer с улучшенной пагинацией"
+    endpoint: "https://feedbacks-api.wildberries.ru"
+    rate_limit: 60
+    burst: 3
+
+  get_wb_questions2:
+    enabled: false
+    description: "Вопросы V2 через service layer с улучшенной пагинацией"
+    endpoint: "https://feedbacks-api.wildberries.ru"
+    rate_limit: 60
+    burst: 3
 
 # Chain Configuration (Chain Pattern)
 # Rule 2: Конфигурация цепочек через YAML

@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
-	stpkg "github.com/ilkoid/poncho-ai/pkg/state"
 	"github.com/ilkoid/poncho-ai/pkg/todo"
 )
 
@@ -148,8 +147,8 @@ func SetupTodoCommands(registry *CommandRegistry, state *AppState) {
 				return CommandResultMsg{Output: fmt.Sprintf("❌ Задача %d провалена: %s", id, reason)}
 
 			case "clear":
-				// REFACTORED 2026-01-20: Используем type-safe SetType
-				if err := stpkg.SetType[*todo.Manager](state.CoreState, stpkg.KeyTodo, todo.NewManager()); err != nil {
+				// REFACTORED 2026-02-21: Используем SetTodoManager после рефакторинга CoreState
+				if err := state.SetTodoManager(todo.NewManager()); err != nil {
 					return CommandResultMsg{Err: err}
 				}
 				return CommandResultMsg{Output: "🗑️ План очищен"}

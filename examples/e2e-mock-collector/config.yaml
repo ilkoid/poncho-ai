@@ -1,0 +1,87 @@
+# E2E Mock Collector Configuration
+#
+# This config is used for Stage A testing: collecting 1-2 batches from WB API
+# and saving to SQLite for V2 tool verification.
+
+# WB API Configuration
+wb:
+  api_key: "${WB_API_KEY:-demo_key}"
+  rate_limit: 100          # Requests per minute (Content API default)
+  burst: 5                 # Burst limit
+  retry_attempts: 3
+  timeout: "60s"           # Longer timeout for large responses
+
+# Analytics API (separate rate limits)
+analytics:
+  base_url: "https://analytics-api.wildberries.ru"
+  rate_limit: 3            # 3 requests per minute (CRITICAL)
+  interval: "20s"          # 20 seconds between requests
+  burst: 1
+
+# Advertising API (separate rate limits)
+adverts:
+  base_url: "https://advert-api.wildberries.ru"
+  rate_limit: 3            # 3 requests per minute
+  interval: "20s"
+  burst: 1
+
+# Feedbacks API (separate rate limits)
+feedbacks:
+  base_url: "https://feedbacks-api.wildberries.ru"
+  rate_limit: 60           # 1 request per second
+  interval: "1s"
+  burst: 1
+
+# Collection settings
+collection:
+  products: 10             # Number of products to fetch (nmIDs)
+  campaigns: 10            # Number of campaigns to fetch (advertIDs)
+  feedbacks: 50            # Number of feedbacks per batch
+  questions: 50            # Number of questions per batch
+  days: 7                  # Default period in days
+
+# Output settings
+output:
+  database: "../e2e-twodays.db"
+  format: "sqlite"
+
+# Endpoints to collect (Stage A: 1-2 batches each)
+endpoints:
+  - name: "funnel"
+    enabled: true
+    batch_size: 5          # 5 nmIDs
+    period: 7              # 7 days
+
+  - name: "funnel_history"
+    enabled: true
+    batch_size: 5
+    period: 7
+
+  - name: "search_positions"
+    enabled: true
+    batch_size: 5
+    period: 7
+
+  - name: "search_queries"
+    enabled: true
+    batch_size: 1          # 1 nmID (per-product query)
+    period: 7
+
+  - name: "fullstats"
+    enabled: true
+    batch_size: 5          # 5 advertIDs
+    date_range: 2          # 2 days (2026-02-20 to 2026-02-21)
+
+  - name: "feedbacks"
+    enabled: true
+    batch_size: 50
+
+  - name: "questions"
+    enabled: true
+    batch_size: 50
+
+  - name: "attribution"
+    enabled: true
+    products: 5
+    campaigns: 5
+    period: 7

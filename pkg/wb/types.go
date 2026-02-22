@@ -294,6 +294,7 @@ type ProductPhoto struct {
 // Поля, которые могут быть null, представлены как указатели или float64.
 type RealizationReportRow struct {
 	RrdID              int     `json:"rrd_id"`                        // Уникальный ID записи (для пагинации)
+	RealizationReportID int    `json:"realizationreport_id,omitempty"` // ID отчёта реализации
 	DocTypeName        string  `json:"doc_type_name"`                 // "Продажа", "Возврат"
 	SaleID             string  `json:"sale_id"`                       // ID продажи
 	DateFrom           string  `json:"date_from"`                     // Начало периода
@@ -320,7 +321,15 @@ type RealizationReportRow struct {
 	DeliveryRub        float64 `json:"delivery_rub,omitempty"`        // Стоимость доставки
 	OrderDT            string  `json:"order_dt,omitempty"`            // Дата заказа
 	SaleDT             string  `json:"sale_dt,omitempty"`             // Дата продажи
-	RRDT               string  `json:"rr_dt,omitempty"`                // Дата отчета
+	RRDT               string  `json:"rr_dt,omitempty"`               // Дата отчета
+
+	// Поля для служебных записей (логистика, ПВЗ, удержания)
+	SupplierOperName   string  `json:"supplier_oper_name,omitempty"`  // Тип операции: "Возмещение издержек...", "Удержание"
+	ShkID              int64   `json:"shk_id,omitempty"`              // ID штрихкода
+	Srid               string  `json:"srid,omitempty"`                // Уникальный ID
+	RebillLogisticCost float64 `json:"rebill_logistic_cost,omitempty"` // Стоимость логистики
+	PPVzVw             float64 `json:"ppvz_vw,omitempty"`             // Корректировка
+	PPVzVwNds          float64 `json:"ppvz_vw_nds,omitempty"`         // НДС корректировки
 }
 
 // ReportDetailByPeriodRequest представляет запрос к API отчета реализации.
@@ -337,4 +346,76 @@ type ReportDetailByPeriodResponse struct {
 	Rows  []RealizationReportRow `json:"rows"`  // Массив строк отчета
 	Total int                    `json:"total"` // Общее количество (если есть)
 	Error *string                `json:"error"` // Ошибка если есть
+}
+
+// ============================================================================
+// Funnel Analytics Types (for WB Analytics API v3)
+// ============================================================================
+
+// FunnelProductMeta stores product metadata for the products table.
+// Updated when funnel data is loaded from WB Analytics API v3.
+type FunnelProductMeta struct {
+	NmID           int     `json:"nmId"`
+	VendorCode     string  `json:"vendorCode"`
+	Title          string  `json:"title"`
+	BrandName      string  `json:"brandName"`
+	SubjectID      int     `json:"subjectId"`
+	SubjectName    string  `json:"subjectName"`
+	ProductRating  float64 `json:"productRating"`
+	FeedbackRating float64 `json:"feedbackRating"`
+	StockWB        int     `json:"stockWb"`
+	StockMP        int     `json:"stockMp"`
+	StockBalance   int     `json:"stockBalanceSum"`
+}
+
+// FunnelHistoryRow stores daily funnel metrics for funnel_metrics_daily table.
+// One row per (nm_id, date) combination.
+type FunnelHistoryRow struct {
+	NmID       int    `json:"nmId"`
+	MetricDate string `json:"date"`
+
+	// Funnel counts
+	OpenCount     int `json:"openCount"`
+	CartCount     int `json:"cartCount"`
+	OrderCount    int `json:"orderCount"`
+	BuyoutCount   int `json:"buyoutCount"`
+	CancelCount   int `json:"cancelCount"`
+	AddToWishlist int `json:"addToWishlist"`
+
+	// Financial metrics
+	OrderSum  int `json:"orderSum"`
+	BuyoutSum int `json:"buyoutSum"`
+	CancelSum int `json:"cancelSum"`
+	AvgPrice  int `json:"avgPrice"`
+
+	// Conversion rates (pre-calculated)
+	ConversionAddToCart   float64 `json:"addToCartPercent"`
+	ConversionCartToOrder float64 `json:"cartToOrderPercent"`
+	ConversionBuyout      float64 `json:"buyoutPercent"`
+
+	// WB Club metrics
+	WBClubOrderCount    int     `json:"wbClubOrderCount"`
+	WBClubBuyoutCount   int     `json:"wbClubBuyoutCount"`
+	WBClubBuyoutPercent float64 `json:"wbClubBuyoutPercent"`
+
+	// Operational metrics
+	TimeToReadyDays     int     `json:"timeToReadyDays"`
+	TimeToReadyHours    int     `json:"timeToReadyHours"`
+	TimeToReadyMins     int     `json:"timeToReadyMins"`
+	LocalizationPercent float64 `json:"localizationPercent"`
+}
+
+// TrendingProduct represents a product with trend analysis results.
+// Used in GetTrendingProducts query results.
+type TrendingProduct struct {
+	NmID               int     `json:"nmId"`
+	Title              string  `json:"title"`
+	BrandName          string  `json:"brandName"`
+	Orders7d           int     `json:"orders7d"`
+	OrdersPrev7d       int     `json:"ordersPrev7d"`
+	OrderGrowthPercent float64 `json:"orderGrowthPercent"`
+	Revenue7d          int     `json:"revenue7d"`
+	RevenueGrowth      float64 `json:"revenueGrowth"`
+	AvgConversion      float64 `json:"avgConversion"`
+	TrendStatus        string  `json:"trendStatus"` // TRENDING_UP, TRENDING_DOWN, STABLE, NEW
 }

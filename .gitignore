@@ -123,3 +123,18 @@ venv/
 # Tools - Python virtual environments
 tools/*/venv/
 
+# Database files (snapshots, test data)
+*.db
+!*.db.example
+
+# Screenshots and temporary images
+screenshots/
+
+# Downloaded data binaries
+download-wb-promotion
+download-wb-sales
+
+# Test utilities (temporary)
+cmd/test-wb-*/
+cmd/fix-fake-png/
+

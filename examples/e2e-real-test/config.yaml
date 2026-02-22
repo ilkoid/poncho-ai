@@ -1,0 +1,82 @@
+# E2E Real Data Test Configuration
+#
+# This config is used for Stage B testing: collecting real data for Feb 20-21
+# and comparing JSON responses with SQLite data.
+
+# WB API Configuration
+wb:
+  api_key: "${WB_API_KEY:-}"
+  rate_limit: 100
+  burst: 5
+  retry_attempts: 3
+  timeout: "60s"
+
+# Analytics API (strict rate limits)
+analytics:
+  base_url: "https://analytics-api.wildberries.ru"
+  rate_limit: 3            # 3 requests per minute (CRITICAL)
+  interval: "20s"
+  burst: 1
+
+# Advertising API
+adverts:
+  base_url: "https://advert-api.wildberries.ru"
+  rate_limit: 3
+  interval: "20s"
+  burst: 1
+
+# Feedbacks API
+feedbacks:
+  base_url: "https://feedbacks-api.wildberries.ru"
+  rate_limit: 60           # 1 request per second
+  interval: "1s"
+  burst: 1
+
+# Date range for Stage B
+date_range:
+  from: "2026-02-20"
+  to: "2026-02-21"
+
+# Output settings
+output:
+  database: "../e2e-twodays.db"
+  report: "comparison_report.txt"
+
+# Comparison settings
+comparison:
+  # Tolerance for floating point comparisons
+  float_tolerance: 0.01
+
+  # Fields to compare
+  funnel_fields:
+    - "nmId"
+    - "vendorCode"
+    - "openCount"
+    - "cartCount"
+    - "orderCount"
+    - "buyoutCount"
+    - "cancelCount"
+    - "addToCartPercent"
+    - "buyoutPercent"
+
+  fullstats_fields:
+    - "advertId"
+    - "views"
+    - "clicks"
+    - "orders"
+    - "sum"
+
+  feedbacks_fields:
+    - "id"
+    - "nmId"
+    - "productValuation"
+
+  questions_fields:
+    - "id"
+    - "nmId"
+    - "state"
+
+# Report settings
+report:
+  max_differences: 10      # Max differences to show per endpoint
+  include_details: true    # Include detailed field-by-field comparison

@@ -1,0 +1,408 @@
+// Package sqlite provides SQLite storage implementation.
+package sqlite
+
+const (
+	// SchemaSQL defines the sales table structure.
+	// Table stores detailed sales data from WB API reportDetailByPeriod.
+	SchemaSQL = `
+-- Main sales table with all fields from WB RealizationReportRow
+CREATE TABLE IF NOT EXISTS sales (
+    -- Primary key
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- WB API identifiers (unique for pagination)
+    rrd_id INTEGER UNIQUE NOT NULL,
+    realizationreport_id INTEGER,
+
+    -- Product identifiers
+    nm_id INTEGER NOT NULL,
+    supplier_article TEXT,
+    barcode TEXT,
+
+    -- Product metadata
+    brand_name TEXT,
+    subject_name TEXT,
+    ts_name TEXT,
+
+    -- Transaction details
+    doc_type_name TEXT,                -- "Продажа", "Возврат"
+    quantity INTEGER,
+    retail_price REAL,
+    retail_amount REAL,
+    sale_percent REAL,
+    commission_percent REAL,
+
+    -- Financial
+    ppvz_for_pay REAL,
+    delivery_rub REAL,
+
+    -- Delivery method (KEY for FBW filtering)
+    delivery_method TEXT,
+    gi_box_type_name TEXT,
+
+    -- Warehouse
+    office_name TEXT,
+
+    -- Dates
+    order_dt TEXT,
+    sale_dt TEXT,
+    rr_dt TEXT,
+
+    -- Cancellation
+    is_cancel INTEGER DEFAULT 0,
+    cancel_dt TEXT,
+
+    -- Metadata
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for fast lookups by nm_id (product analytics)
+CREATE INDEX IF NOT EXISTS idx_sales_nm_id ON sales(nm_id);
+
+-- Index for date range queries (period filtering)
+CREATE INDEX IF NOT EXISTS idx_sales_sale_dt ON sales(sale_dt);
+
+-- Index for delivery method filtering (FBW vs FBS)
+CREATE INDEX IF NOT EXISTS idx_sales_delivery_method ON sales(delivery_method);
+
+-- Index for report date queries
+CREATE INDEX IF NOT EXISTS idx_sales_rr_dt ON sales(rr_dt);
+
+-- Index for rrd_id pagination lookups
+CREATE INDEX IF NOT EXISTS idx_sales_rrd_id ON sales(rrd_id);
+`
+
+	// ServiceRecordsSchemaSQL defines the service_records table structure.
+	// Table stores logistics, pickup points, and deduction records from WB API.
+	// Two types of service records:
+	// 1. nm_id = 0: General logistics/warehouse/PVZ costs
+	// 2. nm_id > 0 + empty doc_type_name: Product-specific logistics (returns to seller, etc.)
+	ServiceRecordsSchemaSQL = `
+-- Service records table for logistics, pickup points, and deductions
+-- Includes both general (nm_id=0) and product-specific (nm_id>0, empty doc_type) records
+CREATE TABLE IF NOT EXISTS service_records (
+    -- Primary key
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- WB API identifiers
+    rrd_id INTEGER UNIQUE NOT NULL,
+    realizationreport_id INTEGER,
+
+    -- Operation type (KEY field for classification!)
+    -- Values: "Возмещение издержек...", "Удержание", "Логистика", etc.
+    supplier_oper_name TEXT,
+
+    -- Product info (for product-specific logistics, NULL for general records)
+    nm_id INTEGER DEFAULT 0,
+    supplier_article TEXT,
+    brand_name TEXT,
+    subject_name TEXT,
+
+    -- Partial identifiers (often filled for service records)
+    barcode TEXT,
+    shk_id INTEGER,
+    srid TEXT,
+
+    -- Delivery info (for product-specific logistics)
+    delivery_method TEXT,
+    gi_box_type_name TEXT,
+    delivery_rub REAL,
+
+    -- Financial data
+    ppvz_vw REAL,              -- Корректировка
+    ppvz_vw_nds REAL,          -- НДС корректировки
+    rebill_logistic_cost REAL, -- Стоимость логистики
+
+    -- Dates
+    rr_dt TEXT,
+    order_dt TEXT,
+    sale_dt TEXT,
+
+    -- Metadata
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for operation type queries (group by logistics/deductions/etc)
+CREATE INDEX IF NOT EXISTS idx_service_oper ON service_records(supplier_oper_name);
+
+-- Index for report date queries
+CREATE INDEX IF NOT EXISTS idx_service_rr_dt ON service_records(rr_dt);
+
+-- Index for rrd_id lookups
+CREATE INDEX IF NOT EXISTS idx_service_rrd_id ON service_records(rrd_id);
+
+-- Index for product-specific queries
+CREATE INDEX IF NOT EXISTS idx_service_nm_id ON service_records(nm_id);
+`
+
+	// CreateViewSQL creates a view for FBW-only sales.
+	// FBW = Fulfillment by Wildberries (sales from WB warehouses)
+	// Note: Exact delivery_method values for FBW need to be verified
+	// through real API response. This is a conservative filter.
+	CreateViewSQL = `
+CREATE VIEW IF NOT EXISTS fbw_sales AS
+SELECT * FROM sales
+WHERE delivery_method LIKE '%WB%' OR delivery_method NOT LIKE '%FBS%'
+   OR delivery_method LIKE '%ФБВ%' OR delivery_method = '';
+`
+
+	// FunnelSchemaSQL defines the funnel analytics tables structure.
+	// Stores product metadata and daily funnel metrics from WB Analytics API v3.
+	// Used for trend analysis and correlation with actual sales data.
+	FunnelSchemaSQL = `
+-- ============================================================================
+-- FUNNEL ANALYTICS TABLES (WB Analytics API v3)
+-- ============================================================================
+
+-- Products metadata table (slowly changing dimension)
+-- Stores product info that changes rarely
+CREATE TABLE IF NOT EXISTS products (
+    -- Primary key (WB product ID)
+    nm_id INTEGER PRIMARY KEY,
+
+    -- Product identification
+    vendor_code TEXT,
+    title TEXT,
+    brand_name TEXT,
+
+    -- Category hierarchy
+    subject_id INTEGER,
+    subject_name TEXT,
+
+    -- Quality metrics (updated when funnel data is loaded)
+    product_rating REAL,
+    feedback_rating REAL,
+
+    -- Stock levels (snapshot from last API call)
+    stock_wb INTEGER DEFAULT 0,
+    stock_mp INTEGER DEFAULT 0,
+    stock_balance_sum INTEGER DEFAULT 0,
+
+    -- Metadata
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for category-based analysis
+CREATE INDEX IF NOT EXISTS idx_products_subject_id ON products(subject_id);
+
+-- Index for brand analysis
+CREATE INDEX IF NOT EXISTS idx_products_brand_name ON products(brand_name);
+
+-- ============================================================================
+-- Daily funnel metrics (core time-series fact table)
+-- Grain: one row per (nm_id, date) combination
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS funnel_metrics_daily (
+    -- Surrogate primary key
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Natural key (business key for upserts)
+    nm_id INTEGER NOT NULL,
+    metric_date TEXT NOT NULL,
+
+    -- Funnel counts (raw metrics)
+    open_count INTEGER DEFAULT 0,
+    cart_count INTEGER DEFAULT 0,
+    order_count INTEGER DEFAULT 0,
+    buyout_count INTEGER DEFAULT 0,
+    cancel_count INTEGER DEFAULT 0,
+    add_to_wishlist INTEGER DEFAULT 0,
+
+    -- Financial metrics (in rubles)
+    order_sum INTEGER DEFAULT 0,
+    buyout_sum INTEGER DEFAULT 0,
+    cancel_sum INTEGER DEFAULT 0,
+    avg_price INTEGER DEFAULT 0,
+
+    -- Conversion rates (pre-calculated for query performance)
+    conversion_add_to_cart REAL,
+    conversion_cart_to_order REAL,
+    conversion_buyout REAL,
+
+    -- WB Club metrics (premium customer segment)
+    wb_club_order_count INTEGER DEFAULT 0,
+    wb_club_buyout_count INTEGER DEFAULT 0,
+    wb_club_buyout_percent REAL,
+
+    -- Operational metrics
+    time_to_ready_days INTEGER DEFAULT 0,
+    time_to_ready_hours INTEGER DEFAULT 0,
+    time_to_ready_mins INTEGER DEFAULT 0,
+    localization_percent REAL,
+
+    -- Metadata
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    -- Unique constraint for upsert logic
+    UNIQUE(nm_id, metric_date)
+);
+
+-- Composite index for time-series queries (product-focused)
+CREATE INDEX IF NOT EXISTS idx_funnel_product_date
+    ON funnel_metrics_daily(nm_id, metric_date);
+
+-- Composite index for cross-product analysis (date-focused)
+CREATE INDEX IF NOT EXISTS idx_funnel_date_product
+    ON funnel_metrics_daily(metric_date, nm_id);
+
+-- Index for trending detection (order count by date)
+CREATE INDEX IF NOT EXISTS idx_funnel_orders
+    ON funnel_metrics_daily(metric_date, order_count);
+
+-- Index for conversion analysis queries
+CREATE INDEX IF NOT EXISTS idx_funnel_conversion
+    ON funnel_metrics_daily(metric_date, conversion_buyout);
+`
+
+	// PromotionSchemaSQL defines the promotion analytics tables structure.
+	// Stores campaign metadata and daily stats from WB Promotion API.
+	// Used for ROI analysis and advertising performance tracking.
+	PromotionSchemaSQL = `
+-- ============================================================================
+-- PROMOTION API TABLES (WB Promotion API)
+-- ============================================================================
+
+-- Campaigns table - metadata for advertising campaigns
+-- Source: GET /adv/v1/promotion/count
+CREATE TABLE IF NOT EXISTS campaigns (
+    -- Primary key (WB campaign ID)
+    advert_id INTEGER PRIMARY KEY,
+
+    -- From /adv/v1/promotion/count
+    campaign_type INTEGER NOT NULL,   -- type: 8=search, 9=auto, 50=catalog
+    status INTEGER NOT NULL,          -- -1=deleted, 4=ready, 7=finished, 8=canceled, 9=active, 11=paused
+    change_time TEXT,                 -- Last modification time
+
+    -- Aggregated stats from /adv/v3/fullstats (updated on each load)
+    total_views INTEGER DEFAULT 0,
+    total_clicks INTEGER DEFAULT 0,
+    total_orders INTEGER DEFAULT 0,
+    total_sum REAL DEFAULT 0,         -- Total spent on ads
+    total_sum_price REAL DEFAULT 0,   -- Total order value
+
+    -- Metadata
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for status filtering (active vs paused vs finished)
+CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
+
+-- Index for type analysis (search vs auto vs catalog)
+CREATE INDEX IF NOT EXISTS idx_campaigns_type ON campaigns(campaign_type);
+
+-- Index for change_time (resume mode)
+CREATE INDEX IF NOT EXISTS idx_campaigns_change_time ON campaigns(change_time);
+
+-- ============================================================================
+-- Daily campaign statistics (core time-series fact table)
+-- Source: GET /adv/v3/fullstats
+-- Grain: one row per (advert_id, date) combination
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS campaign_stats_daily (
+    -- Surrogate primary key
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Natural key (business key for upserts)
+    advert_id INTEGER NOT NULL,
+    stats_date TEXT NOT NULL,
+
+    -- Core metrics from /adv/v3/fullstats
+    views INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    ctr REAL DEFAULT 0,            -- Click-through rate (%)
+    cpc REAL DEFAULT 0,            -- Cost per click (rubles)
+    cr REAL DEFAULT 0,             -- Conversion rate (%)
+
+    -- Orders & revenue
+    orders INTEGER DEFAULT 0,
+    shks INTEGER DEFAULT 0,        -- Buyouts (штрихкод продажи)
+    atbs INTEGER DEFAULT 0,        -- Returns (возвраты)
+    canceled INTEGER DEFAULT 0,    -- Cancellations
+
+    -- Financial
+    sum REAL DEFAULT 0,            -- Ad spend (rubles)
+    sum_price REAL DEFAULT 0,      -- Order value (rubles)
+
+    -- Metadata
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    -- Unique constraint for upsert logic
+    UNIQUE(advert_id, stats_date)
+);
+
+-- Composite index for time-series queries (campaign-focused)
+CREATE INDEX IF NOT EXISTS idx_campaign_stats_campaign_date
+    ON campaign_stats_daily(advert_id, stats_date);
+
+-- Composite index for cross-campaign analysis (date-focused)
+CREATE INDEX IF NOT EXISTS idx_campaign_stats_date
+    ON campaign_stats_daily(stats_date);
+
+-- Index for spend analysis
+CREATE INDEX IF NOT EXISTS idx_campaign_stats_spend
+    ON campaign_stats_daily(stats_date, sum);
+
+-- ============================================================================
+-- Campaign-Product relationship (many-to-many)
+-- Source: /adv/v3/fullstats (nms array in days[].apps[])
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS campaign_products (
+    -- Surrogate primary key
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Foreign keys
+    advert_id INTEGER NOT NULL,
+    nm_id INTEGER NOT NULL,
+
+    -- Product info in campaign context
+    product_name TEXT,
+
+    -- Per-product stats (aggregated from fullstats)
+    total_views INTEGER DEFAULT 0,
+    total_clicks INTEGER DEFAULT 0,
+    total_orders INTEGER DEFAULT 0,
+    total_sum REAL DEFAULT 0,
+
+    -- Metadata
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    -- Unique constraint
+    UNIQUE(advert_id, nm_id)
+);
+
+-- Index for product-focused queries (what campaigns promote this product?)
+CREATE INDEX IF NOT EXISTS idx_campaign_products_nm
+    ON campaign_products(nm_id);
+
+-- Index for campaign-focused queries (what products in this campaign?)
+CREATE INDEX IF NOT EXISTS idx_campaign_products_campaign
+    ON campaign_products(advert_id);
+`
+)
+
+// GetSchemaSQL returns the main table schema.
+func GetSchemaSQL() string {
+	return SchemaSQL
+}
+
+// GetServiceRecordsSchemaSQL returns the service_records table schema.
+func GetServiceRecordsSchemaSQL() string {
+	return ServiceRecordsSchemaSQL
+}
+
+// GetCreateViewSQL returns the FBW view creation SQL.
+func GetCreateViewSQL() string {
+	return CreateViewSQL
+}
+
+// GetFunnelSchemaSQL returns the funnel analytics tables schema.
+func GetFunnelSchemaSQL() string {
+	return FunnelSchemaSQL
+}
+
+// GetPromotionSchemaSQL returns the promotion analytics tables schema.
+func GetPromotionSchemaSQL() string {
+	return PromotionSchemaSQL
+}

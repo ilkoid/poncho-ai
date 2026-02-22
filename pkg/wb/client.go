@@ -85,6 +85,38 @@ func (e ErrorType) HumanMessage() string {
 	}
 }
 
+// isRetryableError проверяет, является ли ошибка повторяемой (временной).
+// К повторяемым ошибкам относятся: таймауты, сетевые ошибки, разрывы соединения.
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for net.Error (timeout, temporary)
+	if netErr, ok := err.(net.Error); ok {
+		return netErr.Timeout() || netErr.Temporary()
+	}
+
+	// Check for specific error strings
+	errStr := err.Error()
+	retryablePatterns := []string{
+		"i/o timeout",
+		"connection reset",
+		"connection refused",
+		"broken pipe",
+		"EOF",
+		"timeout",
+		"temporary failure",
+	}
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // HTTPClient интерфейс для выполнения HTTP запросов.
 //
 // Позволяет мокировать HTTP клиент в тестах (Rule 9).
@@ -780,10 +812,31 @@ func (c *Client) ReportDetailByPeriodIteratorWithTime(
 	rrdid := 0
 	limit := 100000
 
+	// Retry settings for transient network errors
+	const maxRetries = 3
+	const baseBackoff = 5 * time.Second
+
 	for {
-		page, err := c.ReportDetailByPeriodPageWithTime(ctx, baseURL, rateLimit, burst, dateFrom, dateTo, rrdid, limit)
-		if err != nil {
-			return totalCount, err
+		var page *ReportDetailByPeriodPageResult
+		var err error
+
+		// Retry loop with exponential backoff
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			page, err = c.ReportDetailByPeriodPageWithTime(ctx, baseURL, rateLimit, burst, dateFrom, dateTo, rrdid, limit)
+			if err == nil {
+				break // Success
+			}
+
+			// Check if error is retryable (timeout, network error)
+			isRetryable := isRetryableError(err)
+			if !isRetryable || attempt == maxRetries-1 {
+				return totalCount, err
+			}
+
+			// Calculate backoff: 5s, 10s, 20s
+			backoff := baseBackoff * time.Duration(1<<attempt)
+			fmt.Printf("  ⚠️  Сетевая ошибка, повтор #%d через %v: %v\n", attempt+1, backoff, err)
+			time.Sleep(backoff)
 		}
 
 		// Конец пагинации
