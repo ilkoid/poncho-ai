@@ -98,6 +98,23 @@ type ServiceRecordStats struct {
 	ByOperation map[string]int
 }
 
+// RefreshStats holds statistics about a refresh window operation.
+//
+// Returned by RefreshWithinWindow to report deleted/inserted counts.
+type RefreshStats struct {
+	// Deleted is the number of records deleted within the refresh window.
+	Deleted int
+
+	// Inserted is the number of records inserted within the refresh window.
+	Inserted int
+
+	// WindowStart is the start date of the refresh window.
+	WindowStart time.Time
+
+	// WindowEnd is the end date of the refresh window (usually today).
+	WindowEnd time.Time
+}
+
 // ============================================================================
 // FUNNEL REPOSITORY - Analytics Data Storage
 // ============================================================================
@@ -112,6 +129,17 @@ type FunnelRepository interface {
 
 	// SaveDailyMetrics saves daily funnel metrics (upsert by nm_id + date).
 	SaveDailyMetrics(ctx context.Context, metrics []FunnelMetricRecord) error
+
+	// SaveDailyMetricsWithWindow saves metrics with refresh window logic.
+	// Records within the window (today - refreshDays) use INSERT OR REPLACE.
+	// Records outside the window use INSERT OR IGNORE (not modified).
+	//
+	// This handles WB retroactive updates: recent data is refreshed, historical data is frozen.
+	SaveDailyMetricsWithWindow(ctx context.Context, metrics []FunnelMetricRecord, refreshDays int) error
+
+	// RefreshWithinWindow deletes and returns count of records within the refresh window.
+	// Used for reporting before loading new data.
+	RefreshWithinWindow(ctx context.Context, nmIDs []int, refreshDays int) (*RefreshStats, error)
 
 	// GetProduct retrieves product metadata by nmID.
 	GetProduct(ctx context.Context, nmID int) (*ProductRecord, error)

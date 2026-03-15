@@ -143,3 +143,20 @@ cmd/download-all-articles/ЗАГРУЗКИ/
 cmd/download-all-articles/download-all-articles
 cmd/download-all-articles/fix-fake-png
 
+# Python virtual environment (with dot)
+.venv/
+
+# PDF documents (generated from markdown)
+*.pdf
+
+# Markdown reports and plans (business docs)
+*_REPORT.md
+*_PLAN.md
+*_APPROACH.md
+
+# CSS for PDF generation
+style.css
+
+# E2E test comparison reports
+comparison_report.txt
+

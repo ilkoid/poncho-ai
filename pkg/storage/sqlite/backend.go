@@ -187,6 +187,45 @@ func (a *funnelRepoAdapter) Count(ctx context.Context) (int, error) {
 	return a.repo.CountFunnelMetrics(ctx)
 }
 
+func (a *funnelRepoAdapter) SaveDailyMetricsWithWindow(ctx context.Context, metrics []storage.FunnelMetricRecord, refreshDays int) error {
+	// Group metrics by product for batch save
+	productMap := make(map[int][]wb.FunnelHistoryRow)
+	for _, m := range metrics {
+		productMap[m.NmID] = append(productMap[m.NmID], wb.FunnelHistoryRow{
+			NmID:                  m.NmID,
+			MetricDate:            m.MetricDate.Format("2006-01-02"),
+			OpenCount:             m.OpenCount,
+			CartCount:             m.CartCount,
+			OrderCount:            m.OrderCount,
+			BuyoutCount:           m.BuyoutCount,
+			CancelCount:           m.CancelCount,
+			AddToWishlist:         m.AddToWishlist,
+			OrderSum:              m.OrderSum,
+			BuyoutSum:             m.BuyoutSum,
+			AvgPrice:              m.AvgPrice,
+			ConversionAddToCart:   m.ConversionAddToCart,
+			ConversionCartToOrder: m.ConversionCartToOrder,
+			ConversionBuyout:      m.ConversionBuyout,
+			WBClubOrderCount:      m.WBClubOrderCount,
+			WBClubBuyoutCount:     m.WBClubBuyoutCount,
+			WBClubBuyoutPercent:   m.WBClubBuyoutPercent,
+		})
+	}
+
+	// Save each product's metrics
+	for nmID, rows := range productMap {
+		product := wb.FunnelProductMeta{NmID: nmID}
+		if err := a.repo.SaveFunnelHistoryWithWindow(ctx, product, rows, refreshDays); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *funnelRepoAdapter) RefreshWithinWindow(ctx context.Context, nmIDs []int, refreshDays int) (*storage.RefreshStats, error) {
+	return a.repo.RefreshWithinWindow(ctx, nmIDs, refreshDays)
+}
+
 // ============================================================================
 // PROMOTION REPOSITORY ADAPTER
 // ============================================================================

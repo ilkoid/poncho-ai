@@ -5,7 +5,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/storage"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -276,7 +278,8 @@ func (r *SQLiteSalesRepository) CountProducts(ctx context.Context) (int, error) 
 	return count, nil
 }
 
-// GetLastFunnelDate returns the most recent metric_date in funnel_metrics_daily.
+// RefreshStats is a local alias for storage.RefreshStats.
+type RefreshStats = storage.RefreshStats
 // Returns empty string if table is empty.
 func (r *SQLiteSalesRepository) GetLastFunnelDate(ctx context.Context) (string, error) {
 	var lastDate sql.NullString
@@ -288,4 +291,211 @@ func (r *SQLiteSalesRepository) GetLastFunnelDate(ctx context.Context) (string, 
 		return "", nil
 	}
 	return lastDate.String, nil
+}
+
+// RefreshWithinWindow deletes funnel metrics within the refresh window.
+//
+// Returns statistics about deleted records. This is called before loading new data
+// to report what will be refreshed.
+//
+// The window is calculated as: (today - refreshDays) to today.
+// Records within this window will be replaced with fresh data from WB API.
+// Records outside the window are preserved (frozen historical data).
+func (r *SQLiteSalesRepository) RefreshWithinWindow(ctx context.Context, nmIDs []int, refreshDays int) (*RefreshStats, error) {
+	if len(nmIDs) == 0 || refreshDays <= 0 {
+		return &RefreshStats{}, nil
+	}
+
+	now := time.Now()
+	windowStart := now.AddDate(0, 0, -refreshDays)
+
+	// Build placeholders for IN clause
+	placeholders := ""
+	args := make([]any, 0, len(nmIDs)+2)
+	for i, nmID := range nmIDs {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, nmID)
+	}
+	args = append(args, windowStart.Format("2006-01-02"), now.Format("2006-01-02"))
+
+	// Count records that will be deleted (for reporting)
+	var countBefore int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM funnel_metrics_daily WHERE nm_id IN (%s) AND metric_date >= ? AND metric_date <= ?", placeholders)
+	err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&countBefore)
+	if err != nil {
+		return nil, fmt.Errorf("count records within window: %w", err)
+	}
+
+	// Delete records within window
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	deleteQuery := fmt.Sprintf("DELETE FROM funnel_metrics_daily WHERE nm_id IN (%s) AND metric_date >= ? AND metric_date <= ?", placeholders)
+	result, err := tx.ExecContext(ctx, deleteQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("delete within window: %w", err)
+	}
+
+	deleted, _ := result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+
+	return &RefreshStats{
+		Deleted:     int(deleted),
+		Inserted:    0,
+		WindowStart: windowStart,
+		WindowEnd:   now,
+	}, nil
+}
+
+// SaveFunnelHistoryWithWindow saves funnel metrics with refresh window logic.
+//
+// Behaves differently based on record date:
+//   - Within window (today - refreshDays): INSERT OR REPLACE (update existing)
+//   - Outside window: INSERT OR IGNORE (preserve historical data)
+//
+// This handles WB retroactive updates where recent data may change but
+// historical data should be frozen.
+func (r *SQLiteSalesRepository) SaveFunnelHistoryWithWindow(
+	ctx context.Context,
+	product wb.FunnelProductMeta,
+	rows []wb.FunnelHistoryRow,
+	refreshDays int,
+) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	// If refreshDays is 0 or negative, use original behavior (always REPLACE)
+	if refreshDays <= 0 {
+		return r.SaveFunnelHistory(ctx, product, rows)
+	}
+
+	cutoffDate := time.Now().AddDate(0, 0, -refreshDays)
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Upsert product metadata (always)
+	if product.NmID > 0 {
+		_, err = tx.ExecContext(ctx, `
+			INSERT OR REPLACE INTO products (
+				nm_id, vendor_code, title, brand_name,
+				subject_id, subject_name,
+				product_rating, feedback_rating,
+				stock_wb, stock_mp, stock_balance_sum,
+				updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`,
+			product.NmID,
+			product.VendorCode,
+			product.Title,
+			product.BrandName,
+			product.SubjectID,
+			product.SubjectName,
+			product.ProductRating,
+			product.FeedbackRating,
+			product.StockWB,
+			product.StockMP,
+			product.StockBalance,
+		)
+		if err != nil {
+			return fmt.Errorf("upsert product nm_id=%d: %w", product.NmID, err)
+		}
+	}
+
+	// Prepare statements for REPLACE and IGNORE
+	stmtReplace, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO funnel_metrics_daily (
+			nm_id, metric_date,
+			open_count, cart_count, order_count, buyout_count, cancel_count, add_to_wishlist,
+			order_sum, buyout_sum, cancel_sum, avg_price,
+			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout,
+			wb_club_order_count, wb_club_buyout_count, wb_club_buyout_percent,
+			time_to_ready_days, time_to_ready_hours, time_to_ready_mins,
+			localization_percent
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare replace statement: %w", err)
+	}
+	defer stmtReplace.Close()
+
+	stmtIgnore, err := tx.PrepareContext(ctx, `
+		INSERT OR IGNORE INTO funnel_metrics_daily (
+			nm_id, metric_date,
+			open_count, cart_count, order_count, buyout_count, cancel_count, add_to_wishlist,
+			order_sum, buyout_sum, cancel_sum, avg_price,
+			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout,
+			wb_club_order_count, wb_club_buyout_count, wb_club_buyout_percent,
+			time_to_ready_days, time_to_ready_hours, time_to_ready_mins,
+			localization_percent
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare ignore statement: %w", err)
+	}
+	defer stmtIgnore.Close()
+
+	// Save each row with appropriate strategy
+	for _, row := range rows {
+		metricDate, err := time.Parse("2006-01-02", row.MetricDate)
+		if err != nil {
+			return fmt.Errorf("parse date %s: %w", row.MetricDate, err)
+		}
+
+		var stmt *sql.Stmt
+		if metricDate.After(cutoffDate) || metricDate.Equal(cutoffDate) {
+			// Within window → REPLACE (update)
+			stmt = stmtReplace
+		} else {
+			// Outside window → IGNORE (preserve)
+			stmt = stmtIgnore
+		}
+
+		_, err = stmt.ExecContext(ctx,
+			row.NmID,
+			row.MetricDate,
+			row.OpenCount,
+			row.CartCount,
+			row.OrderCount,
+			row.BuyoutCount,
+			row.CancelCount,
+			row.AddToWishlist,
+			row.OrderSum,
+			row.BuyoutSum,
+			row.CancelSum,
+			row.AvgPrice,
+			row.ConversionAddToCart,
+			row.ConversionCartToOrder,
+			row.ConversionBuyout,
+			row.WBClubOrderCount,
+			row.WBClubBuyoutCount,
+			row.WBClubBuyoutPercent,
+			row.TimeToReadyDays,
+			row.TimeToReadyHours,
+			row.TimeToReadyMins,
+			row.LocalizationPercent,
+		)
+		if err != nil {
+			return fmt.Errorf("save row nm_id=%d date=%s: %w", row.NmID, row.MetricDate, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	return nil
 }

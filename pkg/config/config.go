@@ -25,6 +25,28 @@ type AppConfig struct {
 	FileRules          []FileRule                 `yaml:"file_rules"`
 	WB                 WBConfig                   `yaml:"wb"`
 	Chains             map[string]ChainConfig     `yaml:"chains"`
+	Storage            StorageConfig              `yaml:"storage"`               // Refresh window для обновления данных
+}
+
+// StorageConfig — настройки обновления данных.
+//
+// Определяет окно обновления (refresh window) для различных типов данных.
+// WB обновляет исторические данные задним числом (выкупы, отмены, возвраты).
+// Данные внутри окна обновляются, старше окна — замораживаются.
+//
+// Пример:
+//
+//	storage:
+//	  funnel_refresh_window: 7  # Обновлять последние 7 дней воронки
+type StorageConfig struct {
+	// FunnelRefreshWindow — дней для обновления воронки (0 = всегда REPLACE)
+	FunnelRefreshWindow int `yaml:"funnel_refresh_window"`
+
+	// PromotionRefreshWindow — дней для обновления рекламы (0 = всегда REPLACE)
+	PromotionRefreshWindow int `yaml:"promotion_refresh_window"`
+
+	// SalesRefreshWindow — дней для обновления продаж (0 = всегда IGNORE)
+	SalesRefreshWindow int `yaml:"sales_refresh_window"`
 }
 
 // ChainConfig — базовая конфигурация цепочки.
