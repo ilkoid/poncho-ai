@@ -106,10 +106,10 @@ maxiponcho
 cmd/*/poncho
 cmd/*/interruption-test
 
-# Test artifacts in cmd/interruption-test/
-cmd/interruption-test/bak/
-cmd/interruption-test/ЗАГРУЗКИ/
-cmd/interruption-test/poncho_log_*.md
+# Test artifacts in examples/feature-demos/interruption-test/
+examples/feature-demos/interruption-test/bak/
+examples/feature-demos/interruption-test/ЗАГРУЗКИ/
+examples/feature-demos/interruption-test/poncho_log_*.md
 
 # TUI audit reports (temporary)
 *_audit_report.md
@@ -134,14 +134,14 @@ screenshots/
 download-wb-promotion
 download-wb-sales
 
-# Test utilities (temporary)
-cmd/test-wb-*/
-cmd/fix-fake-png/
+# Test utilities (temporary, organized by type)
+cmd/test-utils/test-wb-*/
+cmd/fix-utilities/fix-fake-png/
 
 # Downloaded data folders
-cmd/download-all-articles/ЗАГРУЗКИ/
-cmd/download-all-articles/download-all-articles
-cmd/download-all-articles/fix-fake-png
+cmd/data-downloaders/download-all-articles/ЗАГРУЗКИ/
+cmd/data-downloaders/download-all-articles/download-all-articles
+cmd/data-downloaders/download-all-articles/fix-fake-png
 
 # Python virtual environment (with dot)
 .venv/

@@ -29,9 +29,14 @@ Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI
 
 ```
 poncho-ai/
-├── cmd/                    # Entry points (autonomous utilities)
-├── examples/              # Verification utilities (Rule 9)
-│   └── wb-funnel-demo/    # WB Analytics API v3 demo
+├── cmd/                    # Production utilities
+│   ├── data-downloaders/   # Data collection from APIs
+│   ├── fix-utilities/      # Data fix/cleanup tools
+│   └── test-utils/         # API debugging (not for production)
+├── examples/              # Verification & demos (Rule 9)
+│   ├── e2e-testing/        # E2E infrastructure
+│   ├── api-demos/          # API demonstrations
+│   └── feature-demos/      # Framework features (interruptions, etc.)
 ├── internal/              # App-specific logic (ui/)
 ├── pkg/                   # Reusable library packages
 ├── prompts/              # Prompt templates
@@ -540,42 +545,56 @@ go run cmd/wb-ping-util-v2/main.go
 # Streaming test
 go run cmd/streaming-test/main.go "Explain quantum computing"
 
-# Interruptible agent
-cd examples/interruptible-agent && go run main.go "Show parent categories"
+# Feature demo: Interruptions with TUI
+cd examples/feature-demos/interruption-test && go run main.go [config_path]
 
 # WB Analytics Funnel Demo (API v3 verification)
-cd examples/wb-funnel-demo
+cd examples/api-demos/wb-funnel-demo
 go run main.go                              # Mock mode (demo_key)
 WB_API_KEY=your_key go run main.go         # Real API
 WB_API_KEY=your_key go run main.go --nmIds 123456 --days 30  # Custom args
 
 # E2E Mock Collector (create snapshot database)
-cd examples/e2e-mock-collector
+cd examples/e2e-testing/e2e-mock-collector
 go run main.go --days 7 --output ../e2e-snapshot.db
 
-# Download utilities
-cd cmd/download-wb-sales && go run main.go --days 7
-cd cmd/download-wb-promotion && go run main.go --begin 2025-01-01 --end 2025-01-31
+# Download utilities (production)
+cd cmd/data-downloaders/download-wb-sales && go run main.go --days 7
+cd cmd/data-downloaders/download-wb-promotion && go run main.go --begin 2025-01-01 --end 2025-01-31
 ```
 
-### Examples Directory
+### cmd/ Directory
 
-The `examples/` directory contains autonomous utilities for verification and demonstration:
+Production utilities organized by purpose:
 
-- **`wb-funnel-demo/`** - WB Analytics API v3 verification utility
-  - Demonstrates 15+ v3 metrics (buyouts, cancellations, WB Club, stocks, ratings)
-  - Mock mode with `demo_key` for testing
-  - Custom nmIDs and period support
-  - Standalone go.mod with local replace
+**`data-downloaders/`** - Data collection from external APIs
+- `download-all-articles` - S3 mass download
+- `download-wb-sales` - WB Sales/Analytics → SQLite
+- `download-wb-promotion` - WB Promotion → SQLite
 
-- **`e2e-mock-collector/`** - Data collection for E2E snapshots
-  - Collects from Sales, Analytics, Adverts, Feedbacks APIs
-  - Proper rate limiting between calls
-  - Output to SQLite for SnapshotDBClient
+**`fix-utilities/`** - Data fix/cleanup tools
+- `fix-fake-png` - Fix PNG/JSON file naming
 
-- **`e2e-snapshot-test/`** - SnapshotDBClient verification
-  - Tests all service implementations
-  - Validates data integrity
+**`test-utils/`** - API debugging utilities (not for production)
+- `test-wb-*` - Various WB API testing tools
+
+### examples/ Directory
+
+Verification and demonstration utilities per Rule 9:
+
+**`e2e-testing/`** - E2E infrastructure
+- `e2e-mock-collector` - Collects real data to SQLite
+- `e2e-snapshot-test` - SnapshotDBClient verification
+- `e2e-real-test` - API vs SQLite comparison
+- `e2e-v2-test` - V2 transformation verification
+
+**`api-demos/`** - API demonstrations
+- `wb-funnel-demo` - WB Analytics API v3 (15+ metrics)
+- `wb-list-products` - Seller products listing
+- `wb-service-demo` - WbService layer demo
+
+**`feature-demos/`** - Framework features
+- `interruption-test` - Interruption mechanism with TUI
 
 - **`e2e-real-test/`** - Compare real API vs snapshot data
 
