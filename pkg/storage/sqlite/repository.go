@@ -4,6 +4,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/wb"
@@ -110,6 +111,29 @@ func (r *SQLiteSalesRepository) initSchema() error {
 	if err != nil {
 		return err
 	}
+
+	// Add tags column to products table if not exists (migration for existing DBs)
+	_, err = r.db.Exec(`ALTER TABLE products ADD COLUMN tags TEXT`)
+	if err != nil {
+		// Column may already exist - ignore error
+		// SQLite returns "duplicate column name" error
+	}
+
+	// Migration for funnel_metrics_aggregated: create if not exists
+	var tableExists bool
+	err = r.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='funnel_metrics_aggregated'`).Scan(&tableExists)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("check table existence: %w", err)
+	}
+
+	if !tableExists {
+		// Table doesn't exist - create it
+		_, err = r.db.Exec(GetFunnelAggregatedSchemaSQL())
+		if err != nil {
+			return err
+		}
+	}
+	// If table exists, we use INSERT OR REPLACE which handles updates
 
 	return nil
 }

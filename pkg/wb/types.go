@@ -419,3 +419,265 @@ type TrendingProduct struct {
 	AvgConversion      float64 `json:"avgConversion"`
 	TrendStatus        string  `json:"trendStatus"` // TRENDING_UP, TRENDING_DOWN, STABLE, NEW
 }
+
+// ============================================================================
+// Aggregated Funnel Types (for /api/analytics/v3/sales-funnel/products)
+// ============================================================================
+
+// ProductTag represents a tag in product metadata.
+type ProductTag struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// PeriodRange represents date range for funnel periods.
+type PeriodRange struct {
+	Start string `json:"start"` // YYYY-MM-DD
+	End   string `json:"end"`   // YYYY-MM-DD
+}
+
+// OrderBy represents sorting parameters.
+type OrderBy struct {
+	Field string `json:"field"` // openCard, orders, buyouts, etc.
+	Mode  string `json:"mode"`  // asc, desc
+}
+
+// FunnelAggregatedRequest represents request to /api/analytics/v3/sales-funnel/products.
+type FunnelAggregatedRequest struct {
+	SelectedPeriod PeriodRange `json:"selectedPeriod"`
+	PastPeriod     *PeriodRange `json:"pastPeriod,omitempty"`
+	NmIDs          []int        `json:"nmIds,omitempty"`
+	BrandNames     []string     `json:"brandNames,omitempty"`
+	SubjectIDs     []int        `json:"subjectIds,omitempty"`
+	TagIDs         []int        `json:"tagIds,omitempty"`
+	SkipDeletedNm  bool         `json:"skipDeletedNm,omitempty"`
+	OrderBy        *OrderBy     `json:"orderBy,omitempty"`
+	Limit          int          `json:"limit,omitempty"`
+	Offset         int          `json:"offset,omitempty"`
+}
+
+// FunnelAggregatedResponse represents full API response from aggregated funnel endpoint.
+type FunnelAggregatedResponse struct {
+	Data struct {
+		Products []FunnelAggregatedProduct `json:"products"`
+		Currency string                   `json:"currency"`
+	} `json:"data"`
+}
+
+// FunnelProductExtended extends FunnelProductMeta with tags.
+type FunnelProductExtended struct {
+	FunnelProductMeta
+	Tags []ProductTag `json:"tags"`
+}
+
+// FunnelAggregatedProduct represents one product in aggregated response.
+type FunnelAggregatedProduct struct {
+	Product   FunnelProductExtended     `json:"product"`
+	Statistic FunnelAggregatedStatistic `json:"statistic"`
+}
+
+// FunnelAggregatedStatistic contains selected, past, and comparison periods.
+type FunnelAggregatedStatistic struct {
+	Selected   FunnelPeriodStats       `json:"selected"`
+	Past       *FunnelPeriodStats      `json:"past,omitempty"`
+	Comparison *FunnelComparisonStats  `json:"comparison,omitempty"`
+}
+
+// FunnelPeriodStats contains metrics for a single period.
+type FunnelPeriodStats struct {
+	Period               PeriodRange     `json:"period"`
+	OpenCount            int             `json:"openCount"`
+	CartCount            int             `json:"cartCount"`
+	OrderCount           int             `json:"orderCount"`
+	OrderSum             int             `json:"orderSum"`
+	BuyoutCount          int             `json:"buyoutCount"`
+	BuyoutSum            int             `json:"buyoutSum"`
+	CancelCount          int             `json:"cancelCount"`
+	CancelSum            int             `json:"cancelSum"`
+	AvgPrice             int             `json:"avgPrice"`
+	AvgOrdersCountPerDay float64         `json:"avgOrdersCountPerDay"`
+	ShareOrderPercent    float64         `json:"shareOrderPercent"`
+	AddToWishlist        int             `json:"addToWishlist"`
+	TimeToReady          FunnelTimeToReady `json:"timeToReady"`
+	LocalizationPercent  float64         `json:"localizationPercent"`
+	WBClub               FunnelWBClubStats `json:"wbClub"`
+	Conversions          FunnelConversionStats `json:"conversions"`
+}
+
+// FunnelTimeToReady contains order processing time metrics.
+type FunnelTimeToReady struct {
+	Days  int `json:"days"`
+	Hours int `json:"hours"`
+	Mins  int `json:"mins"`
+}
+
+// FunnelWBClubStats contains WB Club specific metrics.
+type FunnelWBClubStats struct {
+	OrderCount          int     `json:"orderCount"`
+	OrderSum            int     `json:"orderSum"`
+	BuyoutSum           int     `json:"buyoutSum"`
+	BuyoutCount         int     `json:"buyoutCount"`
+	CancelSum           int     `json:"cancelSum"`
+	CancelCount         int     `json:"cancelCount"`
+	AvgPrice            int     `json:"avgPrice"`
+	BuyoutPercent       float64 `json:"buyoutPercent"`
+	AvgOrderCountPerDay float64 `json:"avgOrderCountPerDay"`
+}
+
+// FunnelConversionStats contains conversion rate metrics.
+type FunnelConversionStats struct {
+	AddToCartPercent   float64 `json:"addToCartPercent"`
+	CartToOrderPercent float64 `json:"cartToOrderPercent"`
+	BuyoutPercent      float64 `json:"buyoutPercent"`
+}
+
+// FunnelComparisonStats contains comparison between periods.
+type FunnelComparisonStats struct {
+	OpenCountDynamic            int                      `json:"openCountDynamic"`
+	CartCountDynamic            int                      `json:"cartCountDynamic"`
+	OrderCountDynamic           int                      `json:"orderCountDynamic"`
+	OrderSumDynamic             int                      `json:"orderSumDynamic"`
+	BuyoutCountDynamic          int                      `json:"buyoutCountDynamic"`
+	BuyoutSumDynamic            int                      `json:"buyoutSumDynamic"`
+	CancelCountDynamic          int                      `json:"cancelCountDynamic"`
+	CancelSumDynamic            int                      `json:"cancelSumDynamic"`
+	AvgOrdersCountPerDayDynamic float64                  `json:"avgOrdersCountPerDayDynamic"`
+	AvgPriceDynamic             int                      `json:"avgPriceDynamic"`
+	ShareOrderPercentDynamic    float64                  `json:"shareOrderPercentDynamic"`
+	AddToWishlistDynamic        int                      `json:"addToWishlistDynamic"`
+	TimeToReadyDynamic          FunnelTimeToReady       `json:"timeToReadyDynamic"`
+	LocalizationPercentDynamic  float64                  `json:"localizationPercentDynamic"`
+	WBClubDynamic               FunnelWBClubDynamic    `json:"wbClubDynamic"`
+	ConversionsDynamic         FunnelConversionDynamic `json:"conversions"`
+}
+
+// FunnelWBClubDynamic contains WB Club comparison metrics.
+type FunnelWBClubDynamic struct {
+	OrderCount          int     `json:"orderCount"`
+	OrderSum            int     `json:"orderSum"`
+	BuyoutSum           int     `json:"buyoutSum"`
+	BuyoutCount         int     `json:"buyoutCount"`
+	CancelSum           int     `json:"cancelSum"`
+	CancelCount         int     `json:"cancelCount"`
+	AvgPrice            int     `json:"avgPrice"`
+	BuyoutPercent       float64 `json:"buyoutPercent"`
+	AvgOrderCountPerDay float64 `json:"avgOrderCountPerDay"`
+}
+
+// FunnelConversionDynamic contains conversion comparison metrics.
+type FunnelConversionDynamic struct {
+	AddToCartPercent   float64 `json:"addToCartPercent"`
+	CartToOrderPercent float64 `json:"cartToOrderPercent"`
+	BuyoutPercent      float64 `json:"buyoutPercent"`
+}
+
+// FunnelAggregatedRow represents a row for funnel_metrics_aggregated table.
+// Combines selected, past, and comparison data for one product.
+type FunnelAggregatedRow struct {
+	NmID int `json:"nmId"`
+
+	// Period (selected)
+	PeriodStart string `json:"periodStart"`
+	PeriodEnd   string `json:"periodEnd"`
+
+	// Selected period metrics
+	SelectedOpenCount            int     `json:"selectedOpenCount"`
+	SelectedCartCount            int     `json:"selectedCartCount"`
+	SelectedOrderCount           int     `json:"selectedOrderCount"`
+	SelectedOrderSum             int     `json:"selectedOrderSum"`
+	SelectedBuyoutCount          int     `json:"selectedBuyoutCount"`
+	SelectedBuyoutSum            int     `json:"selectedBuyoutSum"`
+	SelectedCancelCount          int     `json:"selectedCancelCount"`
+	SelectedCancelSum            int     `json:"selectedCancelSum"`
+	SelectedAvgPrice             int     `json:"selectedAvgPrice"`
+	SelectedAvgOrdersCountPerDay float64 `json:"selectedAvgOrdersCountPerDay"`
+	SelectedShareOrderPercent    float64 `json:"selectedShareOrderPercent"`
+	SelectedAddToWishlist        int     `json:"selectedAddToWishlist"`
+	SelectedLocalizationPercent  float64 `json:"selectedLocalizationPercent"`
+	SelectedTimeToReadyDays      int     `json:"selectedTimeToReadyDays"`
+	SelectedTimeToReadyHours     int     `json:"selectedTimeToReadyHours"`
+	SelectedTimeToReadyMins      int     `json:"selectedTimeToReadyMins"`
+	// Selected WBClub
+	SelectedWBClubOrderCount          int     `json:"selectedWBClubOrderCount"`
+	SelectedWBClubOrderSum            int     `json:"selectedWBClubOrderSum"`
+	SelectedWBClubBuyoutCount         int     `json:"selectedWBClubBuyoutCount"`
+	SelectedWBClubBuyoutSum           int     `json:"selectedWBClubBuyoutSum"`
+	SelectedWBClubCancelCount         int     `json:"selectedWBClubCancelCount"`
+	SelectedWBClubCancelSum           int     `json:"selectedWBClubCancelSum"`
+	SelectedWBClubAvgPrice            int     `json:"selectedWBClubAvgPrice"`
+	SelectedWBClubBuyoutPercent       float64 `json:"selectedWBClubBuyoutPercent"`
+	SelectedWBClubAvgOrderCountPerDay float64 `json:"selectedWBClubAvgOrderCountPerDay"`
+	// Selected Conversions
+	SelectedConversionAddToCart   float64 `json:"selectedConversionAddToCart"`
+	SelectedConversionCartToOrder float64 `json:"selectedConversionCartToOrder"`
+	SelectedConversionBuyout      float64 `json:"selectedConversionBuyout"`
+
+	// Past period metrics (nullable)
+	PastPeriodStart *string `json:"pastPeriodStart,omitempty"`
+	PastPeriodEnd   *string `json:"pastPeriodEnd,omitempty"`
+	PastOpenCount            *int     `json:"pastOpenCount,omitempty"`
+	PastCartCount            *int     `json:"pastCartCount,omitempty"`
+	PastOrderCount           *int     `json:"pastOrderCount,omitempty"`
+	PastOrderSum             *int     `json:"pastOrderSum,omitempty"`
+	PastBuyoutCount          *int     `json:"pastBuyoutCount,omitempty"`
+	PastBuyoutSum            *int     `json:"pastBuyoutSum,omitempty"`
+	PastCancelCount          *int     `json:"pastCancelCount,omitempty"`
+	PastCancelSum            *int     `json:"pastCancelSum,omitempty"`
+	PastAvgPrice             *int     `json:"pastAvgPrice,omitempty"`
+	PastAvgOrdersCountPerDay *float64 `json:"pastAvgOrdersCountPerDay,omitempty"`
+	PastShareOrderPercent    *float64 `json:"pastShareOrderPercent,omitempty"`
+	PastAddToWishlist        *int     `json:"pastAddToWishlist,omitempty"`
+	PastLocalizationPercent  *float64 `json:"pastLocalizationPercent,omitempty"`
+	PastTimeToReadyDays      *int     `json:"pastTimeToReadyDays,omitempty"`
+	PastTimeToReadyHours     *int     `json:"pastTimeToReadyHours,omitempty"`
+	PastTimeToReadyMins      *int     `json:"pastTimeToReadyMins,omitempty"`
+	// Past WBClub
+	PastWBClubOrderCount          *int     `json:"pastWBClubOrderCount,omitempty"`
+	PastWBClubOrderSum            *int     `json:"pastWBClubOrderSum,omitempty"`
+	PastWBClubBuyoutCount         *int     `json:"pastWBClubBuyoutCount,omitempty"`
+	PastWBClubBuyoutSum           *int     `json:"pastWBClubBuyoutSum,omitempty"`
+	PastWBClubCancelCount         *int     `json:"pastWBClubCancelCount,omitempty"`
+	PastWBClubCancelSum           *int     `json:"pastWBClubCancelSum,omitempty"`
+	PastWBClubAvgPrice            *int     `json:"pastWBClubAvgPrice,omitempty"`
+	PastWBClubBuyoutPercent       *float64 `json:"pastWBClubBuyoutPercent,omitempty"`
+	PastWBClubAvgOrderCountPerDay *float64 `json:"pastWBClubAvgOrderCountPerDay,omitempty"`
+	// Past Conversions
+	PastConversionAddToCart   *float64 `json:"pastConversionAddToCart,omitempty"`
+	PastConversionCartToOrder *float64 `json:"pastConversionCartToOrder,omitempty"`
+	PastConversionBuyout      *float64 `json:"pastConversionBuyout,omitempty"`
+
+	// Comparison metrics (nullable)
+	ComparisonOpenCountDynamic            *int     `json:"comparisonOpenCountDynamic,omitempty"`
+	ComparisonCartCountDynamic            *int     `json:"comparisonCartCountDynamic,omitempty"`
+	ComparisonOrderCountDynamic           *int     `json:"comparisonOrderCountDynamic,omitempty"`
+	ComparisonOrderSumDynamic             *int     `json:"comparisonOrderSumDynamic,omitempty"`
+	ComparisonBuyoutCountDynamic          *int     `json:"comparisonBuyoutCountDynamic,omitempty"`
+	ComparisonBuyoutSumDynamic            *int     `json:"comparisonBuyoutSumDynamic,omitempty"`
+	ComparisonCancelCountDynamic          *int     `json:"comparisonCancelCountDynamic,omitempty"`
+	ComparisonCancelSumDynamic            *int     `json:"comparisonCancelSumDynamic,omitempty"`
+	ComparisonAvgOrdersCountPerDayDynamic *float64 `json:"comparisonAvgOrdersCountPerDayDynamic,omitempty"`
+	ComparisonAvgPriceDynamic             *int     `json:"comparisonAvgPriceDynamic,omitempty"`
+	ComparisonShareOrderPercentDynamic    *float64 `json:"comparisonShareOrderPercentDynamic,omitempty"`
+	ComparisonAddToWishlistDynamic        *int     `json:"comparisonAddToWishlistDynamic,omitempty"`
+	ComparisonLocalizationPercentDynamic  *float64 `json:"comparisonLocalizationPercentDynamic,omitempty"`
+	ComparisonTimeToReadyDays             *int     `json:"comparisonTimeToReadyDays,omitempty"`
+	ComparisonTimeToReadyHours            *int     `json:"comparisonTimeToReadyHours,omitempty"`
+	ComparisonTimeToReadyMins             *int     `json:"comparisonTimeToReadyMins,omitempty"`
+	// Comparison WBClub
+	ComparisonWBClubOrderCount          *int     `json:"comparisonWBClubOrderCount,omitempty"`
+	ComparisonWBClubOrderSum            *int     `json:"comparisonWBClubOrderSum,omitempty"`
+	ComparisonWBClubBuyoutCount         *int     `json:"comparisonWBClubBuyoutCount,omitempty"`
+	ComparisonWBClubBuyoutSum           *int     `json:"comparisonWBClubBuyoutSum,omitempty"`
+	ComparisonWBClubCancelCount         *int     `json:"comparisonWBClubCancelCount,omitempty"`
+	ComparisonWBClubCancelSum           *int     `json:"comparisonWBClubCancelSum,omitempty"`
+	ComparisonWBClubAvgPrice            *int     `json:"comparisonWBClubAvgPrice,omitempty"`
+	ComparisonWBClubBuyoutPercent       *float64 `json:"comparisonWBClubBuyoutPercent,omitempty"`
+	ComparisonWBClubAvgOrderCountPerDay *float64 `json:"comparisonWBClubAvgOrderCountPerDay,omitempty"`
+	// Comparison Conversions
+	ComparisonConversionAddToCart   *float64 `json:"comparisonConversionAddToCart,omitempty"`
+	ComparisonConversionCartToOrder *float64 `json:"comparisonConversionCartToOrder,omitempty"`
+	ComparisonConversionBuyout      *float64 `json:"comparisonConversionBuyout,omitempty"`
+
+	// Metadata
+	Currency string `json:"currency"`
+}

@@ -178,6 +178,9 @@ CREATE TABLE IF NOT EXISTS products (
     stock_mp INTEGER DEFAULT 0,
     stock_balance_sum INTEGER DEFAULT 0,
 
+    -- Tags (JSON array of ProductTag)
+    tags TEXT,
+
     -- Metadata
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -380,6 +383,153 @@ CREATE INDEX IF NOT EXISTS idx_campaign_products_nm
 CREATE INDEX IF NOT EXISTS idx_campaign_products_campaign
     ON campaign_products(advert_id);
 `
+
+	// FunnelAggregatedSchemaSQL defines the aggregated funnel metrics table.
+	// Stores aggregated data from WB Analytics API v3 /sales-funnel/products.
+	// Grain: one row per (nm_id, period_start, period_end).
+	FunnelAggregatedSchemaSQL = `
+-- ============================================================================
+-- AGGREGATED FUNNEL METRICS (WB Analytics API v3 - /sales-funnel/products)
+-- Grain: one row per (nm_id, selected_period_start, selected_period_end)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS funnel_metrics_aggregated (
+    -- Primary key
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Natural key (business key for upserts)
+    nm_id INTEGER NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+
+    -- Selected period metrics
+    selected_open_count INTEGER DEFAULT 0,
+    selected_cart_count INTEGER DEFAULT 0,
+    selected_order_count INTEGER DEFAULT 0,
+    selected_order_sum INTEGER DEFAULT 0,
+    selected_buyout_count INTEGER DEFAULT 0,
+    selected_buyout_sum INTEGER DEFAULT 0,
+    selected_cancel_count INTEGER DEFAULT 0,
+    selected_cancel_sum INTEGER DEFAULT 0,
+    selected_avg_price INTEGER DEFAULT 0,
+    selected_avg_orders_count_per_day REAL,
+    selected_share_order_percent REAL,
+    selected_add_to_wishlist INTEGER DEFAULT 0,
+    selected_localization_percent REAL,
+    selected_time_to_ready_days INTEGER DEFAULT 0,
+    selected_time_to_ready_hours INTEGER DEFAULT 0,
+    selected_time_to_ready_mins INTEGER DEFAULT 0,
+
+    -- Selected WB Club metrics
+    selected_wb_club_order_count INTEGER DEFAULT 0,
+    selected_wb_club_order_sum INTEGER DEFAULT 0,
+    selected_wb_club_buyout_count INTEGER DEFAULT 0,
+    selected_wb_club_buyout_sum INTEGER DEFAULT 0,
+    selected_wb_club_cancel_count INTEGER DEFAULT 0,
+    selected_wb_club_cancel_sum INTEGER DEFAULT 0,
+    selected_wb_club_avg_price INTEGER DEFAULT 0,
+    selected_wb_club_buyout_percent REAL,
+    selected_wb_club_avg_order_count_per_day REAL,
+
+    -- Selected Conversions
+    selected_conversion_add_to_cart REAL,
+    selected_conversion_cart_to_order REAL,
+    selected_conversion_buyout REAL,
+
+    -- Past period metrics (nullable)
+    past_period_start TEXT,
+    past_period_end TEXT,
+    past_open_count INTEGER,
+    past_cart_count INTEGER,
+    past_order_count INTEGER,
+    past_order_sum INTEGER,
+    past_buyout_count INTEGER,
+    past_buyout_sum INTEGER,
+    past_cancel_count INTEGER,
+    past_cancel_sum INTEGER,
+    past_avg_price INTEGER,
+    past_avg_orders_count_per_day REAL,
+    past_share_order_percent REAL,
+    past_add_to_wishlist INTEGER,
+    past_localization_percent REAL,
+    past_time_to_ready_days INTEGER,
+    past_time_to_ready_hours INTEGER,
+    past_time_to_ready_mins INTEGER,
+
+    -- Past WB Club metrics
+    past_wb_club_order_count INTEGER,
+    past_wb_club_order_sum INTEGER,
+    past_wb_club_buyout_count INTEGER,
+    past_wb_club_buyout_sum INTEGER,
+    past_wb_club_cancel_count INTEGER,
+    past_wb_club_cancel_sum INTEGER,
+    past_wb_club_avg_price INTEGER,
+    past_wb_club_buyout_percent REAL,
+    past_wb_club_avg_order_count_per_day REAL,
+
+    -- Past Conversions
+    past_conversion_add_to_cart REAL,
+    past_conversion_cart_to_order REAL,
+    past_conversion_buyout REAL,
+
+    -- Comparison metrics (nullable)
+    comparison_open_count_dynamic INTEGER,
+    comparison_cart_count_dynamic INTEGER,
+    comparison_order_count_dynamic INTEGER,
+    comparison_order_sum_dynamic INTEGER,
+    comparison_buyout_count_dynamic INTEGER,
+    comparison_buyout_sum_dynamic INTEGER,
+    comparison_cancel_count_dynamic INTEGER,
+    comparison_cancel_sum_dynamic INTEGER,
+    comparison_avg_orders_count_per_day_dynamic REAL,
+    comparison_avg_price_dynamic INTEGER,
+    comparison_share_order_percent_dynamic REAL,
+    comparison_add_to_wishlist_dynamic INTEGER,
+    comparison_localization_percent_dynamic REAL,
+    comparison_time_to_ready_days INTEGER,
+    comparison_time_to_ready_hours INTEGER,
+    comparison_time_to_ready_mins INTEGER,
+
+    -- Comparison WB Club metrics
+    comparison_wb_club_order_count INTEGER,
+    comparison_wb_club_order_sum INTEGER,
+    comparison_wb_club_buyout_count INTEGER,
+    comparison_wb_club_buyout_sum INTEGER,
+    comparison_wb_club_cancel_count INTEGER,
+    comparison_wb_club_cancel_sum INTEGER,
+    comparison_wb_club_avg_price INTEGER,
+    comparison_wb_club_buyout_percent REAL,
+    comparison_wb_club_avg_order_count_per_day REAL,
+
+    -- Comparison Conversions
+    comparison_conversion_add_to_cart REAL,
+    comparison_conversion_cart_to_order REAL,
+    comparison_conversion_buyout REAL,
+
+    -- Metadata
+    currency TEXT DEFAULT 'RUB',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    -- Unique constraint for upsert logic
+    UNIQUE(nm_id, period_start, period_end)
+);
+
+-- Index for product-focused queries
+CREATE INDEX IF NOT EXISTS idx_funnel_agg_product_period
+    ON funnel_metrics_aggregated(nm_id, period_start, period_end);
+
+-- Index for period-focused queries
+CREATE INDEX IF NOT EXISTS idx_funnel_agg_period
+    ON funnel_metrics_aggregated(period_start, period_end);
+
+-- Index for order dynamics analysis
+CREATE INDEX IF NOT EXISTS idx_funnel_agg_orders
+    ON funnel_metrics_aggregated(period_start, selected_order_count);
+
+-- Index for conversion analysis
+CREATE INDEX IF NOT EXISTS idx_funnel_agg_conversion
+    ON funnel_metrics_aggregated(period_start, selected_conversion_buyout);
+`
 )
 
 // GetSchemaSQL returns the main table schema.
@@ -405,4 +555,9 @@ func GetFunnelSchemaSQL() string {
 // GetPromotionSchemaSQL returns the promotion analytics tables schema.
 func GetPromotionSchemaSQL() string {
 	return PromotionSchemaSQL
+}
+
+// GetFunnelAggregatedSchemaSQL returns the aggregated funnel metrics table schema.
+func GetFunnelAggregatedSchemaSQL() string {
+	return FunnelAggregatedSchemaSQL
 }

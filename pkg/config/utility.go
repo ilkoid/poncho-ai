@@ -129,3 +129,54 @@ func (c *WBClientConfig) GetDefaults() WBClientConfig {
 	}
 	return result
 }
+
+// FunnelAggregatedConfig — конфигурация для aggregated funnel данных.
+//
+// Используется для загрузки агрегированной воронки продаж за период
+// из WB Analytics API v3 (/sales-funnel/products).
+type FunnelAggregatedConfig struct {
+	// Периоды (required)
+	SelectedStart string `yaml:"selected_start"` // YYYY-MM-DD
+	SelectedEnd   string `yaml:"selected_end"`   // YYYY-MM-DD
+	PastStart     string `yaml:"past_start"`     // YYYY-MM-DD (optional)
+	PastEnd       string `yaml:"past_end"`       // YYYY-MM-DD (optional)
+
+	// Фильтры (optional - пусто = все товары)
+	NmIDs         []int    `yaml:"nm_ids"`          // Список nmID
+	BrandNames    []string `yaml:"brand_names"`     // Фильтр по брендам
+	SubjectIDs    []int    `yaml:"subject_ids"`     // Фильтр по категориям
+	TagIDs        []int    `yaml:"tag_ids"`         // Фильтр по тегам
+	SkipDeletedNm bool     `yaml:"skip_deleted_nm"` // Скрыть удалённые
+
+	// Сортировка (optional)
+	OrderByField string `yaml:"order_by_field"` // openCard, orders, buyouts, etc.
+	OrderByMode  string `yaml:"order_by_mode"`  // asc, desc
+
+	// Пагинация
+	PageSize int `yaml:"page_size"` // Товаров за запрос (0 = auto, max 1000)
+
+	// Rate limiting
+	RateLimit  int `yaml:"rate_limit"`  // Запросов в минуту (default: 3)
+	BurstLimit int `yaml:"burst"`       // Burst (default: 3)
+
+	// Хранилище
+	DBPath string `yaml:"db_path"` // Путь к SQLite базе
+}
+
+// GetDefaults возвращает дефолтные значения.
+func (c *FunnelAggregatedConfig) GetDefaults() FunnelAggregatedConfig {
+	result := *c
+	if result.RateLimit == 0 {
+		result.RateLimit = 3 // WB Analytics API default
+	}
+	if result.BurstLimit == 0 {
+		result.BurstLimit = 3
+	}
+	if result.PageSize == 0 {
+		result.PageSize = 100 // Optimal balance
+	}
+	if result.DBPath == "" {
+		result.DBPath = "sales.db"
+	}
+	return result
+}

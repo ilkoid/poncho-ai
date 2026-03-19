@@ -1,0 +1,33 @@
+wb:
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+  timeout: 30m
+
+funnel_aggregated:
+  # Периоды (required)
+  selected_start: "2026-03-12"
+  selected_end: "2026-03-18"
+
+  # Past период для сравнения (optional - раскомментируйте если нужно)
+  past_start: "2026-03-05"
+  past_end: "2026-03-11"
+
+  # Фильтры (optional - пусто = все товары)
+  nm_ids: []
+  brand_names: []
+  subject_ids: []
+  tag_ids: []
+  skip_deleted_nm: false
+
+  # Сортировка (optional)
+  order_by_field: ""  # openCard, orders, buyouts, etc.
+  order_by_mode: "desc"
+
+  # Пагинация
+  page_size: 500  # Товаров за запрос (max 1000)
+
+  # Rate limiting
+  rate_limit: 3  # Запросов в минуту (WB Analytics API limit)
+  burst: 3
+
+  # Хранилище
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/cmd/data-downloaders/download-wb-sales/test-2026-funnel-agg.db"
