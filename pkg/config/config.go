@@ -28,17 +28,21 @@ type AppConfig struct {
 	Storage            StorageConfig              `yaml:"storage"`               // Refresh window для обновления данных
 }
 
-// StorageConfig — настройки обновления данных.
+// StorageConfig — настройки хранения и обновления данных.
 //
-// Определяет окно обновления (refresh window) для различных типов данных.
+// Определяет путь к базе данных и окно обновления (refresh window) для различных типов данных.
 // WB обновляет исторические данные задним числом (выкупы, отмены, возвраты).
 // Данные внутри окна обновляются, старше окна — замораживаются.
 //
 // Пример:
 //
 //	storage:
+//	  db_path: "sales.db"
 //	  funnel_refresh_window: 7  # Обновлять последние 7 дней воронки
 type StorageConfig struct {
+	// DbPath — путь к SQLite базе данных
+	DbPath string `yaml:"db_path"`
+
 	// FunnelRefreshWindow — дней для обновления воронки (0 = всегда REPLACE)
 	FunnelRefreshWindow int `yaml:"funnel_refresh_window"`
 

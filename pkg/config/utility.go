@@ -60,8 +60,13 @@ func (c *DownloadConfig) GetDefaults() DownloadConfig {
 //
 // Используется для загрузки воронки продаж с расширенными метриками.
 type FunnelConfig struct {
-	Days      int `yaml:"days"`       // Дней истории (1-365)
-	BatchSize int `yaml:"batch_size"` // Продуктов на запрос (max 20)
+	Days       int    `yaml:"days"`        // Дней истории (1-365) — альтернатива from/to
+	BatchSize  int    `yaml:"batch_size"`  // Продуктов на запрос (max 20)
+	RateLimit  int    `yaml:"rate_limit"`  // Запросов в минуту (default: 3, WB Analytics API limit)
+	BurstLimit int    `yaml:"burst"`       // Burst для rate limiter (default: 3)
+	From       string `yaml:"from"`        // Начальная дата YYYY-MM-DD (опционально, приоритет над days)
+	To         string `yaml:"to"`          // Конечная дата YYYY-MM-DD (опционально, приоритет над days)
+	MaxBatches int    `yaml:"max_batches"` // Макс. батчей для загрузки (0 = все, полезно для тестов)
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.
@@ -72,6 +77,12 @@ func (c *FunnelConfig) GetDefaults() FunnelConfig {
 	}
 	if result.BatchSize == 0 {
 		result.BatchSize = 20
+	}
+	if result.RateLimit == 0 {
+		result.RateLimit = 3 // WB Analytics API default: 3 req/min
+	}
+	if result.BurstLimit == 0 {
+		result.BurstLimit = 3
 	}
 	return result
 }
