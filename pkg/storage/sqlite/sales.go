@@ -316,6 +316,26 @@ func (r *SQLiteSalesRepository) GetLastSaleDT(ctx context.Context) (time.Time, e
 	return time.Parse(time.RFC3339, lastDT.String)
 }
 
+// GetFirstSaleDT returns timestamp of the earliest sale in database.
+// For resume mode: detects if requested period is before existing data.
+// Returns zero time if database is empty.
+//
+// IMPORTANT: Uses MIN(rr_dt) to find the earliest record date.
+func (r *SQLiteSalesRepository) GetFirstSaleDT(ctx context.Context) (time.Time, error) {
+	var firstDT sql.NullString
+	err := r.db.QueryRowContext(ctx,
+		"SELECT MIN(rr_dt) FROM sales",
+	).Scan(&firstDT)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get first rr_dt: %w", err)
+	}
+	if !firstDT.Valid {
+		return time.Time{}, nil // Empty database
+	}
+	// rr_dt is stored in RFC3339 format (e.g., "2026-02-13T00:00:00+03:00")
+	return time.Parse(time.RFC3339, firstDT.String)
+}
+
 // ServiceRecordStats holds statistics about service records.
 type ServiceRecordStats struct {
 	Total        int

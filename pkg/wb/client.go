@@ -117,6 +117,21 @@ func isRetryableError(err error) bool {
 	return false
 }
 
+// normalizeDateTime converts datetime to RFC3339 format.
+// WB API often returns dates as YYYY-MM-DD; we normalize to RFC3339 (YYYY-MM-DDTHH:MM:SS+03:00)
+// for consistent parsing and storage (required by GetLastSaleDT, resume mode).
+func normalizeDateTime(dt string) string {
+	if dt == "" {
+		return dt
+	}
+	// Already has time component (RFC3339 or similar)
+	if strings.Contains(dt, "T") {
+		return dt
+	}
+	// Convert YYYY-MM-DD to YYYY-MM-DDT23:59:59+03:00
+	return dt + "T23:59:59+03:00"
+}
+
 // HTTPClient интерфейс для выполнения HTTP запросов.
 //
 // Позволяет мокировать HTTP клиент в тестах (Rule 9).
@@ -607,6 +622,18 @@ func (c *Client) ReportDetailByPeriodPage(
 		return nil, fmt.Errorf("unmarshal error: %w", err)
 	}
 
+	// Нормализуем даты в RFC3339 формат (API возвращает YYYY-MM-DD)
+	// Это нужно для корректной работы GetLastSaleDT() и resume mode
+	for i := range rows {
+		rows[i].RRDT = normalizeDateTime(rows[i].RRDT)
+		rows[i].OrderDT = normalizeDateTime(rows[i].OrderDT)
+		rows[i].SaleDT = normalizeDateTime(rows[i].SaleDT)
+		if rows[i].CancelDateTime != nil {
+			normalized := normalizeDateTime(*rows[i].CancelDateTime)
+			rows[i].CancelDateTime = &normalized
+		}
+	}
+
 	// DEBUG: логируем количество строк
 	fmt.Printf("[DEBUG ReportDetailByPeriodPage] Rows parsed: %d\n", len(rows))
 
@@ -715,6 +742,18 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 	// Парсим JSON ответ
 	if err := json.Unmarshal(body, &rows); err != nil {
 		return nil, fmt.Errorf("unmarshal error: %w", err)
+	}
+
+	// Нормализуем даты в RFC3339 формат (API возвращает YYYY-MM-DD)
+	// Это нужно для корректной работы GetLastSaleDT() и resume mode
+	for i := range rows {
+		rows[i].RRDT = normalizeDateTime(rows[i].RRDT)
+		rows[i].OrderDT = normalizeDateTime(rows[i].OrderDT)
+		rows[i].SaleDT = normalizeDateTime(rows[i].SaleDT)
+		if rows[i].CancelDateTime != nil {
+			normalized := normalizeDateTime(*rows[i].CancelDateTime)
+			rows[i].CancelDateTime = &normalized
+		}
 	}
 
 	// DEBUG: логируем количество строк

@@ -41,6 +41,11 @@ type SalesRepository interface {
 	// For smart resume: start loading from this moment + 1 second.
 	// Returns zero time if database is empty.
 	GetLastSaleDT(ctx context.Context) (time.Time, error)
+
+	// GetFirstSaleDT returns timestamp of the earliest sale in database.
+	// For resume mode: detects if requested period is before existing data.
+	// Returns zero time if database is empty.
+	GetFirstSaleDT(ctx context.Context) (time.Time, error)
 }
 
 // Ensure implementation satisfies interface.

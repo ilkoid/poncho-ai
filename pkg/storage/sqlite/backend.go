@@ -84,6 +84,10 @@ func (a *salesRepoAdapter) GetLastSaleDT(ctx context.Context) (time.Time, error)
 	return a.repo.GetLastSaleDT(ctx)
 }
 
+func (a *salesRepoAdapter) GetFirstSaleDT(ctx context.Context) (time.Time, error) {
+	return a.repo.GetFirstSaleDT(ctx)
+}
+
 func (a *salesRepoAdapter) GetDeliveryMethods(ctx context.Context) ([]string, error) {
 	return a.repo.GetDeliveryMethods(ctx)
 }
