@@ -120,13 +120,13 @@ func (r *SQLiteSalesRepository) initSchema() error {
 	}
 
 	// Migration for funnel_metrics_aggregated: create if not exists
-	var tableExists bool
-	err = r.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='funnel_metrics_aggregated'`).Scan(&tableExists)
+	var tableName string
+	err = r.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='funnel_metrics_aggregated'`).Scan(&tableName)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("check table existence: %w", err)
 	}
 
-	if !tableExists {
+	if err == sql.ErrNoRows || tableName == "" {
 		// Table doesn't exist - create it
 		_, err = r.db.Exec(GetFunnelAggregatedSchemaSQL())
 		if err != nil {

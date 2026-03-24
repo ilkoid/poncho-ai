@@ -9,8 +9,8 @@ funnel:
   burst: 3         # Burst для rate limiter
 #  from: "2026-03-12"         # Опционально: YYYY-MM-DD (приоритет над days)
 #  to: "2026-03-12"           # Опционально: YYYY-MM-DD (приоритет над days)
-  max_batches: 40   # 0 = загрузить все батчи (полезно для тестов)
+  max_batches: 0   # 0 = загрузить все батчи (полезно для тестов)
 
 storage:
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/cmd/data-downloaders/download-wb-sales/test-2026.db"              # Путь к БД с таблицей sales
-  funnel_refresh_window: 7         # Дней для обновления
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/cmd/data-downloaders/download-wb-sales/test-2026-funnel-agg.db"              # Путь к БД с таблицей sales
+  funnel_refresh_window: 4         # Дней для обновления
