@@ -133,6 +133,8 @@ screenshots/
 # Downloaded data binaries
 download-wb-promotion
 download-wb-sales
+download-wb-funnel
+funnel-db-inspector
 
 # Test utilities (temporary, organized by type)
 cmd/test-utils/test-wb-*/
@@ -142,6 +144,7 @@ cmd/fix-utilities/fix-fake-png/
 cmd/data-downloaders/download-all-articles/ЗАГРУЗКИ/
 cmd/data-downloaders/download-all-articles/download-all-articles
 cmd/data-downloaders/download-all-articles/fix-fake-png
+cmd/data-downloaders/download-wb-feedbacks/download-wb-feedbacks
 
 # Python virtual environment (with dot)
 .venv/

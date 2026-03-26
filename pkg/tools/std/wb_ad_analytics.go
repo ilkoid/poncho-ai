@@ -568,76 +568,6 @@ func (t *WbCampaignFullstatsTool) Definition() tools.ToolDefinition {
 	}
 }
 
-// CampaignFullstatsDay — статистика за один день.
-type CampaignFullstatsDay struct {
-	Date    string  `json:"date"`
-	Atbs    int     `json:"atbs"`
-	Canceled int    `json:"canceled"`
-	Clicks  int     `json:"clicks"`
-	CPC     float64 `json:"cpc"`
-	CR      float64 `json:"cr"`
-	CTR     float64 `json:"ctr"`
-	Orders  int     `json:"orders"`
-	Shks    int     `json:"shks"`
-	Sum     float64 `json:"sum"`
-	SumPrice float64 `json:"sum_price"`
-	Views   int     `json:"views"`
-	Apps    []struct {
-		AppType int `json:"appType"` // 1=сайт, 32=Android, 64=iOS
-		Atbs    int `json:"atbs"`
-		Canceled int `json:"canceled"`
-		Clicks  int `json:"clicks"`
-		CPC     float64 `json:"cpc"`
-		CR      float64 `json:"cr"`
-		CTR     float64 `json:"ctr"`
-		Orders  int `json:"orders"`
-		Shks    int `json:"shks"`
-		Sum     float64 `json:"sum"`
-		SumPrice float64 `json:"sum_price"`
-		Views   int `json:"views"`
-		Nms     []struct {
-			NmID    int     `json:"nmId"`
-			Name    string  `json:"name"`
-			Atbs    int     `json:"atbs"`
-			Canceled int    `json:"canceled"`
-			Clicks  int     `json:"clicks"`
-			CPC     float64 `json:"cpc"`
-			CR      float64 `json:"cr"`
-			CTR     float64 `json:"ctr"`
-			Orders  int     `json:"orders"`
-			Shks    int     `json:"shks"`
-			Sum     float64 `json:"sum"`
-			SumPrice float64 `json:"sum_price"`
-			Views   int     `json:"views"`
-		} `json:"nms"`
-	} `json:"apps"`
-}
-
-// CampaignFullstatsBooster — статистика бустера.
-type CampaignFullstatsBooster struct {
-	AvgPosition float64 `json:"avg_position"`
-	Date        string  `json:"date"`
-	Nm          int     `json:"nm"`
-}
-
-// CampaignFullstatsResponse — ответ API v3 fullstats.
-type CampaignFullstatsResponse struct {
-	AdvertID     int                         `json:"advertId"`
-	Atbs         int                         `json:"atbs"`       // Возвраты
-	Canceled     int                         `json:"canceled"`   // Отмены
-	Clicks       int                         `json:"clicks"`
-	CPC          float64                     `json:"cpc"`
-	CR           float64                     `json:"cr"`         // Конверсия
-	CTR          float64                     `json:"ctr"`
-	Orders       int                         `json:"orders"`
-	Shks         int                         `json:"shks"`       // Выкупы
-	Sum          float64                     `json:"sum"`        // Затраты на рекламу
-	SumPrice     float64                     `json:"sum_price"`  // Сумма заказов
-	Views        int                         `json:"views"`
-	BoosterStats []CampaignFullstatsBooster `json:"boosterStats"`
-	Days         []CampaignFullstatsDay     `json:"days"`
-}
-
 // Execute выполняет инструмент согласно контракту "Raw In, String Out".
 func (t *WbCampaignFullstatsTool) Execute(ctx context.Context, argsJSON string) (string, error) {
 	var args struct {
@@ -685,7 +615,7 @@ func (t *WbCampaignFullstatsTool) Execute(ctx context.Context, argsJSON string) 
 	path := fmt.Sprintf("/adv/v3/fullstats?ids=%s&beginDate=%s&endDate=%s",
 		idsParam, args.BeginDate, args.EndDate)
 
-	var response []CampaignFullstatsResponse
+	var response []wb.CampaignFullstatsResponse
 
 	err = t.client.Get(ctx, t.toolID, t.endpoint, t.rateLimit, t.burst, path, nil, &response)
 	if err != nil {

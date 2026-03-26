@@ -31,9 +31,10 @@ func (c *Client) GetPromotionCount(ctx context.Context) (*PromotionCountResponse
 	return &resp, nil
 }
 
-// GetCampaignFullstats returns daily statistics from /adv/v3/fullstats.
+// GetCampaignFullstats returns full campaign statistics from /adv/v3/fullstats.
+// Returns the complete 4-level hierarchy: Campaign → Day → App → Nm.
 // Max 50 campaign IDs per request, 3 req/min rate limit.
-func (c *Client) GetCampaignFullstats(ctx context.Context, advertIDs []int, beginDate, endDate string) ([]CampaignDailyStats, error) {
+func (c *Client) GetCampaignFullstats(ctx context.Context, advertIDs []int, beginDate, endDate string) ([]CampaignFullstatsResponse, error) {
 	// Use demo mode if configured
 	if c.IsDemoKey() {
 		return c.getMockCampaignFullstats(advertIDs, beginDate, endDate), nil
@@ -59,61 +60,14 @@ func (c *Client) GetCampaignFullstats(ctx context.Context, advertIDs []int, begi
 
 	path := "/adv/v3/fullstats?" + params.Encode()
 
-	// Response is array of campaign stats with nested days
-	var rawResponse []rawCampaignFullstats
-	err := c.Get(ctx, "get_campaign_fullstats", endpoint, 20, 1, path, nil, &rawResponse)
+	// Parse into canonical type with full hierarchy
+	var response []CampaignFullstatsResponse
+	err := c.Get(ctx, "get_campaign_fullstats", endpoint, 20, 1, path, nil, &response)
 	if err != nil {
 		return nil, fmt.Errorf("campaign fullstats: %w", err)
 	}
 
-	// Flatten to daily stats
-	var results []CampaignDailyStats
-	for _, campaign := range rawResponse {
-		for _, day := range campaign.Days {
-			// Parse date from RFC3339 (e.g., "2025-09-07T00:00:00Z")
-			dateStr := day.Date
-			if idx := strings.Index(dateStr, "T"); idx > 0 {
-				dateStr = dateStr[:idx]
-			}
-
-			results = append(results, CampaignDailyStats{
-				AdvertID:  campaign.AdvertID,
-				StatsDate: dateStr,
-				Views:     day.Views,
-				Clicks:    day.Clicks,
-				CTR:       day.CTR,
-				CPC:       day.CPC,
-				CR:        day.CR,
-				Orders:    day.Orders,
-				Shks:      day.Shks,
-				Atbs:      day.Atbs,
-				Canceled:  day.Canceled,
-				Sum:       day.Sum,
-				SumPrice:  day.SumPrice,
-			})
-		}
-	}
-
-	return results, nil
-}
-
-// rawCampaignFullstats matches the API response structure.
-type rawCampaignFullstats struct {
-	AdvertID int `json:"advertId"`
-	Days     []struct {
-		Date     string  `json:"date"`
-		Views    int     `json:"views"`
-		Clicks   int     `json:"clicks"`
-		CTR      float64 `json:"ctr"`
-		CPC      float64 `json:"cpc"`
-		CR       float64 `json:"cr"`
-		Orders   int     `json:"orders"`
-		Shks     int     `json:"shks"`
-		Atbs     int     `json:"atbs"`
-		Canceled int     `json:"canceled"`
-		Sum      float64 `json:"sum"`
-		SumPrice float64 `json:"sum_price"`
-	} `json:"days"`
+	return response, nil
 }
 
 // Mock implementations for demo mode
@@ -135,24 +89,41 @@ func (c *Client) getMockPromotionCount() *PromotionCountResponse {
 	}
 }
 
-func (c *Client) getMockCampaignFullstats(advertIDs []int, beginDate, endDate string) []CampaignDailyStats {
-	var results []CampaignDailyStats
+func (c *Client) getMockCampaignFullstats(advertIDs []int, beginDate, endDate string) []CampaignFullstatsResponse {
+	results := make([]CampaignFullstatsResponse, 0, len(advertIDs))
 	for i, id := range advertIDs {
-		// Generate one row per campaign as a simple mock
-		results = append(results, CampaignDailyStats{
-			AdvertID:  id,
-			StatsDate: beginDate,
-			Views:     1000 + i*100,
-			Clicks:    50 + i*5,
-			CTR:       5.0 + float64(i),
-			CPC:       4.5 + float64(i%3),
-			CR:        2.0 + float64(i%5),
-			Orders:    5 + i,
-			Shks:      4 + i,
-			Atbs:      0,
-			Canceled:  0,
-			Sum:       250.0 + float64(i*10),
-			SumPrice:  5000.0 + float64(i*100),
+		results = append(results, CampaignFullstatsResponse{
+			AdvertID: id,
+			Views:    1000 + i*100,
+			Clicks:   50 + i*5,
+			CTR:      5.0 + float64(i),
+			CPC:      4.5 + float64(i%3),
+			CR:       2.0 + float64(i%5),
+			Orders:   5 + i,
+			Shks:     4 + i,
+			Atbs:     0,
+			Canceled: 0,
+			Sum:      250.0 + float64(i*10),
+			SumPrice: 5000.0 + float64(i*100),
+			Days: []CampaignFullstatsDay{
+				{
+					Date:     beginDate,
+					Views:    500 + i*50,
+					Clicks:   25 + i*3,
+					CTR:      5.0 + float64(i)*0.1,
+					CPC:      4.5,
+					CR:       2.0,
+					Orders:   3 + i,
+					Shks:     2 + i,
+					Sum:      125.0 + float64(i*5),
+					SumPrice: 2500.0 + float64(i*50),
+					Apps: []CampaignFullstatsApp{
+						{AppType: 1, Views: 300 + i*30, Clicks: 15 + i*2, Orders: 2 + i, Sum: 75.0 + float64(i)*3, SumPrice: 1500.0 + float64(i)*30},
+						{AppType: 32, Views: 150 + i*15, Clicks: 8 + i, Orders: 1 + i, Sum: 40.0 + float64(i)*2, SumPrice: 800.0 + float64(i)*20},
+						{AppType: 64, Views: 50 + i*5, Clicks: 2 + i, Orders: 0, Sum: 10.0 + float64(i), SumPrice: 200.0 + float64(i)*10},
+					},
+				},
+			},
 		})
 	}
 	return results

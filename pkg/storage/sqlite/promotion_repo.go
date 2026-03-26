@@ -310,3 +310,194 @@ func (r *SQLiteSalesRepository) UpdateCampaignAggregates(ctx context.Context, ad
 	}
 	return nil
 }
+
+// ============================================================================
+// Campaign Fullstats Repository Methods (API v3 - /adv/v3/fullstats)
+// ============================================================================
+
+// SaveCampaignAppStats saves batch of platform-level daily stats.
+// Grain: (advert_id, stats_date, app_type).
+// Uses INSERT OR REPLACE for upsert.
+func (r *SQLiteSalesRepository) SaveCampaignAppStats(ctx context.Context, rows []wb.CampaignAppStatsRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO campaign_stats_app (
+			advert_id, stats_date, app_type,
+			views, clicks, ctr, cpc, cr,
+			orders, shks, atbs, canceled,
+			sum, sum_price
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range rows {
+		_, err := stmt.ExecContext(ctx,
+			row.AdvertID, row.StatsDate, row.AppType,
+			row.Views, row.Clicks, row.CTR, row.CPC, row.CR,
+			row.Orders, row.Shks, row.Atbs, row.Canceled,
+			row.Sum, row.SumPrice,
+		)
+		if err != nil {
+			return fmt.Errorf("insert app stats advert=%d date=%s app=%d: %w", row.AdvertID, row.StatsDate, row.AppType, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
+}
+
+// SaveCampaignNmStats saves batch of product-level daily stats per platform.
+// Grain: (advert_id, stats_date, app_type, nm_id).
+// Uses INSERT OR REPLACE for upsert.
+func (r *SQLiteSalesRepository) SaveCampaignNmStats(ctx context.Context, rows []wb.CampaignNmStatsRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO campaign_stats_nm (
+			advert_id, stats_date, app_type, nm_id, nm_name,
+			views, clicks, ctr, cpc, cr,
+			orders, shks, atbs, canceled,
+			sum, sum_price
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range rows {
+		_, err := stmt.ExecContext(ctx,
+			row.AdvertID, row.StatsDate, row.AppType, row.NmID, row.NmName,
+			row.Views, row.Clicks, row.CTR, row.CPC, row.CR,
+			row.Orders, row.Shks, row.Atbs, row.Canceled,
+			row.Sum, row.SumPrice,
+		)
+		if err != nil {
+			return fmt.Errorf("insert nm stats advert=%d date=%s app=%d nm=%d: %w", row.AdvertID, row.StatsDate, row.AppType, row.NmID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
+}
+
+// SaveCampaignBoosterStats saves batch of booster-specific stats.
+// Grain: (advert_id, stats_date, nm_id).
+// Uses INSERT OR REPLACE for upsert.
+func (r *SQLiteSalesRepository) SaveCampaignBoosterStats(ctx context.Context, rows []wb.CampaignBoosterStatsRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO campaign_booster_stats (
+			advert_id, stats_date, nm_id, avg_position
+		) VALUES (?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range rows {
+		_, err := stmt.ExecContext(ctx,
+			row.AdvertID, row.StatsDate, row.NmID, row.AvgPosition,
+		)
+		if err != nil {
+			return fmt.Errorf("insert booster stats advert=%d date=%s nm=%d: %w", row.AdvertID, row.StatsDate, row.NmID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
+}
+
+// PopulateCampaignProducts rebuilds the campaign_products materialized view
+// from campaign_stats_nm data. Uses DELETE + INSERT for full refresh.
+// This is the single source of truth for campaign-product relationships.
+func (r *SQLiteSalesRepository) PopulateCampaignProducts(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM campaign_products;
+
+		INSERT OR REPLACE INTO campaign_products (
+			advert_id, nm_id, product_name,
+			total_views, total_clicks, total_orders, total_sum
+		)
+		SELECT
+			advert_id,
+			nm_id,
+			MAX(nm_name) AS product_name,
+			SUM(views)   AS total_views,
+			SUM(clicks)  AS total_clicks,
+			SUM(orders)  AS total_orders,
+			SUM(sum)     AS total_sum
+		FROM campaign_stats_nm
+		GROUP BY advert_id, nm_id
+	`)
+	if err != nil {
+		return fmt.Errorf("populate campaign_products: %w", err)
+	}
+	return nil
+}
+
+// CountCampaignAppStats returns total number of platform-level stats records.
+func (r *SQLiteSalesRepository) CountCampaignAppStats(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM campaign_stats_app").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count campaign_stats_app: %w", err)
+	}
+	return count, nil
+}
+
+// CountCampaignNmStats returns total number of product-level stats records.
+func (r *SQLiteSalesRepository) CountCampaignNmStats(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM campaign_stats_nm").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count campaign_stats_nm: %w", err)
+	}
+	return count, nil
+}
+
+// CountCampaignBoosterStats returns total number of booster stats records.
+func (r *SQLiteSalesRepository) CountCampaignBoosterStats(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM campaign_booster_stats").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count campaign_booster_stats: %w", err)
+	}
+	return count, nil
+}

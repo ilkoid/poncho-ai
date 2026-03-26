@@ -530,6 +530,95 @@ CREATE INDEX IF NOT EXISTS idx_funnel_agg_orders
 CREATE INDEX IF NOT EXISTS idx_funnel_agg_conversion
     ON funnel_metrics_aggregated(period_start, selected_conversion_buyout);
 `
+
+	// CampaignFullstatsSchemaSQL defines tables for detailed campaign breakdown.
+	// Stores platform-level (apps) and product-level (nms) daily stats,
+	// plus booster-specific stats from GET /adv/v3/fullstats.
+	// Grain: campaign_stats_app = (advert_id, stats_date, app_type)
+	//        campaign_stats_nm  = (advert_id, stats_date, app_type, nm_id)
+	//        campaign_booster_stats = (advert_id, stats_date, nm_id)
+	CampaignFullstatsSchemaSQL = `
+-- ============================================================================
+-- CAMPAIGN FULLSTATS TABLES (WB Advertising API v3 - /adv/v3/fullstats)
+-- ============================================================================
+
+-- Platform-level daily stats (grain: advert_id + date + app_type)
+-- Source: GET /adv/v3/fullstats → days[].apps[]
+CREATE TABLE IF NOT EXISTS campaign_stats_app (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    advert_id INTEGER NOT NULL,
+    stats_date TEXT NOT NULL,
+    app_type INTEGER NOT NULL,              -- 1=site, 32=Android, 64=iOS
+    views INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    ctr REAL DEFAULT 0,
+    cpc REAL DEFAULT 0,
+    cr REAL DEFAULT 0,
+    orders INTEGER DEFAULT 0,
+    shks INTEGER DEFAULT 0,
+    atbs INTEGER DEFAULT 0,
+    canceled INTEGER DEFAULT 0,
+    sum REAL DEFAULT 0,
+    sum_price REAL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, stats_date, app_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_stats_app_campaign_date
+    ON campaign_stats_app(advert_id, stats_date);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_stats_app_date
+    ON campaign_stats_app(stats_date);
+
+-- Product-level daily stats per platform (grain: advert_id + date + app_type + nm_id)
+-- Source: GET /adv/v3/fullstats → days[].apps[].nms[]
+CREATE TABLE IF NOT EXISTS campaign_stats_nm (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    advert_id INTEGER NOT NULL,
+    stats_date TEXT NOT NULL,
+    app_type INTEGER NOT NULL,
+    nm_id INTEGER NOT NULL,
+    nm_name TEXT,
+    views INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    ctr REAL DEFAULT 0,
+    cpc REAL DEFAULT 0,
+    cr REAL DEFAULT 0,
+    orders INTEGER DEFAULT 0,
+    shks INTEGER DEFAULT 0,
+    atbs INTEGER DEFAULT 0,
+    canceled INTEGER DEFAULT 0,
+    sum REAL DEFAULT 0,
+    sum_price REAL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, stats_date, app_type, nm_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_stats_nm_campaign_date
+    ON campaign_stats_nm(advert_id, stats_date);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_stats_nm_nm
+    ON campaign_stats_nm(nm_id);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_stats_nm_date
+    ON campaign_stats_nm(stats_date);
+
+-- Booster-specific stats (grain: advert_id + date + nm_id)
+-- Source: GET /adv/v3/fullstats → boosterStats[]
+CREATE TABLE IF NOT EXISTS campaign_booster_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    advert_id INTEGER NOT NULL,
+    stats_date TEXT NOT NULL,
+    nm_id INTEGER NOT NULL,
+    avg_position REAL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, stats_date, nm_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_booster_campaign_date
+    ON campaign_booster_stats(advert_id, stats_date);
+`
+
 )
 
 // GetSchemaSQL returns the main table schema.
@@ -560,4 +649,9 @@ func GetPromotionSchemaSQL() string {
 // GetFunnelAggregatedSchemaSQL returns the aggregated funnel metrics table schema.
 func GetFunnelAggregatedSchemaSQL() string {
 	return FunnelAggregatedSchemaSQL
+}
+
+// GetCampaignFullstatsSchemaSQL returns the campaign fullstats tables schema.
+func GetCampaignFullstatsSchemaSQL() string {
+	return CampaignFullstatsSchemaSQL
 }

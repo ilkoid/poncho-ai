@@ -135,6 +135,12 @@ func (r *SQLiteSalesRepository) initSchema() error {
 	}
 	// If table exists, we use INSERT OR REPLACE which handles updates
 
+	// Create campaign fullstats tables (app-level, nm-level, booster stats)
+	_, err = r.db.Exec(GetCampaignFullstatsSchemaSQL())
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
