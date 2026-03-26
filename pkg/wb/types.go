@@ -395,6 +395,7 @@ type FunnelProductMeta struct {
 
 // FunnelHistoryRow stores daily funnel metrics for funnel_metrics_daily table.
 // One row per (nm_id, date) combination.
+// Fields match /api/analytics/v3/sales-funnel/products/history response (11 fields).
 type FunnelHistoryRow struct {
 	NmID       int    `json:"nmId"`
 	MetricDate string `json:"date"`
@@ -404,30 +405,16 @@ type FunnelHistoryRow struct {
 	CartCount     int `json:"cartCount"`
 	OrderCount    int `json:"orderCount"`
 	BuyoutCount   int `json:"buyoutCount"`
-	CancelCount   int `json:"cancelCount"`
-	AddToWishlist int `json:"addToWishlist"`
+	AddToWishlist int `json:"addToWishlistCount"`
 
 	// Financial metrics
 	OrderSum  int `json:"orderSum"`
 	BuyoutSum int `json:"buyoutSum"`
-	CancelSum int `json:"cancelSum"`
-	AvgPrice  int `json:"avgPrice"`
 
-	// Conversion rates (pre-calculated)
-	ConversionAddToCart   float64 `json:"addToCartPercent"`
-	ConversionCartToOrder float64 `json:"cartToOrderPercent"`
+	// Conversion rates
+	ConversionAddToCart   float64 `json:"addToCartConversion"`
+	ConversionCartToOrder float64 `json:"cartToOrderConversion"`
 	ConversionBuyout      float64 `json:"buyoutPercent"`
-
-	// WB Club metrics
-	WBClubOrderCount    int     `json:"wbClubOrderCount"`
-	WBClubBuyoutCount   int     `json:"wbClubBuyoutCount"`
-	WBClubBuyoutPercent float64 `json:"wbClubBuyoutPercent"`
-
-	// Operational metrics
-	TimeToReadyDays     int     `json:"timeToReadyDays"`
-	TimeToReadyHours    int     `json:"timeToReadyHours"`
-	TimeToReadyMins     int     `json:"timeToReadyMins"`
-	LocalizationPercent float64 `json:"localizationPercent"`
 }
 
 // TrendingProduct represents a product with trend analysis results.
@@ -489,10 +476,19 @@ type FunnelAggregatedResponse struct {
 	} `json:"data"`
 }
 
-// FunnelProductExtended extends FunnelProductMeta with tags.
+// ProductStocks represents stock levels for a product.
+// API returns this as a nested object: {"wb": 50, "mp": 20, "balanceSum": 70}
+type ProductStocks struct {
+	WB         int `json:"wb"`
+	MP         int `json:"mp"`
+	BalanceSum int `json:"balanceSum"`
+}
+
+// FunnelProductExtended extends FunnelProductMeta with tags and stocks.
 type FunnelProductExtended struct {
 	FunnelProductMeta
-	Tags []ProductTag `json:"tags"`
+	Stocks ProductStocks `json:"stocks"`
+	Tags   []ProductTag  `json:"tags"`
 }
 
 // FunnelAggregatedProduct represents one product in aggregated response.

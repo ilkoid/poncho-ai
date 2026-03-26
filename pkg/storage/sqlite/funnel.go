@@ -87,13 +87,10 @@ func (r *SQLiteSalesRepository) SaveFunnelHistory(ctx context.Context, product w
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT OR REPLACE INTO funnel_metrics_daily (
 			nm_id, metric_date,
-			open_count, cart_count, order_count, buyout_count, cancel_count, add_to_wishlist,
-			order_sum, buyout_sum, cancel_sum, avg_price,
-			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout,
-			wb_club_order_count, wb_club_buyout_count, wb_club_buyout_percent,
-			time_to_ready_days, time_to_ready_hours, time_to_ready_mins,
-			localization_percent
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			open_count, cart_count, order_count, buyout_count, add_to_wishlist,
+			order_sum, buyout_sum,
+			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare statement: %w", err)
@@ -108,22 +105,12 @@ func (r *SQLiteSalesRepository) SaveFunnelHistory(ctx context.Context, product w
 			row.CartCount,
 			row.OrderCount,
 			row.BuyoutCount,
-			row.CancelCount,
 			row.AddToWishlist,
 			row.OrderSum,
 			row.BuyoutSum,
-			row.CancelSum,
-			row.AvgPrice,
 			row.ConversionAddToCart,
 			row.ConversionCartToOrder,
 			row.ConversionBuyout,
-			row.WBClubOrderCount,
-			row.WBClubBuyoutCount,
-			row.WBClubBuyoutPercent,
-			row.TimeToReadyDays,
-			row.TimeToReadyHours,
-			row.TimeToReadyMins,
-			row.LocalizationPercent,
 		)
 		if err != nil {
 			return fmt.Errorf("insert funnel row nm_id=%d date=%s: %w", row.NmID, row.MetricDate, err)
@@ -419,13 +406,10 @@ func (r *SQLiteSalesRepository) SaveFunnelHistoryWithWindow(
 	stmtReplace, err := tx.PrepareContext(ctx, `
 		INSERT OR REPLACE INTO funnel_metrics_daily (
 			nm_id, metric_date,
-			open_count, cart_count, order_count, buyout_count, cancel_count, add_to_wishlist,
-			order_sum, buyout_sum, cancel_sum, avg_price,
-			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout,
-			wb_club_order_count, wb_club_buyout_count, wb_club_buyout_percent,
-			time_to_ready_days, time_to_ready_hours, time_to_ready_mins,
-			localization_percent
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			open_count, cart_count, order_count, buyout_count, add_to_wishlist,
+			order_sum, buyout_sum,
+			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare replace statement: %w", err)
@@ -435,13 +419,10 @@ func (r *SQLiteSalesRepository) SaveFunnelHistoryWithWindow(
 	stmtIgnore, err := tx.PrepareContext(ctx, `
 		INSERT OR IGNORE INTO funnel_metrics_daily (
 			nm_id, metric_date,
-			open_count, cart_count, order_count, buyout_count, cancel_count, add_to_wishlist,
-			order_sum, buyout_sum, cancel_sum, avg_price,
-			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout,
-			wb_club_order_count, wb_club_buyout_count, wb_club_buyout_percent,
-			time_to_ready_days, time_to_ready_hours, time_to_ready_mins,
-			localization_percent
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			open_count, cart_count, order_count, buyout_count, add_to_wishlist,
+			order_sum, buyout_sum,
+			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare ignore statement: %w", err)
@@ -471,22 +452,12 @@ func (r *SQLiteSalesRepository) SaveFunnelHistoryWithWindow(
 			row.CartCount,
 			row.OrderCount,
 			row.BuyoutCount,
-			row.CancelCount,
 			row.AddToWishlist,
 			row.OrderSum,
 			row.BuyoutSum,
-			row.CancelSum,
-			row.AvgPrice,
 			row.ConversionAddToCart,
 			row.ConversionCartToOrder,
 			row.ConversionBuyout,
-			row.WBClubOrderCount,
-			row.WBClubBuyoutCount,
-			row.WBClubBuyoutPercent,
-			row.TimeToReadyDays,
-			row.TimeToReadyHours,
-			row.TimeToReadyMins,
-			row.LocalizationPercent,
 		)
 		if err != nil {
 			return fmt.Errorf("save row nm_id=%d date=%s: %w", row.NmID, row.MetricDate, err)

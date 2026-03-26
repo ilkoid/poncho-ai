@@ -147,17 +147,12 @@ func (a *funnelRepoAdapter) SaveDailyMetrics(ctx context.Context, metrics []stor
 			CartCount:             m.CartCount,
 			OrderCount:            m.OrderCount,
 			BuyoutCount:           m.BuyoutCount,
-			CancelCount:           m.CancelCount,
 			AddToWishlist:         m.AddToWishlist,
 			OrderSum:              m.OrderSum,
 			BuyoutSum:             m.BuyoutSum,
-			AvgPrice:              m.AvgPrice,
 			ConversionAddToCart:   m.ConversionAddToCart,
 			ConversionCartToOrder: m.ConversionCartToOrder,
 			ConversionBuyout:      m.ConversionBuyout,
-			WBClubOrderCount:      m.WBClubOrderCount,
-			WBClubBuyoutCount:     m.WBClubBuyoutCount,
-			WBClubBuyoutPercent:   m.WBClubBuyoutPercent,
 		}}
 		if err := a.repo.SaveFunnelHistory(ctx, product, rows); err != nil {
 			return err
@@ -202,17 +197,12 @@ func (a *funnelRepoAdapter) SaveDailyMetricsWithWindow(ctx context.Context, metr
 			CartCount:             m.CartCount,
 			OrderCount:            m.OrderCount,
 			BuyoutCount:           m.BuyoutCount,
-			CancelCount:           m.CancelCount,
 			AddToWishlist:         m.AddToWishlist,
 			OrderSum:              m.OrderSum,
 			BuyoutSum:             m.BuyoutSum,
-			AvgPrice:              m.AvgPrice,
 			ConversionAddToCart:   m.ConversionAddToCart,
 			ConversionCartToOrder: m.ConversionCartToOrder,
 			ConversionBuyout:      m.ConversionBuyout,
-			WBClubOrderCount:      m.WBClubOrderCount,
-			WBClubBuyoutCount:     m.WBClubBuyoutCount,
-			WBClubBuyoutPercent:   m.WBClubBuyoutPercent,
 		})
 	}
 

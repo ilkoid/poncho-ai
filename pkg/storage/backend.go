@@ -177,17 +177,12 @@ type FunnelMetricRecord struct {
 	CartCount            int
 	OrderCount           int
 	BuyoutCount          int
-	CancelCount          int
 	AddToWishlist        int
 	OrderSum             int
 	BuyoutSum            int
-	AvgPrice             int
 	ConversionAddToCart  float64
 	ConversionCartToOrder float64
 	ConversionBuyout     float64
-	WBClubOrderCount     int
-	WBClubBuyoutCount    int
-	WBClubBuyoutPercent  float64
 	CreatedAt            time.Time
 }
 

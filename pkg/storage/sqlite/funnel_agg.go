@@ -213,8 +213,12 @@ func (r *SQLiteSalesRepository) SaveFunnelAggregatedBatch(
 
 // saveFunnelAggregatedInTx сохраняет в транзакции.
 
-// convertToProductMeta преобразует FunnelProductExtended в нужную структуру.
+// convertToProductMeta copies nested Stocks fields into flat fields on FunnelProductMeta
+// for DB compatibility (INSERT uses productMeta.StockWB, etc.).
 func convertToProductMeta(p wb.FunnelProductExtended) wb.FunnelProductExtended {
+	p.StockWB = p.Stocks.WB
+	p.StockMP = p.Stocks.MP
+	p.StockBalance = p.Stocks.BalanceSum
 	return p
 }
 

@@ -20,9 +20,9 @@ llm:
   thinking: "disabled"        # "enabled", "disabled" или пусто (отключает reasoning)
 
 analysis:
-  batch_size: 20
+  batch_size: 30
   min_feedbacks: 1
-  max_feedbacks: 100
+  max_feedbacks: 120
   max_products: 500             # 0 = no limit (for testing set to small number)
   min_article_len: 8          # min supplier_article length (skip short marketplace SKUs like 123068)
   # Include filters (product must match at least one):

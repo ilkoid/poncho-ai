@@ -245,6 +245,7 @@ CREATE INDEX IF NOT EXISTS idx_products_brand_name ON products(brand_name);
 -- ============================================================================
 -- Daily funnel metrics (core time-series fact table)
 -- Grain: one row per (nm_id, date) combination
+-- Fields match /api/analytics/v3/sales-funnel/products/history response
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS funnel_metrics_daily (
     -- Surrogate primary key
@@ -254,35 +255,21 @@ CREATE TABLE IF NOT EXISTS funnel_metrics_daily (
     nm_id INTEGER NOT NULL,
     metric_date TEXT NOT NULL,
 
-    -- Funnel counts (raw metrics)
+    -- Funnel counts (from API)
     open_count INTEGER DEFAULT 0,
     cart_count INTEGER DEFAULT 0,
     order_count INTEGER DEFAULT 0,
     buyout_count INTEGER DEFAULT 0,
-    cancel_count INTEGER DEFAULT 0,
     add_to_wishlist INTEGER DEFAULT 0,
 
-    -- Financial metrics (in rubles)
+    -- Financial metrics (from API)
     order_sum INTEGER DEFAULT 0,
     buyout_sum INTEGER DEFAULT 0,
-    cancel_sum INTEGER DEFAULT 0,
-    avg_price INTEGER DEFAULT 0,
 
-    -- Conversion rates (pre-calculated for query performance)
+    -- Conversion rates (from API)
     conversion_add_to_cart REAL,
     conversion_cart_to_order REAL,
     conversion_buyout REAL,
-
-    -- WB Club metrics (premium customer segment)
-    wb_club_order_count INTEGER DEFAULT 0,
-    wb_club_buyout_count INTEGER DEFAULT 0,
-    wb_club_buyout_percent REAL,
-
-    -- Operational metrics
-    time_to_ready_days INTEGER DEFAULT 0,
-    time_to_ready_hours INTEGER DEFAULT 0,
-    time_to_ready_mins INTEGER DEFAULT 0,
-    localization_percent REAL,
 
     -- Metadata
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,

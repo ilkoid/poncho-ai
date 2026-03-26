@@ -224,22 +224,12 @@ func loadFunnelBatch(ctx context.Context, client *wb.Client, repo *sqlite.SQLite
 				CartCount:             h.CartCount,
 				OrderCount:            h.OrderCount,
 				BuyoutCount:           h.BuyoutCount,
-				CancelCount:           0, // Not in simplified v3 history response
 				AddToWishlist:         h.AddToWishlistCount,
 				OrderSum:              h.OrderSum,
 				BuyoutSum:             h.BuyoutSum,
-				CancelSum:             0, // Not in simplified v3 history response
-				AvgPrice:              0, // Not in simplified v3 history response
 				ConversionAddToCart:   h.AddToCartConversion,
 				ConversionCartToOrder: h.CartToOrderConversion,
 				ConversionBuyout:      h.BuyoutPercent,
-				WBClubOrderCount:      0, // Not in simplified v3 history response
-				WBClubBuyoutCount:     0, // Not in simplified v3 history response
-				WBClubBuyoutPercent:   0, // Not in simplified v3 history response
-				TimeToReadyDays:       0, // Not in simplified v3 history response
-				TimeToReadyHours:      0, // Not in simplified v3 history response
-				TimeToReadyMins:       0, // Not in simplified v3 history response
-				LocalizationPercent:   0, // Not in simplified v3 history response
 			}
 			historyRows = append(historyRows, row)
 		}
@@ -399,21 +389,12 @@ func FunnelMockLoader(ctx context.Context, repo *sqlite.SQLiteSalesRepository, d
 				CartCount:           cartCount,
 				OrderCount:          orderCount,
 				BuyoutCount:         buyoutCount,
-				CancelCount:         orderCount - buyoutCount,
 				AddToWishlist:       openCount / 3,
 				OrderSum:            orderCount * 1500,
 				BuyoutSum:           buyoutCount * 1500,
-				CancelSum:           (orderCount - buyoutCount) * 1500,
-				AvgPrice:            1500,
 				ConversionAddToCart: float64(cartCount) / float64(openCount) * 100,
 				ConversionCartToOrder: float64(orderCount) / float64(cartCount) * 100,
 				ConversionBuyout:    85.0,
-				WBClubOrderCount:    orderCount / 2,
-				WBClubBuyoutCount:   buyoutCount / 2,
-				WBClubBuyoutPercent: 85.0,
-				TimeToReadyDays:     1,
-				TimeToReadyHours:    8,
-				LocalizationPercent: 45.0,
 			}
 			historyRows = append(historyRows, row)
 		}

@@ -17,17 +17,42 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// repoRoot resolves the repository root directory from the source file location.
+// This file lives at cmd/fix-utilities/migrate-feedbacks-to-unified/main.go (4 levels deep).
+func repoRoot() string {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return ".." // fallback
+	}
+	return filepath.Join(filepath.Dir(filename), "..", "..", "..")
+}
+
 func main() {
-	fromFeedbacks := flag.String("from-feedbacks", "feedbacks.db", "Source feedbacks database")
-	fromQuality := flag.String("from-quality", "quality_reports.db", "Source quality reports database")
-	toDB := flag.String("to", "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db", "Target unified database")
+	// Resolve repo root (3 levels up from this file: cmd/fix-utilities/migrate-feedbacks-to-unified)
+	repoRoot := repoRoot()
+
+	fromFeedbacks := flag.String("from-feedbacks", "", "Source feedbacks database (default: download-wb-feedbacks/feedbacks.db)")
+	fromQuality := flag.String("from-quality", "", "Source quality reports database (default: analyze-wb-feedbacks/quality_reports.db)")
+	toDB := flag.String("to", "", "Target unified database (default: db/wb-sales.db)")
 	dryRun := flag.Bool("dry-run", false, "Show what would be migrated without changes")
 	flag.Parse()
+
+	// Apply defaults relative to repo root
+	if *fromFeedbacks == "" {
+		*fromFeedbacks = filepath.Join(repoRoot, "cmd/data-downloaders/download-wb-feedbacks/feedbacks.db")
+	}
+	if *fromQuality == "" {
+		*fromQuality = filepath.Join(repoRoot, "cmd/data-analyzers/analyze-wb-feedbacks/quality_reports.db")
+	}
+	if *toDB == "" {
+		*toDB = filepath.Join(repoRoot, "db/wb-sales.db")
+	}
 
 	// Check source files exist
 	for _, path := range []string{*fromFeedbacks, *fromQuality} {

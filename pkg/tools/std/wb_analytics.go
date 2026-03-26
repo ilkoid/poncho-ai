@@ -412,38 +412,17 @@ func (t *WbProductFunnelHistoryTool) Execute(ctx context.Context, argsJSON strin
 				} `json:"product"`
 				Statistic struct {
 					History []struct {
-						Date            string  `json:"date"`
-						OpenCount       int     `json:"openCount"`
-						CartCount       int     `json:"cartCount"`
-						OrderCount      int     `json:"orderCount"`
-						OrderSum        int     `json:"orderSum"`
-						BuyoutCount     int     `json:"buyoutCount"`
-						BuyoutSum       int     `json:"buyoutSum"`
-						CancelCount     int     `json:"cancelCount"`
-						CancelSum       int     `json:"cancelSum"`
-						AvgPrice        int     `json:"avgPrice"`
-						AddToWishlist   int     `json:"addToWishlist"`
-						TimeToReady     struct {
-							Days  int `json:"days"`
-							Hours int `json:"hours"`
-							Mins  int `json:"mins"`
-						} `json:"timeToReady"`
-						LocalizationPercent float64 `json:"localizationPercent"`
-						WBClub              struct {
-							OrderCount          int     `json:"orderCount"`
-							OrderSum            int     `json:"orderSum"`
-							BuyoutSum           int     `json:"buyoutSum"`
-							BuyoutCount         int     `json:"buyoutCount"`
-							CancelSum           int     `json:"cancelSum"`
-							CancelCount         int     `json:"cancelCount"`
-							AvgPrice            int     `json:"avgPrice"`
-							BuyoutPercent       float64 `json:"buyoutPercent"`
-						} `json:"wbClub"`
-						Conversions struct {
-							AddToCartPercent   float64 `json:"addToCartPercent"`
-							CartToOrderPercent float64 `json:"cartToOrderPercent"`
-							BuyoutPercent      float64 `json:"buyoutPercent"`
-						} `json:"conversions"`
+						Date                string  `json:"date"`
+						OpenCount           int     `json:"openCount"`
+						CartCount           int     `json:"cartCount"`
+						OrderCount          int     `json:"orderCount"`
+						OrderSum            int     `json:"orderSum"`
+						BuyoutCount         int     `json:"buyoutCount"`
+						BuyoutSum           int     `json:"buyoutSum"`
+						BuyoutPercent       float64 `json:"buyoutPercent"`
+						AddToCartConversion float64 `json:"addToCartConversion"`
+						CartToOrderConversion float64 `json:"cartToOrderConversion"`
+						AddToWishlistCount  int     `json:"addToWishlistCount"`
 					} `json:"history"`
 				} `json:"statistic"`
 			} `json:"products"`
