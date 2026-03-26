@@ -1,0 +1,20 @@
+wb:
+  api_key: ${WB_STAT}
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+  rate_limit: 1
+  burst: 2
+  endpoint: https://statistics-api.wildberries.ru
+  timeout: 15m
+
+download:
+  db_path: "sales-march2026-tmp.db"
+  resume: true
+  from: "2026-03-18T00:00:00+03:00"
+  to: "2026-03-18T23:59:59+03:00"
+
+funnel:
+  days: 9
+  batch_size: 20
+
+storage:
+  funnel_refresh_window: 7
