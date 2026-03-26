@@ -15,7 +15,7 @@ wb:
 # Download Settings
 feedbacks:
   # Database path (SQLite)
-  db_path: "feedbacks.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
 
   # Date range (alternative to --days flag)
   begin: ""  # YYYY-MM-DD

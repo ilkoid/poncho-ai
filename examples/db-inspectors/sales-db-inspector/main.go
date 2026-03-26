@@ -23,7 +23,7 @@ import (
 // Flags
 var (
 	dbPath    = flag.String("db", "", "Path to SQLite database (required)")
-	tableType = flag.String("table", "all", "Table type: sales, service, funnel, all")
+	tableType = flag.String("table", "all", "Table type: sales, service, funnel, feedbacks, quality, all")
 	fromDate  = flag.String("from", "", "Start date (YYYY-MM-DD)")
 	toDate    = flag.String("to", "", "End date (YYYY-MM-DD)")
 )
@@ -38,9 +38,9 @@ func main() {
 	}
 
 	// Validate table type
-	validTables := map[string]bool{"sales": true, "service": true, "funnel": true, "all": true}
+	validTables := map[string]bool{"sales": true, "service": true, "funnel": true, "feedbacks": true, "quality": true, "all": true}
 	if !validTables[*tableType] {
-		fmt.Fprintf(os.Stderr, "Error: invalid table type '%s'. Use: sales, service, funnel, or all\n", *tableType)
+		fmt.Fprintf(os.Stderr, "Error: invalid table type '%s'. Use: sales, service, funnel, feedbacks, quality, or all\n", *tableType)
 		os.Exit(1)
 	}
 
@@ -91,6 +91,12 @@ func main() {
 	}
 	if *tableType == "all" || *tableType == "funnel" {
 		inspectFunnelTable(ctx, db)
+	}
+	if *tableType == "all" || *tableType == "feedbacks" {
+		inspectFeedbacksTable(ctx, db)
+	}
+	if *tableType == "all" || *tableType == "quality" {
+		inspectQualityTable(ctx, db)
 	}
 }
 
@@ -468,6 +474,194 @@ func inspectFunnelTable(ctx context.Context, db *sql.DB) {
 	}
 	w.Flush()
 	fmt.Println()
+}
+
+// inspectFeedbacksTable analyzes feedbacks and questions tables.
+func inspectFeedbacksTable(ctx context.Context, db *sql.DB) {
+	// Check if feedbacks table exists
+	var feedbacksExists, questionsExists int
+	db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='feedbacks'",
+	).Scan(&feedbacksExists)
+	db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='questions'",
+	).Scan(&questionsExists)
+
+	fmt.Println("=== FEEDBACKS & QUESTIONS ===")
+
+	if feedbacksExists == 0 && questionsExists == 0 {
+		fmt.Println("   Tables not found")
+		fmt.Println()
+		return
+	}
+
+	// Feedbacks stats
+	if feedbacksExists > 0 {
+		var totalFeedbacks, withAnswer, withPhotos, withVideo int
+		var avgRating sql.NullFloat64
+		db.QueryRowContext(ctx, "SELECT COUNT(*) FROM feedbacks").Scan(&totalFeedbacks)
+		db.QueryRowContext(ctx, "SELECT COUNT(*) FROM feedbacks WHERE answer_text IS NOT NULL AND answer_text != ''").Scan(&withAnswer)
+		db.QueryRowContext(ctx, "SELECT COUNT(*) FROM feedbacks WHERE photo_links IS NOT NULL AND photo_links != ''").Scan(&withPhotos)
+		db.QueryRowContext(ctx, "SELECT COUNT(*) FROM feedbacks WHERE video_link IS NOT NULL AND video_link != ''").Scan(&withVideo)
+		db.QueryRowContext(ctx, "SELECT AVG(product_valuation) FROM feedbacks WHERE product_valuation IS NOT NULL").Scan(&avgRating)
+
+		var uniqueProducts int
+		db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT product_nm_id) FROM feedbacks WHERE product_nm_id IS NOT NULL").Scan(&uniqueProducts)
+
+		fmt.Printf("   Feedbacks total:      %d\n", totalFeedbacks)
+		fmt.Printf("   With seller answer:   %d (%.1f%%)\n", withAnswer, pct(withAnswer, totalFeedbacks))
+		fmt.Printf("   With photos:          %d\n", withPhotos)
+		fmt.Printf("   With video:           %d\n", withVideo)
+		if avgRating.Valid {
+			fmt.Printf("   Avg product valuation: %.2f\n", avgRating.Float64)
+		}
+		fmt.Printf("   Unique products:      %d\n", uniqueProducts)
+
+		// Date range
+		var firstDate, lastDate sql.NullString
+		db.QueryRowContext(ctx, "SELECT MIN(created_date) FROM feedbacks").Scan(&firstDate)
+		db.QueryRowContext(ctx, "SELECT MAX(created_date) FROM feedbacks").Scan(&lastDate)
+		if firstDate.Valid {
+			fmt.Printf("   Period: %s → %s\n", firstDate.String, lastDate.String)
+		}
+	}
+
+	// Questions stats
+	if questionsExists > 0 {
+		var totalQuestions, withAnswer, unanswered int
+		db.QueryRowContext(ctx, "SELECT COUNT(*) FROM questions").Scan(&totalQuestions)
+		db.QueryRowContext(ctx, "SELECT COUNT(*) FROM questions WHERE answer_text IS NOT NULL AND answer_text != ''").Scan(&withAnswer)
+		db.QueryRowContext(ctx, "SELECT COUNT(*) FROM questions WHERE (answer_text IS NULL OR answer_text = '') AND state != 'deleted'").Scan(&unanswered)
+
+		fmt.Println()
+		fmt.Printf("   Questions total:      %d\n", totalQuestions)
+		fmt.Printf("   With seller answer:   %d (%.1f%%)\n", withAnswer, pct(withAnswer, totalQuestions))
+		fmt.Printf("   Unanswered:           %d\n", unanswered)
+	}
+
+	// Top categories by feedback count
+	if feedbacksExists > 0 {
+		fmt.Println()
+		fmt.Println("   Top 10 categories by feedbacks:")
+		rows, err := db.QueryContext(ctx, `
+			SELECT subject_name, COUNT(*) as cnt
+			FROM feedbacks
+			WHERE subject_name IS NOT NULL AND subject_name != ''
+			GROUP BY subject_name
+			ORDER BY cnt DESC
+			LIMIT 10
+		`)
+		if err == nil {
+			defer rows.Close()
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			for rows.Next() {
+				var name string
+				var count int
+				if rows.Scan(&name, &count) == nil {
+					fmt.Fprintf(w, "   - %s\t%d\n", truncate(name, 40), count)
+				}
+			}
+			w.Flush()
+		}
+	}
+
+	fmt.Println()
+}
+
+// inspectQualityTable analyzes product_quality_summary table (LLM analysis results).
+func inspectQualityTable(ctx context.Context, db *sql.DB) {
+	var exists int
+	db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='product_quality_summary'",
+	).Scan(&exists)
+
+	fmt.Println("=== QUALITY SUMMARIES (LLM) ===")
+
+	if exists == 0 {
+		fmt.Println("   Table not found")
+		fmt.Println()
+		return
+	}
+
+	var total int
+	db.QueryRowContext(ctx, "SELECT COUNT(*) FROM product_quality_summary").Scan(&total)
+	fmt.Printf("   Total analyzed products: %d\n", total)
+
+	if total == 0 {
+		fmt.Println("   No LLM analysis results yet")
+		fmt.Println()
+		return
+	}
+
+	// Model distribution
+	fmt.Println()
+	fmt.Println("   Models used:")
+	rows, err := db.QueryContext(ctx, `
+		SELECT COALESCE(model_used, '(unknown)'), COUNT(*)
+		FROM product_quality_summary
+		GROUP BY model_used
+		ORDER BY COUNT(*) DESC
+	`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var model string
+			var count int
+			if rows.Scan(&model, &count) == nil {
+				fmt.Printf("   - %s\t%d\n", truncate(model, 50), count)
+			}
+		}
+	}
+
+	// Analyzed period range
+	var minFrom, maxTo sql.NullString
+	db.QueryRowContext(ctx, "SELECT MIN(request_from) FROM product_quality_summary").Scan(&minFrom)
+	db.QueryRowContext(ctx, "SELECT MAX(request_to) FROM product_quality_summary").Scan(&maxTo)
+	if minFrom.Valid && maxTo.Valid {
+		fmt.Println()
+		fmt.Printf("   Request period range: %s → %s\n", minFrom.String, maxTo.String)
+	}
+
+	// Rating distribution
+	fmt.Println()
+	fmt.Println("   Rating distribution:")
+	ratingRows, err := db.QueryContext(ctx, `
+		SELECT
+			CASE
+				WHEN avg_rating >= 4.5 THEN '4.5-5.0 (excellent)'
+				WHEN avg_rating >= 4.0 THEN '4.0-4.4 (good)'
+				WHEN avg_rating >= 3.5 THEN '3.5-3.9 (average)'
+				WHEN avg_rating >= 3.0 THEN '3.0-3.4 (below avg)'
+				ELSE '< 3.0 (poor)'
+			END as bucket,
+			COUNT(*)
+		FROM product_quality_summary
+		WHERE avg_rating IS NOT NULL
+		GROUP BY bucket
+		ORDER BY MIN(avg_rating) DESC
+	`)
+	if err == nil {
+		defer ratingRows.Close()
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		for ratingRows.Next() {
+			var bucket string
+			var count int
+			if ratingRows.Scan(&bucket, &count) == nil {
+				fmt.Fprintf(w, "   %s\t%d\n", bucket, count)
+			}
+		}
+		w.Flush()
+	}
+
+	fmt.Println()
+}
+
+// pct calculates percentage, avoiding division by zero.
+func pct(part, total int) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(part) / float64(total) * 100
 }
 
 // buildDateFilter builds SQL date filter clause

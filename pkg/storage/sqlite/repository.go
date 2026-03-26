@@ -72,6 +72,23 @@ func NewSQLiteSalesRepository(dbPath string) (*SQLiteSalesRepository, error) {
 		return nil, err
 	}
 
+	// Performance PRAGMAs for bulk-loaded databases
+	pragmas := []string{
+		"PRAGMA page_size = 8192",        // 2x pages (only effective for new DBs)
+		"PRAGMA cache_size = -65536",     // 64MB page cache (vs default 2MB)
+		"PRAGMA mmap_size = 268435456",   // 256MB memory-mapped I/O
+		"PRAGMA synchronous = NORMAL",    // Safe with WAL, faster than FULL
+		"PRAGMA busy_timeout = 5000",     // 5s wait on locked DB
+		"PRAGMA wal_autocheckpoint = 5000", // Less frequent checkpoints
+		"PRAGMA temp_store = MEMORY",     // Temp tables in RAM
+	}
+	for _, p := range pragmas {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("pragma %s: %w", p, err)
+		}
+	}
+
 	repo := &SQLiteSalesRepository{db: db}
 
 	// Initialize schema
@@ -85,6 +102,9 @@ func NewSQLiteSalesRepository(dbPath string) (*SQLiteSalesRepository, error) {
 
 // initSchema creates tables and indexes.
 func (r *SQLiteSalesRepository) initSchema() error {
+	// Migrate: drop old heavy index if it exists (replaced by idx_service_oper_type)
+	_, _ = r.db.Exec("DROP INDEX IF EXISTS idx_service_oper")
+
 	// Create main sales table
 	_, err := r.db.Exec(GetSchemaSQL())
 	if err != nil {
@@ -137,6 +157,54 @@ func (r *SQLiteSalesRepository) initSchema() error {
 
 	// Create campaign fullstats tables (app-level, nm-level, booster stats)
 	_, err = r.db.Exec(GetCampaignFullstatsSchemaSQL())
+	if err != nil {
+		return err
+	}
+
+	// Migrations for new financial columns (ALTER TABLE ADD COLUMN is idempotent-safe via ignoring errors)
+	salesMigrations := []string{
+		"ALTER TABLE sales ADD COLUMN ppvz_sales_commission REAL",
+		"ALTER TABLE sales ADD COLUMN acquiring_fee REAL",
+		"ALTER TABLE sales ADD COLUMN acquiring_percent REAL",
+		"ALTER TABLE sales ADD COLUMN retail_price_withdisc_rub REAL",
+		"ALTER TABLE sales ADD COLUMN ppvz_spp_prc REAL",
+		"ALTER TABLE sales ADD COLUMN ppvz_kvw_prc_base REAL",
+		"ALTER TABLE sales ADD COLUMN ppvz_kvw_prc REAL",
+		"ALTER TABLE sales ADD COLUMN sup_rating_prc_up REAL",
+		"ALTER TABLE sales ADD COLUMN is_kgvp_v2 REAL",
+		"ALTER TABLE sales ADD COLUMN product_discount_for_report REAL",
+		"ALTER TABLE sales ADD COLUMN supplier_promo REAL",
+		"ALTER TABLE sales ADD COLUMN seller_promo_discount REAL",
+		"ALTER TABLE sales ADD COLUMN sale_price_promocode_discount_prc REAL",
+		"ALTER TABLE sales ADD COLUMN wibes_wb_discount_percent REAL",
+		"ALTER TABLE sales ADD COLUMN loyalty_discount REAL",
+		"ALTER TABLE sales ADD COLUMN cashback_amount REAL",
+		"ALTER TABLE sales ADD COLUMN cashback_discount REAL",
+		"ALTER TABLE sales ADD COLUMN cashback_commission_change REAL",
+	}
+	for _, m := range salesMigrations {
+		_, _ = r.db.Exec(m) // Ignore "duplicate column name" for existing DBs
+	}
+
+	serviceMigrations := []string{
+		"ALTER TABLE service_records ADD COLUMN penalty REAL",
+		"ALTER TABLE service_records ADD COLUMN deduction REAL",
+		"ALTER TABLE service_records ADD COLUMN storage_fee REAL",
+		"ALTER TABLE service_records ADD COLUMN acceptance REAL",
+		"ALTER TABLE service_records ADD COLUMN gi_id INTEGER",
+	}
+	for _, m := range serviceMigrations {
+		_, _ = r.db.Exec(m)
+	}
+
+	// Create feedbacks tables (Feedbacks API: feedbacks + questions)
+	_, err = r.db.Exec(GetFeedbacksSchemaSQL())
+	if err != nil {
+		return err
+	}
+
+	// Create quality analysis results table (LLM analyzer output)
+	_, err = r.db.Exec(GetQualitySchemaSQL())
 	if err != nil {
 		return err
 	}

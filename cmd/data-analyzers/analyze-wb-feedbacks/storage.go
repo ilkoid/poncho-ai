@@ -51,35 +51,10 @@ func NewResultsRepo(dbPath string) (*ResultsRepo, error) {
 	}
 
 	repo := &ResultsRepo{db: db}
-	if err := repo.initSchema(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
-	}
 
+	// Schema is created by pkg/storage/sqlite/repository.go initSchema()
+	// when SalesRepository opens the same database.
 	return repo, nil
-}
-
-const createSummaryTable = `
-CREATE TABLE IF NOT EXISTS product_quality_summary (
-    product_nm_id    INTEGER PRIMARY KEY,
-    supplier_article  TEXT,
-    product_name      TEXT,
-    avg_rating        REAL,
-    feedback_count    INTEGER,
-    quality_summary   TEXT,
-    request_from      TEXT,
-    request_to        TEXT,
-    analyzed_from     TEXT,
-    analyzed_to       TEXT,
-    analyzed_at       TEXT,
-    model_used        TEXT
-);`
-
-func (r *ResultsRepo) initSchema() error {
-	if _, err := r.db.Exec(createSummaryTable); err != nil {
-		return fmt.Errorf("create table: %w", err)
-	}
-	return nil
 }
 
 // GetSummary retrieves a stored summary for a product. Returns nil if not found.

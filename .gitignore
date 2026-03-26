@@ -61,6 +61,9 @@ Thumbs.db
 tmp/
 temp/
 
+# Database files directory
+db/
+
 # Build artifacts
 dist/
 build/
@@ -135,11 +138,11 @@ tools/*/venv/
 # Screenshots and temporary images
 screenshots/
 
-# Downloaded data binaries
-download-wb-promotion
-download-wb-sales
-download-wb-funnel
-funnel-db-inspector
+# Downloaded data binaries (root-level only)
+/download-wb-promotion
+/download-wb-sales
+/download-wb-funnel
+/funnel-db-inspector
 
 # Test utilities (temporary, organized by type)
 cmd/test-utils/test-wb-*/

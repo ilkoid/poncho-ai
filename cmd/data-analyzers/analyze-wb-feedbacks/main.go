@@ -26,6 +26,7 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/models"
+	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"gopkg.in/yaml.v3"
 )
 
@@ -141,6 +142,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load prompts: %v", err)
 	}
+
+	// Initialize schema (creates all tables including feedbacks/questions/quality)
+	schemaRepo, err := sqlite.NewSQLiteSalesRepository(cfg.Source.DbPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize schema: %v", err)
+	}
+	schemaRepo.Close()
 
 	// Open databases
 	source, err := NewSourceRepo(cfg.Source.DbPath)

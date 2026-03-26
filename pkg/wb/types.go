@@ -330,6 +330,31 @@ type RealizationReportRow struct {
 	RebillLogisticCost float64 `json:"rebill_logistic_cost,omitempty"` // Стоимость логистики
 	PPVzVw             float64 `json:"ppvz_vw,omitempty"`             // Корректировка
 	PPVzVwNds          float64 `json:"ppvz_vw_nds,omitempty"`         // НДС корректировки
+
+	// Расшифровка ценообразования и затрат (из Swagger DetailReportItem)
+	RetailPriceWithDiscRub    float64 `json:"retail_price_withdisc_rub,omitempty"`    // Цена со скидкой
+	PPVzSppPrc               float64 `json:"ppvz_spp_prc,omitempty"`               // СПП процент
+	PPVzKvwPrcBase           float64 `json:"ppvz_kvw_prc_base,omitempty"`           // Базовый % к выплате (до категорийного)
+	PPVzKvwPrc               float64 `json:"ppvz_kvw_prc,omitempty"`               // % к выплате (с учетом категорийного)
+	SupRatingPrcUp           float64 `json:"sup_rating_prc_up,omitempty"`           // Надбавка за рейтинг продавца
+	IsKgvpV2                 float64 `json:"is_kgvp_v2,omitempty"`                 // КГВП (корпоративные goodwill)
+	PPVzSalesCommission      float64 `json:"ppvz_sales_commission,omitempty"`      // Комиссия за продажу
+	AcquiringFee             float64 `json:"acquiring_fee,omitempty"`              // Эквайринг (сумма)
+	AcquiringPercent         float64 `json:"acquiring_percent,omitempty"`          // Эквайринг (процент)
+	ProductDiscountForReport float64 `json:"product_discount_for_report,omitempty"` // Скидка на товар
+	SupplierPromo            float64 `json:"supplier_promo,omitempty"`             // Промокод поставщика
+	SellerPromoDiscount      float64 `json:"seller_promo_discount,omitempty"`      // Скидка продавца
+	SalePricePromocodeDiscPrc float64 `json:"sale_price_promocode_discount_prc,omitempty"` // Скидка по промокоду (%)
+	WibesWbDiscountPercent   float64 `json:"wibes_wb_discount_percent,omitempty"`  // Скидка WB (e-com)
+	LoyaltyDiscount          float64 `json:"loyalty_discount,omitempty"`           // Скидка за лояльность
+	CashbackAmount           float64 `json:"cashback_amount,omitempty"`            // Кешбэк (сумма)
+	CashbackDiscount         float64 `json:"cashback_discount,omitempty"`          // Скидка кешбэка
+	CashbackCommissionChange float64 `json:"cashback_commission_change,omitempty"` // Возмещение кешбэка продавцу
+	Penalty                  float64 `json:"penalty,omitempty"`                   // Штраф
+	Deduction                float64 `json:"deduction,omitempty"`                 // Удержание
+	StorageFee               float64 `json:"storage_fee,omitempty"`               // Хранение
+	Acceptance               float64 `json:"acceptance,omitempty"`                 // Приемка
+	GiID                     int     `json:"gi_id,omitempty"`                     // ID товара в складе
 }
 
 // ReportDetailByPeriodRequest представляет запрос к API отчета реализации.

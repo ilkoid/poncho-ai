@@ -30,4 +30,4 @@ funnel_aggregated:
   burst: 3
 
   # Хранилище
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/cmd/data-downloaders/download-wb-sales/test-2026-funnel-agg.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"

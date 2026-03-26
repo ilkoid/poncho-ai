@@ -23,6 +23,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -98,7 +99,14 @@ func main() {
 		fmt.Println("Database deleted")
 	}
 
-	// Create repository
+	// Initialize schema (creates all tables including feedbacks/questions)
+	schemaRepo, err := sqlite.NewSQLiteSalesRepository(cfg.Feedbacks.DbPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize schema: %v", err)
+	}
+	schemaRepo.Close()
+
+	// Create repository (tables already exist, only sets PRAGMAs)
 	repo, err := NewFeedbacksRepo(cfg.Feedbacks.DbPath)
 	if err != nil {
 		log.Fatalf("Failed to create repository: %v", err)

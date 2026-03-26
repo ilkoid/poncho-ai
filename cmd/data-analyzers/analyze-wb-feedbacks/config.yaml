@@ -27,11 +27,11 @@ analysis:
   min_article_len: 8          # min supplier_article length (skip short marketplace SKUs like 123068)
   # Include filters (product must match at least one):
   # season: []                 # season digit (1st char of article), e.g. [3] = spring only
-  year: [25]                   # 2-digit year (chars 2-3), e.g. [24] = 2024 only
+  year: [26]                   # 2-digit year (chars 2-3), e.g. [24] = 2024 only
 
 source:
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/cmd/data-downloaders/download-wb-feedbacks/feedbacks.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
 
 results:
-  db_path: "./quality_reports.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
   logs_dir: "./logs"            # JSON logs (empty = disabled)

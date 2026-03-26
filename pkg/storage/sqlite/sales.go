@@ -18,6 +18,10 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 		return nil
 	}
 
+	// Disable sync during bulk insert (safe: data integrity guaranteed by tx.Commit)
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -32,8 +36,15 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 			brand_name, subject_name, ts_name, doc_type_name, quantity,
 			retail_price, retail_amount, sale_percent, commission_percent,
 			ppvz_for_pay, delivery_rub, delivery_method, gi_box_type_name,
-			office_name, order_dt, sale_dt, rr_dt, is_cancel, cancel_dt
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			office_name, order_dt, sale_dt, rr_dt, is_cancel, cancel_dt,
+			ppvz_sales_commission, acquiring_fee, acquiring_percent,
+			retail_price_withdisc_rub, ppvz_spp_prc, ppvz_kvw_prc_base, ppvz_kvw_prc,
+			sup_rating_prc_up, is_kgvp_v2,
+			product_discount_for_report, supplier_promo,
+			seller_promo_discount, sale_price_promocode_discount_prc,
+			wibes_wb_discount_percent, loyalty_discount,
+			cashback_amount, cashback_discount, cashback_commission_change
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare statement: %w", err)
@@ -52,15 +63,23 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 			cancelDT = sql.NullString{String: *row.CancelDateTime, Valid: true}
 		}
 
+		// NULL optimization: store NULL instead of 0.0 for sparse financial fields
+		nullFloat := func(v float64) sql.NullFloat64 {
+			if v == 0 {
+				return sql.NullFloat64{}
+			}
+			return sql.NullFloat64{Float64: v, Valid: true}
+		}
+
 		_, err := stmt.ExecContext(ctx,
 			row.RrdID,
-			0,                   // realizationreport_id - not in our type yet
+			row.RealizationReportID,
 			row.NmID,
 			row.SupplierArticle,
-			row.Barcode,         // barcode from API
+			row.Barcode,
 			row.BrandName,
 			row.SubjectName,
-			row.TechSize,        // ts_name = размер
+			row.TechSize,
 			row.DocTypeName,
 			row.Quantity,
 			row.RetailPrice,
@@ -77,6 +96,24 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 			row.RRDT,
 			isCancel,
 			cancelDT,
+			nullFloat(row.PPVzSalesCommission),
+			nullFloat(row.AcquiringFee),
+			nullFloat(row.AcquiringPercent),
+			nullFloat(row.RetailPriceWithDiscRub),
+			nullFloat(row.PPVzSppPrc),
+			nullFloat(row.PPVzKvwPrcBase),
+			nullFloat(row.PPVzKvwPrc),
+			nullFloat(row.SupRatingPrcUp),
+			nullFloat(row.IsKgvpV2),
+			nullFloat(row.ProductDiscountForReport),
+			nullFloat(row.SupplierPromo),
+			nullFloat(row.SellerPromoDiscount),
+			nullFloat(row.SalePricePromocodeDiscPrc),
+			nullFloat(row.WibesWbDiscountPercent),
+			nullFloat(row.LoyaltyDiscount),
+			nullFloat(row.CashbackAmount),
+			nullFloat(row.CashbackDiscount),
+			nullFloat(row.CashbackCommissionChange),
 		)
 		if err != nil {
 			return fmt.Errorf("insert row rrd_id=%d: %w", row.RrdID, err)
@@ -98,6 +135,10 @@ func (r *SQLiteSalesRepository) SaveServiceRecords(ctx context.Context, rows []w
 		return nil
 	}
 
+	// Disable sync during bulk insert (safe: data integrity guaranteed by tx.Commit)
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -111,9 +152,10 @@ func (r *SQLiteSalesRepository) SaveServiceRecords(ctx context.Context, rows []w
 			nm_id, supplier_article, brand_name, subject_name,
 			barcode, shk_id, srid,
 			delivery_method, gi_box_type_name, delivery_rub,
+			penalty, deduction, storage_fee, acceptance, gi_id,
 			ppvz_vw, ppvz_vw_nds, rebill_logistic_cost,
 			rr_dt, order_dt, sale_dt
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare statement: %w", err)
@@ -121,9 +163,22 @@ func (r *SQLiteSalesRepository) SaveServiceRecords(ctx context.Context, rows []w
 	defer stmt.Close()
 
 	for _, row := range rows {
+		// NULL optimization: store NULL instead of 0.0 for sparse financial fields
+		nullFloat := func(v float64) sql.NullFloat64 {
+			if v == 0 {
+				return sql.NullFloat64{}
+			}
+			return sql.NullFloat64{Float64: v, Valid: true}
+		}
+
+		var giID sql.NullInt64
+		if row.GiID > 0 {
+			giID = sql.NullInt64{Int64: int64(row.GiID), Valid: true}
+		}
+
 		_, err := stmt.ExecContext(ctx,
 			row.RrdID,
-			0, // realizationreport_id - not in our type yet
+			row.RealizationReportID,
 			row.SupplierOperName,
 			row.NmID,
 			row.SupplierArticle,
@@ -135,6 +190,11 @@ func (r *SQLiteSalesRepository) SaveServiceRecords(ctx context.Context, rows []w
 			row.DeliveryMethod,
 			row.GiBoxTypeName,
 			row.DeliveryRub,
+			nullFloat(row.Penalty),
+			nullFloat(row.Deduction),
+			nullFloat(row.StorageFee),
+			nullFloat(row.Acceptance),
+			giID,
 			row.PPVzVw,
 			row.PPVzVwNds,
 			row.RebillLogisticCost,
@@ -356,9 +416,20 @@ func (r *SQLiteSalesRepository) GetServiceRecordStats(ctx context.Context) (*Ser
 		return nil, fmt.Errorf("count service_records: %w", err)
 	}
 
-	// Get counts by operation type
+	// Get counts by operation type (uses same CASE-expression as idx_service_oper_type index)
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT supplier_oper_name, COUNT(*) FROM service_records GROUP BY supplier_oper_name",
+		`SELECT
+			CASE
+				WHEN supplier_oper_name LIKE 'Возмещение издержек%' THEN 'logistics'
+				WHEN supplier_oper_name LIKE 'Возмещение за выдача%' THEN 'pvz'
+				WHEN supplier_oper_name = 'Логистика' THEN 'logistics_direct'
+				WHEN supplier_oper_name = 'Удержание' THEN 'deduction'
+				WHEN supplier_oper_name = 'Штраф' THEN 'penalty'
+				ELSE 'other'
+			END,
+			COUNT(*)
+		FROM service_records
+		GROUP BY 1`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("group by supplier_oper_name: %w", err)

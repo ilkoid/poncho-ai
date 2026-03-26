@@ -40,98 +40,14 @@ func NewFeedbacksRepo(dbPath string) (*FeedbacksRepo, error) {
 	}
 
 	repo := &FeedbacksRepo{db: db}
-	if err := repo.initSchema(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
-	}
 
+	// Schema is created by pkg/storage/sqlite/repository.go initSchema()
+	// when SalesRepository opens the same database. We only set PRAGMAs here.
 	return repo, nil
 }
 
-const createFeedbacksTable = `
-CREATE TABLE IF NOT EXISTS feedbacks (
-    id                              TEXT PRIMARY KEY,
-    text                            TEXT NOT NULL DEFAULT '',
-    pros                            TEXT NOT NULL DEFAULT '',
-    cons                            TEXT NOT NULL DEFAULT '',
-    product_valuation               INTEGER,
-    created_date                    TEXT NOT NULL,
-    state                           TEXT NOT NULL DEFAULT '',
-    user_name                       TEXT NOT NULL DEFAULT '',
-    was_viewed                      INTEGER NOT NULL DEFAULT 0,
-    order_status                    TEXT NOT NULL DEFAULT '',
-    matching_size                   TEXT NOT NULL DEFAULT '',
-    is_able_supplier_feedback_valuation INTEGER NOT NULL DEFAULT 0,
-    supplier_feedback_valuation     INTEGER,
-    is_able_supplier_product_valuation INTEGER NOT NULL DEFAULT 0,
-    supplier_product_valuation      INTEGER,
-    is_able_return_product_orders   INTEGER NOT NULL DEFAULT 0,
-    return_product_orders_date      TEXT,
-    bables                          TEXT,
-    last_order_shk_id               INTEGER,
-    last_order_created_at           TEXT,
-    color                           TEXT NOT NULL DEFAULT '',
-    subject_id                      INTEGER,
-    subject_name                    TEXT NOT NULL DEFAULT '',
-    parent_feedback_id              TEXT,
-    child_feedback_id               TEXT,
-    answer_text                     TEXT,
-    answer_state                    TEXT,
-    answer_editable                 INTEGER,
-    photo_links                     TEXT,
-    video_preview_image             TEXT,
-    video_link                      TEXT,
-    video_duration_sec              INTEGER,
-    product_imt_id                  INTEGER,
-    product_nm_id                   INTEGER,
-    product_name                    TEXT NOT NULL DEFAULT '',
-    supplier_article                TEXT,
-    supplier_name                   TEXT,
-    brand_name                      TEXT,
-    size                            TEXT NOT NULL DEFAULT ''
-);`
-
-const createQuestionsTable = `
-CREATE TABLE IF NOT EXISTS questions (
-    id                  TEXT PRIMARY KEY,
-    text                TEXT NOT NULL DEFAULT '',
-    created_date        TEXT NOT NULL,
-    state               TEXT NOT NULL DEFAULT '',
-    was_viewed          INTEGER NOT NULL DEFAULT 0,
-    is_warned           INTEGER NOT NULL DEFAULT 0,
-    answer_text         TEXT,
-    answer_editable     INTEGER,
-    answer_create_date  TEXT,
-    product_imt_id      INTEGER,
-    product_nm_id       INTEGER,
-    product_name        TEXT NOT NULL DEFAULT '',
-    supplier_article    TEXT NOT NULL DEFAULT '',
-    supplier_name       TEXT NOT NULL DEFAULT '',
-    brand_name          TEXT NOT NULL DEFAULT ''
-);`
-
-func (r *FeedbacksRepo) initSchema() error {
-	for _, ddl := range []string{createFeedbacksTable, createQuestionsTable} {
-		if _, err := r.db.Exec(ddl); err != nil {
-			return fmt.Errorf("create table: %w", err)
-		}
-	}
-
-	// Indexes on API fields (no computed columns)
-	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_feedbacks_created_date ON feedbacks(created_date)",
-		"CREATE INDEX IF NOT EXISTS idx_questions_created_date ON questions(created_date)",
-		"CREATE INDEX IF NOT EXISTS idx_feedbacks_nm_date ON feedbacks(product_nm_id, created_date)",
-		"CREATE INDEX IF NOT EXISTS idx_questions_nm_date ON questions(product_nm_id, created_date)",
-	}
-	for _, idx := range indexes {
-		if _, err := r.db.Exec(idx); err != nil {
-			return fmt.Errorf("create index: %w", err)
-		}
-	}
-
-	return nil
-}
+// Schema is created by pkg/storage/sqlite/repository.go initSchema()
+// when SalesRepository opens the same database.
 
 const insertFeedbackSQL = `
 INSERT OR REPLACE INTO feedbacks (

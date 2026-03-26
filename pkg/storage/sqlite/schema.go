@@ -52,6 +52,32 @@ CREATE TABLE IF NOT EXISTS sales (
     is_cancel INTEGER DEFAULT 0,
     cancel_dt TEXT,
 
+    -- Commission & acquiring (direct costs)
+    ppvz_sales_commission REAL,
+    acquiring_fee REAL,
+    acquiring_percent REAL,
+
+    -- Price breakdown
+    retail_price_withdisc_rub REAL,
+    ppvz_spp_prc REAL,
+    ppvz_kvw_prc_base REAL,
+    ppvz_kvw_prc REAL,
+    sup_rating_prc_up REAL,
+    is_kgvp_v2 REAL,
+
+    -- Discounts & percentages
+    product_discount_for_report REAL,
+    supplier_promo REAL,
+
+    -- Seller promotions & loyalty
+    seller_promo_discount REAL,
+    sale_price_promocode_discount_prc REAL,
+    wibes_wb_discount_percent REAL,
+    loyalty_discount REAL,
+    cashback_amount REAL,
+    cashback_discount REAL,
+    cashback_commission_change REAL,
+
     -- Metadata
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -108,6 +134,13 @@ CREATE TABLE IF NOT EXISTS service_records (
     gi_box_type_name TEXT,
     delivery_rub REAL,
 
+    -- Financial penalties and deductions
+    penalty REAL,
+    deduction REAL,
+    storage_fee REAL,
+    acceptance REAL,
+    gi_id INTEGER,
+
     -- Financial data
     ppvz_vw REAL,              -- Корректировка
     ppvz_vw_nds REAL,          -- НДС корректировки
@@ -122,8 +155,25 @@ CREATE TABLE IF NOT EXISTS service_records (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
--- Index for operation type queries (group by logistics/deductions/etc)
-CREATE INDEX IF NOT EXISTS idx_service_oper ON service_records(supplier_oper_name);
+-- Index for operation type queries (expression-based: maps ~50 names to 6 categories)
+-- Much smaller than indexing raw supplier_oper_name (523MB → ~15MB on 3.8M rows)
+CREATE INDEX IF NOT EXISTS idx_service_oper_type
+    ON service_records(
+        CASE
+            WHEN supplier_oper_name LIKE 'Возмещение издержек%' THEN 'logistics'
+            WHEN supplier_oper_name LIKE 'Возмещение за выдача%' THEN 'pvz'
+            WHEN supplier_oper_name = 'Логистика' THEN 'logistics_direct'
+            WHEN supplier_oper_name = 'Удержание' THEN 'deduction'
+            WHEN supplier_oper_name = 'Штраф' THEN 'penalty'
+            ELSE 'other'
+        END
+    );
+
+-- Partial indexes for sparse financial fields (only rows with actual values)
+CREATE INDEX IF NOT EXISTS idx_service_penalty
+    ON service_records(nm_id) WHERE penalty > 0;
+CREATE INDEX IF NOT EXISTS idx_service_deduction
+    ON service_records(nm_id) WHERE deduction > 0;
 
 -- Index for report date queries
 CREATE INDEX IF NOT EXISTS idx_service_rr_dt ON service_records(rr_dt);
@@ -619,6 +669,103 @@ CREATE INDEX IF NOT EXISTS idx_campaign_booster_campaign_date
     ON campaign_booster_stats(advert_id, stats_date);
 `
 
+	// FeedbacksSchemaSQL defines the feedbacks and questions tables.
+	// Stores raw data from WB Feedbacks API (feedbacks, questions).
+	// Source: GET /api/v1/feedbacks, GET /api/v1/questions
+	FeedbacksSchemaSQL = `
+-- ============================================================================
+-- FEEDBACKS API TABLES (WB Feedbacks API)
+-- ============================================================================
+
+-- Product feedbacks (42 fields from API response)
+CREATE TABLE IF NOT EXISTS feedbacks (
+    id                              TEXT PRIMARY KEY,
+    text                            TEXT NOT NULL DEFAULT '',
+    pros                            TEXT NOT NULL DEFAULT '',
+    cons                            TEXT NOT NULL DEFAULT '',
+    product_valuation               INTEGER,
+    created_date                    TEXT NOT NULL,
+    state                           TEXT NOT NULL DEFAULT '',
+    user_name                       TEXT NOT NULL DEFAULT '',
+    was_viewed                      INTEGER NOT NULL DEFAULT 0,
+    order_status                    TEXT NOT NULL DEFAULT '',
+    matching_size                   TEXT NOT NULL DEFAULT '',
+    is_able_supplier_feedback_valuation INTEGER NOT NULL DEFAULT 0,
+    supplier_feedback_valuation     INTEGER,
+    is_able_supplier_product_valuation INTEGER NOT NULL DEFAULT 0,
+    supplier_product_valuation      INTEGER,
+    is_able_return_product_orders   INTEGER NOT NULL DEFAULT 0,
+    return_product_orders_date      TEXT,
+    bables                          TEXT,
+    last_order_shk_id               INTEGER,
+    last_order_created_at           TEXT,
+    color                           TEXT NOT NULL DEFAULT '',
+    subject_id                      INTEGER,
+    subject_name                    TEXT NOT NULL DEFAULT '',
+    parent_feedback_id              TEXT,
+    child_feedback_id               TEXT,
+    answer_text                     TEXT,
+    answer_state                    TEXT,
+    answer_editable                 INTEGER,
+    photo_links                     TEXT,
+    video_preview_image             TEXT,
+    video_link                      TEXT,
+    video_duration_sec              INTEGER,
+    product_imt_id                  INTEGER,
+    product_nm_id                   INTEGER,
+    product_name                    TEXT NOT NULL DEFAULT '',
+    supplier_article                TEXT,
+    supplier_name                   TEXT,
+    brand_name                      TEXT,
+    size                            TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedbacks_created_date ON feedbacks(created_date);
+CREATE INDEX IF NOT EXISTS idx_feedbacks_nm_date ON feedbacks(product_nm_id, created_date);
+
+-- Customer questions (16 fields from API response)
+CREATE TABLE IF NOT EXISTS questions (
+    id                  TEXT PRIMARY KEY,
+    text                TEXT NOT NULL DEFAULT '',
+    created_date        TEXT NOT NULL,
+    state               TEXT NOT NULL DEFAULT '',
+    was_viewed          INTEGER NOT NULL DEFAULT 0,
+    is_warned           INTEGER NOT NULL DEFAULT 0,
+    answer_text         TEXT,
+    answer_editable     INTEGER,
+    answer_create_date  TEXT,
+    product_imt_id      INTEGER,
+    product_nm_id       INTEGER,
+    product_name        TEXT NOT NULL DEFAULT '',
+    supplier_article    TEXT NOT NULL DEFAULT '',
+    supplier_name       TEXT NOT NULL DEFAULT '',
+    brand_name          TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_questions_created_date ON questions(created_date);
+CREATE INDEX IF NOT EXISTS idx_questions_nm_date ON questions(product_nm_id, created_date);
+`
+
+	// QualitySchemaSQL defines the LLM analysis results table.
+	// Stores per-product quality summaries from analyze-wb-feedbacks.
+	// This data costs real money (LLM API calls) — preserve carefully.
+	QualitySchemaSQL = `
+CREATE TABLE IF NOT EXISTS product_quality_summary (
+    product_nm_id    INTEGER PRIMARY KEY,
+    supplier_article  TEXT,
+    product_name      TEXT,
+    avg_rating        REAL,
+    feedback_count    INTEGER,
+    quality_summary   TEXT,
+    request_from      TEXT,
+    request_to        TEXT,
+    analyzed_from     TEXT,
+    analyzed_to       TEXT,
+    analyzed_at       TEXT,
+    model_used        TEXT
+);
+`
+
 )
 
 // GetSchemaSQL returns the main table schema.
@@ -654,4 +801,14 @@ func GetFunnelAggregatedSchemaSQL() string {
 // GetCampaignFullstatsSchemaSQL returns the campaign fullstats tables schema.
 func GetCampaignFullstatsSchemaSQL() string {
 	return CampaignFullstatsSchemaSQL
+}
+
+// GetFeedbacksSchemaSQL returns the feedbacks and questions tables schema.
+func GetFeedbacksSchemaSQL() string {
+	return FeedbacksSchemaSQL
+}
+
+// GetQualitySchemaSQL returns the product quality summary table schema.
+func GetQualitySchemaSQL() string {
+	return QualitySchemaSQL
 }
