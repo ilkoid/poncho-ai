@@ -1,0 +1,36 @@
+# WB Feedbacks Quality Analyzer - Configuration
+#
+# ENVIRONMENT VARIABLES REQUIRED:
+#   OPENROUTER_API_KEY - Your OpenRouter API key (get from https://openrouter.ai)
+#
+# USAGE:
+#   OPENROUTER_API_KEY=sk-or-... go run . --days=30
+#   go run . --days=7 --subject=Платья
+#   go run . --days=30 --nm-ids-file=batch1.txt
+
+llm:
+  provider: "openrouter"
+  api_key: "${OPENROUTER_API_KEY}"
+  base_url: "https://openrouter.ai/api/v1"
+  chat_model: "z-ai/glm-4.7-flash"
+  temperature: 0.3
+  max_tokens: 9000
+  timeout: 120s
+  thinking: "disabled"        # "enabled", "disabled" или пусто (отключает reasoning)
+
+analysis:
+  batch_size: 10
+  min_feedbacks: 2
+  max_feedbacks: 300
+  max_products: 2             # 0 = no limit (for testing set to small number)
+  min_article_len: 8          # min supplier_article length (skip short marketplace SKUs like 123068)
+  # Include filters (product must match at least one):
+  # season: []                 # season digit (1st char of article), e.g. [3] = spring only
+  year: [25]                   # 2-digit year (chars 2-3), e.g. [24] = 2024 only
+
+source:
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/cmd/data-downloaders/download-wb-feedbacks/feedbacks.db"
+
+results:
+  db_path: "./quality_reports.db"
+  logs_dir: "./logs"            # JSON logs (empty = disabled)
