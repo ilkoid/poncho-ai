@@ -142,7 +142,11 @@ screenshots/
 /download-wb-promotion
 /download-wb-sales
 /download-wb-funnel
+/download-wb-funnel-agg
+/download-wb-feedbacks
 /funnel-db-inspector
+/analyze-wb-feedbacks
+/migrate-feedbacks-to-unified
 
 # Test utilities (temporary, organized by type)
 cmd/test-utils/test-wb-*/
@@ -153,6 +157,14 @@ cmd/data-downloaders/download-all-articles/ЗАГРУЗКИ/
 cmd/data-downloaders/download-all-articles/download-all-articles
 cmd/data-downloaders/download-all-articles/fix-fake-png
 cmd/data-downloaders/download-wb-feedbacks/download-wb-feedbacks
+
+# New downloader code (WIP)
+cmd/data-downloaders/download-wb-sales/*.go
+cmd/data-downloaders/download-wb-sales/*.sh
+cmd/data-downloaders/download-wb-sales/*.yaml
+cmd/data-downloaders/download-wb-sales/*.yaml.bak
+cmd/data-downloaders/download-wb-promotion/*.go
+cmd/data-downloaders/download-wb-promotion/*.yaml
 
 # Python virtual environment (with dot)
 .venv/
