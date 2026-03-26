@@ -1,0 +1,29 @@
+# WB Feedbacks Downloader Configuration
+# Downloads feedbacks and questions from WB Feedbacks API
+
+# WB API Settings
+wb:
+  # API Key (override with WB_API_FEEDBACK_KEY or WB_API_KEY env var)
+  api_key: ""
+  # Rate limit: requests per minute (3 req/sec * 60 = 180)
+  rate_limit: 180
+  # Burst capacity (API docs: burst 6)
+  burst: 6
+  # Request timeout
+  timeout: 30s
+
+# Download Settings
+feedbacks:
+  # Database path (SQLite)
+  db_path: "feedbacks.db"
+
+  # Date range (alternative to --days flag)
+  begin: ""  # YYYY-MM-DD
+  end: ""    # YYYY-MM-DD
+
+  # Days from today (alternative to begin/end)
+  days: 30
+
+  # What to download (set to false to skip)
+  feedbacks: true   # download feedbacks
+  questions: true   # download questions

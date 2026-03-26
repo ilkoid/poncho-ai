@@ -15,6 +15,7 @@ Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI
 - `pkg/app/components.go` - Context propagation (Rule 11)
 - `pkg/app/tool_setup.go` - **OCP: Config-driven tool setup** (2026-02-01)
 - `pkg/app/presets.go` - Preset system for quick launch
+- `pkg/config/utility.go` - Shared config types for cmd/ utilities (PromotionConfig, DownloadConfig, FeedbacksConfig, FunnelConfig, FunnelAggregatedConfig, WBClientConfig)
 - `pkg/agent/Client` - Simple 2-line agent API (Facade)
 - `pkg/events/` - Port & Adapter for UI decoupling
 - `pkg/prompts/` - **OCP: Prompt loading with source pattern** (2026-02-01)
@@ -561,6 +562,9 @@ go run main.go --days 7 --output ../e2e-snapshot.db
 # Download utilities (production)
 cd cmd/data-downloaders/download-wb-sales && go run main.go --days 7
 cd cmd/data-downloaders/download-wb-promotion && go run main.go --begin 2025-01-01 --end 2025-01-31
+cd cmd/data-downloaders/download-wb-feedbacks && go run . --days=7
+cd cmd/data-downloaders/download-wb-funnel && go run . --days=7
+cd cmd/data-downloaders/download-wb-funnel-agg && go run . --days=7
 ```
 
 ### cmd/ Directory
@@ -571,6 +575,9 @@ Production utilities organized by purpose:
 - `download-all-articles` - S3 mass download
 - `download-wb-sales` - WB Sales/Analytics → SQLite
 - `download-wb-promotion` - WB Promotion → SQLite
+- `download-wb-feedbacks` - WB Feedbacks/Questions → SQLite
+- `download-wb-funnel` - WB Analytics v3 funnel → SQLite
+- `download-wb-funnel-agg` - WB Analytics v3 aggregated funnel → SQLite
 
 **`fix-utilities/`** - Data fix/cleanup tools
 - `fix-fake-png` - Fix PNG/JSON file naming
@@ -593,10 +600,12 @@ Verification and demonstration utilities per Rule 9:
 - `wb-list-products` - Seller products listing
 - `wb-service-demo` - WbService layer demo
 
+**`db-inspectors/`** - SQLite database inspection tools
+- `funnel-db-inspector` - Funnel data queries
+- `sales-db-inspector` - Sales data queries
+
 **`feature-demos/`** - Framework features
 - `interruption-test` - Interruption mechanism with TUI
-
-- **`e2e-real-test/`** - Compare real API vs snapshot data
 
 ---
 
@@ -844,7 +853,7 @@ funnel, _ := svc.Sales().GetFunnel(ctx, nmIDs, dateFrom, dateTo)
 |-----|-------|-------|
 | Analytics | 21s | 3 req/min |
 | Adverts | 21s | 3 req/min |
-| Feedbacks | 1.1s | 1 req/sec |
+| Feedbacks | 333ms | 3 req/sec |
 | Content | 0.6s | 100 req/min |
 
 **Usage**:
@@ -859,6 +868,9 @@ go run main.go --days 7 --output ../e2e-snapshot.db
 |---------|---------|
 | `download-wb-sales` | Sales + funnel metrics by period |
 | `download-wb-promotion` | Campaigns + daily stats |
+| `download-wb-feedbacks` | Feedbacks + questions (39 fields, all from API) |
+| `download-wb-funnel` | Analytics v3 funnel (daily per product) |
+| `download-wb-funnel-agg` | Analytics v3 aggregated funnel |
 | `download-all-articles` | S3 article processing |
 
 **Example**:
@@ -899,8 +911,8 @@ go run main.go --begin 2025-01-01 --end 2025-01-31 --resume
 ### Feedbacks API (`feedbacks-api.wildberries.ru`)
 | Endpoint | Purpose | Rate Limit |
 |----------|---------|------------|
-| `/api/v1/feedbacks` | Product feedbacks | 60/min |
-| `/api/v1/questions` | Customer questions | 60/min |
+| `/api/v1/feedbacks` | Product feedbacks | 3 req/sec, burst 6 |
+| `/api/v1/questions` | Customer questions | 3 req/sec, burst 6 |
 
 **API Keys**:
 - `WB_API_KEY` - Content, Analytics, Advertising APIs
@@ -909,5 +921,5 @@ go run main.go --begin 2025-01-01 --end 2025-01-31 --resume
 
 ---
 
-**Last Updated**: 2026-02-23
-**Version**: 8.2 (E2E testing infrastructure + WB API endpoints reference)
+**Last Updated**: 2026-03-26
+**Version**: 9.0 (download-wb-feedbacks, download-wb-funnel, download-wb-funnel-agg, db-inspectors)

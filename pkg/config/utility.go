@@ -130,6 +130,34 @@ func (c *WBClientConfig) GetDefaults() WBClientConfig {
 	return result
 }
 
+// FeedbacksConfig — конфигурация для download-wb-feedbacks утилиты.
+//
+// Используется для загрузки отзывов и вопросов с WB Feedbacks API.
+type FeedbacksConfig struct {
+	DbPath    string `yaml:"db_path"`   // Путь к SQLite базе данных
+	Begin     string `yaml:"begin"`     // Начальная дата (YYYY-MM-DD)
+	End       string `yaml:"end"`       // Конечная дата (YYYY-MM-DD)
+	Days      int    `yaml:"days"`      // Дней от сегодня (альтернатива begin/end)
+	Feedbacks bool   `yaml:"feedbacks"` // Загружать отзывы (default: true)
+	Questions bool   `yaml:"questions"` // Загружать вопросы (default: true)
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c *FeedbacksConfig) GetDefaults() FeedbacksConfig {
+	result := *c
+	if result.DbPath == "" {
+		result.DbPath = "feedbacks.db"
+	}
+	if result.Days == 0 {
+		result.Days = 7
+	}
+	if !result.Feedbacks && !result.Questions {
+		result.Feedbacks = true
+		result.Questions = true
+	}
+	return result
+}
+
 // FunnelAggregatedConfig — конфигурация для aggregated funnel данных.
 //
 // Используется для загрузки агрегированной воронки продаж за период
