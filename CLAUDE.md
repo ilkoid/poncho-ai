@@ -32,6 +32,7 @@ Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI
 poncho-ai/
 ├── cmd/                    # Production utilities
 │   ├── data-downloaders/   # Data collection from APIs
+│   ├── data-analyzers/     # LLM-powered data analysis
 │   ├── fix-utilities/      # Data fix/cleanup tools
 │   └── test-utils/         # API debugging (not for production)
 ├── examples/              # Verification & demos (Rule 9)
@@ -565,6 +566,9 @@ cd cmd/data-downloaders/download-wb-promotion && go run main.go --begin 2025-01-
 cd cmd/data-downloaders/download-wb-feedbacks && go run . --days=7
 cd cmd/data-downloaders/download-wb-funnel && go run . --days=7
 cd cmd/data-downloaders/download-wb-funnel-agg && go run . --days=7
+
+# Analyze utilities (LLM-powered)
+cd cmd/data-analyzers/analyze-wb-feedbacks && OPENROUTER_API_KEY=sk-or-... go run . --days=30
 ```
 
 ### cmd/ Directory
@@ -578,6 +582,9 @@ Production utilities organized by purpose:
 - `download-wb-feedbacks` - WB Feedbacks/Questions → SQLite
 - `download-wb-funnel` - WB Analytics v3 funnel → SQLite
 - `download-wb-funnel-agg` - WB Analytics v3 aggregated funnel → SQLite
+
+**`data-analyzers/`** - LLM-powered data analysis
+- `analyze-wb-feedbacks` - Feedback quality analysis via OpenRouter (two-level LLM aggregation)
 
 **`fix-utilities/`** - Data fix/cleanup tools
 - `fix-fake-png` - Fix PNG/JSON file naming
@@ -618,6 +625,7 @@ Verification and demonstration utilities per Rule 9:
 | `WB_API_KEY` | Wildberries API (Content, Analytics, Advertising) |
 | `WB_API_FEEDBACK_KEY` | Wildberries Feedbacks API (separate key) |
 | `WB_STAT_API_KEY` | Wildberries Statistics API (optional) |
+| `OPENROUTER_API_KEY` | OpenRouter (LLM gateway for analyzers) |
 
 ---
 
@@ -888,6 +896,11 @@ go run main.go --begin 2025-01-01 --end 2025-01-31 --resume
 
 ## WB API Endpoints Reference
 
+### Statistics API (`statistics-api.wildberries.ru`)
+| Endpoint | Purpose | Rate Limit |
+|----------|---------|------------|
+| `/api/v5/supplier/reportDetailByPeriod` | Sales realization report (87 fields) | 100/min |
+
 ### Content API (`suppliers-api.wildberries.ru`)
 | Endpoint | Purpose | Rate Limit |
 |----------|---------|------------|
@@ -921,5 +934,5 @@ go run main.go --begin 2025-01-01 --end 2025-01-31 --resume
 
 ---
 
-**Last Updated**: 2026-03-26
-**Version**: 9.0 (download-wb-feedbacks, download-wb-funnel, download-wb-funnel-agg, db-inspectors)
+**Last Updated**: 2026-03-27
+**Version**: 10.0 (analyze-wb-feedbacks, campaign fullstats 4-level hierarchy, Statistics API)
