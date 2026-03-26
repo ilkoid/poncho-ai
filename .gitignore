@@ -126,6 +126,11 @@ tools/*/venv/
 # Database files (snapshots, test data)
 *.db
 !*.db.example
+*.db-shm
+*.db-wal
+
+# Generated CSV reports
+*_reports.csv
 
 # Screenshots and temporary images
 screenshots/
