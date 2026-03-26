@@ -39,16 +39,13 @@ func DownloadFeedbacks(
 ) (int, error) {
 	total := 0
 
-	for _, isAnswered := range []bool{false, true} {
-		label := "unanswered"
-		if isAnswered {
-			label = "answered"
-		}
-		fmt.Printf("  Loading %s feedbacks...\n", label)
+	for i, isAnswered := range []bool{false, true} {
+		pass := i + 1
+		fmt.Printf("  Loading feedbacks (pass %d, isAnswered=%t)...\n", pass, isAnswered)
 
 		count, err := downloadFeedbacksPass(ctx, client, repo, dateFrom, dateTo, isAnswered, rateLimit, burst)
 		if err != nil {
-			return total, fmt.Errorf("%s feedbacks: %w", label, err)
+			return total, fmt.Errorf("pass %d feedbacks: %w", pass, err)
 		}
 		total += count
 		fmt.Printf("    %d rows\n", count)
@@ -119,16 +116,13 @@ func DownloadQuestions(
 ) (int, error) {
 	total := 0
 
-	for _, isAnswered := range []bool{false, true} {
-		label := "unanswered"
-		if isAnswered {
-			label = "answered"
-		}
-		fmt.Printf("  Loading %s questions...\n", label)
+	for i, isAnswered := range []bool{false, true} {
+		pass := i + 1
+		fmt.Printf("  Loading questions (pass %d, isAnswered=%t)...\n", pass, isAnswered)
 
 		count, err := downloadQuestionsPeriod(ctx, client, repo, dateFrom, dateTo, isAnswered, rateLimit, burst, 0)
 		if err != nil {
-			return total, fmt.Errorf("%s questions: %w", label, err)
+			return total, fmt.Errorf("pass %d questions: %w", pass, err)
 		}
 		total += count
 		fmt.Printf("    %d rows\n", count)

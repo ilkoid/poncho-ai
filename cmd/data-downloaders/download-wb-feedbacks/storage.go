@@ -250,10 +250,24 @@ func (r *FeedbacksRepo) CountFeedbacks(ctx context.Context) (int, error) {
 	return count, err
 }
 
+// CountFeedbacksWithAnswer returns number of feedbacks that have a seller answer.
+func (r *FeedbacksRepo) CountFeedbacksWithAnswer(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT count(*) FROM feedbacks WHERE answer_text IS NOT NULL").Scan(&count)
+	return count, err
+}
+
 // CountQuestions returns total number of questions in the database.
 func (r *FeedbacksRepo) CountQuestions(ctx context.Context) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, "SELECT count(*) FROM questions").Scan(&count)
+	return count, err
+}
+
+// CountQuestionsWithAnswer returns number of questions that have a seller answer.
+func (r *FeedbacksRepo) CountQuestionsWithAnswer(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT count(*) FROM questions WHERE answer_text IS NOT NULL").Scan(&count)
 	return count, err
 }
 

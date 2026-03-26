@@ -164,13 +164,17 @@ func main() {
 	// Verify counts
 	fmt.Println("\nVerifying...")
 	fbCount, _ := repo.CountFeedbacks(ctx)
+	fbAnswered, _ := repo.CountFeedbacksWithAnswer(ctx)
 	qCount, _ := repo.CountQuestions(ctx)
+	qAnswered, _ := repo.CountQuestionsWithAnswer(ctx)
 
 	// Summary
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("Download complete!")
-	fmt.Printf("  Feedbacks: %d (DB total: %d)\n", summary.FeedbacksRows, fbCount)
-	fmt.Printf("  Questions: %d (DB total: %d)\n", summary.QuestionsRows, qCount)
+	fmt.Printf("  Feedbacks: %d total, %d with answer (%.1f%%)\n",
+		fbCount, fbAnswered, pct(fbAnswered, fbCount))
+	fmt.Printf("  Questions: %d total, %d with answer (%.1f%%)\n",
+		qCount, qAnswered, pct(qAnswered, qCount))
 	fmt.Printf("  Database:  %s\n", cfg.Feedbacks.DbPath)
 }
 
@@ -353,4 +357,11 @@ func generateMockQuestion(rng *rand.Rand, i int) QuestionFull {
 		q.AnswerText = &s
 	}
 	return q
+}
+
+func pct(part, total int) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(part) / float64(total) * 100
 }
