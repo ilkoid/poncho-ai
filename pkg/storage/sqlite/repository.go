@@ -78,7 +78,7 @@ func NewSQLiteSalesRepository(dbPath string) (*SQLiteSalesRepository, error) {
 		"PRAGMA cache_size = -65536",     // 64MB page cache (vs default 2MB)
 		"PRAGMA mmap_size = 268435456",   // 256MB memory-mapped I/O
 		"PRAGMA synchronous = NORMAL",    // Safe with WAL, faster than FULL
-		"PRAGMA busy_timeout = 5000",     // 5s wait on locked DB
+		"PRAGMA busy_timeout = 10000",    // 10s wait on locked DB
 		"PRAGMA wal_autocheckpoint = 5000", // Less frequent checkpoints
 		"PRAGMA temp_store = MEMORY",     // Temp tables in RAM
 	}
@@ -194,6 +194,21 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		"ALTER TABLE service_records ADD COLUMN gi_id INTEGER",
 	}
 	for _, m := range serviceMigrations {
+		_, _ = r.db.Exec(m)
+	}
+
+	// Migrations for campaign detail columns (from /api/advert/v2/adverts)
+	campaignMigrations := []string{
+		"ALTER TABLE campaigns ADD COLUMN name TEXT",
+		"ALTER TABLE campaigns ADD COLUMN payment_type TEXT",
+		"ALTER TABLE campaigns ADD COLUMN bid_type TEXT",
+		"ALTER TABLE campaigns ADD COLUMN placement_search INTEGER DEFAULT 0",
+		"ALTER TABLE campaigns ADD COLUMN placement_reco INTEGER DEFAULT 0",
+		"ALTER TABLE campaigns ADD COLUMN ts_created TEXT",
+		"ALTER TABLE campaigns ADD COLUMN ts_started TEXT",
+		"ALTER TABLE campaigns ADD COLUMN ts_deleted TEXT",
+	}
+	for _, m := range campaignMigrations {
 		_, _ = r.db.Exec(m)
 	}
 

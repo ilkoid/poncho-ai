@@ -314,6 +314,16 @@ CREATE TABLE IF NOT EXISTS campaigns (
     status INTEGER NOT NULL,          -- -1=deleted, 4=ready, 7=finished, 8=canceled, 9=active, 11=paused
     change_time TEXT,                 -- Last modification time
 
+    -- From /api/advert/v2/adverts (campaign details)
+    name TEXT,                        -- Campaign name
+    payment_type TEXT,                -- cpm | cpc
+    bid_type TEXT,                    -- manual | unified
+    placement_search INTEGER DEFAULT 0,  -- 0/1
+    placement_reco INTEGER DEFAULT 0,    -- 0/1
+    ts_created TEXT,                  -- Creation timestamp
+    ts_started TEXT,                  -- Start timestamp (null if not started)
+    ts_deleted TEXT,                  -- Deletion timestamp
+
     -- Aggregated stats from /adv/v3/fullstats (updated on each load)
     total_views INTEGER DEFAULT 0,
     total_clicks INTEGER DEFAULT 0,

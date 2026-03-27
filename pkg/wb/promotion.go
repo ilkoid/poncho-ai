@@ -70,6 +70,42 @@ func (c *Client) GetCampaignFullstats(ctx context.Context, advertIDs []int, begi
 	return response, nil
 }
 
+// GetAdvertDetails returns campaign details from /api/advert/v2/adverts.
+// Max 50 IDs per request. Rate limit: 100/min (same server as promotion/count).
+// NOTE: v2 may not return details for all campaign types (e.g. type=8 legacy, type=6 booster).
+func (c *Client) GetAdvertDetails(ctx context.Context, ids []int) ([]AdvertDetail, error) {
+	// Use demo mode if configured
+	if c.IsDemoKey() {
+		return c.getMockAdvertDetails(ids), nil
+	}
+
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// Build URL with query parameters
+	// GET /api/advert/v2/adverts?id=123,456
+	endpoint := "https://advert-api.wildberries.ru"
+
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = fmt.Sprintf("%d", id)
+	}
+
+	params := url.Values{}
+	params.Set("id", strings.Join(idStrs, ","))
+
+	path := "/api/advert/v2/adverts?" + params.Encode()
+
+	var response AdvertsResponse
+	err := c.Get(ctx, "get_advert_details", endpoint, 100, 5, path, nil, &response)
+	if err != nil {
+		return nil, fmt.Errorf("advert details: %w", err)
+	}
+
+	return response.Adverts, nil
+}
+
 // Mock implementations for demo mode
 
 func (c *Client) getMockPromotionCount() *PromotionCountResponse {
@@ -87,6 +123,33 @@ func (c *Client) getMockPromotionCount() *PromotionCountResponse {
 		},
 		All: 2,
 	}
+}
+
+func (c *Client) getMockAdvertDetails(ids []int) []AdvertDetail {
+	results := make([]AdvertDetail, 0, len(ids))
+	paymentTypes := []string{"cpm", "cpc"}
+	bidTypes := []string{"manual", "unified"}
+	for i, id := range ids {
+		results = append(results, AdvertDetail{
+			ID:      id,
+			BidType: bidTypes[i%2],
+			Status:  9,
+			Settings: AdvertSettings{
+				Name:        fmt.Sprintf("Mock Campaign %d", id),
+				PaymentType: paymentTypes[i%2],
+				Placements: AdvertPlacements{
+					Search:          i%2 == 0,
+					Recommendations: i%3 == 0,
+				},
+			},
+			Timestamps: AdvertTimestamps{
+				Created: "2025-01-01T00:00:00Z",
+				Updated: "2025-01-15T00:00:00Z",
+				Started: "2025-01-02T00:00:00Z",
+			},
+		})
+	}
+	return results
 }
 
 func (c *Client) getMockCampaignFullstats(advertIDs []int, beginDate, endDate string) []CampaignFullstatsResponse {

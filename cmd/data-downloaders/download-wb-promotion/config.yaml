@@ -28,7 +28,7 @@ promotion:
 
   # Filter by campaign status (comma-separated: 9,11 = active + paused)
   # -1 = deleted, 4 = ready, 7 = finished, 8 = canceled, 9 = active, 11 = paused
-  statuses: []
+  statuses: [4,7,9,11]
 
   # Resume mode: continue from last loaded date
   resume: false

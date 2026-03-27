@@ -227,6 +227,14 @@ type CampaignRecord struct {
 	CampaignType  int
 	Status        int
 	ChangeTime    time.Time
+	Name          string
+	PaymentType   string
+	BidType       string
+	PlacementSearch bool
+	PlacementReco   bool
+	TsCreated     string
+	TsStarted     string
+	TsDeleted     string
 	TotalViews    int
 	TotalClicks   int
 	TotalOrders   int

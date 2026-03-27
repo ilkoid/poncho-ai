@@ -26,6 +26,67 @@ type PromotionAdvert struct {
 	ChangeTime string `json:"changeTime"` // Время последнего изменения
 }
 
+// ============================================================================
+// Advert Details API v2 Types (GET /api/advert/v2/adverts)
+// ============================================================================
+
+// AdvertsResponse — ответ от GET /api/advert/v2/adverts.
+type AdvertsResponse struct {
+	Adverts []AdvertDetail `json:"adverts"`
+}
+
+// AdvertDetail — детальная информация о кампании.
+// NOTE: v2 may not return details for all campaign types (e.g. type=8 legacy, type=6 booster).
+type AdvertDetail struct {
+	ID         int               `json:"id"`
+	BidType    string            `json:"bid_type"`
+	Status     int               `json:"status"`
+	NmSettings []AdvertNmSetting `json:"nm_settings"`
+	Settings   AdvertSettings    `json:"settings"`
+	Timestamps AdvertTimestamps  `json:"timestamps"`
+}
+
+// AdvertSettings — настройки кампании.
+type AdvertSettings struct {
+	Name        string           `json:"name"`
+	PaymentType string           `json:"payment_type"`
+	Placements  AdvertPlacements `json:"placements"`
+}
+
+// AdvertPlacements — места размещения рекламы.
+type AdvertPlacements struct {
+	Search          bool `json:"search"`
+	Recommendations bool `json:"recommendations"`
+}
+
+// AdvertTimestamps — временные отметки кампании.
+// NOTE: "started" may be null (campaign not yet started) — Go string gets "".
+type AdvertTimestamps struct {
+	Created string `json:"created"`
+	Updated string `json:"updated"`
+	Started string `json:"started"`
+	Deleted string `json:"deleted"`
+}
+
+// AdvertNmSetting — настройки товара в кампании.
+type AdvertNmSetting struct {
+	NmID        int           `json:"nm_id"`
+	Subject     AdvertSubject `json:"subject"`
+	BidsKopecks AdvertBids    `json:"bids_kopecks"`
+}
+
+// AdvertSubject — предмет (категория) товара.
+type AdvertSubject struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// AdvertBids — ставки в копейках.
+type AdvertBids struct {
+	Search          int `json:"search"`
+	Recommendations int `json:"recommendations"`
+}
+
 // CampaignStatus — константы статусов кампаний.
 // Документация WB: https://openapi.wildberries.ru
 const (

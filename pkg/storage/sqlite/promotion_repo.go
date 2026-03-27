@@ -15,7 +15,7 @@ import (
 // ============================================================================
 
 // SaveCampaigns saves batch of campaign metadata.
-// Uses INSERT OR REPLACE for upsert (advert_id is PRIMARY KEY).
+// Uses INSERT ... ON CONFLICT DO UPDATE to preserve aggregate columns.
 func (r *SQLiteSalesRepository) SaveCampaigns(ctx context.Context, groups []wb.PromotionAdvertGroup) error {
 	if len(groups) == 0 {
 		return nil
@@ -28,9 +28,14 @@ func (r *SQLiteSalesRepository) SaveCampaigns(ctx context.Context, groups []wb.P
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT OR REPLACE INTO campaigns (
+		INSERT INTO campaigns (
 			advert_id, campaign_type, status, change_time, updated_at
 		) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(advert_id) DO UPDATE SET
+			campaign_type = excluded.campaign_type,
+			status = excluded.status,
+			change_time = excluded.change_time,
+			updated_at = excluded.updated_at
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare statement: %w", err)
@@ -435,6 +440,69 @@ func (r *SQLiteSalesRepository) SaveCampaignBoosterStats(ctx context.Context, ro
 		)
 		if err != nil {
 			return fmt.Errorf("insert booster stats advert=%d date=%s nm=%d: %w", row.AdvertID, row.StatsDate, row.NmID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
+}
+
+// SaveCampaignDetails updates campaign metadata from /api/advert/v2/adverts.
+// Uses UPDATE because campaigns already exist from SaveCampaigns().
+func (r *SQLiteSalesRepository) SaveCampaignDetails(ctx context.Context, details []wb.AdvertDetail) error {
+	if len(details) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		UPDATE campaigns SET
+			name = ?,
+			payment_type = ?,
+			bid_type = ?,
+			placement_search = ?,
+			placement_reco = ?,
+			ts_created = ?,
+			ts_started = ?,
+			ts_deleted = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE advert_id = ?
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, d := range details {
+		placementSearch := 0
+		if d.Settings.Placements.Search {
+			placementSearch = 1
+		}
+		placementReco := 0
+		if d.Settings.Placements.Recommendations {
+			placementReco = 1
+		}
+
+		_, err := stmt.ExecContext(ctx,
+			d.Settings.Name,
+			d.Settings.PaymentType,
+			d.BidType,
+			placementSearch,
+			placementReco,
+			d.Timestamps.Created,
+			d.Timestamps.Started,
+			d.Timestamps.Deleted,
+			d.ID,
+		)
+		if err != nil {
+			return fmt.Errorf("update campaign details advert_id=%d: %w", d.ID, err)
 		}
 	}
 
