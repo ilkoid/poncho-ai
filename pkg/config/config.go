@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 // AppConfig — корневая структура конфигурации.
@@ -290,28 +288,11 @@ func (c *DebugConfig) GetDefaults() DebugConfig {
 
 // Load читает YAML файл, подставляет ENV переменные и возвращает готовую структуру.
 func Load(path string) (*AppConfig, error) {
-	// 1. Проверяем существование файла
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("config file not found at: %s", path)
-	}
-
-	// 2. Читаем файл целиком
-	rawBytes, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	// 3. Подставляем переменные окружения.
-	// os.ExpandEnv заменяет ${VAR} или $VAR на значение из системы.
-	contentWithEnv := os.ExpandEnv(string(rawBytes))
-
-	// 4. Парсим YAML в структуру
 	var cfg AppConfig
-	if err := yaml.Unmarshal([]byte(contentWithEnv), &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse yaml: %w", err)
+	if err := LoadYAML(path, &cfg); err != nil {
+		return nil, err
 	}
 
-	// 5. Валидируем критические настройки
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}

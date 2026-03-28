@@ -22,7 +22,6 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
-	"gopkg.in/yaml.v3"
 )
 
 // Config represents the YAML configuration structure.
@@ -158,19 +157,10 @@ func main() {
 
 // loadConfig loads configuration from YAML file with ENV expansion.
 func loadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-
-	// Expand environment variables like ${VAR}
-	dataWithEnv := []byte(os.ExpandEnv(string(data)))
-
 	var cfg Config
-	if err := yaml.Unmarshal(dataWithEnv, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
+	if err := config.LoadYAML(path, &cfg); err != nil {
+		return nil, err
 	}
-
 	return &cfg, nil
 }
 

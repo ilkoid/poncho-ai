@@ -19,8 +19,6 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
-	"gopkg.in/yaml.v3"
-
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
@@ -247,16 +245,10 @@ func main() {
 }
 
 func loadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := config.LoadYAML(path, &cfg); err != nil {
 		return nil, err
 	}
-
 	return &cfg, nil
 }
 

@@ -1,53 +1,16 @@
-// Package main provides SQLite storage for WB feedbacks and questions.
-package main
+// Package sqlite provides feedbacks storage methods on SQLiteSalesRepository.
+//
+// Methods for saving and counting feedbacks/questions from WB Feedbacks API.
+// Schema is created by initSchema() in repository.go.
+package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
-
-// FeedbacksRepo manages SQLite storage for feedbacks and questions.
-// Concrete type (no interface) — only 1 implementation per dev_solid.md.
-type FeedbacksRepo struct {
-	db *sql.DB
-}
-
-// NewFeedbacksRepo creates repository with optimized SQLite settings.
-func NewFeedbacksRepo(dbPath string) (*FeedbacksRepo, error) {
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-
-	// PRAGMA settings for write-heavy workloads
-	pragmas := []struct {
-		key, val string
-	}{
-		{"journal_mode", "WAL"},      // Write-Ahead Logging: faster INSERT, parallel reads
-		{"synchronous", "NORMAL"},     // balance speed vs safety
-		{"cache_size", "-64000"},      // 64MB cache (default 2MB)
-		{"temp_store", "MEMORY"},      // temp tables in RAM
-	}
-	for _, p := range pragmas {
-		if _, err := db.Exec(fmt.Sprintf("PRAGMA %s = %s", p.key, p.val)); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("PRAGMA %s: %w", p.key, err)
-		}
-	}
-
-	repo := &FeedbacksRepo{db: db}
-
-	// Schema is created by pkg/storage/sqlite/repository.go initSchema()
-	// when SalesRepository opens the same database. We only set PRAGMAs here.
-	return repo, nil
-}
-
-// Schema is created by pkg/storage/sqlite/repository.go initSchema()
-// when SalesRepository opens the same database.
 
 const insertFeedbackSQL = `
 INSERT OR REPLACE INTO feedbacks (
@@ -65,7 +28,7 @@ INSERT OR REPLACE INTO feedbacks (
 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 // SaveFeedbacks saves batch of feedbacks. Returns count of inserted rows.
-func (r *FeedbacksRepo) SaveFeedbacks(ctx context.Context, items []FeedbackFull) (int, error) {
+func (r *SQLiteSalesRepository) SaveFeedbacks(ctx context.Context, items []wb.FeedbackFull) (int, error) {
 	if len(items) == 0 {
 		return 0, nil
 	}
@@ -85,14 +48,14 @@ func (r *FeedbacksRepo) SaveFeedbacks(ctx context.Context, items []FeedbackFull)
 	for _, f := range items {
 		_, err := stmt.ExecContext(ctx,
 			f.ID, f.Text, f.Pros, f.Cons, f.ProductValuation, f.CreatedDate, f.State, f.UserName,
-			boolToInt(f.WasViewed), f.OrderStatus, f.MatchingSize,
-			boolToInt(f.IsAbleSupplierFeedbackValuation), nullInt(f.SupplierFeedbackValuation),
-			boolToInt(f.IsAbleSupplierProductValuation), nullInt(f.SupplierProductValuation),
-			boolToInt(f.IsAbleReturnProductOrders), f.ReturnProductOrdersDate, stringsToJSON(f.Bables),
+			fbBoolToInt(f.WasViewed), f.OrderStatus, f.MatchingSize,
+			fbBoolToInt(f.IsAbleSupplierFeedbackValuation), fbNullInt(f.SupplierFeedbackValuation),
+			fbBoolToInt(f.IsAbleSupplierProductValuation), fbNullInt(f.SupplierProductValuation),
+			fbBoolToInt(f.IsAbleReturnProductOrders), f.ReturnProductOrdersDate, fbStringsToJSON(f.Bables),
 			f.LastOrderShkId, f.LastOrderCreatedAt, f.Color, f.SubjectId, f.SubjectName,
 			f.ParentFeedbackId, f.ChildFeedbackId,
-			f.AnswerText, f.AnswerState, boolPtrToInt(f.AnswerEditable),
-			f.PhotoLinksJSON, f.VideoPreviewImage, f.VideoLink, nullIntPtr(f.VideoDurationSec),
+			f.AnswerText, f.AnswerState, fbBoolPtrToInt(f.AnswerEditable),
+			f.PhotoLinksJSON, f.VideoPreviewImage, f.VideoLink, fbNullIntPtr(f.VideoDurationSec),
 			f.ProductImtId, f.ProductNmId, f.ProductName,
 			f.SupplierArticle, f.SupplierName, f.BrandName, f.Size,
 		)
@@ -122,7 +85,7 @@ INSERT OR REPLACE INTO questions (
 )`
 
 // SaveQuestions saves batch of questions. Returns count of inserted rows.
-func (r *FeedbacksRepo) SaveQuestions(ctx context.Context, items []QuestionFull) (int, error) {
+func (r *SQLiteSalesRepository) SaveQuestions(ctx context.Context, items []wb.QuestionFull) (int, error) {
 	if len(items) == 0 {
 		return 0, nil
 	}
@@ -142,8 +105,8 @@ func (r *FeedbacksRepo) SaveQuestions(ctx context.Context, items []QuestionFull)
 	for _, q := range items {
 		_, err := stmt.ExecContext(ctx,
 			q.ID, q.Text, q.CreatedDate, q.State,
-			boolToInt(q.WasViewed), boolToInt(q.IsWarned),
-			q.AnswerText, boolPtrToInt(q.AnswerEditable), q.AnswerCreateDate,
+			fbBoolToInt(q.WasViewed), fbBoolToInt(q.IsWarned),
+			q.AnswerText, fbBoolPtrToInt(q.AnswerEditable), q.AnswerCreateDate,
 			q.ProductImtId, q.ProductNmId, q.ProductName,
 			q.SupplierArticle, q.SupplierName, q.BrandName,
 		)
@@ -160,66 +123,61 @@ func (r *FeedbacksRepo) SaveQuestions(ctx context.Context, items []QuestionFull)
 }
 
 // CountFeedbacks returns total number of feedbacks in the database.
-func (r *FeedbacksRepo) CountFeedbacks(ctx context.Context) (int, error) {
+func (r *SQLiteSalesRepository) CountFeedbacks(ctx context.Context) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, "SELECT count(*) FROM feedbacks").Scan(&count)
 	return count, err
 }
 
 // CountFeedbacksWithAnswer returns number of feedbacks that have a seller answer.
-func (r *FeedbacksRepo) CountFeedbacksWithAnswer(ctx context.Context) (int, error) {
+func (r *SQLiteSalesRepository) CountFeedbacksWithAnswer(ctx context.Context) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, "SELECT count(*) FROM feedbacks WHERE answer_text IS NOT NULL").Scan(&count)
 	return count, err
 }
 
 // CountQuestions returns total number of questions in the database.
-func (r *FeedbacksRepo) CountQuestions(ctx context.Context) (int, error) {
+func (r *SQLiteSalesRepository) CountQuestions(ctx context.Context) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, "SELECT count(*) FROM questions").Scan(&count)
 	return count, err
 }
 
 // CountQuestionsWithAnswer returns number of questions that have a seller answer.
-func (r *FeedbacksRepo) CountQuestionsWithAnswer(ctx context.Context) (int, error) {
+func (r *SQLiteSalesRepository) CountQuestionsWithAnswer(ctx context.Context) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, "SELECT count(*) FROM questions WHERE answer_text IS NOT NULL").Scan(&count)
 	return count, err
-}
-
-// Close closes the database connection.
-func (r *FeedbacksRepo) Close() error {
-	return r.db.Close()
 }
 
 // ============================================================================
 // Helpers for Go → SQLite type conversion
 // ============================================================================
 
-func boolToInt(b bool) int {
+func fbBoolToInt(b bool) int {
 	if b {
 		return 1
 	}
 	return 0
 }
 
-func boolPtrToInt(b *bool) *int {
+func fbBoolPtrToInt(b *bool) *int {
 	if b == nil {
 		return nil
 	}
-	v := boolToInt(*b)
+	v := fbBoolToInt(*b)
 	return &v
 }
 
-func nullInt(v int) *int {
+func fbNullInt(v int) *int {
 	return &v
 }
 
-func nullIntPtr(v *int) *int {
+func fbNullIntPtr(v *int) *int {
 	return v
 }
 
-func stringsToJSON(v []string) *string {
+func fbStringsToJSON(v []string) *string {
 	if v == nil {
 		return nil
 	}

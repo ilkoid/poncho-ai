@@ -20,8 +20,6 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
-	"gopkg.in/yaml.v3"
-
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
@@ -99,15 +97,8 @@ func main() {
 		fmt.Println("Database deleted")
 	}
 
-	// Initialize schema (creates all tables including feedbacks/questions)
-	schemaRepo, err := sqlite.NewSQLiteSalesRepository(cfg.Feedbacks.DbPath)
-	if err != nil {
-		log.Fatalf("Failed to initialize schema: %v", err)
-	}
-	schemaRepo.Close()
-
-	// Create repository (tables already exist, only sets PRAGMAs)
-	repo, err := NewFeedbacksRepo(cfg.Feedbacks.DbPath)
+	// Create repository (schema init + optimized PRAGMAs in single open)
+	repo, err := sqlite.NewSQLiteSalesRepository(cfg.Feedbacks.DbPath)
 	if err != nil {
 		log.Fatalf("Failed to create repository: %v", err)
 	}
@@ -203,16 +194,10 @@ func main() {
 }
 
 func loadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := config.LoadYAML(path, &cfg); err != nil {
 		return nil, err
 	}
-
 	return &cfg, nil
 }
 
@@ -310,12 +295,12 @@ func printHeader(cfg *Config, beginDate, endDate string, mock bool) {
 // Mock data generation
 // ============================================================================
 
-func mockDownload(ctx context.Context, repo *FeedbacksRepo, kind string) int {
+func mockDownload(ctx context.Context, repo *sqlite.SQLiteSalesRepository, kind string) int {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	count := rng.Intn(50) + 10
 
 	if kind == "feedbacks" {
-		items := make([]FeedbackFull, count)
+		items := make([]wb.FeedbackFull, count)
 		for i := range items {
 			items[i] = generateMockFeedback(rng, i)
 		}
@@ -323,7 +308,7 @@ func mockDownload(ctx context.Context, repo *FeedbacksRepo, kind string) int {
 		return n
 	}
 
-	items := make([]QuestionFull, count)
+	items := make([]wb.QuestionFull, count)
 	for i := range items {
 		items[i] = generateMockQuestion(rng, i)
 	}
@@ -331,8 +316,8 @@ func mockDownload(ctx context.Context, repo *FeedbacksRepo, kind string) int {
 	return n
 }
 
-func generateMockFeedback(rng *rand.Rand, i int) FeedbackFull {
-	f := FeedbackFull{
+func generateMockFeedback(rng *rand.Rand, i int) wb.FeedbackFull {
+	f := wb.FeedbackFull{
 		ID:             fmt.Sprintf("mock-feedback-%d", i),
 		Text:           fmt.Sprintf("Mock feedback text %d", i),
 		Pros:           "Good quality",
@@ -361,8 +346,8 @@ func generateMockFeedback(rng *rand.Rand, i int) FeedbackFull {
 	return f
 }
 
-func generateMockQuestion(rng *rand.Rand, i int) QuestionFull {
-	q := QuestionFull{
+func generateMockQuestion(rng *rand.Rand, i int) wb.QuestionFull {
+	q := wb.QuestionFull{
 		ID:           fmt.Sprintf("mock-question-%d", i),
 		Text:         fmt.Sprintf("Mock question text %d?", i),
 		CreatedDate:  time.Now().Add(-time.Duration(rng.Intn(168)) * time.Hour).Format(time.RFC3339),

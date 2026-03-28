@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -33,7 +34,7 @@ type DownloadSummary struct {
 func DownloadFeedbacks(
 	ctx context.Context,
 	client *wb.Client,
-	repo *FeedbacksRepo,
+	repo *sqlite.SQLiteSalesRepository,
 	dateFrom, dateTo int64,
 	rateLimit, burst int,
 ) (int, error) {
@@ -57,7 +58,7 @@ func DownloadFeedbacks(
 func downloadFeedbacksPass(
 	ctx context.Context,
 	client *wb.Client,
-	repo *FeedbacksRepo,
+	repo *sqlite.SQLiteSalesRepository,
 	dateFrom, dateTo int64,
 	isAnswered bool,
 	rateLimit, burst int,
@@ -110,7 +111,7 @@ func downloadFeedbacksPass(
 func DownloadQuestions(
 	ctx context.Context,
 	client *wb.Client,
-	repo *FeedbacksRepo,
+	repo *sqlite.SQLiteSalesRepository,
 	dateFrom, dateTo int64,
 	rateLimit, burst int,
 ) (int, error) {
@@ -139,7 +140,7 @@ const maxSplitDepth = 10
 func downloadQuestionsPeriod(
 	ctx context.Context,
 	client *wb.Client,
-	repo *FeedbacksRepo,
+	repo *sqlite.SQLiteSalesRepository,
 	dateFrom, dateTo int64,
 	isAnswered bool,
 	rateLimit, burst int,

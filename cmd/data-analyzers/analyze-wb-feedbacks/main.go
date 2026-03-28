@@ -27,7 +27,6 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/models"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
-	"gopkg.in/yaml.v3"
 )
 
 // Config represents the YAML configuration.
@@ -383,14 +382,8 @@ type ProcessStats struct {
 // ============================================================================
 
 func loadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	// Expand ${VAR} environment variables before parsing YAML
-	expanded := os.ExpandEnv(string(data))
 	var cfg Config
-	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
+	if err := config.LoadYAML(path, &cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
