@@ -101,16 +101,17 @@ func main() {
 	fmt.Printf("🔑 API Key: %s (Analytics)\n", maskAPIKey(apiKey))
 
 	// Create WB client
-	wbCfg := config.WBConfig{
-		APIKey:     apiKey,
-		RateLimit:  defaults.RateLimit,
-		BurstLimit: defaults.BurstLimit,
-	}
-	wbCfg = wbCfg.GetDefaults()
-	wbClient, err := wb.NewFromConfig(wbCfg)
-	if err != nil {
-		log.Fatalf("❌ Failed to create WB client: %v", err)
-	}
+	wbClient := wb.New(apiKey)
+	// Setup adaptive rate limiting
+	rl := defaults.RateLimits
+	wbClient.SetRateLimit("get_wb_funnel_aggregated",
+		rl.FunnelAggregated, rl.FunnelAggregatedBurst,
+		rl.FunnelAggregatedApi, rl.FunnelAggregatedApiBurst)
+	wbClient.SetAdaptiveParams(
+		0, // adaptive_recover_after: deprecated
+		defaults.AdaptiveProbeAfter,
+		defaults.MaxBackoffSeconds,
+	)
 
 	// Load data
 	loaderCfg := AggregatedLoaderConfig{

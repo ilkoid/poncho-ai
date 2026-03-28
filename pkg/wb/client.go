@@ -339,7 +339,6 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 
 	// Retry loop
 	for i := 0; i < c.retryAttempts; i++ {
-		// 1. Ждем разрешения от лимитера (блокирует горутину, если превысили лимит)
 		if err := limiter.Wait(ctx); err != nil {
 			return fmt.Errorf("rate limiter wait: %w", err)
 		}
@@ -364,15 +363,15 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 
 		// Обработка 429 (Too Many Requests) — adaptive rate limiting
 		if resp.StatusCode == http.StatusTooManyRequests {
-			retryAfterSec := 1
+			serverRetrySec := 1
 			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
-					retryAfterSec = sec
+					serverRetrySec = sec
 				}
 			}
-			waitDur := c.adaptiveReduce(toolID, retryAfterSec)
-			fmt.Fprintf(os.Stderr, "⚠️  429 Rate limited (%s) for %s, waiting %v (attempt %d/%d)...\n",
-				resp.Header.Get("X-Ratelimit-Retry"), toolID, waitDur.Truncate(time.Second), i+1, c.retryAttempts)
+			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
+			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)...\n",
+				toolID, waitDur.Truncate(time.Second), serverRetrySec, i+1, c.retryAttempts)
 
 			select {
 			case <-ctx.Done():
@@ -494,15 +493,16 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		if resp.StatusCode == http.StatusTooManyRequests {
 			io.Copy(io.Discard, resp.Body) // drain body
 			resp.Body.Close()
-			retryAfterSec := 1
+			serverRetrySec := 1
 			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
-					retryAfterSec = sec
+					serverRetrySec = sec
 				}
 			}
-			waitDur := c.adaptiveReduce(toolID, retryAfterSec)
-			fmt.Fprintf(os.Stderr, "⚠️  429 Rate limited (%s) for %s, waiting %v (attempt %d/%d)...\n",
-				resp.Header.Get("X-Ratelimit-Retry"), toolID, waitDur.Truncate(time.Second), i+1, c.retryAttempts)
+			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
+			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)...\n",
+				toolID, waitDur.Truncate(time.Second), serverRetrySec, i+1, c.retryAttempts)
+
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -615,10 +615,10 @@ func (c *Client) RateLimiters() map[string]rate.Limit {
 }
 
 // adaptiveReduce immediately drops the rate limiter to api floor after a 429 response.
-// Instead of computing rate from X-Ratelimit-Retry (which may be higher than swagger),
-// we drop to the known-safe api floor to avoid irritating the server.
-// Returns the wait duration (X-Ratelimit-Retry, capped at maxBackoffSeconds).
-func (c *Client) adaptiveReduce(toolID string, retryAfterSec int) time.Duration {
+// Calculates cooldown from api floor rate (60/apiRate) instead of X-Ratelimit-Retry,
+// ensuring the rate limiter's token bucket has exactly one token available for retry.
+// Falls back to server header if no adaptive state configured.
+func (c *Client) adaptiveReduce(toolID string, serverRetrySec int) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -632,12 +632,6 @@ func (c *Client) adaptiveReduce(toolID string, retryAfterSec int) time.Duration 
 	state.reduced = true
 	state.probed = false
 
-	// Cap wait time at maxBackoffSeconds
-	waitSec := retryAfterSec
-	if waitSec > c.maxBackoffSeconds {
-		waitSec = c.maxBackoffSeconds
-	}
-
 	// Immediately drop to api floor (swagger-documented safe rate)
 	if limiter, ok := c.limiters[toolID]; ok {
 		if state.apiFloor > 0 && rate.Limit(state.apiFloor) < limiter.Limit() {
@@ -648,7 +642,24 @@ func (c *Client) adaptiveReduce(toolID string, retryAfterSec int) time.Duration 
 		}
 	}
 
-	return time.Duration(waitSec) * time.Second
+	// Calculate cooldown: one full interval at api floor rate.
+	// 3 req/min → 20s. 300 req/min → 200ms.
+	// After this duration the token bucket has exactly 1 token for retry,
+	// so limiter.Wait() returns immediately and the retry consumes it.
+	var waitDur time.Duration
+	if state.apiFloor > 0 {
+		waitDur = time.Duration(float64(time.Second) / float64(state.apiFloor))
+	} else {
+		// No adaptive state — fall back to server header
+		waitDur = time.Duration(serverRetrySec) * time.Second
+	}
+
+	// Cap at maxBackoffSeconds
+	if c.maxBackoffSeconds > 0 && waitDur > time.Duration(c.maxBackoffSeconds)*time.Second {
+		waitDur = time.Duration(c.maxBackoffSeconds) * time.Second
+	}
+
+	return waitDur
 }
 
 // adaptiveRecoverOK tracks consecutive successes and manages recovery after 429.

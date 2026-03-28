@@ -262,12 +262,38 @@ func (c *WBClientConfig) GetDefaults() WBClientConfig {
 //
 // Используется для загрузки отзывов и вопросов с WB Feedbacks API.
 type FeedbacksConfig struct {
-	DbPath    string `yaml:"db_path"`   // Путь к SQLite базе данных
-	Begin     string `yaml:"begin"`     // Начальная дата (YYYY-MM-DD)
-	End       string `yaml:"end"`       // Конечная дата (YYYY-MM-DD)
-	Days      int    `yaml:"days"`      // Дней от сегодня (альтернатива begin/end)
-	Feedbacks bool   `yaml:"feedbacks"` // Загружать отзывы (default: true)
-	Questions bool   `yaml:"questions"` // Загружать вопросы (default: true)
+	DbPath     string             `yaml:"db_path"`     // Путь к SQLite базе данных
+	Begin      string             `yaml:"begin"`       // Начальная дата (YYYY-MM-DD)
+	End        string             `yaml:"end"`         // Конечная дата (YYYY-MM-DD)
+	Days       int                `yaml:"days"`        // Дней от сегодня (альтернатива begin/end)
+	Feedbacks  bool               `yaml:"feedbacks"`   // Загружать отзывы (default: true)
+	Questions  bool               `yaml:"questions"`   // Загружать вопросы (default: true)
+	RateLimits FeedbacksRateLimits `yaml:"rate_limits"` // Rate limits per endpoint (req/min)
+	AdaptiveProbeAfter int        `yaml:"adaptive_probe_after"`   // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds  int        `yaml:"max_backoff_seconds"`    // Cap for cooldown (default: 60)
+}
+
+// FeedbacksRateLimits — rate limits для feedbacks API endpoints.
+//
+// Feedbacks API: 3 req/sec (180 req/min), burst 6.
+//
+// Два уровня rate для каждого endpoint:
+//   - desired:      желаемый rate (можно превышать swagger — adaptive limiter обработает 429)
+//   - desired_burst: burst для desired rate
+//   - api:           swagger-documented rate (recovery floor после 429)
+//   - api_burst:     burst для api rate
+//
+// Если desired не указан — используется api (без превышения swagger).
+type FeedbacksRateLimits struct {
+	DownloadFeedbacks      int `yaml:"download_feedbacks"`       // desired rate (default: 180)
+	DownloadFeedbacksBurst int `yaml:"download_feedbacks_burst"` // desired burst (default: 6)
+	DownloadFeedbacksApi    int `yaml:"download_feedbacks_api"`  // swagger rate (default: 180)
+	DownloadFeedbacksApiBurst int `yaml:"download_feedbacks_api_burst"` // swagger burst (default: 6)
+
+	DownloadQuestions      int `yaml:"download_questions"`       // desired rate (default: 180)
+	DownloadQuestionsBurst int `yaml:"download_questions_burst"` // desired burst (default: 6)
+	DownloadQuestionsApi    int `yaml:"download_questions_api"`  // swagger rate (default: 180)
+	DownloadQuestionsApiBurst int `yaml:"download_questions_api_burst"` // swagger burst (default: 6)
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.
@@ -283,6 +309,42 @@ func (c *FeedbacksConfig) GetDefaults() FeedbacksConfig {
 		result.Feedbacks = true
 		result.Questions = true
 	}
+
+	// Rate limits defaults
+	if result.RateLimits.DownloadFeedbacksApi == 0 {
+		result.RateLimits.DownloadFeedbacksApi = 180 // 3 req/sec
+	}
+	if result.RateLimits.DownloadFeedbacks == 0 {
+		result.RateLimits.DownloadFeedbacks = result.RateLimits.DownloadFeedbacksApi
+	}
+	if result.RateLimits.DownloadFeedbacksApiBurst == 0 {
+		result.RateLimits.DownloadFeedbacksApiBurst = 6
+	}
+	if result.RateLimits.DownloadFeedbacksBurst == 0 {
+		result.RateLimits.DownloadFeedbacksBurst = result.RateLimits.DownloadFeedbacksApiBurst
+	}
+
+	if result.RateLimits.DownloadQuestionsApi == 0 {
+		result.RateLimits.DownloadQuestionsApi = 180 // 3 req/sec
+	}
+	if result.RateLimits.DownloadQuestions == 0 {
+		result.RateLimits.DownloadQuestions = result.RateLimits.DownloadQuestionsApi
+	}
+	if result.RateLimits.DownloadQuestionsApiBurst == 0 {
+		result.RateLimits.DownloadQuestionsApiBurst = 6
+	}
+	if result.RateLimits.DownloadQuestionsBurst == 0 {
+		result.RateLimits.DownloadQuestionsBurst = result.RateLimits.DownloadQuestionsApiBurst
+	}
+
+	// Adaptive defaults
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+
 	return result
 }
 
@@ -311,28 +373,80 @@ type FunnelAggregatedConfig struct {
 	// Пагинация
 	PageSize int `yaml:"page_size"` // Товаров за запрос (0 = auto, max 1000)
 
-	// Rate limiting
-	RateLimit  int `yaml:"rate_limit"`  // Запросов в минуту (default: 3)
-	BurstLimit int `yaml:"burst"`       // Burst (default: 3)
+	// Rate limiting (legacy fields for backwards compatibility)
+	RateLimit  int `yaml:"rate_limit"`  // Запросов в минуту (deprecated: use rate_limits instead)
+	BurstLimit int `yaml:"burst"`       // Burst (deprecated: use rate_limits instead)
+
+	// Adaptive rate limiting
+	RateLimits         FunnelAggregatedRateLimits `yaml:"rate_limits"` // Rate limits per endpoint (req/min)
+	AdaptiveProbeAfter int                        `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds  int                        `yaml:"max_backoff_seconds"`  // Cap for cooldown (default: 60)
 
 	// Хранилище
 	DBPath string `yaml:"db_path"` // Путь к SQLite базе
 }
 
+// FunnelAggregatedRateLimits — rate limits для aggregated funnel API endpoint.
+//
+// Analytics API v3: 3 req/min, burst 3 (very slow).
+//
+// Два уровня rate:
+//   - desired:      желаемый rate (можно превышать swagger — adaptive limiter обработает 429)
+//   - desired_burst: burst для desired rate
+//   - api:           swagger-documented rate (recovery floor после 429)
+//   - api_burst:     burst для api rate
+//
+// Если desired не указан — используется api (без превышения swagger).
+type FunnelAggregatedRateLimits struct {
+	FunnelAggregated      int `yaml:"funnel_aggregated"`       // desired rate (default: 3)
+	FunnelAggregatedBurst int `yaml:"funnel_aggregated_burst"` // desired burst (default: 3)
+	FunnelAggregatedApi    int `yaml:"funnel_aggregated_api"`  // swagger rate (default: 3)
+	FunnelAggregatedApiBurst int `yaml:"funnel_aggregated_api_burst"` // swagger burst (default: 3)
+}
+
 // GetDefaults возвращает дефолтные значения.
 func (c *FunnelAggregatedConfig) GetDefaults() FunnelAggregatedConfig {
 	result := *c
+
+	// Legacy rate_limits (for backwards compatibility)
 	if result.RateLimit == 0 {
 		result.RateLimit = 3 // WB Analytics API default
 	}
 	if result.BurstLimit == 0 {
 		result.BurstLimit = 3
 	}
+
+	// New adaptive rate limits
+	if result.RateLimits.FunnelAggregatedApi == 0 {
+		result.RateLimits.FunnelAggregatedApi = result.RateLimit // Use legacy value as default
+	}
+	if result.RateLimits.FunnelAggregated == 0 {
+		result.RateLimits.FunnelAggregated = result.RateLimits.FunnelAggregatedApi
+	}
+	if result.RateLimits.FunnelAggregatedApiBurst == 0 {
+		result.RateLimits.FunnelAggregatedApiBurst = result.BurstLimit
+	}
+	if result.RateLimits.FunnelAggregatedBurst == 0 {
+		result.RateLimits.FunnelAggregatedBurst = result.RateLimits.FunnelAggregatedApiBurst
+	}
+
+	// Adaptive defaults
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+
+	// Pagination defaults
 	if result.PageSize == 0 {
 		result.PageSize = 100 // Optimal balance
 	}
+
+	// Database defaults
 	if result.DBPath == "" {
 		result.DBPath = "sales.db"
 	}
+
 	return result
 }

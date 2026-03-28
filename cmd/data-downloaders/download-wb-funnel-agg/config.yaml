@@ -25,9 +25,25 @@ funnel_aggregated:
   # Пагинация
   page_size: 500  # Товаров за запрос (max 1000)
 
-  # Rate limiting
+  # Rate limiting (legacy fields - for backwards compatibility)
   rate_limit: 3  # Запросов в минуту (WB Analytics API limit)
   burst: 3
+
+  # Adaptive rate limiting (preferred - use rate_limits instead)
+  # Analytics API v3: 3 req/min, burst 3 (very slow!)
+  # desired: rate you want (can exceed api — adaptive limiter handles 429)
+  # api:      swagger-documented rate (recovery floor after 429)
+  rate_limits:
+    funnel_aggregated: 3
+    funnel_aggregated_burst: 3
+    funnel_aggregated_api: 3
+    funnel_aggregated_api_burst: 3
+
+  # Adaptive rate limiting tuning (see dev_limits.md)
+  # probe_after:   consecutive OKs at api floor before probing desired
+  # max_backoff:   cap for cooldown time (seconds)
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
 
   # Хранилище
   db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"

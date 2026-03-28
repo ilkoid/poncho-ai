@@ -5,10 +5,6 @@
 wb:
   # API Key (override with WB_API_FEEDBACK_KEY or WB_API_KEY env var)
   api_key: ""
-  # Rate limit: requests per minute (3 req/sec * 60 = 180)
-  rate_limit: 180
-  # Burst capacity (API docs: burst 6)
-  burst: 6
   # Request timeout
   timeout: 30s
 
@@ -27,3 +23,28 @@ feedbacks:
   # What to download (set to false to skip)
   feedbacks: true   # download feedbacks
   questions: true   # download questions
+
+  # Rate limits per endpoint (requests per minute)
+  # Feedbacks API: 3 req/sec (180 req/min), burst 6
+  # desired: rate you want (can exceed api — adaptive limiter handles 429)
+  # api:      swagger-documented rate (recovery floor after 429)
+  # burst:    max simultaneous requests
+  # If desired not set → defaults to api (safe, no exceeding swagger)
+  rate_limits:
+    # /api/v1/feedbacks (3 req/sec)
+    download_feedbacks: 180
+    download_feedbacks_burst: 6
+    download_feedbacks_api: 180
+    download_feedbacks_api_burst: 6
+
+    # /api/v1/questions (3 req/sec)
+    download_questions: 180
+    download_questions_burst: 6
+    download_questions_api: 180
+    download_questions_api_burst: 6
+
+  # Adaptive rate limiting tuning (see dev_limits.md)
+  # probe_after:   consecutive OKs at api floor before probing desired
+  # max_backoff:   cap for cooldown time (seconds)
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60

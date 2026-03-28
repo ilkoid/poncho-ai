@@ -84,9 +84,10 @@ func LoadAggregatedFunnel(ctx context.Context, cfg AggregatedLoaderConfig) (*Agg
 
 		// Make API call
 		var response wb.FunnelAggregatedResponse
+		rl := cfg.Config.RateLimits
 		err := cfg.Client.Post(ctx, "get_wb_funnel_aggregated",
 			"https://seller-analytics-api.wildberries.ru",
-			cfg.Config.RateLimit, cfg.Config.BurstLimit,
+			rl.FunnelAggregated, rl.FunnelAggregatedBurst,
 			"/api/analytics/v3/sales-funnel/products",
 			req, &response)
 

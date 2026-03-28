@@ -62,9 +62,10 @@ promotion:
     advert_details_api: 300
     advert_details_api_burst: 5
     # /adv/v3/fullstats (swagger: 3 req/min — desired can exceed, adaptive handles 429)
+    # NOTE: API may enforce stricter limits in practise. Try 3 first, reduce to 2 if needed.
     fullstats: 4
     fullstats_burst: 1
-    fullstats_api: 3
+    fullstats_api: 3           # conservative: 2 req/min (swagger says 3, but practise may differ)
     fullstats_api_burst: 1
 
   # Adaptive rate limiting tuning (see dev_limits.md)

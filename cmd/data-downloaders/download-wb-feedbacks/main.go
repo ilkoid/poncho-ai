@@ -123,14 +123,14 @@ func main() {
 		log.Fatalf("Invalid end date: %v", err)
 	}
 
-	// Rate limit from config
-	rateLimit := cfg.WB.RateLimit
-	burst := cfg.WB.BurstLimit
+	// Apply defaults
+	fc := cfg.Feedbacks.GetDefaults()
+	rl := fc.RateLimits
 
 	var summary DownloadSummary
 
 	// Download feedbacks
-	if cfg.Feedbacks.Feedbacks {
+	if fc.Feedbacks {
 		fmt.Println("\nDownloading feedbacks...")
 		if *mock {
 			summary.FeedbacksRows = mockDownload(ctx, repo, "feedbacks")
@@ -140,7 +140,15 @@ func main() {
 				log.Fatal("No API key. Set WB_API_FEEDBACK_KEY or WB_API_KEY")
 			}
 			client := wb.New(apiKey)
-			count, err := DownloadFeedbacks(ctx, client, repo, dateFrom, dateTo, rateLimit, burst)
+			// Setup adaptive rate limiting
+			client.SetRateLimit("download_feedbacks", rl.DownloadFeedbacks, rl.DownloadFeedbacksBurst,
+				rl.DownloadFeedbacksApi, rl.DownloadFeedbacksApiBurst)
+			client.SetAdaptiveParams(
+				0, // adaptive_recover_after: deprecated
+				fc.AdaptiveProbeAfter,
+				fc.MaxBackoffSeconds,
+			)
+			count, err := DownloadFeedbacks(ctx, client, repo, dateFrom, dateTo, rl.DownloadFeedbacks, rl.DownloadFeedbacksBurst)
 			if err != nil {
 				log.Fatalf("Failed to download feedbacks: %v", err)
 			}
@@ -150,7 +158,7 @@ func main() {
 	}
 
 	// Download questions
-	if cfg.Feedbacks.Questions {
+	if fc.Questions {
 		fmt.Println("\nDownloading questions...")
 		if *mock {
 			summary.QuestionsRows = mockDownload(ctx, repo, "questions")
@@ -160,7 +168,15 @@ func main() {
 				log.Fatal("No API key. Set WB_API_FEEDBACK_KEY or WB_API_KEY")
 			}
 			client := wb.New(apiKey)
-			count, err := DownloadQuestions(ctx, client, repo, dateFrom, dateTo, rateLimit, burst)
+			// Setup adaptive rate limiting
+			client.SetRateLimit("download_questions", rl.DownloadQuestions, rl.DownloadQuestionsBurst,
+				rl.DownloadQuestionsApi, rl.DownloadQuestionsApiBurst)
+			client.SetAdaptiveParams(
+				0, // adaptive_recover_after: deprecated
+				fc.AdaptiveProbeAfter,
+				fc.MaxBackoffSeconds,
+			)
+			count, err := DownloadQuestions(ctx, client, repo, dateFrom, dateTo, rl.DownloadQuestions, rl.DownloadQuestionsBurst)
 			if err != nil {
 				log.Fatalf("Failed to download questions: %v", err)
 			}
