@@ -154,6 +154,7 @@ type Client struct {
 	mu       sync.RWMutex
 	limiters map[string]*rate.Limiter     // tool ID → limiter
 	adaptive map[string]*rateLimitState   // tool ID → adaptive state (for 429 recovery)
+	lastRequestTime map[string]time.Time  // tool ID → last HTTP request time (for min interval check)
 }
 
 // rateLimitState tracks adaptive rate limiting after 429 responses.
@@ -210,6 +211,7 @@ func New(apiKey string) *Client {
 		},
 		limiters: make(map[string]*rate.Limiter),
 		adaptive: make(map[string]*rateLimitState),
+			lastRequestTime: make(map[string]time.Time),
 	}
 }
 
@@ -271,6 +273,7 @@ func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 		},
 		limiters: make(map[string]*rate.Limiter),
 		adaptive: make(map[string]*rateLimitState),
+			lastRequestTime: make(map[string]time.Time),
 	}, nil
 }
 
@@ -336,7 +339,6 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 	var lastErr error
 
 	// Track timing for rate limiting
-	var lastRequestTime time.Time
 	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit)) // 3/min → 20s
 
 	// Retry loop
@@ -348,6 +350,10 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 		waitDur := time.Since(waitStart)
 
 		// Additional delay: ensure minimum interval since last HTTP request
+		c.mu.RLock()
+		lastRequestTime := c.lastRequestTime[toolID]
+		c.mu.RUnlock()
+
 		if !lastRequestTime.IsZero() {
 			sinceLastReq := time.Since(lastRequestTime)
 			if sinceLastReq < minInterval {
@@ -372,9 +378,12 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 		httpReq.Header.Set("Accept", "application/json")
 
 		// Record time just before HTTP request
-		lastRequestTime = time.Now()
+		requestTime := time.Now()
+		c.mu.Lock()
+		c.lastRequestTime[toolID] = requestTime
+		c.mu.Unlock()
 		fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: HTTP request at %s\n",
-			toolID, lastRequestTime.Format("15:04:05.000"))
+			toolID, requestTime.Format("15:04:05.000"))
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
@@ -515,7 +524,6 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 	var lastErr error
 
 	// Track timing for rate limiting
-	var lastRequestTime time.Time
 	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit)) // 3/min → 20s
 
 	// Debug: show limiter state before first request
@@ -532,6 +540,10 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		// Additional delay: ensure minimum interval since last HTTP request
 		// This is needed because limiter.Wait() measures from last limiter.Wait() call,
 		// not from last actual HTTP request. After retries/429, this matters.
+		c.mu.RLock()
+		lastRequestTime := c.lastRequestTime[toolID]
+		c.mu.RUnlock()
+
 		if !lastRequestTime.IsZero() {
 			sinceLastReq := time.Since(lastRequestTime)
 			if sinceLastReq < minInterval {
@@ -560,9 +572,12 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		httpReq.Header.Set("Accept", "application/json")
 
 		// Record time just before HTTP request
-		lastRequestTime = time.Now()
+		requestTime := time.Now()
+		c.mu.Lock()
+		c.lastRequestTime[toolID] = requestTime
+		c.mu.Unlock()
 		fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: HTTP request at %s\n",
-			toolID, lastRequestTime.Format("15:04:05.000"))
+			toolID, requestTime.Format("15:04:05.000"))
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
