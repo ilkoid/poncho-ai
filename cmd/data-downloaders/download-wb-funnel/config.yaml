@@ -13,9 +13,9 @@ funnel:
   funnel_rate_limit_api: 3     # api floor — восстановление после 429 (swagger: 3)
   funnel_rate_limit_api_burst: 3
   # Adaptive tuning
-  adaptive_recover_after: 5    # OKs для восстановления до api floor после 429
+  # adaptive_recover_after: 5   # DEPRECATED — limiter drops to api floor immediately on 429
   adaptive_probe_after: 10     # OKs на api floor перед пробой desired
-  max_backoff_seconds: 60      # Cap для exponential backoff
+  max_backoff_seconds: 60      # Cap для wait time после 429
 #  from: "2026-03-12"         # Опционально: YYYY-MM-DD (приоритет над days)
 #  to: "2026-03-12"           # Опционально: YYYY-MM-DD (приоритет над days)
   max_batches: 0   # 0 = загрузить все батчи (полезно для тестов)

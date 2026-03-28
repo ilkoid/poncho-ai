@@ -35,11 +35,11 @@ promotion:
 
   # Skip downloading campaign details (name, payment_type, placements)
   # Saves ~35s for 8800+ campaigns. Use when you only need stats numbers.
-  skip_details: false
+  skip_details: true
 
   # Skip loading campaign list from /adv/v1/promotion/count (reuse IDs from DB)
   # Use when campaigns are already in DB and you only need to update details or stats.
-  skip_campaigns: false
+  skip_campaigns: true
 
   # Skip downloading stats from /adv/v3/fullstats
   # Use when you only need to update campaign details.
@@ -62,15 +62,15 @@ promotion:
     advert_details_api: 300
     advert_details_api_burst: 5
     # /adv/v3/fullstats (swagger: 3 req/min — desired can exceed, adaptive handles 429)
-    fullstats: 3
+    fullstats: 4
     fullstats_burst: 1
     fullstats_api: 3
     fullstats_api_burst: 1
 
   # Adaptive rate limiting tuning (see dev_limits.md)
-  # recover_after: consecutive OKs to restore to api floor after 429
+  # recover_after: DEPRECATED — limiter drops to api floor immediately on 429
   # probe_after:   consecutive OKs at api floor before probing desired again
-  # max_backoff:   cap for exponential backoff (seconds)
-  adaptive_recover_after: 5
-  adaptive_probe_after: 10
-  max_backoff_seconds: 60
+  # max_backoff:   cap for wait time after 429 (seconds)
+  # adaptive_recover_after: 10  # DEPRECATED — no longer used
+  adaptive_probe_after: 15
+  max_backoff_seconds: 30

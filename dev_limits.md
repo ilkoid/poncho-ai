@@ -5,24 +5,23 @@
 We use a two-level rate limiting strategy that allows exceeding documented API limits
 while safely handling 429 (Too Many Requests) responses.
 
-**Core idea**: start aggressive (`desired`), auto-reduce on 429, recover to safe floor (`api`),
-then periodically probe `desired` again to detect if the API limit has increased.
+**Core idea**: start aggressive (`desired`), on 429 immediately drop to safe floor (`api`),
+wait the server-specified backoff, then after N stable OKs probe `desired` again.
 
 ```
-desired: 10 req/min    ← start here (can exceed swagger)
-api:      3 req/min     ← recovery floor after 429 (swagger-documented)
+desired: 4 req/min     ← start here (can exceed swagger)
+api:      3 req/min    ← immediate drop on 429 (swagger-documented)
 
      ┌──────────────────────────────────────────────────┐
-     │  desired (10) ←─── probe after 10 OKs at api ──┐ │
+     │  desired (4) ←─── probe after N OKs at api ────┐ │
      │    │                                             │ │
      │    ├── 200 OK ──┐                                │ │
-     │    │             ├── 200 OK (×5) ──→ api floor (3)│ │
      │    │             │                                │ │
      │    ├── 429 ─────┤                                │ │
-     │    │    reduce to 60/X-Ratelimit-Retry          │ │
-     │    │    exponential backoff on repeats           │ │
+     │    │    IMMEDIATE drop to api floor (3)          │ │
+     │    │    wait X-Ratelimit-Retry seconds           │ │
+     │    │    after N OKs at api floor → probe (4)     │ │
      │    │                                             │ │
-     │  api floor (3) ←─── recover after 5 OKs         │ │
      └──────────────────────────────────────────────────┘
 ```
 
@@ -30,8 +29,19 @@ api:      3 req/min     ← recovery floor after 429 (swagger-documented)
 
 - Swagger limits are often conservative. Real API throughput can be higher.
 - Short bursts at higher rates complete faster when the API allows it.
-- 429 responses are cheap (no data lost) — we just retry with backoff.
-- The adaptive mechanism ensures we never overwhelm the API persistently.
+- 429 responses are cheap (no data lost) — we just drop to safe floor and retry.
+- The adaptive mechanism ensures we never irritate the server persistently.
+
+### Why immediate drop to api floor (not computed from X-Ratelimit-Retry)?
+
+The header `X-Ratelimit-Retry` tells how long to wait, NOT the sustainable rate.
+Computing `60/retryAfter` as a rate is **wrong** — it may be higher than the swagger limit.
+
+Example: retry=6 → 60/6 = 10 req/min. But swagger says 3 req/min.
+If we reduce to 10 req/min, we'll immediately get another 429 — irritating the server.
+
+**Correct approach**: drop to the known-safe api floor immediately. Respect the server's
+backoff wait time, but use our own known-safe rate for subsequent requests.
 
 ---
 
@@ -41,10 +51,10 @@ api:      3 req/min     ← recovery floor after 429 (swagger-documented)
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `rateLimitState` | `pkg/wb/client.go` | Tracks desired/api/recovery state per toolID |
+| `rateLimitState` | `pkg/wb/client.go` | Tracks desired/api/probe state per toolID |
 | `SetRateLimit()` | `pkg/wb/client.go` | Pre-sets limiter with both desired and api rates |
-| `adaptiveReduce()` | `pkg/wb/client.go` | Handles 429: reduces limiter, returns backoff duration |
-| `adaptiveRecoverOK()` | `pkg/wb/client.go` | Tracks successes, restores to api floor |
+| `adaptiveReduce()` | `pkg/wb/client.go` | On 429: drops limiter to api floor, returns wait duration |
+| `adaptiveRecoverOK()` | `pkg/wb/client.go` | After N OKs at api floor: probes desired rate |
 | `doRequest()` | `pkg/wb/client.go` | HTTP retry loop with adaptive logic (for most endpoints) |
 | `GetStream()` | `pkg/wb/client.go` | Streaming variant (for large responses, e.g. fullstats) |
 | `PromotionRateLimits` | `pkg/config/utility.go` | Config struct with desired/api/burst per endpoint |
@@ -55,32 +65,33 @@ api:      3 req/min     ← recovery floor after 429 (swagger-documented)
 ```
 config.yaml                          pkg/wb/client.go                     HTTP
 ───────────                          ───────────────                     ────
-fullstats: 10  (desired)
-fullstats_api: 3  (swagger floor)
+fullstats: 4   (desired)
+fullstats_api: 3 (swagger floor)
         │
         ▼
 applyRateLimits()
-  → SetRateLimit("get_campaign_fullstats", 10, 1, 3, 1)
-      → limiters["get_campaign_fullstats"] = 10/60 req/s (desired)
+  → SetRateLimit("get_campaign_fullstats", 4, 1, 3, 1)
+      → limiters["get_campaign_fullstats"] = 4/60 req/s (desired)
       → adaptive["get_campaign_fullstats"] = {
-            desiredLimit: 10/60,
-            apiFloor:     3/60,     ← recovery target
+            desiredLimit: 4/60,
+            desiredBurst: 1,
+            apiFloor:     3/60,     ← immediate drop target on 429
           }
         │
         ▼
-GetCampaignFullstats(..., 10, 1)
-  → GetStream(..., 10, 1)
-      → getOrCreateLimiter() → returns pre-set limiter (10/60)
+GetCampaignFullstats(..., 4, 1)
+  → GetStream(..., 4, 1)
+      → getOrCreateLimiter() → returns pre-set limiter (4/60)
       → limiter.Wait(ctx)     ← throttling here
       → HTTP request
           │
           ├── 200 → adaptiveRecoverOK()
           │            → consecutiveOK++
-          │            → if 5 OKs → restore limiter to apiFloor (3/60)
+          │            → if N OKs at api floor → probe desired (4/60)
           │
           └── 429 → adaptiveReduce(retryAfterSec)
-                       → limiter reduced to 60/retryAfterSec
-                       → exponential backoff: retryAfter × 2^(n-1), cap 60s
+                       → limiter dropped to apiFloor (3/60)
+                       → wait retryAfterSec seconds
                        → retry
 ```
 
@@ -94,7 +105,7 @@ GetCampaignFullstats(..., 10, 1)
 rate_limits:
   # endpoint_name:     desired rate (req/min) — can exceed api
   # endpoint_name_burst:  desired burst
-  # endpoint_name_api:   swagger-documented rate (req/min) — recovery floor
+  # endpoint_name_api:   swagger-documented rate (req/min) — immediate drop target on 429
   # endpoint_name_api_burst: swagger-documented burst
 ```
 
@@ -121,11 +132,15 @@ rate_limits:
   advert_details_api: 300
   advert_details_api_burst: 5
 
-  # /adv/v3/fullstats (swagger: 3 req/min) — aggressive exceeding
-  fullstats: 10              # try 10 req/min (3.3× swagger)
+  # /adv/v3/fullstats (swagger: 3 req/min) — moderate exceeding
+  fullstats: 4               # try 4 req/min (> swagger 3)
   fullstats_burst: 1
-  fullstats_api: 3           # recover to 3 req/min after 429
+  fullstats_api: 3           # immediate drop to 3 req/min on 429
   fullstats_api_burst: 1
+
+  # Adaptive tuning
+  adaptive_probe_after: 15   # OKs at api floor before probing desired
+  max_backoff_seconds: 90    # cap for wait time
 ```
 
 ---
@@ -204,7 +219,7 @@ by `SetRateLimit` — the params here are fallback if `SetRateLimit` wasn't call
 rate_limits:
   new_endpoint: 50          # desired (try 50 req/min)
   new_endpoint_burst: 5
-  new_endpoint_api: 20      # swagger: 20 req/min (recovery floor)
+  new_endpoint_api: 20      # swagger: 20 req/min (immediate drop on 429)
   new_endpoint_api_burst: 3
 ```
 
@@ -215,38 +230,43 @@ rate_limits:
 ### On 429 (Too Many Requests)
 
 ```
-429 received with X-Ratelimit-Retry: 20
+429 received with X-Ratelimit-Retry: 6
 
-1. Compute actual rate: 60/20 = 3 req/min
-2. Reduce limiter if 3 < current rate
-3. Exponential backoff: 20s × 2^(consecutive429-1)
-   - 1st 429: wait 20s
-   - 2nd 429: wait 40s
-   - 3rd 429: wait 60s (capped)
-   - 4th+ 429: wait 60s (capped)
-4. Log: "⚠️  Adaptive rate limit: tool_id reduced to 3.0 req/min (was 10.0)"
+1. Immediately drop limiter to api floor (e.g., 3 req/min)
+2. Wait X-Ratelimit-Retry seconds (6s)
+3. Retry request
+4. Log: "⚠️  Adaptive rate limit: tool_id dropped to 3.0 req/min (api floor)"
 ```
 
-### On Recovery (consecutive successes)
+No exponential backoff — we're already at the safe rate. The server's retry header
+is respected as the wait time, but we don't compound it.
 
-Two-phase recovery cycle:
+### On Recovery (consecutive successes at api floor)
+
+After `adaptive_probe_after` consecutive OKs at api floor, probe desired rate:
 
 ```
-Phase 1 — After 429: 5 consecutive OKs → restore to api floor (3 req/min)
-  Log: "✅ Adaptive rate limit: tool_id restored to 3.0 req/min (api floor)"
-
-Phase 2 — At api floor: 10 consecutive OKs → probe desired rate again (10 req/min)
-  Log: "🔄 Adaptive rate limit: tool_id probing 10.0 req/min (desired)"
-  → If succeeds: stays at desired (API throughput is higher than swagger!)
-  → If 429 again: back to Phase 1 (reduce → recover → probe → ...)
+At api floor (3 req/min):
+  OK, OK, OK, ... (N OKs) → probe desired (4 req/min)
+  Log: "🔄 Adaptive rate limit: tool_id probing 4.0 req/min (desired)"
+  → If succeeds: stays at desired for all remaining requests
+  → If 429: immediate drop to api floor again, cycle repeats
 ```
 
-### Why recovery goes to api floor first, then probes desired
+### Why immediate drop (not gradual reduction)
 
-Recovering directly to `desired` after 429 would immediately cause another 429.
-The two-phase cycle ensures stable operation while periodically probing for higher
-throughput. If the API limit changes (e.g., WB increases it), the probe succeeds
-and we automatically run at the higher rate.
+Gradual reduction (computing rate from `X-Ratelimit-Retry`) causes repeated 429s
+because the computed rate is often higher than the actual API limit:
+
+```
+❌ GRADUAL (old behavior):
+429 with retry=6 → reduce to 10 req/min → another 429 → reduce to 12 → another 429 → ...
+(repeatedly irritates the server)
+
+✅ IMMEDIATE DROP (current behavior):
+429 with retry=6 → drop to 3 req/min (api floor) → stable operation → probe later
+(respects the server immediately)
+```
 
 ---
 
@@ -256,9 +276,11 @@ and we automatically run at the higher rate.
 
 | YAML field | Default | Client field | Purpose |
 |-----------|--------|-------------|---------|
-| `adaptive_recover_after` | 5 | `adaptiveRecoverAfter` | Consecutive OKs to restore to api floor after 429 |
-| `adaptive_probe_after` | 10 | `adaptiveProbeAfter` | Consecutive OKs at api floor before probing desired again |
-| `max_backoff_seconds` | 60 | `maxBackoffSeconds` | Cap for exponential backoff |
+| `adaptive_probe_after` | 10 | `adaptiveProbeAfter` | Consecutive OKs at api floor before probing desired |
+| `max_backoff_seconds` | 60 | `maxBackoffSeconds` | Cap for wait time after 429 |
+
+> **Deprecated**: `adaptive_recover_after` is accepted for backwards compatibility but no longer used.
+> The limiter drops to api floor immediately on 429, so there's no "recovery to api floor" phase.
 
 Set via `client.SetAdaptiveParams()` or YAML config. Zero values keep defaults.
 
@@ -268,16 +290,15 @@ File: `pkg/wb/client.go`
 
 ## Logging Examples
 
-### Aggressive start, 429, recovery, probe
+### Aggressive start, 429, drop, probe
 
 ```
-⚠️  429 Rate limited (20) for get_campaign_fullstats, waiting 20s (attempt 1/3)...
-⚠️  Adaptive rate limit: get_campaign_fullstats reduced to 3.0 req/min (was 10.0)
-✅  Adaptive rate limit: get_campaign_fullstats restored to 3.0 req/min (api floor)
-... 10 successful requests at api floor ...
-🔄 Adaptive rate limit: get_campaign_fullstats probing 10.0 req/min (desired)
-→ if no 429: stays at 10.0 for all remaining requests
-→ if 429: reduced again, cycle repeats
+⚠️  429 Rate limited (6) for get_campaign_fullstats, waiting 6s (attempt 1/3)...
+⚠️  Adaptive rate limit: get_campaign_fullstats dropped to 3.0 req/min (api floor)
+... 15 successful requests at api floor (no 429) ...
+🔄 Adaptive rate limit: get_campaign_fullstats probing 4.0 req/min (desired)
+→ if no 429: stays at 4.0 for all remaining requests
+→ if 429: dropped to 3.0 again, cycle repeats
 ```
 
 ### No 429 (desired rate works)
@@ -298,14 +319,11 @@ Multiple goroutines can call API methods concurrently.
 
 ## Pitfalls & Common Mistakes
 
-### 1. Forgetting to call `SetRateLimit()` — DEADLOCK on 429
+### 1. Forgetting to call `SetRateLimit()` — potential issues on 429
 
-**Symptom**: program hangs forever after receiving a 429 response.
-
-**Root cause**: if `SetRateLimit()` was never called for a toolID, the adaptive state
-is created lazily in `adaptiveReduce()` with zero values (`apiFloor: 0`). When recovery
-kicks in after 5 OKs, it calls `limiter.SetLimit(rate.Limit(0))` which means 0 events/sec
-→ `limiter.Wait(ctx)` blocks forever.
+**Symptom**: if 429 occurs, adaptive state is created lazily with zero `apiFloor`.
+The limiter won't be reduced (guard `if state.apiFloor > 0`), so it stays at whatever
+rate it was running. No deadlock, but no protection either.
 
 ```
 ❌ WRONG — no adaptive setup:
@@ -317,12 +335,8 @@ client.Post(ctx, "tool_id", url, 3, 3, path, body, &result)
 ✅ CORRECT:
 wbClient, _ := wb.NewFromConfig(wbCfg)
 wbClient.SetRateLimit("tool_id", desiredRate, desiredBurst, apiRate, apiBurst)
-wbClient.SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff)
+wbClient.SetAdaptiveParams(probeAfter, maxBackoff)
 ```
-
-**Defense**: `adaptiveRecoverOK()` has a guard `if state.apiFloor > 0` that skips
-the restore when adaptive state wasn't properly initialized. This prevents the deadlock
-but means the limiter stays at the reduced rate permanently (no recovery, no probing).
 
 ### 2. `NewFromConfig()` ignores `RateLimit`/`BurstLimit` fields
 
@@ -352,7 +366,6 @@ If `SetRateLimit()` was called first, `getOrCreateLimiter()` returns the pre-set
 and completely ignores the passed params:
 
 ```go
-// client.go:543-559
 func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *rate.Limiter {
     if limiter, exists := c.limiters[toolID]; exists {
         return limiter  // ← pre-set limiter wins, params ignored
@@ -362,46 +375,84 @@ func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *ra
 ```
 
 This is by design — it allows API methods to work both with and without adaptive setup.
-But it means hardcoded values like `c.Get(ctx, "tool_id", url, 300, 5, ...)` are harmless
-when `SetRateLimit()` was called before.
 
 ### 4. Config fields exist but aren't wired → dead code
 
-Adding adaptive fields to the config struct (`FunnelRateLimit`, `FunnelRateLimitApi`, etc.)
-and `GetDefaults()` cascade is only half the job. If the downloader's `main.go` doesn't
-call `SetRateLimit()` with those values, the fields are dead code.
+Adding adaptive fields to the config struct and `GetDefaults()` cascade is only half the job.
+If the downloader's `main.go` doesn't call `SetRateLimit()` with those values, the fields are dead code.
 
 **Checklist when adding a new downloader:**
 - [ ] Config struct has `desired`, `desired_burst`, `api`, `api_burst` fields
 - [ ] `GetDefaults()` has cascade: api → desired, api_burst → desired_burst
-- [ ] `main.go` calls `SetRateLimit(toolID, desired, desiredBurst, api, apiBurst)`
-- [ ] `main.go` calls `SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff)`
+- [ ] `main.go` calls `SetRateLimit(toolID, desired, desiredBurst, api, apiBurst)` **for EACH toolID used**
+- [ ] **ToolIDs in `SetRateLimit()` match exactly the toolIDs in API calls** (verify with grep)
+- [ ] `main.go` calls `SetAdaptiveParams(probeAfter, maxBackoff)`
 - [ ] YAML config has all adaptive fields (not just `rate_limit`/`burst`)
 - [ ] Displayed rate limit in header matches actual rate being used
 
-### 5. Phase 2 probe without `probed` flag — log spam every N requests
+### 5. Computing rate from X-Ratelimit-Retry is wrong
+
+**Symptom**: repeated 429s even after reducing rate. The system keeps "dancing" around
+the actual API limit instead of settling at a safe rate.
+
+**Root cause**: `X-Ratelimit-Retry` is a backoff hint ("wait N seconds"), NOT a rate indicator.
+Computing `60/N` as req/min gives a rate that may be higher than the swagger limit.
+
+```
+❌ WRONG: retry=6 → rate = 60/6 = 10 req/min (higher than swagger 3!)
+✅ CORRECT: retry=6 → wait 6 seconds, use api floor (3 req/min) for subsequent requests
+```
+
+### 6. Probe without `probed` flag — log spam every N requests
 
 **Symptom**: "🔄 Adaptive rate limit: tool_id probing X req/min (desired)" appears
-every ~10 requests even though no 429 occurred and the rate hasn't changed.
+every ~N requests even though no 429 occurred.
 
-**Root cause**: Phase 2 condition `!reduced && consecutiveOK >= probeAfter && desiredLimit > apiFloor`
-is always true when `desired != api`, regardless of whether the limiter is already at desired rate.
-After a successful probe, `consecutiveOK` resets to 0, counts to `probeAfter` again, and
-triggers another no-op probe — indefinitely.
+**Fix**: `rateLimitState` has a `probed` bool field. Probe sets it to `true`.
+`adaptiveReduce()` resets it to `false` on 429. One-shot probe per 429 cycle.
 
 ```
-❌ BEFORE (no probed flag):
-desired (400) → works → 10 OKs → probe 400 (no-op, already there) → 10 OKs → probe 400 → ...
-
-✅ AFTER (probed flag):
 desired (400) → works → (no log spam)
      │
-     └── 429 → reduce → 5 OKs → api floor → 10 OKs → probe (400), probed=true
-                                                              │
-                                                              └── works (no re-probe)
-                                                                   │
-                                                                   └── 429 → probed=false → cycle
+     └── 429 → drop to api floor → N OKs → probe (400), probed=true
+                                                │
+                                                └── works (no re-probe)
+                                                     │
+                                                     └── 429 → probed=false → cycle
 ```
 
-**Fix**: `rateLimitState` has a `probed` bool field. Phase 2 sets it to `true` after probing.
-`adaptiveReduce()` resets it to `false` on 429. This makes probe a one-shot event per 429 cycle.
+### 7. ToolID mismatch between `SetRateLimit()` and API call
+
+**Symptom**: Adaptive rate limiting silently fails — limiter never drops to api floor,
+repeated 429s on consecutive requests despite adaptive code running.
+
+**Root cause**: `SetRateLimit("tool_id_A", ...)` creates adaptive state for one toolID,
+but API method uses `Get(ctx, "tool_id_B", ...)` — a completely different limiter
+with no adaptive state (`apiFloor=0`). The check `if state.apiFloor > 0` fails silently.
+
+```
+SetRateLimit("get_campaign_fullstats", 4, 1, 3, 1)
+              ↓ creates limiter + adaptive state
+              limiters["get_campaign_fullstats"] = {apiFloor: 3/60}
+
+Get(ctx, "get_wb_campaign_fullstats2", ...)
+              ↓ getOrCreateLimiter() creates NEW limiter
+              limiters["get_wb_campaign_fullstats2"] = {apiFloor: 0}  ← no adaptive!
+
+On 429: adaptiveReduce("get_wb_campaign_fullstats2")
+              ↓ state.apiFloor = 0
+              ↓ if state.apiFloor > 0 { ... }  ← FAILS!
+              ↓ limiter NOT reduced → immediate 429 again!
+```
+
+**Fix**: Ensure toolIDs match exactly. Verify with grep:
+
+```bash
+# Find all SetRateLimit calls
+grep -rn "SetRateLimit" cmd/data-downloaders/
+
+# Find all API call toolIDs in the SAME codebase (not service layer)
+grep -rn 'client.Get\|client.Post\|client.GetStream' cmd/data-downloaders/
+```
+
+**Better fix**: Define toolID constants in one place and use them everywhere.

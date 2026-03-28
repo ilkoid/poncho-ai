@@ -163,12 +163,12 @@ type Client struct {
 // After further successes at api floor, probes desiredLimit again (cycle).
 type rateLimitState struct {
 	desiredLimit  rate.Limit // user-configured aggressive rate (from config)
-	apiFloor      rate.Limit // swagger-documented safe rate (first recovery target)
+	desiredBurst  int        // burst for desired rate (restored on probe)
+	apiFloor      rate.Limit // swagger-documented safe rate (immediate drop on 429)
 	apiFloorBurst int
-	reduced       bool // true after 429 — recovery goes to apiFloor first
-	probed        bool // true after successful Phase 2 probe — prevents re-probing until next 429
+	reduced       bool // true after 429 — stays true until probe
+	probed        bool // true after successful probe — prevents re-probing until next 429
 	consecutiveOK  int // successes since last 429 or last probe
-	consecutive429 int // consecutive 429s (for exponential backoff)
 }
 
 // IsDemoKey проверяет что используется demo ключ (для mock режима).
@@ -576,6 +576,7 @@ func (c *Client) SetRateLimit(toolID string, desiredRate, desiredBurst, apiRate,
 	c.limiters[toolID] = rate.NewLimiter(rate.Limit(desiredPerSec), desiredBurst)
 	c.adaptive[toolID] = &rateLimitState{
 		desiredLimit:  rate.Limit(desiredPerSec),
+		desiredBurst:  desiredBurst,
 		apiFloor:      rate.Limit(apiPerSec),
 		apiFloorBurst: apiBurst,
 	}
@@ -597,9 +598,26 @@ func (c *Client) SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff int) {
 	}
 }
 
-// adaptiveReduce lowers the rate limiter after a 429 response.
-// Computes the actual rate from X-Ratelimit-Retry header and applies
-// exponential backoff multiplier. Returns the wait duration.
+// SetHTTPClient injects a custom HTTP client (for testing).
+func (c *Client) SetHTTPClient(hc HTTPClient) {
+	c.httpClient = hc
+}
+
+// RateLimiters returns current rate limit per toolID (for testing).
+func (c *Client) RateLimiters() map[string]rate.Limit {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	result := make(map[string]rate.Limit, len(c.limiters))
+	for id, lim := range c.limiters {
+		result[id] = lim.Limit()
+	}
+	return result
+}
+
+// adaptiveReduce immediately drops the rate limiter to api floor after a 429 response.
+// Instead of computing rate from X-Ratelimit-Retry (which may be higher than swagger),
+// we drop to the known-safe api floor to avoid irritating the server.
+// Returns the wait duration (X-Ratelimit-Retry, capped at maxBackoffSeconds).
 func (c *Client) adaptiveReduce(toolID string, retryAfterSec int) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -610,42 +628,35 @@ func (c *Client) adaptiveReduce(toolID string, retryAfterSec int) time.Duration 
 		c.adaptive[toolID] = state
 	}
 
-	state.consecutive429++
 	state.consecutiveOK = 0
 	state.reduced = true
 	state.probed = false
 
-	// Compute actual rate from 429 header: API says "wait N seconds"
-	// → actual rate = 60/N req/min
-	actualRatePerSec := 60.0 / float64(retryAfterSec)
-
-	// Exponential backoff: retryAfter * 2^(consecutive429-1), capped at maxBackoffSeconds
-	backoffMultiplier := 1 << (state.consecutive429 - 1) // 1, 2, 4, 8...
-	waitSec := retryAfterSec * backoffMultiplier
+	// Cap wait time at maxBackoffSeconds
+	waitSec := retryAfterSec
 	if waitSec > c.maxBackoffSeconds {
 		waitSec = c.maxBackoffSeconds
 	}
 
-	// Reduce limiter if actual rate is lower than current
+	// Immediately drop to api floor (swagger-documented safe rate)
 	if limiter, ok := c.limiters[toolID]; ok {
-		currentLimit := limiter.Limit()
-		if actualRatePerSec < float64(currentLimit) {
-			limiter.SetLimit(rate.Limit(actualRatePerSec))
-			limiter.SetBurst(1)
-			fmt.Fprintf(os.Stderr, "⚠️  Adaptive rate limit: %s reduced to %.1f req/min (was %.1f)\n",
-				toolID, actualRatePerSec*60, currentLimit*60)
+		if state.apiFloor > 0 && rate.Limit(state.apiFloor) < limiter.Limit() {
+			limiter.SetLimit(state.apiFloor)
+			limiter.SetBurst(state.apiFloorBurst)
+			fmt.Fprintf(os.Stderr, "⚠️  Adaptive rate limit: %s dropped to %.1f req/min (api floor)\n",
+				toolID, state.apiFloor*60)
 		}
 	}
 
 	return time.Duration(waitSec) * time.Second
 }
 
-// adaptiveRecoverOK tracks consecutive successes and manages two-phase recovery:
+// adaptiveRecoverOK tracks consecutive successes and manages recovery after 429.
 //
-//	Phase 1 (after 429): recover to apiFloor after adaptiveRecoverAfter OKs
-//	Phase 2 (at api floor): probe desiredLimit again after adaptiveProbeAfter OKs
+// After a 429, the limiter is immediately at api floor. After adaptiveProbeAfter
+// consecutive OKs at api floor, probe the desired rate again (one-shot per 429 cycle).
 //
-// Cycle: desired → 429 → api floor → (probe) → desired → 429 → ...
+// Cycle: desired → 429 → immediate drop to api floor → N OKs → probe desired → repeat
 func (c *Client) adaptiveRecoverOK(toolID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -656,36 +667,21 @@ func (c *Client) adaptiveRecoverOK(toolID string) {
 	}
 
 	state.consecutiveOK++
-	state.consecutive429 = 0
 
 	limiter, ok := c.limiters[toolID]
 	if !ok {
 		return
 	}
 
-	// Phase 1: after 429, recover to api floor first
-	if state.reduced && state.consecutiveOK >= c.adaptiveRecoverAfter {
-		if state.apiFloor > 0 {
-			limiter.SetLimit(state.apiFloor)
-			limiter.SetBurst(state.apiFloorBurst)
-		}
-		state.reduced = false
-		state.consecutiveOK = 0
-		if state.apiFloor > 0 {
-			fmt.Fprintf(os.Stderr, "✅ Adaptive rate limit: %s restored to %.1f req/min (api floor)\n",
-				toolID, state.apiFloor*60)
-		}
-		return
-	}
-
-	// Phase 2: at api floor, probe desired rate again (once per 429 cycle)
-	if !state.reduced && !state.probed && state.consecutiveOK >= c.adaptiveProbeAfter && state.desiredLimit > state.apiFloor {
+	// After adaptiveProbeAfter OKs at api floor, probe desired rate (one-shot per 429 cycle)
+	if state.reduced && !state.probed && state.consecutiveOK >= c.adaptiveProbeAfter && state.desiredLimit > state.apiFloor {
 		limiter.SetLimit(state.desiredLimit)
+		limiter.SetBurst(state.desiredBurst)
 		state.probed = true
+		state.reduced = false
 		state.consecutiveOK = 0
 		fmt.Fprintf(os.Stderr, "🔄 Adaptive rate limit: %s probing %.1f req/min (desired)\n",
 			toolID, state.desiredLimit*60)
-		return
 	}
 }
 

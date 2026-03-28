@@ -131,7 +131,7 @@ func main() {
 		funnelDefaults.FunnelRateLimit, funnelDefaults.FunnelRateLimitBurst,
 		funnelDefaults.FunnelRateLimitApi, funnelDefaults.FunnelRateLimitApiBurst)
 	wbClient.SetAdaptiveParams(
-		funnelDefaults.AdaptiveRecoverAfter,
+		0, // adaptive_recover_after: deprecated, limiter drops to api floor immediately
 		funnelDefaults.AdaptiveProbeAfter,
 		funnelDefaults.MaxBackoffSeconds)
 

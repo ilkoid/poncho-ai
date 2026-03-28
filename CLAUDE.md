@@ -162,7 +162,8 @@ type Tool interface {
 - `get_wb_top_search_queries` - Top search queries by product
 - `get_wb_top_organic_positions` - Organic search positions
 
-**Rate Limits** (Analytics API): 3 req/min, 20s interval. Content API uses higher limits (100).
+**Rate Limits**: Two-level adaptive rate limiting for all downloaders (see [dev_limits.md](dev_limits.md)).
+Analytics API: 3 req/min swagger. Content/Advertising API: higher limits (100-300/min).
 
 **Tool Registration** (OCP Refactored - 2026-02-01):
 Config-driven via `pkg/app/tool_setup.go` with factory pattern in `registerTool()`:
@@ -444,14 +445,26 @@ type Components struct {
 // pkg/wb/client.go
 client := wb.New(apiKey)                    // Simple creation
 client, err := wb.NewFromConfig(cfg.WB)    // Config-based
+
+// Adaptive rate limiting (MUST call before API methods)
+client.SetRateLimit("tool_id", desiredRate, desiredBurst, apiRate, apiBurst)
+client.SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff)
 ```
+
+**Important**: `NewFromConfig()` does NOT use `WBConfig.RateLimit`/`BurstLimit` fields.
+Always call `SetRateLimit()` explicitly for adaptive behavior. See [dev_limits.md](dev_limits.md).
+
+**HTTP Methods**:
+- `Get()` → `doRequest()` — buffered (io.ReadAll + json.Unmarshal)
+- `GetStream()` — streaming (json.Decoder, for large payloads like fullstats)
+- `Post()` → `doRequest()` — for request bodies
 
 **Demo Mode**: `client.IsDemoKey()` returns `true` for `demo_key`, enabling mock responses.
 
 **Thread Safety**:
 - CoreState: `sync.RWMutex`
 - ModelRegistry: `sync.RWMutex`
-- WB Client: `sync.RWMutex` (rate limiters map)
+- WB Client: `sync.RWMutex` (rate limiters map + adaptive state map)
 
 ### S3 Batch Tools (`pkg/tools/std/s3_batch.go`)
 **Purpose**: Batch operations with classification and vision analysis.
@@ -623,6 +636,7 @@ Verification and demonstration utilities per Rule 9:
 | `ZAI_API_KEY` | LLM provider |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | Storage |
 | `WB_API_KEY` | Wildberries API (Content, Analytics, Advertising) |
+| `WB_API_ANALYTICS_AND_PROMO_KEY` | Analytics + Advertising API (alternative key) |
 | `WB_API_FEEDBACK_KEY` | Wildberries Feedbacks API (separate key) |
 | `WB_STAT_API_KEY` | Wildberries Statistics API (optional) |
 | `OPENROUTER_API_KEY` | OpenRouter (LLM gateway for analyzers) |
@@ -682,7 +696,9 @@ Burst:  3 requests
 - `github.com/charmbracelet/bubbletea` - TUI framework
 - `github.com/minio/minio-go/v7` - S3 client
 - `github.com/sashabaranov/go-openai` - OpenAI API
+- `github.com/mattn/go-sqlite3` - SQLite driver (CGo)
 - `golang.org/x/time/rate` - Rate limiting
+- `gopkg.in/yaml.v3` - YAML config parsing
 
 ---
 
@@ -808,6 +824,69 @@ prompt_sources:
 
 ---
 
+## Testing
+
+```bash
+# Run all tests
+go test ./...
+
+# Run specific package
+go test ./pkg/wb/ -v
+go test ./cmd/data-downloaders/download-wb-sales/ -v
+
+# Run specific test
+go test ./pkg/wb/ -run TestAdaptiveRateLimit_ReducesOn429 -v
+
+# Run with coverage
+go test ./... -coverprofile=coverage.out
+```
+
+### Test Layers
+
+**Unit tests** (`pkg/`): Test internal logic with mocked dependencies.
+- `pkg/wb/client_adaptive_test.go` — Adaptive rate limiting: 429 recovery, toolID mismatch detection, retry behavior. Uses `mockHTTPClient` (implements `HTTPClient` interface) to exercise real retry loop + `adaptiveReduce()` without network.
+- `pkg/chain/*_test.go` — ReAct cycle components (6 files)
+- `pkg/tui/*_test.go` — TUI primitives (7 files)
+
+**E2E tests** (`cmd/`): Test downloader logic with mock clients + SQLite.
+- `cmd/data-downloaders/download-wb-sales/e2e_test.go` — Download, resume mode, retry on failure
+- `cmd/data-downloaders/download-wb-promotion/e2e_test.go` — Campaign loading, stats hierarchy, resume
+
+### Test Patterns
+
+```go
+// Mock HTTP client (for testing wb.Client internals — rate limiting, retries)
+mockHTTP := &mockHTTPClient{responses: []*mockResponse{
+    {status: 429, header: map[string]string{"X-Ratelimit-Retry": "1"}},
+    {status: 200, body: `[]`},
+}}
+client := wb.New("test_key")
+client.SetHTTPClient(mockHTTP)
+client.SetRateLimit("tool_id", 6000, 100, 3000, 100)
+// Verify: client.RateLimiters()["tool_id"] after 429
+
+// Mock service client (for testing downloader logic — skips HTTP entirely)
+mockClient := wb.NewMockClient()
+mockClient.AddMockSales(rows...)
+mockClient.SetFailCount(2) // fail first 2 requests, succeed on 3rd
+
+// App-level mock (implements PromotionClient interface)
+mock := NewMockPromotionClient()
+PopulateMockData(mock, 5, 7) // 5 campaigns, 7 days
+```
+
+### Key: Why Two Mock Levels
+
+| Mock | What it tests | Skips |
+|------|--------------|-------|
+| `mockHTTPClient` (HTTPClient) | `doRequest()` retry loop, `adaptiveReduce()`, `getOrCreateLimiter()` | Service layer |
+| `MockClient` / `MockPromotionClient` (Service) | Downloader batch logic, DB save, resume mode | Rate limiting |
+
+Service-level mocks are **faster** but **cannot catch rate limiting bugs** (they bypass HTTP).
+HTTP-level mocks exercise the real retry loop and catch configuration/runtime mismatches.
+
+---
+
 ## E2E Testing Infrastructure
 
 ### SnapshotDBClient (`pkg/wb/snapshot_client.go`)
@@ -872,14 +951,17 @@ go run main.go --days 7 --output ../e2e-snapshot.db
 
 ### Download Utilities (`cmd/download-*`)
 
-| Utility | Purpose |
-|---------|---------|
-| `download-wb-sales` | Sales + funnel metrics by period |
-| `download-wb-promotion` | Campaigns + daily stats |
-| `download-wb-feedbacks` | Feedbacks + questions (39 fields, all from API) |
-| `download-wb-funnel` | Analytics v3 funnel (daily per product) |
-| `download-wb-funnel-agg` | Analytics v3 aggregated funnel |
-| `download-all-articles` | S3 article processing |
+All downloaders use **two-level adaptive rate limiting** (see [dev_limits.md](dev_limits.md)):
+start at desired rate, auto-reduce on 429, recover to api floor, probe desired again.
+
+| Utility | Purpose | Config |
+|---------|---------|--------|
+| `download-wb-sales` | Sales + funnel metrics by period | `config.yaml` |
+| `download-wb-promotion` | Campaigns + daily stats (4-level hierarchy) | `config.yaml` |
+| `download-wb-feedbacks` | Feedbacks + questions (39 fields) | `config.yaml` |
+| `download-wb-funnel` | Analytics v3 funnel (daily per product) | `config.yaml` |
+| `download-wb-funnel-agg` | Analytics v3 aggregated funnel | `config.yaml` |
+| `download-all-articles` | S3 article processing | — |
 
 **Example**:
 ```bash
@@ -890,6 +972,43 @@ go run main.go --days 7 --output sales.db
 # Download promotion data with resume
 cd cmd/download-wb-promotion
 go run main.go --begin 2025-01-01 --end 2025-01-31 --resume
+```
+
+---
+
+## Adaptive Rate Limiting (2026-03-28)
+
+Two-level rate limiting in `pkg/wb/client.go` allows exceeding documented API limits
+while safely handling 429 responses. Full developer guide: [dev_limits.md](dev_limits.md).
+
+**Setup** (required for all downloaders):
+```go
+client.SetRateLimit("tool_id", desiredRate, desiredBurst, apiRate, apiBurst)
+client.SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff)
+```
+
+**Recovery cycle**: `desired` → 429 → `api floor` (after 5 OKs) → `probe desired` (after 10 OKs) → repeat.
+
+**Key internals**:
+- `getOrCreateLimiter()` — returns pre-set limiter, ignores inline rateLimit/burst params (fallback only)
+- `adaptiveReduce()` — computes rate from `X-Ratelimit-Retry` header, exponential backoff
+- `adaptiveRecoverOK()` — two-phase recovery with `probed` flag (one-shot probe per 429 cycle)
+- `GetStream()` — streaming decode for large payloads (avoids io.ReadAll)
+
+**Common pitfalls** (see [dev_limits.md](dev_limits.md) Pitfalls section):
+1. Forgetting `SetRateLimit()` → adaptive state created lazily with `apiFloor=0`, limiter never reduces
+2. `NewFromConfig()` ignores `WBConfig.RateLimit` — must call `SetRateLimit()` explicitly
+3. Phase 2 probe spam without `probed` flag — fixed, but check if adding new downloader
+4. Config fields exist but aren't wired → dead code (checklist in dev_limits.md)
+5. Computing rate from `X-Ratelimit-Retry` is wrong — header is backoff hint, not rate indicator
+6. **ToolID mismatch** — `SetRateLimit("tool_A")` + `Get("tool_B")` creates separate limiter with no adaptive state. Verify with: `grep -rn "SetRateLimit" cmd/ && grep -rn 'client.Get\|client.Post' cmd/`
+
+**Testing** (see `pkg/wb/client_adaptive_test.go`):
+```go
+// SetHTTPClient() — inject mock for testing wb.Client internals
+client.SetHTTPClient(mockHTTP)
+// RateLimiters() — inspect current rate per toolID for assertions
+rates := client.RateLimiters()
 ```
 
 ---
@@ -934,5 +1053,5 @@ go run main.go --begin 2025-01-01 --end 2025-01-31 --resume
 
 ---
 
-**Last Updated**: 2026-03-27
-**Version**: 10.0 (analyze-wb-feedbacks, campaign fullstats 4-level hierarchy, Statistics API)
+**Last Updated**: 2026-03-28
+**Version**: 12.0 (testing infrastructure, adaptive rate limiting tests, toolID mismatch pitfall)

@@ -124,7 +124,7 @@ func main() {
 		wbClient := wb.New(apiKey)
 		applyRateLimits(wbClient, cfg.Promotion.GetDefaults().RateLimits)
 		wbClient.SetAdaptiveParams(
-			cfg.Promotion.GetDefaults().AdaptiveRecoverAfter,
+			0, // adaptive_recover_after: deprecated, limiter drops to api floor immediately
 			cfg.Promotion.GetDefaults().AdaptiveProbeAfter,
 			cfg.Promotion.GetDefaults().MaxBackoffSeconds,
 		)
@@ -387,5 +387,5 @@ func printHeader(cfg *Config, beginDate, endDate string, mock bool) {
 func applyRateLimits(client *wb.Client, rl config.PromotionRateLimits) {
 	client.SetRateLimit("get_promotion_count", rl.PromotionCount, rl.PromotionCountBurst, rl.PromotionCountApi, rl.PromotionCountApiBurst)
 	client.SetRateLimit("get_advert_details", rl.AdvertDetails, rl.AdvertDetailsBurst, rl.AdvertDetailsApi, rl.AdvertDetailsApiBurst)
-	client.SetRateLimit("get_campaign_fullstats", rl.Fullstats, rl.FullstatsBurst, rl.FullstatsApi, rl.FullstatsApiBurst)
+	client.SetRateLimit("get_wb_campaign_fullstats2", rl.Fullstats, rl.FullstatsBurst, rl.FullstatsApi, rl.FullstatsApiBurst)
 }
