@@ -62,7 +62,7 @@ promotion:
     advert_details_api: 300
     advert_details_api_burst: 5
     # /adv/v3/fullstats (swagger: 3 req/min — desired can exceed, adaptive handles 429)
-    fullstats: 5
+    fullstats: 3
     fullstats_burst: 1
     fullstats_api: 3
     fullstats_api_burst: 1

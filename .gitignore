@@ -152,19 +152,13 @@ screenshots/
 cmd/test-utils/test-wb-*/
 cmd/fix-utilities/fix-fake-png/
 
+# Go compiled binaries (binary name = directory name)
+cmd/data-downloaders/download-all-articles/download-all-articles
+cmd/data-downloaders/download-wb-*/download-wb-*
+cmd/data-analyzers/analyze-wb-*/analyze-wb-*
+
 # Downloaded data folders
 cmd/data-downloaders/download-all-articles/ЗАГРУЗКИ/
-cmd/data-downloaders/download-all-articles/download-all-articles
-cmd/data-downloaders/download-all-articles/fix-fake-png
-cmd/data-downloaders/download-wb-feedbacks/download-wb-feedbacks
-
-# New downloader code (WIP)
-cmd/data-downloaders/download-wb-sales/*.go
-cmd/data-downloaders/download-wb-sales/*.sh
-cmd/data-downloaders/download-wb-sales/*.yaml
-cmd/data-downloaders/download-wb-sales/*.yaml.bak
-cmd/data-downloaders/download-wb-promotion/*.go
-cmd/data-downloaders/download-wb-promotion/*.yaml
 
 # Python virtual environment (with dot)
 .venv/

@@ -1,0 +1,56 @@
+# WB Sales Downloader Configuration
+# Downloads sales data from WB Statistics API to local SQLite database.
+#
+# Usage (from utility folder!):
+#   cd cmd/download-wb-sales
+#   WB_STAT=your_key go run main.go              # Sales mode
+#   WB_ANALYTICS=your_key go run main.go --funnel # Funnel mode
+
+# WB API Settings (Rule 13: config next to executable)
+wb:
+  # Statistics API token - for sales data
+  # Use WB_STAT environment variable
+  api_key: ${WB_STAT}
+
+  # Analytics API token - for funnel metrics (optional, for --funnel mode)
+  # If not set, falls back to WB_STAT (but Analytics API requires separate key!)
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+
+  # CRITICAL: Rate limiting - 1 request per minute (60 second pauses)
+  # Exceeding this will result in account BAN!
+  rate_limit: 1
+  burst: 1
+  endpoint: https://statistics-api.wildberries.ru
+  timeout: 30m  # HTTP timeout (30 minutes per day for very large datasets)
+
+# Download Settings
+download:
+  # Date range for sales data (supports YYYY-MM-DD or RFC3339 with time)
+  # Use +03:00 for Moscow timezone (UTC+3)
+  from: "2026-02-20T00:00:00+03:00"
+  to:   "2026-02-21T23:59:59+03:00"
+
+  # SQLite database path (relative to working directory)
+  db_path: "sales-2026.db"
+
+  # Days per API request (1-30). Use 1 for large data volumes to avoid timeouts.
+  # WB API allows up to 30 days per request.
+  interval_days: 1  # Load 1 day at a time to avoid timeout
+
+  # Filter for FBW only (Fulfillment by Wildberries)
+  # Set to true to save only WB warehouse sales
+  fbw_only: true
+
+  # Resume interrupted download
+  # If true, skips already downloaded rrd_id values
+  resume: true
+
+# Funnel Analytics Settings (for --funnel mode)
+# Uses Analytics API v3: seller-analytics-api.wildberries.ru
+funnel:
+  # Days of history to load (1-365)
+  # 1-7 days free, up to 365 with subscription
+  days: 7
+
+  # Products per API request (max 20 for Analytics API v3)
+  batch_size: 20
