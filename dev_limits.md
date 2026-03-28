@@ -6,7 +6,7 @@ We use a two-level rate limiting strategy that allows exceeding documented API l
 while safely handling 429 (Too Many Requests) responses.
 
 **Core idea**: start aggressive (`desired`), on 429 immediately drop to safe floor (`api`),
-wait a calculated cooldown (`60/apiRate` seconds), then after N stable OKs probe `desired` again.
+wait a calculated cooldown (`60/apiRate` seconds), then **stay at api floor forever**.
 
 ```
 desired: 4 req/min     ← start here (can exceed swagger)
@@ -14,16 +14,16 @@ api:      3 req/min    ← immediate drop on 429 (swagger-documented)
 cooldown: 20s          ← 60/3 = one full interval at api floor
 
      ┌──────────────────────────────────────────────────┐
-     │  desired (4) ←─── probe after N OKs at api ────┐ │
-     │    │                                             │ │
-     │    ├── 200 OK ──┐                                │ │
-     │    │             │                                │ │
-     │    ├── 429 ─────┤                                │ │
-     │    │    IMMEDIATE drop to api floor (3)          │ │
-     │    │    wait 60/3 = 20s (calculated, not header) │ │
-     │    │    retry (limiter has exactly 1 token)       │ │
-     │    │    after N OKs at api floor → probe (4)     │ │
-     │    │                                             │ │
+     │  desired (4)                                      │ │
+     │    │                                              │ │
+     │    ├── 200 OK ──┐                                 │ │
+     │    │             │                                 │ │
+     │    ├── 429 ─────┤                                 │ │
+     │    │    IMMEDIATE drop to api floor (3)           │ │
+     │    │    wait 60/3 = 20s (calculated, not header)  │ │
+     │    │    retry (limiter has exactly 1 token)        │ │
+     │    │    stay at 3 req/min forever → stable        │ │
+     │    │                                              │ │
      └──────────────────────────────────────────────────┘
 ```
 
@@ -69,10 +69,10 @@ This guarantees:
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `rateLimitState` | `pkg/wb/client.go` | Tracks desired/api/probe state per toolID |
+| `rateLimitState` | `pkg/wb/client.go` | Tracks desired/api/reduced state per toolID |
 | `SetRateLimit()` | `pkg/wb/client.go` | Pre-sets limiter with both desired and api rates |
 | `adaptiveReduce()` | `pkg/wb/client.go` | On 429: drops limiter to api floor, returns calculated cooldown |
-| `adaptiveRecoverOK()` | `pkg/wb/client.go` | After N OKs at api floor: probes desired rate |
+| `adaptiveRecoverOK()` | `pkg/wb/client.go` | Tracks successful requests (no probing) |
 | `doRequest()` | `pkg/wb/client.go` | HTTP retry loop with adaptive logic (for most endpoints) |
 | `GetStream()` | `pkg/wb/client.go` | Streaming variant (for large responses, e.g. fullstats) |
 | `PromotionRateLimits` | `pkg/config/utility.go` | Config struct with desired/api/burst per endpoint |
@@ -94,6 +94,7 @@ applyRateLimits()
             desiredLimit: 4/60,
             desiredBurst: 1,
             apiFloor:     3/60,     ← immediate drop target on 429
+            reduced:      false,
           }
         │
         ▼
@@ -104,8 +105,7 @@ GetCampaignFullstats(..., 4, 1)
       → HTTP request
           │
           ├── 200 → adaptiveRecoverOK()
-          │            → consecutiveOK++
-          │            → if N OKs at api floor → probe desired (4/60)
+          │            → consecutiveOK++ (no probing)
           │
           └── 429 → adaptiveReduce(serverRetrySec)
                        → limiter dropped to apiFloor (3/60)
@@ -261,6 +261,7 @@ rate_limits:
 4. limiter.Wait() returns immediately (token accumulated during wait)
 5. Retry request (consumes token)
 6. Next request waits 20s for next token
+7. All subsequent requests stay at api floor forever
 ```
 
 **Why this works**: The cooldown duration matches the token bucket's refill rate.
@@ -268,17 +269,8 @@ After waiting `1/apiFloor` seconds, exactly one token is available. `limiter.Wai
 returns immediately for the retry, consumes that token, and subsequent requests
 properly wait for new tokens. No bursts, no token stealing, just smooth pacing.
 
-### On Recovery (consecutive successes at api floor)
-
-After `adaptive_probe_after` consecutive OKs at api floor, probe desired rate:
-
-```
-At api floor (3 req/min):
-  Request every 20s → OK, OK, OK, ... (N OKs) → probe desired (4 req/min)
-  Log: "🔄 Adaptive rate limit: tool_id probing 4.0 req/min (desired)"
-  → If succeeds: stays at desired for all remaining requests
-  → If 429: immediate drop to api floor again, cycle repeats
-```
+**Simplified behavior**: Once dropped to api floor, the rate stays there forever.
+No probing back to desired rate — this prevents repeated 429s and makes behavior predictable.
 
 ### Cooldown Calculation Examples
 
@@ -300,10 +292,12 @@ exactly one token available and return immediately.
 
 | YAML field | Default | Client field | Purpose |
 |-----------|--------|-------------|---------|
-| `adaptive_probe_after` | 10 | `adaptiveProbeAfter` | Consecutive OKs at api floor before probing desired |
+| `adaptive_probe_after` | 10 | `adaptiveProbeAfter` | **DEPRECATED** — no longer used (no probing) |
 | `max_backoff_seconds` | 60 | `maxBackoffSeconds` | Cap for cooldown (for very low api rates) |
 
 Set via `client.SetAdaptiveParams()` or YAML config. Zero values keep defaults.
+
+**Note**: `adaptive_probe_after` is kept in config for backwards compatibility but has no effect.
 
 File: `pkg/wb/client.go`
 
@@ -311,15 +305,12 @@ File: `pkg/wb/client.go`
 
 ## Logging Examples
 
-### Aggressive start, 429, drop, probe
+### Aggressive start, 429, drop to api floor
 
 ```
 ⚠️  429 for get_campaign_fullstats, cooling down 20s (server: 6s, attempt 1/3)...
 ⚠️  Adaptive rate limit: get_campaign_fullstats dropped to 3.0 req/min (api floor)
-... 15 successful requests at api floor (one every ~20s, no 429) ...
-🔄 Adaptive rate limit: get_campaign_fullstats probing 4.0 req/min (desired)
-→ if no 429: stays at 4.0 for all remaining requests
-→ if 429: dropped to 3.0 again, cycle repeats
+... subsequent requests every 20s at 3 req/min, stable ...
 ```
 
 **Log format breakdown**:
@@ -458,16 +449,25 @@ grep -rn 'client.Get\|client.Post\|client.GetStream' cmd/data-downloaders/
 
 **Explanation**: This field is deprecated and accepted only for backwards compatibility.
 The limiter drops to api floor **immediately** on 429, so there's no "recovery to api floor" phase.
-Use `adaptive_probe_after` to control when to probe the desired rate.
 
-### 7. Expecting instant recovery after 429
+### 7. Deprecated `adaptive_probe_after` does nothing (since 2026-03-28)
+
+**Symptom**: Changing `adaptive_probe_after` in config has no effect.
+
+**Explanation**: This field is deprecated. The simplified adaptive behavior no longer probes
+the desired rate after 429. Once dropped to api floor, the rate stays there forever.
+This prevents repeated 429s and makes behavior predictable.
+
+**If you want faster rates**: Set `fullstats_api` (or `*_api` field) to a higher value
+directly in the config. The system will use that as the api floor.
+
+### 8. Expecting instant recovery after 429
 
 **Symptom**: "Why is it slow after 429? Shouldn't it recover immediately?"
 
-**Explanation**: After 429, we drop to api floor and wait for a full token interval (cooldown).
-For 3 req/min, that's 20 seconds. This is by design — we're being conservative to avoid
-irritating the server. After `adaptive_probe_after` successful requests at api floor,
-we probe the desired rate again.
+**Explanation**: After 429, we drop to api floor and stay there forever. For 3 req/min,
+that means one request every 20 seconds. This is by design — we prioritize server
+stability and predictable behavior over speed.
 
-**Patience is key**: the system prioritizes server stability over speed. Once it finds
-a working rate (api floor or desired), it sticks to it until the next 429.
+**To increase speed**: Set `*_api` to a higher swagger-documented rate, or set
+`desired` equal to `api` to start at the safe rate without probing.

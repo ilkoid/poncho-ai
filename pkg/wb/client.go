@@ -157,18 +157,16 @@ type Client struct {
 }
 
 // rateLimitState tracks adaptive rate limiting after 429 responses.
-// When the API returns 429, the limiter is auto-reduced to the actual rate.
-// After N consecutive successes, the rate is restored to apiFloor (swagger limit),
-// NOT to desiredLimit — because desiredLimit may exceed swagger and cause another 429.
-// After further successes at api floor, probes desiredLimit again (cycle).
+// When the API returns 429, the limiter is auto-reduced to apiFloor (swagger limit).
+// Once reduced, it stays at apiFloor forever — no probing back to desired rate.
+// This simplifies behavior and prevents repeated 429s from aggressive probing.
 type rateLimitState struct {
 	desiredLimit  rate.Limit // user-configured aggressive rate (from config)
-	desiredBurst  int        // burst for desired rate (restored on probe)
+	desiredBurst  int        // burst for desired rate (stored for potential future use)
 	apiFloor      rate.Limit // swagger-documented safe rate (immediate drop on 429)
 	apiFloorBurst int
-	reduced       bool // true after 429 — stays true until probe
-	probed        bool // true after successful probe — prevents re-probing until next 429
-	consecutiveOK  int // successes since last 429 or last probe
+	reduced       bool       // true after 429 — stays at api floor forever
+	consecutiveOK  int        // successes since last 429 (for potential future use)
 }
 
 // IsDemoKey проверяет что используется demo ключ (для mock режима).
@@ -630,7 +628,6 @@ func (c *Client) adaptiveReduce(toolID string, serverRetrySec int) time.Duration
 
 	state.consecutiveOK = 0
 	state.reduced = true
-	state.probed = false
 
 	// Immediately drop to api floor (swagger-documented safe rate)
 	if limiter, ok := c.limiters[toolID]; ok {
@@ -665,9 +662,9 @@ func (c *Client) adaptiveReduce(toolID string, serverRetrySec int) time.Duration
 // adaptiveRecoverOK tracks consecutive successes and manages recovery after 429.
 //
 // After a 429, the limiter is immediately at api floor. After adaptiveProbeAfter
-// consecutive OKs at api floor, probe the desired rate again (one-shot per 429 cycle).
+// at api floor forever. No probing back to desired rate.
 //
-// Cycle: desired → 429 → immediate drop to api floor → N OKs → probe desired → repeat
+// Simplified behavior: desired → 429 → immediate drop to api floor → stay forever
 func (c *Client) adaptiveRecoverOK(toolID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -679,21 +676,8 @@ func (c *Client) adaptiveRecoverOK(toolID string) {
 
 	state.consecutiveOK++
 
-	limiter, ok := c.limiters[toolID]
-	if !ok {
-		return
-	}
-
-	// After adaptiveProbeAfter OKs at api floor, probe desired rate (one-shot per 429 cycle)
-	if state.reduced && !state.probed && state.consecutiveOK >= c.adaptiveProbeAfter && state.desiredLimit > state.apiFloor {
-		limiter.SetLimit(state.desiredLimit)
-		limiter.SetBurst(state.desiredBurst)
-		state.probed = true
-		state.reduced = false
-		state.consecutiveOK = 0
-		fmt.Fprintf(os.Stderr, "🔄 Adaptive rate limit: %s probing %.1f req/min (desired)\n",
-			toolID, state.desiredLimit*60)
-	}
+	// No probing - stay at api floor forever after first 429
+	// Future: could log "N successful requests at api floor" for debugging
 }
 
 // Post выполняет POST запрос к Wildberries API с поддержкой Rate Limit и Retries.
