@@ -105,7 +105,8 @@ func main() {
 	fmt.Printf("📊 FUNNEL MODE: Загрузка аналитики воронки\n")
 	// Period info is shown in LoadFunnelHistory (handles from/to vs days)
 	fmt.Printf("📦 Batch size: %d товаров\n", funnelBatchSize)
-	fmt.Printf("⏱️  Rate limit: %d req/min, burst: %d\n", funnelDefaults.RateLimit, funnelDefaults.BurstLimit)
+	fmt.Printf("⏱️  Rate limit: %d req/min (desired), %d req/min (api floor), burst: %d\n",
+		funnelDefaults.FunnelRateLimit, funnelDefaults.FunnelRateLimitApi, funnelDefaults.FunnelRateLimitBurst)
 	fmt.Println(repeat("=", 71))
 
 	// Show which key is being used
@@ -125,12 +126,23 @@ func main() {
 		log.Fatalf("❌ Failed to create WB client: %v", err)
 	}
 
+	// Apply two-level adaptive rate limiting (see dev_limits.md)
+	wbClient.SetRateLimit("get_wb_product_funnel_history",
+		funnelDefaults.FunnelRateLimit, funnelDefaults.FunnelRateLimitBurst,
+		funnelDefaults.FunnelRateLimitApi, funnelDefaults.FunnelRateLimitApiBurst)
+	wbClient.SetAdaptiveParams(
+		funnelDefaults.AdaptiveRecoverAfter,
+		funnelDefaults.AdaptiveProbeAfter,
+		funnelDefaults.MaxBackoffSeconds)
+
 	// Load funnel history
 	funnelCfg := FunnelLoaderConfig{
 		Client:        wbClient,
 		Repo:          repo,
 		Days:          funnelDays,
 		BatchSize:     funnelBatchSize,
+		RateLimit:     funnelDefaults.FunnelRateLimit,
+		BurstLimit:    funnelDefaults.FunnelRateLimitBurst,
 		RefreshWindow: cfg.Storage.FunnelRefreshWindow,
 		From:          funnelDefaults.From,
 		To:            funnelDefaults.To,

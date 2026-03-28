@@ -30,6 +30,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -145,8 +146,29 @@ type Client struct {
 	httpClient    HTTPClient // Интерфейс вместо конкретного типа для testability
 	retryAttempts int        // Количество retry попыток
 
+	// Adaptive rate limiting tuning (configurable via SetAdaptiveParams)
+	adaptiveRecoverAfter int // consecutive OKs to restore to api floor after 429
+	adaptiveProbeAfter   int // consecutive OKs at api floor before probing desired again
+	maxBackoffSeconds    int // cap for exponential backoff
+
 	mu       sync.RWMutex
-	limiters map[string]*rate.Limiter // tool ID → limiter
+	limiters map[string]*rate.Limiter     // tool ID → limiter
+	adaptive map[string]*rateLimitState   // tool ID → adaptive state (for 429 recovery)
+}
+
+// rateLimitState tracks adaptive rate limiting after 429 responses.
+// When the API returns 429, the limiter is auto-reduced to the actual rate.
+// After N consecutive successes, the rate is restored to apiFloor (swagger limit),
+// NOT to desiredLimit — because desiredLimit may exceed swagger and cause another 429.
+// After further successes at api floor, probes desiredLimit again (cycle).
+type rateLimitState struct {
+	desiredLimit  rate.Limit // user-configured aggressive rate (from config)
+	apiFloor      rate.Limit // swagger-documented safe rate (first recovery target)
+	apiFloorBurst int
+	reduced       bool // true after 429 — recovery goes to apiFloor first
+	probed        bool // true after successful Phase 2 probe — prevents re-probing until next 429
+	consecutiveOK  int // successes since last 429 or last probe
+	consecutive429 int // consecutive 429s (for exponential backoff)
 }
 
 // IsDemoKey проверяет что используется demo ключ (для mock режима).
@@ -180,12 +202,16 @@ func New(apiKey string) *Client {
 	timeout, _ := time.ParseDuration(cfg.Timeout)
 
 	return &Client{
-		apiKey:        cfg.APIKey,
-		retryAttempts: cfg.RetryAttempts,
+		apiKey:               cfg.APIKey,
+		retryAttempts:        cfg.RetryAttempts,
+		adaptiveRecoverAfter: 5,
+		adaptiveProbeAfter:   10,
+		maxBackoffSeconds:    60,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
 		limiters: make(map[string]*rate.Limiter),
+		adaptive: make(map[string]*rateLimitState),
 	}
 }
 
@@ -236,13 +262,17 @@ func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 	}
 
 	return &Client{
-		apiKey:        cfg.APIKey,
-		retryAttempts: cfg.RetryAttempts,
+		apiKey:               cfg.APIKey,
+		retryAttempts:        cfg.RetryAttempts,
+		adaptiveRecoverAfter: 5,
+		adaptiveProbeAfter:   10,
+		maxBackoffSeconds:    60,
 		httpClient: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
 		},
 		limiters: make(map[string]*rate.Limiter),
+		adaptive: make(map[string]*rateLimitState),
 	}, nil
 }
 
@@ -332,21 +362,22 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 
 		body, _ := io.ReadAll(resp.Body)
 
-		// Обработка 429 (Too Many Requests)
+		// Обработка 429 (Too Many Requests) — adaptive rate limiting
 		if resp.StatusCode == http.StatusTooManyRequests {
-			// Читаем заголовок X-Ratelimit-Retry или Retry-After
-			retryAfter := 1 * time.Second // Дефолт
+			retryAfterSec := 1
 			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
-				if sec, err := strconv.Atoi(s); err == nil {
-					retryAfter = time.Duration(sec) * time.Second
+				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
+					retryAfterSec = sec
 				}
 			}
+			waitDur := c.adaptiveReduce(toolID, retryAfterSec)
+			fmt.Fprintf(os.Stderr, "⚠️  429 Rate limited (%s) for %s, waiting %v (attempt %d/%d)...\n",
+				resp.Header.Get("X-Ratelimit-Retry"), toolID, waitDur.Truncate(time.Second), i+1, c.retryAttempts)
 
-			// Ждем и ретраем
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(retryAfter):
+			case <-time.After(waitDur):
 				continue
 			}
 		}
@@ -354,6 +385,9 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
 		}
+
+		// Track successful request for adaptive recovery
+		c.adaptiveRecoverOK(toolID)
 
 		if err := json.Unmarshal(body, dest); err != nil {
 			return fmt.Errorf("unmarshal error: %w", err)
@@ -408,6 +442,97 @@ func (c *Client) Get(ctx context.Context, toolID string, baseURL string, rateLim
 	}, dest)
 }
 
+// GetStream выполняет GET запрос с rate limiting и retries,
+// но вместо io.ReadAll + json.Unmarshal использует json.Decoder
+// для потоковой десериализации прямо из resp.Body.
+//
+// Экономит память на больших payload (fullstats): нет промежуточного []byte.
+// dest должен быть указателем (как в Get), но для top-level массивов
+// json.Decoder читает срез по одному элементу.
+func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params url.Values, dest interface{}) error {
+	if baseURL == "" {
+		return fmt.Errorf("baseURL is required")
+	}
+	if rateLimit <= 0 {
+		return fmt.Errorf("rateLimit must be positive")
+	}
+	if burst <= 0 {
+		return fmt.Errorf("burst must be positive")
+	}
+
+	u, err := url.Parse(baseURL + path)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	if params != nil {
+		u.RawQuery = params.Encode()
+	}
+
+	limiter := c.getOrCreateLimiter(toolID, rateLimit, burst)
+	var lastErr error
+
+	for i := 0; i < c.retryAttempts; i++ {
+		if err := limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait: %w", err)
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+		if err != nil {
+			return err
+		}
+		httpReq.Header.Set("Authorization", c.apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// Обработка 429 — adaptive rate limiting
+		if resp.StatusCode == http.StatusTooManyRequests {
+			io.Copy(io.Discard, resp.Body) // drain body
+			resp.Body.Close()
+			retryAfterSec := 1
+			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
+				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
+					retryAfterSec = sec
+				}
+			}
+			waitDur := c.adaptiveReduce(toolID, retryAfterSec)
+			fmt.Fprintf(os.Stderr, "⚠️  429 Rate limited (%s) for %s, waiting %v (attempt %d/%d)...\n",
+				resp.Header.Get("X-Ratelimit-Retry"), toolID, waitDur.Truncate(time.Second), i+1, c.retryAttempts)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(waitDur):
+				continue
+			}
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+		}
+
+		// Track successful request for adaptive recovery
+		c.adaptiveRecoverOK(toolID)
+
+		// Streaming decode — без промежуточного []byte
+		decoder := json.NewDecoder(resp.Body)
+		if err := decoder.Decode(dest); err != nil {
+			resp.Body.Close()
+			return fmt.Errorf("stream unmarshal error: %w", err)
+		}
+		resp.Body.Close()
+		return nil
+	}
+
+	return fmt.Errorf("max retries exceeded, last error: %v", lastErr)
+}
+
 // getOrCreateLimiter возвращает существующий limiter для toolID или создаёт новый.
 //
 // Параметры:
@@ -432,6 +557,136 @@ func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *ra
 	c.limiters[toolID] = limiter
 
 	return limiter
+}
+
+// SetRateLimit pre-sets rate limiter for a toolID.
+// Must be called before API methods that use this toolID.
+// Overrides the default rate limit passed to Get()/Post().
+//
+// Parameters:
+//   - desiredRate: user-configured rate (can exceed swagger — adaptive handles 429)
+//   - desiredBurst: burst for desired rate
+//   - apiRate: swagger-documented safe rate (recovery target after 429)
+//   - apiBurst: burst for api rate
+func (c *Client) SetRateLimit(toolID string, desiredRate, desiredBurst, apiRate, apiBurst int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	desiredPerSec := float64(desiredRate) / 60.0
+	apiPerSec := float64(apiRate) / 60.0
+	c.limiters[toolID] = rate.NewLimiter(rate.Limit(desiredPerSec), desiredBurst)
+	c.adaptive[toolID] = &rateLimitState{
+		desiredLimit:  rate.Limit(desiredPerSec),
+		apiFloor:      rate.Limit(apiPerSec),
+		apiFloorBurst: apiBurst,
+	}
+}
+
+// SetAdaptiveParams configures adaptive rate limiting tuning.
+// Must be called before API methods. Zero values keep defaults.
+func (c *Client) SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if recoverAfter > 0 {
+		c.adaptiveRecoverAfter = recoverAfter
+	}
+	if probeAfter > 0 {
+		c.adaptiveProbeAfter = probeAfter
+	}
+	if maxBackoff > 0 {
+		c.maxBackoffSeconds = maxBackoff
+	}
+}
+
+// adaptiveReduce lowers the rate limiter after a 429 response.
+// Computes the actual rate from X-Ratelimit-Retry header and applies
+// exponential backoff multiplier. Returns the wait duration.
+func (c *Client) adaptiveReduce(toolID string, retryAfterSec int) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	state, exists := c.adaptive[toolID]
+	if !exists {
+		state = &rateLimitState{}
+		c.adaptive[toolID] = state
+	}
+
+	state.consecutive429++
+	state.consecutiveOK = 0
+	state.reduced = true
+	state.probed = false
+
+	// Compute actual rate from 429 header: API says "wait N seconds"
+	// → actual rate = 60/N req/min
+	actualRatePerSec := 60.0 / float64(retryAfterSec)
+
+	// Exponential backoff: retryAfter * 2^(consecutive429-1), capped at maxBackoffSeconds
+	backoffMultiplier := 1 << (state.consecutive429 - 1) // 1, 2, 4, 8...
+	waitSec := retryAfterSec * backoffMultiplier
+	if waitSec > c.maxBackoffSeconds {
+		waitSec = c.maxBackoffSeconds
+	}
+
+	// Reduce limiter if actual rate is lower than current
+	if limiter, ok := c.limiters[toolID]; ok {
+		currentLimit := limiter.Limit()
+		if actualRatePerSec < float64(currentLimit) {
+			limiter.SetLimit(rate.Limit(actualRatePerSec))
+			limiter.SetBurst(1)
+			fmt.Fprintf(os.Stderr, "⚠️  Adaptive rate limit: %s reduced to %.1f req/min (was %.1f)\n",
+				toolID, actualRatePerSec*60, currentLimit*60)
+		}
+	}
+
+	return time.Duration(waitSec) * time.Second
+}
+
+// adaptiveRecoverOK tracks consecutive successes and manages two-phase recovery:
+//
+//	Phase 1 (after 429): recover to apiFloor after adaptiveRecoverAfter OKs
+//	Phase 2 (at api floor): probe desiredLimit again after adaptiveProbeAfter OKs
+//
+// Cycle: desired → 429 → api floor → (probe) → desired → 429 → ...
+func (c *Client) adaptiveRecoverOK(toolID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	state, exists := c.adaptive[toolID]
+	if !exists {
+		return
+	}
+
+	state.consecutiveOK++
+	state.consecutive429 = 0
+
+	limiter, ok := c.limiters[toolID]
+	if !ok {
+		return
+	}
+
+	// Phase 1: after 429, recover to api floor first
+	if state.reduced && state.consecutiveOK >= c.adaptiveRecoverAfter {
+		if state.apiFloor > 0 {
+			limiter.SetLimit(state.apiFloor)
+			limiter.SetBurst(state.apiFloorBurst)
+		}
+		state.reduced = false
+		state.consecutiveOK = 0
+		if state.apiFloor > 0 {
+			fmt.Fprintf(os.Stderr, "✅ Adaptive rate limit: %s restored to %.1f req/min (api floor)\n",
+				toolID, state.apiFloor*60)
+		}
+		return
+	}
+
+	// Phase 2: at api floor, probe desired rate again (once per 429 cycle)
+	if !state.reduced && !state.probed && state.consecutiveOK >= c.adaptiveProbeAfter && state.desiredLimit > state.apiFloor {
+		limiter.SetLimit(state.desiredLimit)
+		state.probed = true
+		state.consecutiveOK = 0
+		fmt.Fprintf(os.Stderr, "🔄 Adaptive rate limit: %s probing %.1f req/min (desired)\n",
+			toolID, state.desiredLimit*60)
+		return
+	}
 }
 
 // Post выполняет POST запрос к Wildberries API с поддержкой Rate Limit и Retries.

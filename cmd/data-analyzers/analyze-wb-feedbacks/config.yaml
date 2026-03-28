@@ -27,7 +27,7 @@ analysis:
   min_article_len: 8          # min supplier_article length (skip short marketplace SKUs like 123068)
   # Include filters (product must match at least one):
   # season: []                 # season digit (1st char of article), e.g. [3] = spring only
-  year: [26]                   # 2-digit year (chars 2-3), e.g. [24] = 2024 only
+  year: [25]                   # 2-digit year (chars 2-3), e.g. [24] = 2024 only
 
 source:
   db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"

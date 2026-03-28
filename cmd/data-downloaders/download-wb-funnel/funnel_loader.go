@@ -26,6 +26,8 @@ type FunnelLoaderConfig struct {
 	Repo          *sqlite.SQLiteSalesRepository
 	Days          int    // Days of history to load (1-365) — fallback if From/To not set
 	BatchSize     int    // Products per API request (max 20 for Analytics API v3)
+	RateLimit     int    // Fallback rate limit (req/min) — pre-set limiter from SetRateLimit takes priority
+	BurstLimit    int    // Fallback burst — pre-set limiter from SetRateLimit takes priority
 	RefreshWindow int    // Refresh window in days (0 = always replace, 7 = update last 7 days)
 	From          string // Start date YYYY-MM-DD (optional, takes precedence over Days)
 	To            string // End date YYYY-MM-DD (optional, takes precedence over Days)
@@ -102,7 +104,7 @@ func LoadFunnelHistory(ctx context.Context, cfg FunnelLoaderConfig) (*FunnelLoad
 
 		// Load funnel history for this batch
 		// wb.Client automatically enforces rate limiting (3 req/min = 20s between requests)
-		productsLoaded, metricsLoaded, err := loadFunnelBatch(ctx, cfg.Client, cfg.Repo, batch, cfg.From, cfg.To, cfg.Days, cfg.RefreshWindow)
+		productsLoaded, metricsLoaded, err := loadFunnelBatch(ctx, cfg.Client, cfg.Repo, batch, cfg.From, cfg.To, cfg.Days, cfg.RefreshWindow, cfg.RateLimit, cfg.BurstLimit)
 		if err != nil {
 			fmt.Printf("❌ Ошибка: %v\n", err)
 			// Continue with next batch on error
@@ -124,7 +126,7 @@ func LoadFunnelHistory(ctx context.Context, cfg FunnelLoaderConfig) (*FunnelLoad
 }
 
 // loadFunnelBatch loads funnel history for a single batch of products.
-func loadFunnelBatch(ctx context.Context, client *wb.Client, repo *sqlite.SQLiteSalesRepository, nmIDs []int, from, to string, days int, refreshDays int) (productsLoaded, metricsLoaded int, err error) {
+func loadFunnelBatch(ctx context.Context, client *wb.Client, repo *sqlite.SQLiteSalesRepository, nmIDs []int, from, to string, days int, refreshDays int, rateLimit, burst int) (productsLoaded, metricsLoaded int, err error) {
 	// Determine period: explicit from/to takes precedence over days
 	var begin, end time.Time
 
@@ -190,7 +192,7 @@ func loadFunnelBatch(ctx context.Context, client *wb.Client, repo *sqlite.SQLite
 
 	err = client.Post(ctx, "get_wb_product_funnel_history",
 		"https://seller-analytics-api.wildberries.ru",
-		3, 3,
+		rateLimit, burst,
 		"/api/analytics/v3/sales-funnel/products/history",
 		reqBody, &response)
 	if err != nil {

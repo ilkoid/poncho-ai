@@ -23,7 +23,7 @@ func (c *Client) GetPromotionCount(ctx context.Context) (*PromotionCountResponse
 	path := "/adv/v1/promotion/count"
 
 	var resp PromotionCountResponse
-	err := c.Get(ctx, "get_promotion_count", endpoint, 100, 5, path, nil, &resp)
+	err := c.Get(ctx, "get_promotion_count", endpoint, 300, 5, path, nil, &resp)
 	if err != nil {
 		return nil, fmt.Errorf("promotion count: %w", err)
 	}
@@ -33,8 +33,8 @@ func (c *Client) GetPromotionCount(ctx context.Context) (*PromotionCountResponse
 
 // GetCampaignFullstats returns full campaign statistics from /adv/v3/fullstats.
 // Returns the complete 4-level hierarchy: Campaign → Day → App → Nm.
-// Max 50 campaign IDs per request, 3 req/min rate limit.
-func (c *Client) GetCampaignFullstats(ctx context.Context, advertIDs []int, beginDate, endDate string) ([]CampaignFullstatsResponse, error) {
+// Max 50 campaign IDs per request. Rate limit is configurable (swagger default: 3 req/min).
+func (c *Client) GetCampaignFullstats(ctx context.Context, advertIDs []int, beginDate, endDate string, rateLimit, burst int) ([]CampaignFullstatsResponse, error) {
 	// Use demo mode if configured
 	if c.IsDemoKey() {
 		return c.getMockCampaignFullstats(advertIDs, beginDate, endDate), nil
@@ -61,8 +61,9 @@ func (c *Client) GetCampaignFullstats(ctx context.Context, advertIDs []int, begi
 	path := "/adv/v3/fullstats?" + params.Encode()
 
 	// Parse into canonical type with full hierarchy
+	// Use GetStream to avoid io.ReadAll + json.Unmarshal double allocation
 	var response []CampaignFullstatsResponse
-	err := c.Get(ctx, "get_campaign_fullstats", endpoint, 20, 1, path, nil, &response)
+	err := c.GetStream(ctx, "get_campaign_fullstats", endpoint, rateLimit, burst, path, nil, &response)
 	if err != nil {
 		return nil, fmt.Errorf("campaign fullstats: %w", err)
 	}
@@ -71,7 +72,7 @@ func (c *Client) GetCampaignFullstats(ctx context.Context, advertIDs []int, begi
 }
 
 // GetAdvertDetails returns campaign details from /api/advert/v2/adverts.
-// Max 50 IDs per request. Rate limit: 100/min (same server as promotion/count).
+// Max 50 IDs per request. Rate limit: 5 req/sec (swagger).
 // NOTE: v2 may not return details for all campaign types (e.g. type=8 legacy, type=6 booster).
 func (c *Client) GetAdvertDetails(ctx context.Context, ids []int) ([]AdvertDetail, error) {
 	// Use demo mode if configured
@@ -98,7 +99,7 @@ func (c *Client) GetAdvertDetails(ctx context.Context, ids []int) ([]AdvertDetai
 	path := "/api/advert/v2/adverts?" + params.Encode()
 
 	var response AdvertsResponse
-	err := c.Get(ctx, "get_advert_details", endpoint, 100, 5, path, nil, &response)
+	err := c.Get(ctx, "get_advert_details", endpoint, 300, 5, path, nil, &response)
 	if err != nil {
 		return nil, fmt.Errorf("advert details: %w", err)
 	}

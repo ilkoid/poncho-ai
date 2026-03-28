@@ -12,15 +12,49 @@ package config
 //
 // Используется для загрузки данных о продвижении товаров с WB API.
 type PromotionConfig struct {
-	DbPath   string `yaml:"db_path"`   // Путь к SQLite базе данных
-	Begin    string `yaml:"begin"`     // Начальная дата (YYYY-MM-DD)
-	End      string `yaml:"end"`       // Конечная дата (YYYY-MM-DD)
-	Days     int    `yaml:"days"`      // Дней от сегодня (альтернатива begin/end)
-	Statuses []int  `yaml:"statuses"`  // Фильтр по статусам (например, 9, 11)
-	Resume   bool   `yaml:"resume"`    // Продолжить с последней даты
+	DbPath     string               `yaml:"db_path"`     // Путь к SQLite базе данных
+	Begin      string               `yaml:"begin"`       // Начальная дата (YYYY-MM-DD)
+	End        string               `yaml:"end"`         // Конечная дата (YYYY-MM-DD)
+	Days       int                  `yaml:"days"`        // Дней от сегодня (альтернатива begin/end)
+	Statuses   []int                `yaml:"statuses"`    // Фильтр по статусам (например, 9, 11)
+	Resume     bool                 `yaml:"resume"`      // Продолжить с последней даты
+	RateLimits PromotionRateLimits  `yaml:"rate_limits"` // Rate limits per endpoint (req/min)
+	AdaptiveRecoverAfter int     `yaml:"adaptive_recover_after"` // OKs to restore to api floor after 429 (default: 5)
+	AdaptiveProbeAfter   int     `yaml:"adaptive_probe_after"`   // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds    int     `yaml:"max_backoff_seconds"`    // Cap for exponential backoff (default: 60)
+	SkipDetails bool                 `yaml:"skip_details"` // Skip campaign details download (name, payment_type)
+	SkipCampaigns bool                `yaml:"skip_campaigns"` // Skip campaign list download (reuse IDs from DB)
+	SkipStats     bool                `yaml:"skip_stats"`     // Skip stats download
+}
+
+// PromotionRateLimits — rate limits для promotion API endpoints.
+//
+// Два уровня rate для каждого endpoint:
+//   - desired:      желаемый rate (можно превышать swagger — adaptive limiter обработает 429)
+//   - desired_burst: burst для desired rate
+//   - api:           swagger-documented rate (recovery floor после 429)
+//   - api_burst:     burst для api rate
+//
+// Если desired не указан — используется api (без превышения swagger).
+type PromotionRateLimits struct {
+	PromotionCount      int `yaml:"promotion_count"`       // desired rate (default: 300)
+	PromotionCountBurst int `yaml:"promotion_count_burst"` // desired burst (default: 5)
+	PromotionCountApi    int `yaml:"promotion_count_api"`  // swagger rate (default: 300)
+	PromotionCountApiBurst int `yaml:"promotion_count_api_burst"` // swagger burst (default: 5)
+
+	AdvertDetails       int `yaml:"advert_details"`        // desired rate (default: 300)
+	AdvertDetailsBurst  int `yaml:"advert_details_burst"` // desired burst (default: 5)
+	AdvertDetailsApi    int `yaml:"advert_details_api"`   // swagger rate (default: 300)
+	AdvertDetailsApiBurst int `yaml:"advert_details_api_burst"` // swagger burst (default: 5)
+
+	Fullstats           int `yaml:"fullstats"`            // desired rate (default: 3)
+	FullstatsBurst      int `yaml:"fullstats_burst"`      // desired burst (default: 1)
+	FullstatsApi        int `yaml:"fullstats_api"`        // swagger rate (default: 3)
+	FullstatsApiBurst   int `yaml:"fullstats_api_burst"`  // swagger burst (default: 1)
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.
+// Если desired не указан — используется api значение (без превышения swagger).
 func (c *PromotionConfig) GetDefaults() PromotionConfig {
 	result := *c
 	if result.DbPath == "" {
@@ -29,6 +63,60 @@ func (c *PromotionConfig) GetDefaults() PromotionConfig {
 	if result.Days == 0 {
 		result.Days = 7
 	}
+
+	// Promotion count
+	if result.RateLimits.PromotionCountApi == 0 {
+		result.RateLimits.PromotionCountApi = 300 // 5 req/sec (swagger)
+	}
+	if result.RateLimits.PromotionCount == 0 {
+		result.RateLimits.PromotionCount = result.RateLimits.PromotionCountApi // default = api
+	}
+	if result.RateLimits.PromotionCountApiBurst == 0 {
+		result.RateLimits.PromotionCountApiBurst = 5
+	}
+	if result.RateLimits.PromotionCountBurst == 0 {
+		result.RateLimits.PromotionCountBurst = result.RateLimits.PromotionCountApiBurst
+	}
+
+	// Advert details
+	if result.RateLimits.AdvertDetailsApi == 0 {
+		result.RateLimits.AdvertDetailsApi = 300 // 5 req/sec (swagger)
+	}
+	if result.RateLimits.AdvertDetails == 0 {
+		result.RateLimits.AdvertDetails = result.RateLimits.AdvertDetailsApi
+	}
+	if result.RateLimits.AdvertDetailsApiBurst == 0 {
+		result.RateLimits.AdvertDetailsApiBurst = 5
+	}
+	if result.RateLimits.AdvertDetailsBurst == 0 {
+		result.RateLimits.AdvertDetailsBurst = result.RateLimits.AdvertDetailsApiBurst
+	}
+
+	// Fullstats
+	if result.RateLimits.FullstatsApi == 0 {
+		result.RateLimits.FullstatsApi = 3 // 3 req/min (swagger)
+	}
+	if result.RateLimits.Fullstats == 0 {
+		result.RateLimits.Fullstats = result.RateLimits.FullstatsApi
+	}
+	if result.RateLimits.FullstatsApiBurst == 0 {
+		result.RateLimits.FullstatsApiBurst = 1
+	}
+	if result.RateLimits.FullstatsBurst == 0 {
+		result.RateLimits.FullstatsBurst = result.RateLimits.FullstatsApiBurst
+	}
+
+	// Adaptive tuning defaults
+	if result.AdaptiveRecoverAfter == 0 {
+		result.AdaptiveRecoverAfter = 5
+	}
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+
 	return result
 }
 
@@ -59,6 +147,8 @@ func (c *DownloadConfig) GetDefaults() DownloadConfig {
 // FunnelConfig — конфигурация для funnel данных (WB Analytics API v3).
 //
 // Используется для загрузки воронки продаж с расширенными метриками.
+// Двухуровневый rate limiting: desired (агрессивный) + api (swagger floor для восстановления).
+// См. dev_limits.md для деталей.
 type FunnelConfig struct {
 	Days       int    `yaml:"days"`        // Дней истории (1-365) — альтернатива from/to
 	BatchSize  int    `yaml:"batch_size"`  // Продуктов на запрос (max 20)
@@ -67,9 +157,21 @@ type FunnelConfig struct {
 	From       string `yaml:"from"`        // Начальная дата YYYY-MM-DD (опционально, приоритет над days)
 	To         string `yaml:"to"`          // Конечная дата YYYY-MM-DD (опционально, приоритет над days)
 	MaxBatches int    `yaml:"max_batches"` // Макс. батчей для загрузки (0 = все, полезно для тестов)
+
+	// Adaptive rate limiting (two-level: desired + api floor)
+	FunnelRateLimit         int `yaml:"funnel_rate_limit"`           // desired rate (default: api value)
+	FunnelRateLimitBurst    int `yaml:"funnel_rate_limit_burst"`     // desired burst
+	FunnelRateLimitApi      int `yaml:"funnel_rate_limit_api"`       // swagger rate (default: 3)
+	FunnelRateLimitApiBurst int `yaml:"funnel_rate_limit_api_burst"` // swagger burst (default: 3)
+
+	// Adaptive tuning (see dev_limits.md)
+	AdaptiveRecoverAfter int `yaml:"adaptive_recover_after"` // OKs to restore to api floor after 429 (default: 5)
+	AdaptiveProbeAfter   int `yaml:"adaptive_probe_after"`   // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds    int `yaml:"max_backoff_seconds"`    // Cap for exponential backoff (default: 60)
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.
+// Каскадные дефолты: api → desired, api_burst → desired_burst.
 func (c *FunnelConfig) GetDefaults() FunnelConfig {
 	result := *c
 	if result.Days == 0 {
@@ -84,6 +186,32 @@ func (c *FunnelConfig) GetDefaults() FunnelConfig {
 	if result.BurstLimit == 0 {
 		result.BurstLimit = 3
 	}
+
+	// Funnel rate limits (two-level adaptive)
+	if result.FunnelRateLimitApi == 0 {
+		result.FunnelRateLimitApi = 3 // swagger: 3 req/min
+	}
+	if result.FunnelRateLimit == 0 {
+		result.FunnelRateLimit = result.FunnelRateLimitApi // default = api (safe)
+	}
+	if result.FunnelRateLimitApiBurst == 0 {
+		result.FunnelRateLimitApiBurst = 3
+	}
+	if result.FunnelRateLimitBurst == 0 {
+		result.FunnelRateLimitBurst = result.FunnelRateLimitApiBurst
+	}
+
+	// Adaptive tuning defaults
+	if result.AdaptiveRecoverAfter == 0 {
+		result.AdaptiveRecoverAfter = 5
+	}
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+
 	return result
 }
 

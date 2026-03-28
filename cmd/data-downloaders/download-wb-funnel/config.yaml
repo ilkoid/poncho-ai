@@ -5,8 +5,17 @@ wb:
 funnel:
   days: 7
   batch_size: 20
-  rate_limit: 4    # Запросов в минуту (WB Analytics API default: 3)
-  burst: 3         # Burst для rate limiter
+  rate_limit: 4    # Legacy (для совместимости)
+  burst: 3         # Legacy (для совместимости)
+  # Adaptive rate limiting (двухуровневый, см. dev_limits.md)
+  funnel_rate_limit: 5         # desired — пробуем 5 req/min (> swagger 3)
+  funnel_rate_limit_burst: 3
+  funnel_rate_limit_api: 3     # api floor — восстановление после 429 (swagger: 3)
+  funnel_rate_limit_api_burst: 3
+  # Adaptive tuning
+  adaptive_recover_after: 5    # OKs для восстановления до api floor после 429
+  adaptive_probe_after: 10     # OKs на api floor перед пробой desired
+  max_backoff_seconds: 60      # Cap для exponential backoff
 #  from: "2026-03-12"         # Опционально: YYYY-MM-DD (приоритет над days)
 #  to: "2026-03-12"           # Опционально: YYYY-MM-DD (приоритет над days)
   max_batches: 0   # 0 = загрузить все батчи (полезно для тестов)

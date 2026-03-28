@@ -264,15 +264,42 @@ type CampaignBoosterStatsRow struct {
 // Flatten Helpers — чистые функции для преобразования иерархии → плоских строк
 // ============================================================================
 
-// FlattenToDailyStats преобразует CampaignFullstatsResponse в плоский []CampaignDailyStats.
-// Уровень: Day (без разбивки по платформам и товарам).
-func FlattenToDailyStats(responses []CampaignFullstatsResponse) []CampaignDailyStats {
-	var result []CampaignDailyStats
+// FlattenAllResult содержит все плоские строки из 4-уровневой иерархии fullstats.
+// Получается за один обход вместо 4 отдельных (FlattenToDailyStats, etc.).
+type FlattenAllResult struct {
+	Daily   []CampaignDailyStats
+	App     []CampaignAppStatsRow
+	Nm      []CampaignNmStatsRow
+	Booster []CampaignBoosterStatsRow
+}
+
+// FlattenAll преобразует CampaignFullstatsResponse в плоские строки для всех 4 таблиц
+// за один обход иерархии Campaign → Day → App → Nm.
+// Использует string interning для NmName: одно имя товара разделяется между всеми
+// записями с одинаковым nmId (экономия ~92× аллокаций на товар при 31 дне × 3 платформы).
+func FlattenAll(responses []CampaignFullstatsResponse) FlattenAllResult {
+	var r FlattenAllResult
+	// String interning pool: один экземпляр строки на nmId
+	nmNames := make(map[int]string, 64)
+
 	for _, campaign := range responses {
+		// Booster stats — отдельный срез, не входит в Day→App→Nm
+		for _, bs := range campaign.BoosterStats {
+			r.Booster = append(r.Booster, CampaignBoosterStatsRow{
+				AdvertID:    campaign.AdvertID,
+				StatsDate:   parseDateToYMD(bs.Date),
+				NmID:        bs.Nm,
+				AvgPosition: bs.AvgPosition,
+			})
+		}
+
 		for _, day := range campaign.Days {
-			result = append(result, CampaignDailyStats{
+			dateStr := parseDateToYMD(day.Date)
+
+			// Daily level
+			r.Daily = append(r.Daily, CampaignDailyStats{
 				AdvertID: campaign.AdvertID,
-				StatsDate: parseDateToYMD(day.Date),
+				StatsDate: dateStr,
 				Views:    day.Views,
 				Clicks:   day.Clicks,
 				CTR:      day.CTR,
@@ -285,20 +312,10 @@ func FlattenToDailyStats(responses []CampaignFullstatsResponse) []CampaignDailyS
 				Sum:      day.Sum,
 				SumPrice: day.SumPrice,
 			})
-		}
-	}
-	return result
-}
 
-// FlattenToAppStats преобразует CampaignFullstatsResponse в []CampaignAppStatsRow.
-// Уровень: App (платформы: site/Android/iOS по дням).
-func FlattenToAppStats(responses []CampaignFullstatsResponse) []CampaignAppStatsRow {
-	var result []CampaignAppStatsRow
-	for _, campaign := range responses {
-		for _, day := range campaign.Days {
-			dateStr := parseDateToYMD(day.Date)
 			for _, app := range day.Apps {
-				result = append(result, CampaignAppStatsRow{
+				// App level
+				r.App = append(r.App, CampaignAppStatsRow{
 					AdvertID: campaign.AdvertID,
 					StatsDate: dateStr,
 					AppType:   app.AppType,
@@ -314,27 +331,18 @@ func FlattenToAppStats(responses []CampaignFullstatsResponse) []CampaignAppStats
 					Sum:       app.Sum,
 					SumPrice:  app.SumPrice,
 				})
-			}
-		}
-	}
-	return result
-}
 
-// FlattenToNmStats преобразует CampaignFullstatsResponse в []CampaignNmStatsRow.
-// Уровень: Nm (товары по платформам по дням — самый гранулярный).
-func FlattenToNmStats(responses []CampaignFullstatsResponse) []CampaignNmStatsRow {
-	var result []CampaignNmStatsRow
-	for _, campaign := range responses {
-		for _, day := range campaign.Days {
-			dateStr := parseDateToYMD(day.Date)
-			for _, app := range day.Apps {
 				for _, nm := range app.Nms {
-					result = append(result, CampaignNmStatsRow{
+					// Nm level — intern name by nmId
+					if _, ok := nmNames[nm.NmID]; !ok {
+						nmNames[nm.NmID] = nm.Name
+					}
+					r.Nm = append(r.Nm, CampaignNmStatsRow{
 						AdvertID: campaign.AdvertID,
 						StatsDate: dateStr,
 						AppType:   app.AppType,
 						NmID:      nm.NmID,
-						NmName:    nm.Name,
+						NmName:    nmNames[nm.NmID],
 						Views:     nm.Views,
 						Clicks:    nm.Clicks,
 						CTR:       nm.CTR,
@@ -351,24 +359,7 @@ func FlattenToNmStats(responses []CampaignFullstatsResponse) []CampaignNmStatsRo
 			}
 		}
 	}
-	return result
-}
-
-// FlattenToBoosterStats преобразует CampaignFullstatsResponse в []CampaignBoosterStatsRow.
-// Уровень: Booster (только для кампаний типа Booster).
-func FlattenToBoosterStats(responses []CampaignFullstatsResponse) []CampaignBoosterStatsRow {
-	var result []CampaignBoosterStatsRow
-	for _, campaign := range responses {
-		for _, bs := range campaign.BoosterStats {
-			result = append(result, CampaignBoosterStatsRow{
-				AdvertID:    campaign.AdvertID,
-				StatsDate:   parseDateToYMD(bs.Date),
-				NmID:        bs.Nm,
-				AvgPosition: bs.AvgPosition,
-			})
-		}
-	}
-	return result
+	return r
 }
 
 // parseDateToYMD converts RFC3339 date string to YYYY-MM-DD format.
