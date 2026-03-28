@@ -335,10 +335,31 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 
 	var lastErr error
 
+	// Track timing for rate limiting
+	var lastRequestTime time.Time
+	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit)) // 3/min → 20s
+
 	// Retry loop
 	for i := 0; i < c.retryAttempts; i++ {
+		waitStart := time.Now()
 		if err := limiter.Wait(ctx); err != nil {
 			return fmt.Errorf("rate limiter wait: %w", err)
+		}
+		waitDur := time.Since(waitStart)
+
+		// Additional delay: ensure minimum interval since last HTTP request
+		if !lastRequestTime.IsZero() {
+			sinceLastReq := time.Since(lastRequestTime)
+			if sinceLastReq < minInterval {
+				additionalWait := minInterval - sinceLastReq
+				select {
+				case <-time.After(additionalWait):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: interval since last HTTP request: %v (limiter.Wait: %v)\n",
+				toolID, time.Since(lastRequestTime).Truncate(time.Millisecond), waitDur.Truncate(time.Millisecond))
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, req.method, req.url, req.body)
@@ -349,6 +370,11 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 		httpReq.Header.Set("Authorization", c.apiKey)
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
+
+		// Record time just before HTTP request
+		lastRequestTime = time.Now()
+		fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: HTTP request at %s\n",
+			toolID, lastRequestTime.Format("15:04:05.000"))
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
@@ -361,6 +387,18 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 
 		// Обработка 429 (Too Many Requests) — adaptive rate limiting
 		if resp.StatusCode == http.StatusTooManyRequests {
+			// Parse 429 error details
+			var err429 struct {
+				Title     string `json:"title"`
+				Detail    string `json:"detail"`
+				Code      string `json:"code"`
+				RequestID string `json:"requestId"`
+				Origin    string `json:"origin"`
+				Status    int    `json:"status"`
+				Timestamp string `json:"timestamp"`
+			}
+			_ = json.Unmarshal(body, &err429)
+
 			serverRetrySec := 1
 			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
@@ -368,8 +406,16 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 				}
 			}
 			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
-			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)...\n",
+
+			// Log 429 details
+			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)\n",
 				toolID, waitDur.Truncate(time.Second), serverRetrySec, i+1, c.retryAttempts)
+			if err429.Detail != "" {
+				fmt.Fprintf(os.Stderr, "    429 detail: %s | code: %s | origin: %s | time: %s\n",
+					err429.Detail, err429.Code, err429.Origin, err429.Timestamp)
+			} else if len(body) > 0 {
+				fmt.Fprintf(os.Stderr, "    429 body: %s\n", string(body))
+			}
 
 			select {
 			case <-ctx.Done():
@@ -468,9 +514,41 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 	limiter := c.getOrCreateLimiter(toolID, rateLimit, burst)
 	var lastErr error
 
+	// Track timing for rate limiting
+	var lastRequestTime time.Time
+	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit)) // 3/min → 20s
+
+	// Debug: show limiter state before first request
+	fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: limiter addr=%p, rate=%.1f/min, burst=%d, min_interval=%v\n",
+		toolID, limiter, limiter.Limit()*60, limiter.Burst(), minInterval.Truncate(time.Millisecond))
+
 	for i := 0; i < c.retryAttempts; i++ {
+		waitStart := time.Now()
 		if err := limiter.Wait(ctx); err != nil {
 			return fmt.Errorf("rate limiter wait: %w", err)
+		}
+		waitDur := time.Since(waitStart)
+
+		// Additional delay: ensure minimum interval since last HTTP request
+		// This is needed because limiter.Wait() measures from last limiter.Wait() call,
+		// not from last actual HTTP request. After retries/429, this matters.
+		if !lastRequestTime.IsZero() {
+			sinceLastReq := time.Since(lastRequestTime)
+			if sinceLastReq < minInterval {
+				additionalWait := minInterval - sinceLastReq
+				fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: additional wait %v to ensure %v interval since last HTTP (was %v)\n",
+					toolID, additionalWait.Truncate(time.Millisecond), minInterval.Truncate(time.Millisecond), sinceLastReq.Truncate(time.Millisecond))
+				select {
+				case <-time.After(additionalWait):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: interval since last HTTP request: %v (limiter.Wait: %v)\n",
+				toolID, time.Since(lastRequestTime).Truncate(time.Millisecond), waitDur.Truncate(time.Millisecond))
+		} else {
+			fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: limiter.Wait() took %v (first request)\n",
+				toolID, waitDur.Truncate(time.Millisecond))
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
@@ -481,6 +559,11 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
+		// Record time just before HTTP request
+		lastRequestTime = time.Now()
+		fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: HTTP request at %s\n",
+			toolID, lastRequestTime.Format("15:04:05.000"))
+
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			lastErr = err
@@ -489,8 +572,22 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 
 		// Обработка 429 — adaptive rate limiting
 		if resp.StatusCode == http.StatusTooManyRequests {
-			io.Copy(io.Discard, resp.Body) // drain body
+			// Read response body for debugging
+			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+
+			// Parse 429 error details
+			var err429 struct {
+				Title     string `json:"title"`
+				Detail    string `json:"detail"`
+				Code      string `json:"code"`
+				RequestID string `json:"requestId"`
+				Origin    string `json:"origin"`
+				Status    int    `json:"status"`
+				Timestamp string `json:"timestamp"`
+			}
+			_ = json.Unmarshal(body, &err429)
+
 			serverRetrySec := 1
 			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
@@ -498,8 +595,16 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 				}
 			}
 			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
-			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)...\n",
+
+			// Log 429 details
+			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)\n",
 				toolID, waitDur.Truncate(time.Second), serverRetrySec, i+1, c.retryAttempts)
+			if err429.Detail != "" {
+				fmt.Fprintf(os.Stderr, "    429 detail: %s | code: %s | origin: %s | time: %s\n",
+					err429.Detail, err429.Code, err429.Origin, err429.Timestamp)
+			} else if len(body) > 0 {
+				fmt.Fprintf(os.Stderr, "    429 body: %s\n", string(body))
+			}
 
 			select {
 			case <-ctx.Done():
@@ -543,8 +648,10 @@ func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *ra
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Если limiter уже существует - возвращаем
+	// Если limiter уже существует - возвращаем (игнорируем переданные rateLimit/burst)
 	if limiter, exists := c.limiters[toolID]; exists {
+		fmt.Fprintf(os.Stderr, "RATE_DEBUG getOrCreateLimiter(%s): reusing addr=%p, rate=%.1f/min, burst=%d\n",
+			toolID, limiter, limiter.Limit()*60, limiter.Burst())
 		return limiter
 	}
 
@@ -553,6 +660,8 @@ func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *ra
 	ratePerSec := float64(rateLimit) / 60.0
 	limiter := rate.NewLimiter(rate.Limit(ratePerSec), burst)
 	c.limiters[toolID] = limiter
+	fmt.Fprintf(os.Stderr, "RATE_DEBUG getOrCreateLimiter(%s): CREATED NEW addr=%p, rate=%d/min, burst=%d\n",
+		toolID, limiter, rateLimit, burst)
 
 	return limiter
 }
@@ -613,9 +722,8 @@ func (c *Client) RateLimiters() map[string]rate.Limit {
 }
 
 // adaptiveReduce immediately drops the rate limiter to api floor after a 429 response.
-// Calculates cooldown from api floor rate (60/apiRate) instead of X-Ratelimit-Retry,
-// ensuring the rate limiter's token bucket has exactly one token available for retry.
-// Falls back to server header if no adaptive state configured.
+// Calculates cooldown using server's X-Ratelimit-Retry header with minimum safety margin
+// based on api floor rate. Falls back to server header if no adaptive state configured.
 func (c *Client) adaptiveReduce(toolID string, serverRetrySec int) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -639,13 +747,21 @@ func (c *Client) adaptiveReduce(toolID string, serverRetrySec int) time.Duration
 		}
 	}
 
-	// Calculate cooldown: one full interval at api floor rate.
-	// 3 req/min → 20s. 300 req/min → 200ms.
-	// After this duration the token bucket has exactly 1 token for retry,
-	// so limiter.Wait() returns immediately and the retry consumes it.
+	// Calculate cooldown: use server's X-Ratelimit-Retry hint, but ensure at least
+	// one full interval at api floor rate for safety.
+	// 3 req/min → 20s minimum interval.
+	// This ensures the rate limiter's token bucket has time to refill.
 	var waitDur time.Duration
 	if state.apiFloor > 0 {
-		waitDur = time.Duration(float64(time.Second) / float64(state.apiFloor))
+		// Minimum interval based on api floor rate
+		minInterval := time.Duration(float64(time.Second) / float64(state.apiFloor))
+		// Use server hint, but ensure at least minimum interval
+		serverWait := time.Duration(serverRetrySec) * time.Second
+		if serverWait < minInterval {
+			waitDur = minInterval
+		} else {
+			waitDur = serverWait
+		}
 	} else {
 		// No adaptive state — fall back to server header
 		waitDur = time.Duration(serverRetrySec) * time.Second

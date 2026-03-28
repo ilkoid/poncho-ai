@@ -24,7 +24,7 @@ promotion:
   #end: "2026-01-02"    # YYYY-MM-DD
 
   # Days from today (alternative to begin/end)
-  days: 2
+  days: 14
 
   # Filter by campaign status (comma-separated: 9,11 = active + paused)
   # -1 = deleted, 4 = ready, 7 = finished, 8 = canceled, 9 = active, 11 = paused
@@ -52,20 +52,21 @@ promotion:
   # If desired not set → defaults to api (safe, no exceeding swagger)
   rate_limits:
     # /adv/v1/promotion/count (5 req/sec)
-    promotion_count: 400
+    promotion_count: 300
     promotion_count_burst: 10
     promotion_count_api: 300
     promotion_count_api_burst: 5
     # /api/advert/v2/adverts (5 req/sec)
-    advert_details: 400
+    advert_details: 300
     advert_details_burst: 10
     advert_details_api: 300
     advert_details_api_burst: 5
-    # /adv/v3/fullstats (swagger: 3 req/min — desired can exceed, adaptive handles 429)
-    # NOTE: API may enforce stricter limits in practise. Try 3 first, reduce to 2 if needed.
+    # /adv/v3/fullstats
+    # Swagger says: 3 req/min, but "global limiter per seller" is stricter in practice
+    # Real limit: 2 req/min (30s interval) to avoid 429 errors
     fullstats: 4
     fullstats_burst: 1
-    fullstats_api: 3           # conservative: 2 req/min (swagger says 3, but practise may differ)
+    fullstats_api: 3           # practical limit (swagger says 3, but 429 occurs)
     fullstats_api_burst: 1
 
   # Adaptive rate limiting tuning (see dev_limits.md)

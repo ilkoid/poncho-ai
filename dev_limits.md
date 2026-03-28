@@ -2,64 +2,46 @@
 
 ## Concept
 
-We use a two-level rate limiting strategy that allows exceeding documented API limits
-while safely handling 429 (Too Many Requests) responses.
+Two-level rate limiting with **minimum interval guarantee between HTTP requests**:
 
-**Core idea**: start aggressive (`desired`), on 429 immediately drop to safe floor (`api`),
-wait a calculated cooldown (`60/apiRate` seconds), then **stay at api floor forever**.
-
+**For swagger-documented endpoints:**
 ```
-desired: 4 req/min     ← start here (can exceed swagger)
-api:      3 req/min    ← immediate drop on 429 (swagger-documented)
-cooldown: 20s          ← 60/3 = one full interval at api floor
+desired: 3 req/min     ← equals swagger (no aggressive starting rate)
+api:      3 req/min    ← same as desired (no reduction needed)
+cooldown: 20s          ← max(server hint, 60/3) = respects X-Ratelimit-Retry
+min_interval: 20s      ← GUARANTEED between HTTP requests (not just limiter.Wait calls)
 
-     ┌──────────────────────────────────────────────────┐
-     │  desired (4)                                      │ │
-     │    │                                              │ │
-     │    ├── 200 OK ──┐                                 │ │
-     │    │             │                                 │ │
-     │    ├── 429 ─────┤                                 │ │
-     │    │    IMMEDIATE drop to api floor (3)           │ │
-     │    │    wait 60/3 = 20s (calculated, not header)  │ │
-     │    │    retry (limiter has exactly 1 token)        │ │
-     │    │    stay at 3 req/min forever → stable        │ │
-     │    │                                              │ │
-     └──────────────────────────────────────────────────┘
+3 req/min ──→ 429 ──→ cooldown ──→ stay at 3 req/min
 ```
 
-### Why not just use the swagger limit?
+**For undocumented/uncertain endpoints:**
+```
+desired: 4 req/min     ← start aggressive (can exceed swagger)
+api:      3 req/min    ← immediate drop on 429 (swagger limit)
+cooldown: max(1s, 20s) ← respect X-Ratelimit-Retry, but ensure minimum interval
+min_interval: computed ← 60/rateLimit, ensures pacing even after retries
 
-- Swagger limits are often conservative. Real API throughput can be higher.
-- Short bursts at higher rates complete faster when the API allows it.
-- 429 responses are cheap (no data lost) — we just drop to safe floor and retry.
-- The adaptive mechanism ensures we never irritate the server persistently.
+desired (4) ──→ 429 ──→ api floor (3) ──→ stay forever
+```
 
-### Why calculated cooldown instead of `X-Ratelimit-Retry`?
+**Why minimum interval guarantee?**
 
-The header `X-Ratelimit-Retry` tells how long to wait, but it's **unreliable**:
-- Often too short (1-6 seconds) — causes repeated 429s
-- Not aligned with our rate limiter's token bucket
-- Doesn't account for our desired/api rate configuration
-
-**Our approach**: calculate cooldown as `1/apiFloor` seconds (or `60/apiRatePerMin`).
-
-For `apiFloor=3/min` → cooldown = 60/3 = 20 seconds.
-
-This guarantees:
-1. The API's rate counter has fully reset
-2. Our token bucket has exactly 1 token available for retry
-3. No "token stealing" from subsequent requests
-4. Predictable, server-independent behavior
+The standard `rate.Limiter.Wait()` measures time from the **last `Wait()` call**, not from the **last HTTP request**. This causes issues after retries/429:
 
 ```
-❌ OLD (header-based):
-429 → wait 6s (from X-Ratelimit-Retry) → limiter.Wait(+14s) → retry
-     ↑ retry "steals" token, next request waits extra → bursts → 429s
+Request 1: Wait() (0s) → HTTP (t=0) → 429!
+Cooldown: 20s
+Retry:    Wait() (0s, token ready!) → HTTP (t=20) ← Only 20s from Request 1 ✓
 
-✅ NEW (calculated):
-429 → wait 20s (calculated from api floor) → limiter.Wait(0s, token ready) → retry
-     ↑ retry consumes accumulated token, next request waits 20s → stable
+But without cooldown:
+Request 1: Wait() (0s) → HTTP (t=0) → error
+Retry:    Wait() (0s) → HTTP (t=0.1) ← Only 0.1s between HTTP requests! ✗
 ```
+
+**Solution:** After `limiter.Wait()`, we check `time.Since(lastHTTPRequest)` and wait additional time if needed:
+- `3 req/min` → `minInterval = 20s`
+- If `sinceLast < 20s`, wait `20s - sinceLast`
+- This guarantees **minimum interval between actual HTTP requests**
 
 ---
 
@@ -67,56 +49,48 @@ This guarantees:
 
 ### Components
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| `rateLimitState` | `pkg/wb/client.go` | Tracks desired/api/reduced state per toolID |
-| `SetRateLimit()` | `pkg/wb/client.go` | Pre-sets limiter with both desired and api rates |
-| `adaptiveReduce()` | `pkg/wb/client.go` | On 429: drops limiter to api floor, returns calculated cooldown |
-| `adaptiveRecoverOK()` | `pkg/wb/client.go` | Tracks successful requests (no probing) |
-| `doRequest()` | `pkg/wb/client.go` | HTTP retry loop with adaptive logic (for most endpoints) |
-| `GetStream()` | `pkg/wb/client.go` | Streaming variant (for large responses, e.g. fullstats) |
-| `PromotionRateLimits` | `pkg/config/utility.go` | Config struct with desired/api/burst per endpoint |
-| `applyRateLimits()` | `cmd/.../main.go` | Wires YAML config to client |
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `rateLimitState` | `pkg/wb/client.go:163` | Tracks desired/api rates per toolID |
+| `SetRateLimit()` | `pkg/wb/client.go:623` | Pre-sets limiter with both rates |
+| `adaptiveReduce()` | `pkg/wb/client.go:713` | On 429: drops to api floor, returns cooldown |
+| `adaptiveRecoverOK()` | `pkg/wb/client.go:762` | Tracks successes (no probing) |
+| `doRequest()` | `pkg/wb/client.go:332` | HTTP retry loop with min interval check |
+| `GetStream()` | `pkg/wb/client.go:495` | Streaming variant with min interval check |
 
 ### Data Flow
 
 ```
-config.yaml                          pkg/wb/client.go                     HTTP
-───────────                          ───────────────                     ────
+config.yaml                     pkg/wb/client.go                    HTTP
+───────────                     ───────────────                    ────
 fullstats: 4   (desired)
 fullstats_api: 3 (swagger floor)
         │
         ▼
 applyRateLimits()
   → SetRateLimit("get_campaign_fullstats", 4, 1, 3, 1)
-      → limiters["get_campaign_fullstats"] = 4/60 req/s (desired)
+      → limiters["get_campaign_fullstats"] = 4/60 req/s
       → adaptive["get_campaign_fullstats"] = {
             desiredLimit: 4/60,
-            desiredBurst: 1,
-            apiFloor:     3/60,     ← immediate drop target on 429
-            reduced:      false,
+            apiFloor:     3/60,
           }
         │
         ▼
 GetCampaignFullstats(..., 4, 1)
   → GetStream(..., 4, 1)
-      → getOrCreateLimiter() → returns pre-set limiter (4/60)
+      → getOrCreateLimiter() → returns pre-set limiter
       → limiter.Wait(ctx)     ← throttling here
       → HTTP request
           │
           ├── 200 → adaptiveRecoverOK()
-          │            → consecutiveOK++ (no probing)
           │
-          └── 429 → adaptiveReduce(serverRetrySec)
-                       → limiter dropped to apiFloor (3/60)
-                       → wait = 1/apiFloor = 20s (calculated, not serverRetrySec)
-                       → limiter.Wait() returns immediately (1 token ready)
-                       → retry consumes token → success
+          └── 429 → adaptiveReduce()
+                       → limiter dropped to 3/60
+                       → wait = 60/3 = 20s
+                       → retry (consumes 1 token)
           │
-          └── next request → limiter.Wait() waits 20s for next token
+          └── next request → limiter.Wait() waits 20s
 ```
-
-**Key insight**: after the calculated cooldown, `limiter.Wait()` returns immediately because exactly one token has accumulated. The retry consumes it, and the next request properly waits for a new token.
 
 ---
 
@@ -127,347 +101,278 @@ GetCampaignFullstats(..., 4, 1)
 ```yaml
 rate_limits:
   # endpoint_name:     desired rate (req/min) — can exceed api
-  # endpoint_name_burst:  desired burst
-  # endpoint_name_api:   swagger-documented rate (req/min) — immediate drop target on 429
-  # endpoint_name_api_burst: swagger-documented burst
+  # endpoint_name_api:   swagger-documented rate (req/min)
 ```
 
 ### Rules
 
-1. **If `desired` not set** → defaults to `api` (safe, no exceeding swagger)
-2. **If `api` not set** → defaults to swagger value in `GetDefaults()`
-3. **If `burst` not set** → defaults to corresponding `*_api_burst`
-4. **If `*_api_burst` not set** → defaults to sensible value in `GetDefaults()`
+1. If `desired` not set → defaults to `api`
+2. If `api` not set → defaults to swagger value in code
+3. Burst defaults to corresponding `*_api_burst`
 
-### Example (current config)
+### Example
 
 ```yaml
 rate_limits:
-  # /adv/v1/promotion/count (5 req/sec) — no exceeding needed
-  promotion_count: 300
-  promotion_count_burst: 5
-  promotion_count_api: 300
-  promotion_count_api_burst: 5
+  # /adv/v1/promotion/count (5 req/sec = 300 req/min)
+  promotion_count: 300       # desired equals swagger for documented endpoints
+  promotion_count_api: 300   # swagger: 300 req/min
 
-  # /api/advert/v2/adverts (5 req/sec) — no exceeding needed
-  advert_details: 300
-  advert_details_burst: 5
-  advert_details_api: 300
-  advert_details_api_burst: 5
+  # /adv/v3/fullstats (swagger: 3 req/min, 20s interval, burst 1)
+  # See docs/wb_api_swagger/08-promotion.yaml for documented limits
+  fullstats: 3               # swagger-documented (no adaptive reduction needed)
+  fullstats_api: 3           # same as desired for documented endpoints
 
-  # /adv/v3/fullstats (swagger: 3 req/min) — moderate exceeding
-  fullstats: 4               # try 4 req/min (> swagger 3)
-  fullstats_burst: 1
-  fullstats_api: 3           # immediate drop to 3 req/min on 429
-  fullstats_api_burst: 1
+  # For undocumented endpoints, you can try aggressive rates:
+  # some_unknown_endpoint: 10    # try 10 req/min
+  # some_unknown_endpoint_api: 5 # drop to 5 req/min on 429
 
   # Adaptive tuning
-  adaptive_probe_after: 15   # OKs at api floor before probing desired
-  max_backoff_seconds: 90    # cap for cooldown (for very low api rates)
+  max_backoff_seconds: 30    # cap for cooldown (very low rates)
 ```
 
 ---
 
-## How to Add Adaptive Rate Limiting to a New Endpoint
+## Adding Adaptive Rate Limiting to a New Endpoint
 
-### Step 1: Add config fields to config struct
-
-File: `pkg/config/utility.go` (or appropriate config package)
-
-```go
-type PromotionRateLimits struct {
-    // ... existing fields ...
-
-    // New endpoint
-    NewEndpoint          int `yaml:"new_endpoint"`           // desired (default: api value)
-    NewEndpointBurst     int `yaml:"new_endpoint_burst"`      // desired burst
-    NewEndpointApi       int `yaml:"new_endpoint_api"`        // swagger rate
-    NewEndpointApiBurst  int `yaml:"new_endpoint_api_burst"`  // swagger burst
-}
-```
-
-### Step 2: Add defaults in `GetDefaults()`
+### Step 1: Add config fields
 
 File: `pkg/config/utility.go`
 
 ```go
-// In GetDefaults():
+type YourRateLimits struct {
+    // New endpoint
+    NewEndpoint       int `yaml:"new_endpoint"`
+    NewEndpointApi    int `yaml:"new_endpoint_api"`
+}
+```
 
-// New endpoint
+### Step 2: Add defaults
+
+File: `pkg/config/utility.go`, in `GetDefaults()`:
+
+```go
 if result.RateLimits.NewEndpointApi == 0 {
     result.RateLimits.NewEndpointApi = 100 // swagger limit
 }
 if result.RateLimits.NewEndpoint == 0 {
     result.RateLimits.NewEndpoint = result.RateLimits.NewEndpointApi
 }
-if result.RateLimits.NewEndpointApiBurst == 0 {
-    result.RateLimits.NewEndpointApiBurst = 5
-}
-if result.RateLimits.NewEndpointBurst == 0 {
-    result.RateLimits.NewEndpointBurst = result.RateLimits.NewEndpointApiBurst
-}
 ```
 
-### Step 3: Wire to client in `applyRateLimits()`
+### Step 3: Wire to client
 
-File: `cmd/data-downloaders/download-wb-promotion/main.go` (or similar)
+File: `cmd/your-downloader/main.go`
 
 ```go
-func applyRateLimits(client *wb.Client, rl config.PromotionRateLimits) {
-    // ... existing ...
-    client.SetRateLimit("new_endpoint", rl.NewEndpoint, rl.NewEndpointBurst,
-                       rl.NewEndpointApi, rl.NewEndpointApiBurst)
+func applyRateLimits(client *wb.Client, rl config.YourRateLimits) {
+    client.SetRateLimit("new_endpoint", rl.NewEndpoint, 1,
+                       rl.NewEndpointApi, 1)
 }
 ```
 
 ### Step 4: Use in API method
 
-File: `pkg/wb/promotion.go` (or wherever the API method lives)
+File: `pkg/wb/your_api.go`
 
 ```go
 func (c *Client) GetNewEndpoint(ctx context.Context, rateLimit, burst int) (Result, error) {
-    // For large responses, use GetStream (avoids io.ReadAll)
     var result Result
-    err := c.GetStream(ctx, "new_endpoint", endpoint, rateLimit, burst, path, nil, &result)
+    err := c.GetStream(ctx, "new_endpoint", baseURL, rateLimit, burst, path, nil, &result)
     return result, err
 }
 ```
 
-**Important**: pass `rateLimit` and `burst` from the caller. The limiter is pre-set
-by `SetRateLimit` — the params here are fallback if `SetRateLimit` wasn't called.
-
-### Step 5: Add to YAML config
-
-```yaml
-rate_limits:
-  new_endpoint: 50          # desired (try 50 req/min)
-  new_endpoint_burst: 5
-  new_endpoint_api: 20      # swagger: 20 req/min (immediate drop on 429)
-  new_endpoint_api_burst: 3
-```
+**Critical**: `toolID` in `SetRateLimit()` must match `toolID` in `Get()` calls.
 
 ---
 
-## Adaptive Behavior Details
+## Behavior Details
+
+### Minimum Interval Between HTTP Requests
+
+**Critical fix:** After `limiter.Wait()` returns, we check `time.Since(lastHTTPRequest)` and wait additional time if needed:
+
+```go
+minInterval := 60s / rateLimit  // 3/min → 20s
+if !lastRequestTime.IsZero() {
+    sinceLastReq := time.Since(lastRequestTime)
+    if sinceLastReq < minInterval {
+        additionalWait := minInterval - sinceLastReq
+        time.Sleep(additionalWait)
+    }
+}
+```
+
+**Why this is needed:** `limiter.Wait()` measures time from the **last `Wait()` call**, not from the **last HTTP request**. After retries or network errors, this matters:
+
+```
+Normal flow:
+  Request 1: Wait(0s) → HTTP(t=0) → success
+  Request 2: Wait(20s) → HTTP(t=20) → success ✓
+
+Without minInterval check (after error):
+  Request 1: Wait(0s) → HTTP(t=0) → error
+  Retry:     Wait(0s, token ready!) → HTTP(t=0.1) ← Only 0.1s between HTTP! ✗
+
+With minInterval check:
+  Request 1: Wait(0s) → HTTP(t=0) → error
+  Retry:     Wait(0s) → check: sinceLast=0.1s < 20s → wait 19.9s → HTTP(t=20) ✓
+```
 
 ### On 429 (Too Many Requests)
 
 ```
-429 received with X-Ratelimit-Retry: 6 (logged for reference, but NOT used for wait)
+429 received with X-Ratelimit-Retry: 1
 
 1. Immediately drop limiter to api floor (e.g., 3 req/min)
-2. Calculate cooldown: 1/apiFloor = 1/(3/60) = 20 seconds
-3. Wait 20 seconds (capped at max_backoff_seconds if configured)
-4. limiter.Wait() returns immediately (token accumulated during wait)
-5. Retry request (consumes token)
-6. Next request waits 20s for next token
+2. Calculate cooldown: max(server hint, 60/rate)
+   - max(1, 60/3) = max(1, 20) = 20 seconds
+3. Wait 20 seconds (capped at max_backoff_seconds)
+4. After cooldown, limiter.Wait() may wait 0s (token ready)
+5. MINIMUM INTERVAL CHECK: ensure 20s since last HTTP request
+6. Retry request
 7. All subsequent requests stay at api floor forever
 ```
 
-**Why this works**: The cooldown duration matches the token bucket's refill rate.
-After waiting `1/apiFloor` seconds, exactly one token is available. `limiter.Wait()`
-returns immediately for the retry, consumes that token, and subsequent requests
-properly wait for new tokens. No bursts, no token stealing, just smooth pacing.
+**Key behavior:**
+- The server's `X-Ratelimit-Retry` hint is respected, but we enforce a minimum cooldown
+- The minInterval check ensures proper pacing even after retries/cooldowns
+- This prevents "burst" requests that could trigger additional 429s
 
-**Simplified behavior**: Once dropped to api floor, the rate stays there forever.
-No probing back to desired rate — this prevents repeated 429s and makes behavior predictable.
+### Cooldown Examples
 
-### Cooldown Calculation Examples
-
-| API Floor Rate | Cooldown (`1/apiFloor`) | Token Bucket After Cooldown |
-|----------------|-------------------------|----------------------------|
-| 3 req/min (0.05 req/s) | 20 seconds | 1.0 token (exactly) |
-| 20 req/min (0.33 req/s) | 3 seconds | 1.0 token (exactly) |
-| 300 req/min (5 req/s) | 200ms | 1.0 token (exactly) |
-
-**Alignment**: The cooldown is deliberately chosen to match the rate limiter's
-token accumulation. After waiting this duration, `limiter.Wait()` will have
-exactly one token available and return immediately.
+| API Floor Rate | Cooldown (`60/apiRate`) |
+|----------------|------------------------|
+| 3 req/min | 20 seconds |
+| 20 req/min | 3 seconds |
+| 300 req/min | 200ms |
 
 ---
 
 ## Constants
 
-### Adaptive Tuning (configurable via YAML)
+| YAML field | Default | Purpose |
+|-----------|--------|---------|
+| `max_backoff_seconds` | 60 | Cap for cooldown (very low rates) |
+| `adaptive_probe_after` | 10 | **Deprecated** — no longer used |
 
-| YAML field | Default | Client field | Purpose |
-|-----------|--------|-------------|---------|
-| `adaptive_probe_after` | 10 | `adaptiveProbeAfter` | **DEPRECATED** — no longer used (no probing) |
-| `max_backoff_seconds` | 60 | `maxBackoffSeconds` | Cap for cooldown (for very low api rates) |
-
-Set via `client.SetAdaptiveParams()` or YAML config. Zero values keep defaults.
-
-**Note**: `adaptive_probe_after` is kept in config for backwards compatibility but has no effect.
-
-File: `pkg/wb/client.go`
+File: `pkg/wb/client.go:265`
 
 ---
 
-## Logging Examples
+## Common Pitfalls
 
-### Aggressive start, 429, drop to api floor
+### 1. Forgetting `SetRateLimit()` — silent failure
 
-```
-⚠️  429 for get_campaign_fullstats, cooling down 20s (server: 6s, attempt 1/3)...
-⚠️  Adaptive rate limit: get_campaign_fullstats dropped to 3.0 req/min (api floor)
-... subsequent requests every 20s at 3 req/min, stable ...
-```
+**Symptom**: 429 responses, rate never drops.
 
-**Log format breakdown**:
-- `cooling down 20s` — our calculated cooldown from api floor rate
-- `server: 6s` — X-Ratelimit-Retry header value (logged for reference, not used)
+**Cause**: No adaptive state (`apiFloor=0`), limiter stays at current rate.
 
-### No 429 (desired rate works)
+```go
+// ❌ WRONG
+wbClient, _ := wb.NewFromConfig(cfg)
+client.Get(ctx, "tool_id", url, 3, 3, path, nil, &result)
 
-```
-(no output — desired rate is within actual API capacity)
-```
-
----
-
-## Thread Safety
-
-All adaptive state is protected by `c.mu` (sync.RWMutex in `Client`).
-The rate limiter itself (`golang.org/x/time/rate.Limiter`) is also thread-safe.
-Multiple goroutines can call API methods concurrently.
-
----
-
-## Pitfalls & Common Mistakes
-
-### 1. Forgetting to call `SetRateLimit()` — no adaptive state
-
-**Symptom**: if 429 occurs, adaptive state is created lazily with zero `apiFloor`.
-The limiter won't be reduced (guard `if state.apiFloor > 0`), so it stays at whatever
-rate it was running. Falls back to `X-Ratelimit-Retry` header, which may be unreliable.
-
-```
-❌ WRONG — no adaptive setup:
-wbClient, _ := wb.NewFromConfig(wbCfg)
-// Missing: wbClient.SetRateLimit(...)
-// Missing: wbClient.SetAdaptiveParams(...)
-client.Post(ctx, "tool_id", url, 3, 3, path, body, &result)
-
-✅ CORRECT:
-wbClient, _ := wb.NewFromConfig(wbCfg)
-wbClient.SetRateLimit("tool_id", desiredRate, desiredBurst, apiRate, apiBurst)
-wbClient.SetAdaptiveParams(probeAfter, maxBackoff)
+// ✅ CORRECT
+wbClient, _ := wb.NewFromConfig(cfg)
+wbClient.SetRateLimit("tool_id", 4, 1, 3, 1)
+client.Get(ctx, "tool_id", url, 3, 3, path, nil, &result)
 ```
 
-### 2. `NewFromConfig()` ignores `RateLimit`/`BurstLimit` fields
+### 2. ToolID mismatch — silent failure
 
-The `WBConfig.RateLimit` and `WBConfig.BurstLimit` fields are **not used** by the client.
-They are stored in the config struct but `NewFromConfig()` never reads them. Actual rate
-limiting is done per-request via `getOrCreateLimiter()` with params passed to
-`Get()`/`Post()`/`GetStream()`.
+**Symptom**: 429 responses, adaptive reduction never triggers.
 
+**Cause**: `SetRateLimit("tool_A")` creates state for one toolID, `Get("tool_B")` uses a different limiter.
+
+```go
+// ❌ WRONG — toolIDs don't match
+client.SetRateLimit("get_campaign_fullstats", 4, 1, 3, 1)
+client.Get(ctx, "get_wb_campaign_fullstats2", ...)  // Different!
+
+// ✅ CORRECT — toolIDs match
+client.SetRateLimit("get_campaign_fullstats", 4, 1, 3, 1)
+client.Get(ctx, "get_campaign_fullstats", ...)
 ```
+
+**Verification**:
+```bash
+# Find SetRateLimit calls
+grep -rn "SetRateLimit" cmd/
+
+# Find API call toolIDs (same codebase)
+grep -rn 'client.Get\|client.Post\|client.GetStream' cmd/
+```
+
+**Better**: Define toolID constants to prevent typos.
+
+### 3. `NewFromConfig()` ignores `WBConfig.RateLimit`
+
+**Symptom**: Config values have no effect.
+
+**Cause**: The `WBConfig.RateLimit` field is never read by `NewFromConfig()`.
+
+```go
 wbCfg := config.WBConfig{
-    RateLimit:  10,   // ← this is DEAD config, never used by client
-    BurstLimit: 5,    // ← this too
+    RateLimit:  10,   // ← DEAD config, never used
 }
 wbClient, _ := wb.NewFromConfig(wbCfg)
 
-// Actual rate limiting happens here (or via pre-set limiter from SetRateLimit):
-client.Post(ctx, "tool_id", url, 3, 3, path, body, &result)  // ← 3,3 is what matters
+// Actual rate limiting is via SetRateLimit() or Get() params
+wbClient.SetRateLimit("tool_id", 4, 1, 3, 1)  // ← This works
 ```
 
-**Rule**: if you want adaptive rate limiting, always call `SetRateLimit()` explicitly.
-The `WBConfig.RateLimit` field is only useful for `New()` (not `NewFromConfig`).
+### 4. Fallback params in API methods
 
-### 3. Hardcoded params in API methods are fallback, not actual rate
-
-`Get()` and `Post()` accept `rateLimit` and `burst` params, but these are **fallback values**.
-If `SetRateLimit()` was called first, `getOrCreateLimiter()` returns the pre-set limiter
-and completely ignores the passed params:
+`Get()` and `Post()` accept `rateLimit` and `burst` params, but if `SetRateLimit()` was called first, these params are **ignored**:
 
 ```go
 func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *rate.Limiter {
     if limiter, exists := c.limiters[toolID]; exists {
         return limiter  // ← pre-set limiter wins, params ignored
     }
-    // Only creates new limiter if SetRateLimit() wasn't called (fallback)
+    // Only creates new limiter if SetRateLimit() wasn't called
 }
 ```
 
-This is by design — it allows API methods to work both with and without adaptive setup.
+This is by design — allows API methods to work with or without adaptive setup.
 
-### 4. Config fields exist but aren't wired → dead code
+### 5. Config fields exist but aren't wired
 
-Adding adaptive fields to the config struct and `GetDefaults()` cascade is only half the job.
-If the downloader's `main.go` doesn't call `SetRateLimit()` with those values, the fields are dead code.
+**Symptom**: YAML config changes have no effect.
 
-**Checklist when adding a new downloader:**
-- [ ] Config struct has `desired`, `desired_burst`, `api`, `api_burst` fields
-- [ ] `GetDefaults()` has cascade: api → desired, api_burst → desired_burst
-- [ ] `main.go` calls `SetRateLimit(toolID, desired, desiredBurst, api, apiBurst)` **for EACH toolID used**
-- [ ] **ToolIDs in `SetRateLimit()` match exactly the toolIDs in API calls** (verify with grep)
-- [ ] `main.go` calls `SetAdaptiveParams(probeAfter, maxBackoff)`
-- [ ] YAML config has all adaptive fields (not just `rate_limit`/`burst`)
-- [ ] Displayed rate limit in header matches actual rate being used
+**Cause**: Fields added to config struct but `main.go` doesn't call `SetRateLimit()`.
 
-### 5. ToolID mismatch between `SetRateLimit()` and API call
+**Checklist**:
+- [ ] Config struct has `desired`, `api` fields
+- [ ] `GetDefaults()` has cascade: api → desired
+- [ ] `main.go` calls `SetRateLimit()` for each toolID
+- [ ] ToolIDs in `SetRateLimit()` match API calls exactly
 
-**Symptom**: Adaptive rate limiting silently fails — limiter never drops to api floor,
-repeated 429s on consecutive requests despite adaptive code running.
+---
 
-**Root cause**: `SetRateLimit("tool_id_A", ...)` creates adaptive state for one toolID,
-but API method uses `Get(ctx, "tool_id_B", ...)` — a completely different limiter
-with no adaptive state (`apiFloor=0`). The check `if state.apiFloor > 0` fails silently.
+## Thread Safety
 
-```
-SetRateLimit("get_campaign_fullstats", 4, 1, 3, 1)
-              ↓ creates limiter + adaptive state
-              limiters["get_campaign_fullstats"] = {apiFloor: 3/60}
+All adaptive state protected by `c.mu` (sync.RWMutex).
+The rate limiter itself (`golang.org/x/time/rate.Limiter`) is also thread-safe.
+Multiple goroutines can call API methods concurrently.
 
-Get(ctx, "get_wb_campaign_fullstats2", ...)
-              ↓ getOrCreateLimiter() creates NEW limiter
-              limiters["get_wb_campaign_fullstats2"] = {apiFloor: 0}  ← no adaptive!
+---
 
-On 429: adaptiveReduce("get_wb_campaign_fullstats2")
-              ↓ state.apiFloor = 0
-              ↓ if state.apiFloor > 0 { ... }  ← FAILS!
-              ↓ fallback to server header (may be too short)
-              ↓ repeated 429s
+## Testing
+
+File: `pkg/wb/client_adaptive_test.go`
+
+```go
+// SetHTTPClient() — inject mock for testing
+client.SetHTTPClient(mockHTTP)
+
+// RateLimiters() — inspect current rate for assertions
+rates := client.RateLimiters()
 ```
 
-**Fix**: Ensure toolIDs match exactly. Verify with grep:
-
-```bash
-# Find all SetRateLimit calls
-grep -rn "SetRateLimit" cmd/data-downloaders/
-
-# Find all API call toolIDs in the SAME codebase (not service layer)
-grep -rn 'client.Get\|client.Post\|client.GetStream' cmd/data-downloaders/
-```
-
-**Better fix**: Define toolID constants in one place and use them everywhere.
-
-### 6. Deprecated `adaptive_recover_after` does nothing
-
-**Symptom**: Changing `adaptive_recover_after` in config has no effect.
-
-**Explanation**: This field is deprecated and accepted only for backwards compatibility.
-The limiter drops to api floor **immediately** on 429, so there's no "recovery to api floor" phase.
-
-### 7. Deprecated `adaptive_probe_after` does nothing (since 2026-03-28)
-
-**Symptom**: Changing `adaptive_probe_after` in config has no effect.
-
-**Explanation**: This field is deprecated. The simplified adaptive behavior no longer probes
-the desired rate after 429. Once dropped to api floor, the rate stays there forever.
-This prevents repeated 429s and makes behavior predictable.
-
-**If you want faster rates**: Set `fullstats_api` (or `*_api` field) to a higher value
-directly in the config. The system will use that as the api floor.
-
-### 8. Expecting instant recovery after 429
-
-**Symptom**: "Why is it slow after 429? Shouldn't it recover immediately?"
-
-**Explanation**: After 429, we drop to api floor and stay there forever. For 3 req/min,
-that means one request every 20 seconds. This is by design — we prioritize server
-stability and predictable behavior over speed.
-
-**To increase speed**: Set `*_api` to a higher swagger-documented rate, or set
-`desired` equal to `api` to start at the safe rate without probing.
+Key tests:
+- `TestAdaptiveRateLimit_ReducesOn429` — verifies rate drops on 429
+- `TestAdaptiveRateLimit_SilentFailureOnMismatch` — toolID mismatch pitfall
+- `TestAdaptiveRateLimit_SilentFailureWithoutSetup` — missing `SetRateLimit()` pitfall
