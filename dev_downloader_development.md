@@ -449,7 +449,148 @@ func TestBasicDownload(t *testing.T) {
 4. **Missing `_ "github.com/mattn/go-sqlite3"`**: Driver registration required in main.go.
 5. **Config not expanding `${ENV}`**: Use `config.LoadYAML()` which handles `os.ExpandEnv()`.
 6. **Shared database between utilities**: If multiple downloaders write to the same database file (e.g., `wb-sales.db`), be aware that all data is stored together. To reset a specific utility's data, you can manually delete the relevant tables or use separate database files per utility.
-6. **Ignoring 5xx errors**: The WB API may return transient 5xx errors (503, 500, 502, 504). The `wb.Client` automatically retries these with exponential backoff (5s, 10s, 15s). No manual retry logic needed in downloaders.
+7. **Ignoring 5xx errors**: The WB API may return transient 5xx errors (503, 500, 502, 504). The `wb.Client` automatically retries these with exponential backoff (5s, 10s, 15s). No manual retry logic needed in downloaders.
+
+---
+
+## Anti-Patterns: Bugs to Avoid
+
+### 1. SQL Placeholder Mismatch
+
+**❌ Wrong** — Too many placeholders:
+```go
+stmt, err := tx.PrepareContext(ctx, `
+    INSERT OR REPLACE INTO funnel_metrics_daily (
+        nm_id, metric_date, open_count, cart_count, order_count,
+        buyout_count, add_to_wishlist, order_sum, buyout_sum,
+        conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)  // 13 placeholders!
+`)
+```
+
+**✅ Correct** — Match placeholders to column count (12):
+```go
+stmt, err := tx.PrepareContext(ctx, `
+    INSERT OR REPLACE INTO funnel_metrics_daily (
+        nm_id, metric_date, open_count, cart_count, order_count,
+        buyout_count, add_to_wishlist, order_sum, buyout_sum,
+        conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)  // 12 placeholders = 12 columns
+`)
+```
+
+**Error symptom**: `prepare replace statement: 13 values for 12 columns`
+
+**Prevention**:
+- Count placeholders explicitly: `strings.Count(sql, "?")` must equal column count
+- Always verify after schema changes
+- Add unit tests for INSERT statements
+
+---
+
+### 2. io.Reader Cannot Be Reused on Retry
+
+**❌ Wrong** — Reader consumed on first attempt, empty on retry:
+```go
+// In Post()
+return c.doRequest(ctx, toolID, rateLimit, burst, httpRequest{
+    method: "POST",
+    url:    u.String(),
+    body:   strings.NewReader(string(bodyJSON)),  // Reader gets consumed!
+}, dest)
+
+// In doRequest() retry loop
+for i := 0; i < c.retryAttempts; i++ {
+    httpReq, err := http.NewRequestWithContext(ctx, req.method, req.url, req.body)
+    // On retry: req.body is at EOF → empty request body → 400 "Request body is empty"
+}
+```
+
+**✅ Correct** — Store raw bytes, recreate Reader on each retry:
+```go
+// Store both Reader and raw bytes
+type httpRequest struct {
+    method    string
+    url       string
+    body      io.Reader
+    bodyBytes []byte  // Store for retry
+}
+
+// In Post()
+bodyJSON, err := json.Marshal(body)
+return c.doRequest(ctx, toolID, rateLimit, burst, httpRequest{
+    method:    "POST",
+    url:       u.String(),
+    body:      strings.NewReader(string(bodyJSON)),
+    bodyBytes: bodyJSON,  // Save raw bytes
+}, dest)
+
+// In doRequest() retry loop
+for i := 0; i < c.retryAttempts; i++ {
+    // Recreate Reader from raw bytes on each attempt
+    var bodyReader io.Reader
+    if len(req.bodyBytes) > 0 {
+        bodyReader = bytes.NewReader(req.bodyBytes)  // Fresh Reader!
+    } else if req.body != nil {
+        bodyReader = req.body
+    }
+    httpReq, err := http.NewRequestWithContext(ctx, req.method, req.url, bodyReader)
+}
+```
+
+**Error symptom**: After 429 → retry → `400 Bad Request: "Request body is empty"`
+
+**Prevention**:
+- Never reuse `io.Reader` across retries
+- Store raw `[]byte` payload, recreate Reader on each attempt
+- Test retry logic explicitly (mock 429 response)
+
+---
+
+### 3. Date Calculation Off-By-One
+
+**❌ Wrong** — Includes today (incomplete data):
+```go
+endDate := time.Now().Format("2006-01-02")  // Today (may be incomplete)
+beginDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+```
+
+**✅ Correct** — Exclude today (use yesterday as end):
+```go
+endDate := time.Now().AddDate(0, 0, -1).Format("2006-01-02")  // Yesterday
+beginDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+```
+
+**Pattern used**: `days: 7` means "last 7 complete days", excluding today.
+
+---
+
+### 4. Missing Error Continuation in Batch Loops
+
+**❌ Wrong** — Stops entire download on single batch error:
+```go
+for i, batch := range batches {
+    productsLoaded, metricsLoaded, err := loadFunnelBatch(ctx, ...)
+    if err != nil {
+        return nil, err  // Stops here! Remaining batches not processed.
+    }
+    result.ProductsLoaded += productsLoaded
+}
+```
+
+**✅ Correct** — Log error, continue with next batch:
+```go
+for i, batch := range batches {
+    productsLoaded, metricsLoaded, err := loadFunnelBatch(ctx, ...)
+    if err != nil {
+        fmt.Printf("❌ Ошибка: %v\n", err)
+        continue  // Skip failed batch, process remaining
+    }
+    result.ProductsLoaded += productsLoaded
+}
+```
+
+**Trade-off**: Some batches lost, but download continues. Use `--resume` mode to retry failed batches later.
 
 ---
 
@@ -476,12 +617,27 @@ When the WB API returns a 5xx status code (500-599), the client automatically re
 - `503 Service Unavailable` - Upstream service failures (e.g., `s2s-api-auth-adv`)
 - `500 Internal Server Error` - RPC timeouts (e.g., `GetStatsDailyNmApp: DeadlineExceeded`)
 
-### 429 Rate Limiting (Adaptive)
+### 429 Rate Limiting (Adaptive + Retry)
 
-429 responses are handled with **adaptive rate limiting** (see [dev_limits.md](dev_limits.md)):
-1. Limiter immediately reduces to `apiFloor` (swagger-documented rate)
-2. Cooldown period based on `X-Ratelimit-Retry` header or exponential backoff
-3. Stays at reduced rate permanently (no probing back to aggressive rate)
+429 responses are handled with **adaptive rate limiting + automatic retry** (see [dev_limits.md](dev_limits.md)):
+
+1. **Immediate cooldown**: Limiter reduces to `apiFloor` (swagger-documented rate)
+2. **Wait period**: Based on `X-Ratelimit-Retry` header or exponential backoff
+3. **Automatic retry**: Request is retried with fresh body (POST requests recreate Reader)
+4. **Permanent reduction**: Stays at reduced rate until successful request, then probes back up
+
+**Log output**:
+```
+RATE_DEBUG get_wb_product_funnel_history: HTTP request at 22:59:33.911
+⚠️  Adaptive rate limit: get_wb_product_funnel_history dropped to 3.0 req/min (api floor)
+⚠️  429 for get_wb_product_funnel_history, cooling down 20s (server: 4s, attempt 1/3)
+    429 detail: Limited by global limiter...
+RATE_DEBUG get_wb_product_funnel_history: interval since last HTTP request: 20.492s
+RATE_DEBUG get_wb_product_funnel_history: HTTP request at 22:59:54.404
+✅ 20 товаров, 160 метрик
+```
+
+**Critical**: POST requests MUST store raw body bytes to recreate Reader on retry (see Anti-Pattern #2).
 
 ### Network Errors (Retried)
 

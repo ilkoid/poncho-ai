@@ -124,6 +124,7 @@ func (c *PromotionConfig) GetDefaults() PromotionConfig {
 //
 // Используется для загрузки данных о продажах с WB API.
 type DownloadConfig struct {
+	Days        int    `yaml:"days"`         // Дней от сегодня (альтернатива from/to, default: 7)
 	From        string `yaml:"from"`         // Начальная дата (YYYY-MM-DD)
 	To          string `yaml:"to"`           // Конечная дата (YYYY-MM-DD)
 	DbPath      string `yaml:"db_path"`      // Путь к SQLite базе данных
@@ -354,6 +355,7 @@ func (c *FeedbacksConfig) GetDefaults() FeedbacksConfig {
 // из WB Analytics API v3 (/sales-funnel/products).
 type FunnelAggregatedConfig struct {
 	// Периоды (required)
+	Days          int    `yaml:"days"`           // Дней от сегодня (альтернатива selected_start/end)
 	SelectedStart string `yaml:"selected_start"` // YYYY-MM-DD
 	SelectedEnd   string `yaml:"selected_end"`   // YYYY-MM-DD
 	PastStart     string `yaml:"past_start"`     // YYYY-MM-DD (optional)

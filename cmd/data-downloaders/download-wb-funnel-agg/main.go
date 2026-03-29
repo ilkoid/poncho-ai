@@ -46,6 +46,18 @@ func main() {
 		log.Fatalf("❌ Failed to load config: %v", err)
 	}
 
+	// Apply date range from days if configured
+	if cfg.FunnelAggregated.Days > 0 {
+		beginDate, endDate := calculateDateRangeForFunnel(cfg.FunnelAggregated.Days)
+		cfg.FunnelAggregated.SelectedStart = beginDate
+		cfg.FunnelAggregated.SelectedEnd = endDate
+		// Calculate past period for comparison (same duration, preceding period)
+		pastEnd := time.Now().AddDate(0, 0, -cfg.FunnelAggregated.Days-1).Format("2006-01-02")
+		pastStart := time.Now().AddDate(0, 0, -cfg.FunnelAggregated.Days*2).Format("2006-01-02")
+		cfg.FunnelAggregated.PastStart = pastStart
+		cfg.FunnelAggregated.PastEnd = pastEnd
+	}
+
 	// Validate API key
 	apiKey := cfg.WB.AnalyticsAPIKey
 	if apiKey == "" || apiKey == "${WB_API_ANALYTICS_AND_PROMO_KEY}" {
@@ -180,4 +192,15 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("  # С кастомным конфигом")
 	fmt.Println("  go run . --config /path/to/config.yaml")
+}
+
+// calculateDateRangeForFunnel вычисляет даты от текущего дня.
+// days=7 означает последние 7 дней, исключая сегодня.
+func calculateDateRangeForFunnel(days int) (string, string) {
+	now := time.Now()
+	// endDate = вчера
+	endDate := now.AddDate(0, 0, -1).Format("2006-01-02")
+	// beginDate = сегодня - days
+	beginDate := now.AddDate(0, 0, -days).Format("2006-01-02")
+	return beginDate, endDate
 }

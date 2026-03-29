@@ -90,7 +90,7 @@ func (r *SQLiteSalesRepository) SaveFunnelHistory(ctx context.Context, product w
 			open_count, cart_count, order_count, buyout_count, add_to_wishlist,
 			order_sum, buyout_sum,
 			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare statement: %w", err)
@@ -143,6 +143,17 @@ func (r *SQLiteSalesRepository) GetDistinctNmIDs(ctx context.Context) ([]int, er
 	}
 
 	return nmIDs, rows.Err()
+}
+
+// GetDistinctNmIDCount returns the count of distinct nm_id from sales table.
+// Used for progress estimation.
+func (r *SQLiteSalesRepository) GetDistinctNmIDCount(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT nm_id) FROM sales").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count distinct nm_id: %w", err)
+	}
+	return count, nil
 }
 
 // GetTrendingProducts returns products with trend analysis.
@@ -409,7 +420,7 @@ func (r *SQLiteSalesRepository) SaveFunnelHistoryWithWindow(
 			open_count, cart_count, order_count, buyout_count, add_to_wishlist,
 			order_sum, buyout_sum,
 			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare replace statement: %w", err)
@@ -422,7 +433,7 @@ func (r *SQLiteSalesRepository) SaveFunnelHistoryWithWindow(
 			open_count, cart_count, order_count, buyout_count, add_to_wishlist,
 			order_sum, buyout_sum,
 			conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare ignore statement: %w", err)

@@ -37,7 +37,20 @@ func LoadAggregatedFunnel(ctx context.Context, cfg AggregatedLoaderConfig) (*Agg
 	totalLoaded := 0
 	pages := 0
 
+	// Get total product count for progress estimation (from sales table)
+	totalProducts := 0
+	if count, err := cfg.Repo.GetDistinctNmIDCount(ctx); err == nil {
+		totalProducts = count
+	}
+
 	fmt.Println("🔄 Начинаем загрузку с пагинацией...")
+	fmt.Printf("📅 Период: %s → %s\n", cfg.Config.SelectedStart, cfg.Config.SelectedEnd)
+	if cfg.Config.PastStart != "" && cfg.Config.PastEnd != "" {
+		fmt.Printf("📅 Past:   %s → %s\n", cfg.Config.PastStart, cfg.Config.PastEnd)
+	}
+	if totalProducts > 0 {
+		fmt.Printf("📊 Товаров в БД: ~%d (оценка прогресса)\n", totalProducts)
+	}
 	fmt.Println()
 
 	for {
@@ -80,7 +93,17 @@ func LoadAggregatedFunnel(ctx context.Context, cfg AggregatedLoaderConfig) (*Agg
 
 		pageStart := time.Now()
 		pageNum := offset/pageSize + 1
-		fmt.Printf("🔄 Страница %d (offset=%d)... ", pageNum, offset)
+
+		// Calculate progress
+		var progressInfo string
+		if totalProducts > 0 {
+			remaining := totalProducts - totalLoaded
+			percent := float64(totalLoaded) / float64(totalProducts) * 100
+			progressInfo = fmt.Sprintf("прогресс: %d/%d (%.1f%%, осталось: ~%d)", totalLoaded, totalProducts, percent, remaining)
+		} else {
+			progressInfo = fmt.Sprintf("загружено: %d", totalLoaded)
+		}
+		fmt.Printf("🔄 Страница %d (offset=%d, %s)... ", pageNum, offset, progressInfo)
 
 		// Make API call
 		var response wb.FunnelAggregatedResponse
@@ -127,13 +150,29 @@ func LoadAggregatedFunnel(ctx context.Context, cfg AggregatedLoaderConfig) (*Agg
 		result.PagesLoaded = pages
 		result.Duration = time.Since(start)
 
-		// Информативный вывод
+		// Информативный вывод с общим прогрессом
 		if apiCount != saved {
-			fmt.Printf("⚠️  API: %d товаров, Сохранено: %d (страница: %s, всего: %s)\n",
-				apiCount, saved, time.Since(pageStart).Round(time.Second), result.Duration.Round(time.Second))
+			if totalProducts > 0 {
+				remaining := totalProducts - totalLoaded
+				percent := float64(totalLoaded) / float64(totalProducts) * 100
+				fmt.Printf("⚠️  API: %d, Сохранено: %d (страница: %s, %d/%d: %.1f%%, осталось: ~%d, время: %s)\n",
+					apiCount, saved, time.Since(pageStart).Round(time.Second),
+					totalLoaded, totalProducts, percent, remaining, result.Duration.Round(time.Second))
+			} else {
+				fmt.Printf("⚠️  API: %d товаров, Сохранено: %d (страница: %s, прогресс: %d всего, время: %s)\n",
+					apiCount, saved, time.Since(pageStart).Round(time.Second), totalLoaded, result.Duration.Round(time.Second))
+			}
 		} else {
-			fmt.Printf("✅ %d товаров (страница: %s, всего: %s)\n",
-				saved, time.Since(pageStart).Round(time.Second), result.Duration.Round(time.Second))
+			if totalProducts > 0 {
+				remaining := totalProducts - totalLoaded
+				percent := float64(totalLoaded) / float64(totalProducts) * 100
+				fmt.Printf("✅ %d товаров (страница: %s, %d/%d: %.1f%%, осталось: ~%d, время: %s)\n",
+					saved, time.Since(pageStart).Round(time.Second),
+					totalLoaded, totalProducts, percent, remaining, result.Duration.Round(time.Second))
+			} else {
+				fmt.Printf("✅ %d товаров (страница: %s, прогресс: %d всего, время: %s)\n",
+					saved, time.Since(pageStart).Round(time.Second), totalLoaded, result.Duration.Round(time.Second))
+			}
 		}
 
 		// Check if we got less than pageSize - means last page

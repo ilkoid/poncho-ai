@@ -3,13 +3,12 @@ wb:
   timeout: 30m
 
 funnel_aggregated:
-  # Периоды (required)
-  selected_start: "2026-03-12"
-  selected_end: "2026-03-18"
-
-  # Past период для сравнения (optional - раскомментируйте если нужно)
-  past_start: "2026-03-05"
-  past_end: "2026-03-11"
+  # Даты обновляются скриптом update-funnel-agg-dates.sh
+  # Для еженедельной загрузки: Пн-Вс прошлой недели vs позапрошлая неделя
+  selected_start: "2026-03-23"  # Понедельник прошлой недели
+  selected_end:   "2026-03-29"  # Воскресенье прошлой недели
+  past_start: "2026-03-16"  # Понедельник позапрошлой недели
+  past_end:   "2026-03-22"  # Воскресенье позапрошлой недели
 
   # Фильтры (optional - пусто = все товары)
   nm_ids: []
@@ -23,7 +22,7 @@ funnel_aggregated:
   order_by_mode: "desc"
 
   # Пагинация
-  page_size: 500  # Товаров за запрос (max 1000)
+  page_size: 1000  # Товаров за запрос (max 1000)
 
   # Rate limiting (legacy fields - for backwards compatibility)
   rate_limit: 3  # Запросов в минуту (WB Analytics API limit)
@@ -46,4 +45,5 @@ funnel_aggregated:
   max_backoff_seconds: 60
 
   # Хранилище
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+  # db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+  db_path: "test-fun-agg-script.db"

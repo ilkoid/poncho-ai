@@ -23,6 +23,7 @@
 package wb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -326,6 +327,8 @@ type httpRequest struct {
 	method string
 	url    string
 	body   io.Reader
+	// bodyBytes stores raw body for retry (Readers can only be read once)
+	bodyBytes []byte
 }
 
 // doRequest выполняет HTTP запрос с retry логикой и rate limiting.
@@ -368,7 +371,15 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 				toolID, time.Since(lastRequestTime).Truncate(time.Millisecond), waitDur.Truncate(time.Millisecond))
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, req.method, req.url, req.body)
+			// Create request body reader (recreate on retry for POST requests)
+			var bodyReader io.Reader
+			if len(req.bodyBytes) > 0 {
+				bodyReader = bytes.NewReader(req.bodyBytes)
+			} else if req.body != nil {
+				bodyReader = req.body
+			}
+
+			httpReq, err := http.NewRequestWithContext(ctx, req.method, req.url, bodyReader)
 		if err != nil {
 			return err
 		}
@@ -879,9 +890,10 @@ func (c *Client) Post(ctx context.Context, toolID string, baseURL string, rateLi
 	}
 
 	return c.doRequest(ctx, toolID, rateLimit, burst, httpRequest{
-		method: "POST",
-		url:    u.String(),
-		body:   strings.NewReader(string(bodyJSON)),
+		method:    "POST",
+		url:       u.String(),
+		body:      strings.NewReader(string(bodyJSON)),
+		bodyBytes: bodyJSON, // Store for retry (Reader can only be read once)
 	}, dest)
 }
 // PingResponse представляет ответ от ping endpoint Wildberries Content API.
