@@ -809,3 +809,46 @@ func GetFeedbacksSchemaSQL() string {
 func GetQualitySchemaSQL() string {
 	return QualitySchemaSQL
 }
+
+	// StocksWarehouseSchemaSQL defines the daily warehouse stock snapshots table.
+	// Stores raw data from WB Analytics API: POST /api/analytics/v1/stocks-report/wb-warehouses.
+	// Grain: one row per (snapshot_date, nm_id, chrt_id, warehouse_id).
+	// Used for stockout prediction: JOIN with sales/funnel data to compute days_of_stock.
+	const StocksWarehouseSchemaSQL = `
+-- ============================================================================
+-- STOCK WAREHOUSE SNAPSHOTS (WB Analytics API - stocks-report/wb-warehouses)
+-- Grain: one row per (snapshot_date, nm_id, chrt_id, warehouse_id)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS stocks_daily_warehouses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date TEXT NOT NULL,
+    nm_id INTEGER NOT NULL,
+    chrt_id INTEGER NOT NULL,
+    warehouse_id INTEGER NOT NULL,
+    warehouse_name TEXT NOT NULL DEFAULT '',
+    region_name TEXT NOT NULL DEFAULT '',
+    quantity INTEGER NOT NULL DEFAULT 0,
+    in_way_to_client INTEGER NOT NULL DEFAULT 0,
+    in_way_from_client INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(snapshot_date, nm_id, chrt_id, warehouse_id)
+);
+
+-- Composite index for time-series queries (product-focused: stock trends per warehouse)
+CREATE INDEX IF NOT EXISTS idx_stocks_nm_warehouse_date
+    ON stocks_daily_warehouses(nm_id, warehouse_id, snapshot_date);
+
+-- Index for date-focused queries (gap detection, date filtering)
+CREATE INDEX IF NOT EXISTS idx_stocks_date
+    ON stocks_daily_warehouses(snapshot_date);
+
+-- Index for warehouse-level aggregation queries
+CREATE INDEX IF NOT EXISTS idx_stocks_warehouse
+    ON stocks_daily_warehouses(warehouse_id, snapshot_date);
+`
+
+	// GetStocksWarehouseSchemaSQL returns the stocks warehouse snapshots table schema.
+	func GetStocksWarehouseSchemaSQL() string {
+		return StocksWarehouseSchemaSQL
+	}

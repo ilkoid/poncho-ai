@@ -17,7 +17,7 @@ wb:
 # Promotion Download Settings
 promotion:
   # Database path (SQLite)
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-promo-test2.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
 
   # Date range (alternative to --days flag)
   #begin: "2026-01-01"  # YYYY-MM-DD
@@ -31,15 +31,15 @@ promotion:
   statuses: [7,9,11]
 
   # Resume mode: continue from last loaded date
-  resume: false
+  resume: false # true
 
   # Skip downloading campaign details (name, payment_type, placements)
   # Saves ~35s for 8800+ campaigns. Use when you only need stats numbers.
-  skip_details: true
+  skip_details: false
 
   # Skip loading campaign list from /adv/v1/promotion/count (reuse IDs from DB)
   # Use when campaigns are already in DB and you only need to update details or stats.
-  skip_campaigns: true
+  skip_campaigns: false
 
   # Skip downloading stats from /adv/v3/fullstats
   # Use when you only need to update campaign details.
@@ -64,7 +64,7 @@ promotion:
     # /adv/v3/fullstats
     # Swagger says: 3 req/min, but "global limiter per seller" is stricter in practice
     # Real limit: 2 req/min (30s interval) to avoid 429 errors
-    fullstats: 4
+    fullstats: 3
     fullstats_burst: 1
     fullstats_api: 3           # practical limit (swagger says 3, but 429 occurs)
     fullstats_api_burst: 1

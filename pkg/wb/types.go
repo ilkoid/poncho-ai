@@ -702,3 +702,30 @@ type FunnelAggregatedRow struct {
 	// Metadata
 	Currency string `json:"currency"`
 }
+
+// ============================================================================
+// Stock Warehouse Types (for WB Analytics API — new endpoint)
+// ============================================================================
+
+// StockWarehouseItem represents a single warehouse stock record from the new API.
+// POST /api/analytics/v1/stocks-report/wb-warehouses
+type StockWarehouseItem struct {
+	NmID            int64  `json:"nmId"`
+	ChrtID          int64  `json:"chrtId"`
+	WarehouseID     int64  `json:"warehouseId"`
+	WarehouseName   string `json:"warehouseName"`
+	RegionName      string `json:"regionName"`
+	Quantity        int64  `json:"quantity"`
+	InWayToClient   int64  `json:"inWayToClient"`
+	InWayFromClient int64  `json:"inWayFromClient"`
+}
+
+// StocksWarehouseAPIResponse wraps the API response for stocks warehouse endpoint.
+// POST /api/analytics/v1/stocks-report/wb-warehouses
+type StocksWarehouseAPIResponse struct {
+	Data struct {
+		Items []StockWarehouseItem `json:"items"`
+	} `json:"data"`
+	Error     bool   `json:"error"`
+	ErrorText string `json:"errorText"`
+}

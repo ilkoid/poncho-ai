@@ -450,3 +450,71 @@ func (c *FunnelAggregatedConfig) GetDefaults() FunnelAggregatedConfig {
 
 	return result
 }
+
+// StocksConfig — конфигурация для download-wb-stocks утилиты.
+//
+// Используется для загрузки ежедневных снимков остатков с WB Analytics API.
+// Двухуровневый rate limiting: desired (агрессивный) + api (swagger floor для восстановления).
+// См. dev_limits.md для деталей.
+type StocksConfig struct {
+	DbPath             string             `yaml:"db_path"`              // Путь к SQLite базе данных (default: sales.db)
+	FirstDate          string             `yaml:"first_date"`           // Начало отсчёта для gap detection (YYYY-MM-DD)
+	APIKeyEnv          string             `yaml:"api_key_env"`          // Имя переменной окружения для API ключа (default: WB_API_ANALYTICS_AND_PROMO_KEY)
+	RateLimits         StocksRateLimits   `yaml:"rate_limits"`          // Rate limits для warehouse endpoint
+	AdaptiveProbeAfter int                `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds  int                `yaml:"max_backoff_seconds"`  // Cap for exponential backoff (default: 60)
+}
+
+// StocksRateLimits — rate limits для stocks warehouse API endpoint.
+//
+// Analytics API: 3 req/min, burst 1.
+//
+// Два уровня rate:
+//   - desired:      желаемый rate (можно превышать swagger — adaptive limiter обработает 429)
+//   - desired_burst: burst для desired rate
+//   - api:           swagger-documented rate (recovery floor после 429)
+//   - api_burst:     burst для api rate
+//
+// Если desired не указан — используется api (без превышения swagger).
+type StocksRateLimits struct {
+	Warehouse         int `yaml:"warehouse"`           // desired rate (default: 3)
+	WarehouseBurst    int `yaml:"warehouse_burst"`     // desired burst (default: 1)
+	WarehouseApi      int `yaml:"warehouse_api"`       // swagger rate (default: 3)
+	WarehouseApiBurst int `yaml:"warehouse_api_burst"` // swagger burst (default: 1)
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+// Каскадные дефолты: api -> desired, api_burst -> desired_burst.
+func (c *StocksConfig) GetDefaults() StocksConfig {
+	result := *c
+	if result.DbPath == "" {
+		result.DbPath = "sales.db"
+	}
+	if result.APIKeyEnv == "" {
+		result.APIKeyEnv = "WB_API_ANALYTICS_AND_PROMO_KEY" // default env var
+	}
+
+	// Warehouse rate limits (two-level adaptive)
+	if result.RateLimits.WarehouseApi == 0 {
+		result.RateLimits.WarehouseApi = 3 // swagger: 3 req/min
+	}
+	if result.RateLimits.Warehouse == 0 {
+		result.RateLimits.Warehouse = result.RateLimits.WarehouseApi // default = api (safe)
+	}
+	if result.RateLimits.WarehouseApiBurst == 0 {
+		result.RateLimits.WarehouseApiBurst = 1
+	}
+	if result.RateLimits.WarehouseBurst == 0 {
+		result.RateLimits.WarehouseBurst = result.RateLimits.WarehouseApiBurst
+	}
+
+	// Adaptive tuning defaults
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+
+	return result
+}

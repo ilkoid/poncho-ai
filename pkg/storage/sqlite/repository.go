@@ -224,6 +224,12 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		return err
 	}
 
+
+		// Create stocks warehouse snapshots table (WB Analytics API - stocks-report/wb-warehouses)
+		_, err = r.db.Exec(GetStocksWarehouseSchemaSQL())
+		if err != nil {
+			return err
+		}
 	return nil
 }
 
