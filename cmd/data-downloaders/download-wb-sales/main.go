@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -31,37 +32,43 @@ type Config struct {
 }
 
 func main() {
-	// Parse flags
-	mockMode := false
-	funnelMode := false
-	args := os.Args[1:]
-	for _, arg := range args {
-		if arg == "--mock" || arg == "-m" {
-			mockMode = true
-		}
-		if arg == "--funnel" || arg == "-f" {
-			funnelMode = true
-		}
-		if arg == "--help" || arg == "-h" {
-			printHelp()
-			return
-		}
-	}
+	// Parse CLI flags
+	configPath := flag.String("config", "config.yaml", "Path to config file")
+	days := flag.Int("days", 0, "Days from today (overrides config download.from/to)")
+	begin := flag.String("begin", "", "Begin date YYYY-MM-DD (alternative to days)")
+	end := flag.String("end", "", "End date YYYY-MM-DD (alternative to days)")
+	mockMode := flag.Bool("mock", false, "Mock mode (generate test data, no API calls)")
+	funnelMode := flag.Bool("funnel", false, "Funnel mode (load analytics funnel instead of sales)")
+	help := flag.Bool("help", false, "Show help")
+	flag.Parse()
 
-	// Parse config file path (optional: default config.yaml)
-	configPath := "config.yaml"
-	if len(args) > 0 && args[0] != "" && args[0][0] != '-' {
-		configPath = args[0]
+	if *help {
+		printHelp()
+		return
 	}
 
 	// Load configuration
-	cfg, err := loadConfig(configPath)
+	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("❌ Failed to load config: %v", err)
 	}
 
+		// Apply date range (priority: CLI flags > config.days > config.from/to)
+		if *days > 0 || (*begin != "" && *end != "") {
+			// CLI flags override everything
+			beginDate, endDate := calculateDateRange(*days, *begin, *end)
+			cfg.Download.From = beginDate + "T00:00:00+03:00"
+			cfg.Download.To = endDate + "T23:59:59+03:00"
+		} else if cfg.Download.Days > 0 {
+			// Use config days if CLI flags not provided
+			beginDate, endDate := calculateDateRange(cfg.Download.Days, "", "")
+			cfg.Download.From = beginDate + "T00:00:00+03:00"
+			cfg.Download.To = endDate + "T23:59:59+03:00"
+		}
+		// Otherwise use download.from/to from config as-is
+
 	// In mock mode, skip API key validation
-	if !mockMode {
+	if !*mockMode {
 		// Validate API key
 		if cfg.WB.APIKey == "" || cfg.WB.APIKey == "${WB_STAT}" {
 			log.Fatal("❌ WB_STAT not set. Use: WB_STAT=your_key go run main.go")
@@ -116,7 +123,7 @@ func main() {
 	defer repo.Close()
 
 	// ========== FUNNEL MODE ==========
-	if funnelMode {
+	if *funnelMode {
 		// Apply defaults for funnel config
 		funnelDays := cfg.Funnel.Days
 		if funnelDays <= 0 || funnelDays > 365 {
@@ -133,7 +140,7 @@ func main() {
 
 		var funnelResult *FunnelLoadResult
 
-		if mockMode {
+		if *mockMode {
 			fmt.Println("🧪 MOCK MODE: Генерация тестовых данных")
 			funnelResult, err = FunnelMockLoader(ctx, repo, funnelDays, cfg.Storage.FunnelRefreshWindow)
 		} else {
@@ -211,7 +218,7 @@ func main() {
 
 	var result *DownloadResult
 
-	if mockMode {
+	if *mockMode {
 		// Mock mode: use generated data instead of API calls
 		fmt.Println("🧪 MOCK MODE: Симуляция данных (без API вызовов)")
 		result, err = DownloadSalesWithMock(ctx, repo, ranges)
@@ -297,6 +304,10 @@ func printHelp() {
 	fmt.Println("  go run . [опции]")
 	fmt.Println()
 	fmt.Println("ОПЦИИ:")
+	fmt.Println("  --days N         Загрузить данные за последние N дней (исключая сегодня)")
+	fmt.Println("  --begin DATE     Начальная дата YYYY-MM-DD (альтернатива --days)")
+	fmt.Println("  --end DATE       Конечная дата YYYY-MM-DD (альтернатива --days)")
+	fmt.Println("  --config PATH    Путь к конфигурационному файлу (default: config.yaml)")
 	fmt.Println("  --mock, -m       Режим симуляции (генерация моковых данных без API вызовов)")
 	fmt.Println("  --funnel, -f     Загрузить данные воронки аналитики (вместо продаж)")
 	fmt.Println("  --help, -h       Показать справку")
@@ -310,18 +321,43 @@ func printHelp() {
 	fmt.Println("  WB_API_ANALYTICS_AND_PROMO_KEY API токен Analytics API (воронка)")
 	fmt.Println()
 	fmt.Println("КОНФИГУРАЦИЯ (config.yaml):")
-	fmt.Println("  download.from/to   Период загрузки продаж")
+	fmt.Println("  download.days      Дней от сегодня (альтернатива from/to)")
+	fmt.Println("  download.from/to   Период загрузки продаж (перезаписывается --days/--begin/--end)")
 	fmt.Println("  storage.db_path    Путь к SQLite базе")
 	fmt.Println("  funnel.days        Дней истории для воронки (1-365)")
 	fmt.Println("  funnel.batch_size  Товаров на запрос (max 20)")
-	fmt.Println()
 	fmt.Println("ПРИМЕРЫ:")
-	fmt.Println("  # Загрузка продаж")
-	fmt.Println("  WB_STAT=your_key go run .")
+	fmt.Println("  # Загрузка продаж за последние 7 дней")
+	fmt.Println("  WB_STAT=your_key go run . --days=7")
 	fmt.Println()
-	fmt.Println("  # Загрузка воронки аналитики")
+	fmt.Println("  # Загрузка продаж за произвольный период")
+	fmt.Println("  WB_STAT=your_key go run . --begin=2025-01-01 --end=2025-01-31")
+	fmt.Println()
+	fmt.Println("  # Загрузка воронки аналитики за последние 30 дней")
 	fmt.Println("  WB_API_ANALYTICS_AND_PROMO_KEY=your_key go run . --funnel")
 	fmt.Println()
 	fmt.Println("  # Режим симуляции воронки (без API ключа)")
 	fmt.Println("  go run . --funnel --mock")
+}
+
+
+// calculateDateRange вычисляет диапазон дат на основе параметров CLI.
+// Приоритет: begin/end > days > config values.
+func calculateDateRange(days int, begin, end string) (string, string) {
+	// Если указаны явные даты - используем их
+	if begin != "" && end != "" {
+		return begin, end
+	}
+
+	// Если указано количество дней - вычисляем от текущей даты
+	if days > 0 {
+		now := time.Now()
+		// --days N = последние N дней, исключая сегодня
+		endDate := now.AddDate(0, 0, -1).Format("2006-01-02")
+		beginDate := now.AddDate(0, 0, -days).Format("2006-01-02")
+		return beginDate, endDate
+	}
+
+	// Если ничего не указано - возвращаем пустые строки (будут использоваться значения из config)
+	return "", ""
 }

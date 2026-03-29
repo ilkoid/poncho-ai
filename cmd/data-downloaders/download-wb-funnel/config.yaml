@@ -5,10 +5,10 @@ wb:
 funnel:
   days: 7
   batch_size: 20
-  rate_limit: 4    # Legacy (для совместимости)
-  burst: 3         # Legacy (для совместимости)
+#  rate_limit: 4    # Legacy (для совместимости)
+#  burst: 3         # Legacy (для совместимости)
   # Adaptive rate limiting (двухуровневый, см. dev_limits.md)
-  funnel_rate_limit: 5         # desired — пробуем 5 req/min (> swagger 3)
+  funnel_rate_limit: 3         # desired — пробуем 5 req/min (> swagger 3)
   funnel_rate_limit_burst: 3
   funnel_rate_limit_api: 3     # api floor — восстановление после 429 (swagger: 3)
   funnel_rate_limit_api_burst: 3

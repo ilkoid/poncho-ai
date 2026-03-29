@@ -6,30 +6,18 @@ wb:
   endpoint: https://statistics-api.wildberries.ru
   timeout: 30m
 
+# Sales download settings (used by default, without --funnel flag)
+# Priority: CLI flags (--days/--begin/--end) > download.days > download.from/to
 download:
+  days: 7                        # Load last 7 days (alternative to from/to, default: 7)
+  # from: "2026-03-01T00:00:00+03:00"  # Start date (YYYY-MM-DD or RFC3339) - overridden by days
+  # to: "2026-03-26T23:59:59+03:00"    # End date (YYYY-MM-DD or RFC3339) - overridden by days
   resume: false
-  from: "2026-03-01T00:00:00+03:00"
-  to: "2026-03-26T23:59:59+03:00"
-
-funnel:
-  days: 7
-  batch_size: 20
-  rate_limit: 3    # Запросов в минуту (WB Analytics API default: 3)
-  burst: 3         # Burst для rate limiter
-
-  # Adaptive rate limiting (see dev_limits.md)
-  # desired: rate you want (can exceed api — adaptive limiter handles 429)
-  # api:      swagger-documented rate (recovery floor after 429)
-  funnel_rate_limit: 5           # desired: try 5 req/min (1.7× swagger)
-  funnel_rate_limit_burst: 1
-  funnel_rate_limit_api: 3       # swagger: 3 req/min (recovery floor)
-  funnel_rate_limit_api_burst: 3
 
   # Adaptive tuning
-  adaptive_recover_after: 5     # OKs to restore to api floor after 429
-  adaptive_probe_after: 10      # OKs at api floor before probing desired
-  max_backoff_seconds: 60       # Cap for exponential backoff
+  adaptive_recover_after: 5      # OKs to restore to api floor after 429
+  adaptive_probe_after: 10       # OKs at api floor before probing desired
+  max_backoff_seconds: 60        # Cap for exponential backoff
 
 storage:
   db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
-  funnel_refresh_window: 3

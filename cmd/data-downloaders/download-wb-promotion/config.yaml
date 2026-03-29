@@ -64,9 +64,9 @@ promotion:
     # /adv/v3/fullstats
     # Swagger says: 3 req/min, but "global limiter per seller" is stricter in practice
     # Real limit: 2 req/min (30s interval) to avoid 429 errors
-    fullstats: 3
+    fullstats: 2
     fullstats_burst: 1
-    fullstats_api: 3           # practical limit (swagger says 3, but 429 occurs)
+    fullstats_api: 2           # practical limit (swagger says 3, but 429 occurs)
     fullstats_api_burst: 1
 
   # Adaptive rate limiting tuning (see dev_limits.md)

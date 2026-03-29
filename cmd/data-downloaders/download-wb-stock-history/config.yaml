@@ -16,7 +16,7 @@ stock_history:
   #end: "2026-01-31"    # YYYY-MM-DD
 
   # Days from today (alternative to begin/end)
-  days: 3
+  days: 31
 
   # Report type: "metrics" (monthly) or "daily" (daily stock levels)
   report_type: "daily"
