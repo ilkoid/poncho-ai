@@ -894,6 +894,129 @@ func (c *Client) Ping(ctx context.Context, baseURL string, rateLimit int, burst 
 	return &resp, nil
 }
 
+// GetRaw выполняет GET запрос и возвращает сырые байты ответа.
+//
+// Используется для скачивания бинарных данных (ZIP архивы, CSV файлы и т.д.).
+// В отличие от Get(), не парсит JSON и не десериализует ответ.
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - toolID: идентификатор инструмента для rate limiting
+//   - baseURL: базовый URL API
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - path: путь запроса (например, "/api/v1/endpoint")
+//   - params: query параметры (опционально)
+//
+// Возвращает сырой []byte тела ответа или ошибку.
+func (c *Client) GetRaw(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params map[string]string) ([]byte, error) {
+	if baseURL == "" {
+		return nil, fmt.Errorf("baseURL is required")
+	}
+	if rateLimit <= 0 {
+		return nil, fmt.Errorf("rateLimit must be positive")
+	}
+	if burst <= 0 {
+		return nil, fmt.Errorf("burst must be positive")
+	}
+
+	// Build URL
+	u, err := url.Parse(baseURL + path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid url: %w", err)
+	}
+
+	// Add query params
+	if params != nil {
+		q := u.Query()
+		for k, v := range params {
+			q.Set(k, v)
+		}
+		u.RawQuery = q.Encode()
+	}
+
+	// Get limiter
+	limiter := c.getOrCreateLimiter(toolID, rateLimit, burst)
+	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit))
+
+	// Retry loop
+	var lastErr error
+	for i := 0; i < c.retryAttempts; i++ {
+		// Rate limiter wait
+		if err := limiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("rate limiter wait: %w", err)
+		}
+
+		// Minimum interval since last request
+		c.mu.RLock()
+		lastRequestTime := c.lastRequestTime[toolID]
+		c.mu.RUnlock()
+
+		if !lastRequestTime.IsZero() {
+			sinceLastReq := time.Since(lastRequestTime)
+			if sinceLastReq < minInterval {
+				additionalWait := minInterval - sinceLastReq
+				time.Sleep(additionalWait)
+			}
+		}
+
+		// Update last request time before HTTP call
+		c.mu.Lock()
+		c.lastRequestTime[toolID] = time.Now()
+		c.mu.Unlock()
+
+		// Make HTTP request
+		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+
+		// Set headers
+		req.Header.Set("Authorization", c.apiKey)
+		req.Header.Set("Accept", "application/zip") // For ZIP downloads
+
+		// Execute request
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("http request: %w", err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		// Handle rate limiting (429)
+		if resp.StatusCode == 429 {
+			serverRetrySec := 1
+			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
+				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
+					serverRetrySec = sec
+				}
+			}
+			c.adaptiveReduce(toolID, serverRetrySec)
+			lastErr = fmt.Errorf("got 429, retrying after %d sec", serverRetrySec)
+			continue
+		}
+
+		// Check status code
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		}
+
+		// Recovery after successful request
+		c.adaptiveRecoverOK(toolID)
+
+		// Read raw bytes
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read response body: %w", err)
+		}
+
+		return data, nil
+	}
+
+	return nil, lastErr
+}
+
 // ReportDetailByPeriodPageResult представляет результат одной страницы пагинации.
 type ReportDetailByPeriodPageResult struct {
 	Rows        []RealizationReportRow // Строки отчета

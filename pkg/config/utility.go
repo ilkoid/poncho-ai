@@ -518,3 +518,61 @@ func (c *StocksConfig) GetDefaults() StocksConfig {
 
 	return result
 }
+
+// StockHistoryConfig — конфигурация для download-wb-stock-history утилиты.
+//
+// Используется для загрузки исторических данных об остатках через CSV отчёты.
+type StockHistoryConfig struct {
+	DbPath      string                `yaml:"db_path"`
+	Begin       string                `yaml:"begin"`
+	End         string                `yaml:"end"`
+	Days        int                   `yaml:"days"`
+	ReportType  string                `yaml:"report_type"`
+	StockType   string                `yaml:"stock_type"`
+	Resume      bool                  `yaml:"resume"`
+	RateLimits  StockHistoryRateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter int            `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int            `yaml:"max_backoff_seconds"`
+	PollIntervalSec    int            `yaml:"poll_interval_sec"`
+	PollTimeoutMin     int            `yaml:"poll_timeout_min"`
+}
+
+type StockHistoryRateLimits struct {
+	Create           int `yaml:"create"`
+	CreateBurst      int `yaml:"create_burst"`
+	CreateApi        int `yaml:"create_api"`
+	CreateApiBurst   int `yaml:"create_api_burst"`
+	StatusCheck      int `yaml:"status_check"`
+	StatusCheckBurst int `yaml:"status_check_burst"`
+	StatusCheckApi   int `yaml:"status_check_api"`
+	StatusCheckApiBurst int `yaml:"status_check_api_burst"`
+	Download         int `yaml:"download"`
+	DownloadBurst    int `yaml:"download_burst"`
+	DownloadApi      int `yaml:"download_api"`
+	DownloadApiBurst int `yaml:"download_api_burst"`
+}
+
+func (c *StockHistoryConfig) GetDefaults() StockHistoryConfig {
+	result := *c
+	if result.DbPath == "" { result.DbPath = "stock_history.db" }
+	if result.Days == 0 { result.Days = 30 }
+	if result.ReportType == "" { result.ReportType = "daily" }
+	if result.StockType == "" { result.StockType = "" }
+	if result.RateLimits.CreateApi == 0 { result.RateLimits.CreateApi = 3 }
+	if result.RateLimits.Create == 0 { result.RateLimits.Create = result.RateLimits.CreateApi }
+	if result.RateLimits.CreateApiBurst == 0 { result.RateLimits.CreateApiBurst = 3 }
+	if result.RateLimits.CreateBurst == 0 { result.RateLimits.CreateBurst = result.RateLimits.CreateApiBurst }
+	if result.RateLimits.StatusCheckApi == 0 { result.RateLimits.StatusCheckApi = 3 }
+	if result.RateLimits.StatusCheck == 0 { result.RateLimits.StatusCheck = result.RateLimits.StatusCheckApi }
+	if result.RateLimits.StatusCheckApiBurst == 0 { result.RateLimits.StatusCheckApiBurst = 3 }
+	if result.RateLimits.StatusCheckBurst == 0 { result.RateLimits.StatusCheckBurst = result.RateLimits.StatusCheckApiBurst }
+	if result.RateLimits.DownloadApi == 0 { result.RateLimits.DownloadApi = 3 }
+	if result.RateLimits.Download == 0 { result.RateLimits.Download = result.RateLimits.DownloadApi }
+	if result.RateLimits.DownloadApiBurst == 0 { result.RateLimits.DownloadApiBurst = 3 }
+	if result.RateLimits.DownloadBurst == 0 { result.RateLimits.DownloadBurst = result.RateLimits.DownloadApiBurst }
+	if result.AdaptiveProbeAfter == 0 { result.AdaptiveProbeAfter = 10 }
+	if result.MaxBackoffSeconds == 0 { result.MaxBackoffSeconds = 60 }
+	if result.PollIntervalSec == 0 { result.PollIntervalSec = 30 }
+	if result.PollTimeoutMin == 0 { result.PollTimeoutMin = 30 }
+	return result
+}

@@ -225,6 +225,12 @@ func (r *SQLiteSalesRepository) initSchema() error {
 	}
 
 
+
+		// Create stock history CSV reports tables (WB Analytics API - async CSV generation)
+		_, err = r.db.Exec(GetStockHistorySchemaSQL())
+		if err != nil {
+			return err
+		}
 		// Create stocks warehouse snapshots table (WB Analytics API - stocks-report/wb-warehouses)
 		_, err = r.db.Exec(GetStocksWarehouseSchemaSQL())
 		if err != nil {
