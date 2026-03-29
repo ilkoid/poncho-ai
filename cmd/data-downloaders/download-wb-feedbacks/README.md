@@ -18,9 +18,6 @@ WB_API_FEEDBACK_KEY=xxx go run . --begin=2025-01-01 --end=2025-01-31
 # Только отзывы или только вопросы
 WB_API_FEEDBACK_KEY=xxx go run . --days=30 --config=config-no-questions.yaml
 
-# Очистить БД и скачать заново
-WB_API_FEEDBACK_KEY=xxx go run . --clean --days=30 --db=archive.db
-
 # Mock mode (без API)
 go run . --mock --days=7
 ```
@@ -33,7 +30,6 @@ go run . --mock --days=7
 | `--begin DATE` | | Начало периода (YYYY-MM-DD), приоритет над `--days` |
 | `--end DATE` | | Конец периода (YYYY-MM-DD) |
 | `--db PATH` | `feedbacks.db` | Путь к SQLite |
-| `--clean` | | Удалить БД перед загрузкой |
 | `--mock` | | Тестовый режим без API |
 | `--config PATH` | `config.yaml` | Путь к конфигу |
 | `--help` | | Справка |

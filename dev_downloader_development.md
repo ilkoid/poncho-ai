@@ -448,3 +448,56 @@ func TestBasicDownload(t *testing.T) {
 3. **ToolID mismatch**: `SetRateLimit("tool_A")` + `Get(ctx, "tool_B", ...)` creates separate limiter with no adaptive state.
 4. **Missing `_ "github.com/mattn/go-sqlite3"`**: Driver registration required in main.go.
 5. **Config not expanding `${ENV}`**: Use `config.LoadYAML()` which handles `os.ExpandEnv()`.
+6. **Shared database between utilities**: If multiple downloaders write to the same database file (e.g., `wb-sales.db`), be aware that all data is stored together. To reset a specific utility's data, you can manually delete the relevant tables or use separate database files per utility.
+6. **Ignoring 5xx errors**: The WB API may return transient 5xx errors (503, 500, 502, 504). The `wb.Client` automatically retries these with exponential backoff (5s, 10s, 15s). No manual retry logic needed in downloaders.
+
+---
+
+## Transient Error Handling
+
+The `wb.Client` automatically handles transient errors from the WB API:
+
+### 5xx Server Errors (Retried)
+
+When the WB API returns a 5xx status code (500-599), the client automatically retries with exponential backoff:
+
+- **Retry 1**: 5 second wait
+- **Retry 2**: 10 second wait
+- **Retry 3**: 15 second wait (default `retry_attempts: 3`)
+
+**Log output**:
+```
+⚠️  Transient 5xx (503) for get_campaign_fullstats, retrying in 5s... (attempt 2/3)
+⚠️  Transient 5xx (503) for get_campaign_fullstats, retrying in 10s... (attempt 3/3)
+✅ 462 daily, 1392 app, 4567 nm, 0 booster (api 24.971s, flatten 2ms, db 504ms)
+```
+
+**Common 5xx errors from WB API**:
+- `503 Service Unavailable` - Upstream service failures (e.g., `s2s-api-auth-adv`)
+- `500 Internal Server Error` - RPC timeouts (e.g., `GetStatsDailyNmApp: DeadlineExceeded`)
+
+### 429 Rate Limiting (Adaptive)
+
+429 responses are handled with **adaptive rate limiting** (see [dev_limits.md](dev_limits.md)):
+1. Limiter immediately reduces to `apiFloor` (swagger-documented rate)
+2. Cooldown period based on `X-Ratelimit-Retry` header or exponential backoff
+3. Stays at reduced rate permanently (no probing back to aggressive rate)
+
+### Network Errors (Retried)
+
+Connection failures, timeouts, and other network errors are automatically retried up to `retry_attempts` times.
+
+### Configuration
+
+Control retry behavior via `config.yaml`:
+
+```yaml
+wb:
+  retry_attempts: 5  # Total attempts (1 initial + 4 retries)
+  timeout: 30s       # Per-request timeout
+```
+
+For large downloads, consider:
+- Increasing `retry_attempts` to 5 for better resilience
+- Using `--resume` flag to continue after interruption
+- Running during off-peak hours (2-6 AM Moscow time)

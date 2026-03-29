@@ -435,6 +435,20 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 		}
 
 		if resp.StatusCode != http.StatusOK {
+			// Check if it's a transient 5xx error (and we have retries left)
+			isTransient5xx := resp.StatusCode >= 500 && resp.StatusCode < 600
+			if isTransient5xx && i < c.retryAttempts-1 {
+				lastErr = fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+				backoff := time.Duration(i+1) * 5 * time.Second // 5s, 10s, 15s
+				fmt.Fprintf(os.Stderr, "⚠️  Transient 5xx (%d) for %s, retrying in %v... (attempt %d/%d)\n",
+					resp.StatusCode, toolID, backoff.Truncate(time.Second), i+2, c.retryAttempts)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(backoff):
+					continue
+				}
+			}
 			return fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
 		}
 
@@ -632,6 +646,20 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			// Check if it's a transient 5xx error (and we have retries left)
+			isTransient5xx := resp.StatusCode >= 500 && resp.StatusCode < 600
+			if isTransient5xx && i < c.retryAttempts-1 {
+				lastErr = fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+				backoff := time.Duration(i+1) * 5 * time.Second // 5s, 10s, 15s
+				fmt.Fprintf(os.Stderr, "⚠️  Transient 5xx (%d) for %s, retrying in %v... (attempt %d/%d)\n",
+					resp.StatusCode, toolID, backoff.Truncate(time.Second), i+2, c.retryAttempts)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(backoff):
+					continue
+				}
+			}
 			return fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
 		}
 

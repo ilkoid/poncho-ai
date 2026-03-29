@@ -35,7 +35,6 @@ func main() {
 	// Flags
 	configPath := flag.String("config", "config.yaml", "Path to config file")
 	mock := flag.Bool("mock", false, "Use mock client (no API calls)")
-	clean := flag.Bool("clean", false, "Delete database before download")
 	begin := flag.String("begin", "", "Begin date (YYYY-MM-DD)")
 	end := flag.String("end", "", "End date (YYYY-MM-DD)")
 	days := flag.Int("days", 0, "Days from today (alternative to begin/end)")
@@ -88,14 +87,6 @@ func main() {
 		fmt.Println("\nInterrupted!")
 		cancel()
 	}()
-
-	// Delete database if --clean
-	if *clean {
-		if err := os.Remove(cfg.Feedbacks.DbPath); err != nil && !os.IsNotExist(err) {
-			log.Fatalf("Failed to delete database: %v", err)
-		}
-		fmt.Println("Database deleted")
-	}
 
 	// Create repository (schema init + optimized PRAGMAs in single open)
 	repo, err := sqlite.NewSQLiteSalesRepository(cfg.Feedbacks.DbPath)
@@ -248,7 +239,6 @@ Usage:
 Options:
   --config PATH     Config file path (default: config.yaml)
   --mock            Use mock client (no API calls)
-  --clean           Delete database before download
   --begin DATE      Begin date (YYYY-MM-DD)
   --end DATE        End date (YYYY-MM-DD)
   --days N          Days from today (alternative to begin/end)
@@ -264,9 +254,6 @@ Examples:
 
   # Mock mode for testing
   go run . --mock --days=7
-
-  # Clean + custom DB
-  go run . --clean --days=30 --db=archive.db
 
 `)
 }

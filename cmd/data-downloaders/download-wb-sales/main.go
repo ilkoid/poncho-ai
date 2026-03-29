@@ -33,15 +33,11 @@ type Config struct {
 func main() {
 	// Parse flags
 	mockMode := false
-	cleanDB := false
 	funnelMode := false
 	args := os.Args[1:]
 	for _, arg := range args {
 		if arg == "--mock" || arg == "-m" {
 			mockMode = true
-		}
-		if arg == "--clean" || arg == "-c" {
-			cleanDB = true
 		}
 		if arg == "--funnel" || arg == "-f" {
 			funnelMode = true
@@ -62,16 +58,6 @@ func main() {
 	cfg, err := loadConfig(configPath)
 	if err != nil {
 		log.Fatalf("❌ Failed to load config: %v", err)
-	}
-
-	// Clean database if --clean flag is set
-	if cleanDB {
-		dbPath := cfg.Storage.DbPath
-		if err := os.Remove(dbPath); err != nil {
-			fmt.Printf("⚠️  Не удалось удалить %s: %v\n", dbPath, err)
-		} else {
-			fmt.Printf("🗑️  База удалена: %s\n", dbPath)
-		}
 	}
 
 	// In mock mode, skip API key validation
@@ -311,7 +297,6 @@ func printHelp() {
 	fmt.Println("  go run . [опции]")
 	fmt.Println()
 	fmt.Println("ОПЦИИ:")
-	fmt.Println("  --clean, -c      Удалить БД перед загрузкой (чистая база)")
 	fmt.Println("  --mock, -m       Режим симуляции (генерация моковых данных без API вызовов)")
 	fmt.Println("  --funnel, -f     Загрузить данные воронки аналитики (вместо продаж)")
 	fmt.Println("  --help, -h       Показать справку")

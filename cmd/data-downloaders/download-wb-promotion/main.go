@@ -35,7 +35,6 @@ func main() {
 	// Flags
 	configPath := flag.String("config", "config.yaml", "Path to config file")
 	mock := flag.Bool("mock", false, "Use mock client (no API calls)")
-	clean := flag.Bool("clean", false, "Delete database before download")
 	begin := flag.String("begin", "", "Begin date (YYYY-MM-DD)")
 	end := flag.String("end", "", "End date (YYYY-MM-DD)")
 	days := flag.Int("days", 0, "Days from today (alternative to begin/end)")
@@ -92,14 +91,6 @@ func main() {
 		fmt.Println("\n⚠️  Interrupted!")
 		cancel()
 	}()
-
-	// Delete database if --clean
-	if *clean {
-		if err := os.Remove(cfg.Promotion.DbPath); err != nil && !os.IsNotExist(err) {
-			log.Fatalf("❌ Failed to delete database: %v", err)
-		}
-		fmt.Println("🗑️  Database deleted")
-	}
 
 	// Create repository
 	repo, err := sqlite.NewSQLiteSalesRepository(cfg.Promotion.DbPath)
@@ -325,7 +316,6 @@ Usage:
 Options:
   --config PATH     Config file path (default: config.yaml)
   --mock            Use mock client (no API calls)
-  --clean           Delete database before download
   --begin DATE      Begin date (YYYY-MM-DD)
   --end DATE        End date (YYYY-MM-DD)
   --days N          Days from today (alternative to begin/end)
@@ -344,6 +334,9 @@ Examples:
 
   # Download active campaigns only
   go run main.go --statuses=9 --days=30
+
+  # Resume from last loaded date
+  WB_API_KEY=xxx go run main.go --days=30 --resume
 
   # Mock mode for testing
   go run main.go --mock --days=7

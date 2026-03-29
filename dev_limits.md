@@ -240,6 +240,45 @@ With minInterval check:
 - The minInterval check ensures proper pacing even after retries/cooldowns
 - This prevents "burst" requests that could trigger additional 429s
 
+### On 5xx (Server Errors)
+
+When the WB API returns a 5xx status code (500-599), the client automatically retries with exponential backoff:
+
+```
+Request: 200 OK → success
+Request: 503 Service Unavailable → retry after 5s
+Retry 1: 503 Service Unavailable → retry after 10s
+Retry 2: 200 OK → success
+```
+
+**Backoff schedule:**
+- Retry 1: 5 seconds
+- Retry 2: 10 seconds
+- Retry 3: 15 seconds (if `retry_attempts: 4`)
+
+**Common 5xx errors from WB API:**
+| Status | Origin | Meaning |
+|--------|--------|---------|
+| `503` | `s2s-api-auth-adv` | Upstream authentication service failure |
+| `500` | `camp-api-public-cache` | Internal RPC timeout (e.g., `GetStatsDailyNmApp: DeadlineExceeded`) |
+| `502` | Any | Bad gateway (upstream service unavailable) |
+| `504` | Any | Gateway timeout |
+
+**Log output:**
+```
+⚠️  Transient 5xx (503) for get_campaign_fullstats, retrying in 5s... (attempt 2/3)
+⚠️  Transient 5xx (503) for get_campaign_fullstats, retrying in 10s... (attempt 3/3)
+✅ 462 daily, 1392 app, 4567 nm, 0 booster (api 24.971s, flatten 2ms, db 504ms)
+```
+
+**Key differences from 429 handling:**
+| Feature | 429 (Rate Limit) | 5xx (Server Error) |
+|---------|------------------|-------------------|
+| Action | Drop rate to `apiFloor` permanently | Retry with exponential backoff |
+| Cooldown | Based on `X-Ratelimit-Retry` header | Fixed exponential backoff |
+| State change | Rate limiter reduced | Rate limiter unchanged |
+| Retry count | Uses `retry_attempts` | Uses `retry_attempts` |
+
 ### Cooldown Examples
 
 | API Floor Rate | Cooldown (`60/apiRate`) |
