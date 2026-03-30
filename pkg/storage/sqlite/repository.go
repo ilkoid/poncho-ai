@@ -236,6 +236,11 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+		// Create region sales table (WB Seller Analytics API — /api/v1/analytics/region-sale)
+		_, err = r.db.Exec(GetRegionSalesSchemaSQL())
+		if err != nil {
+			return err
+		}
 	return nil
 }
 

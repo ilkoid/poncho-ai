@@ -802,3 +802,28 @@ type StockHistoryReportItem struct {
 type StockHistoryReportListResponse struct {
 	Data []StockHistoryReportItem `json:"data"`
 }
+
+// ============================================================================
+// Region Sale Types (Seller Analytics API — /api/v1/analytics/region-sale)
+// ============================================================================
+
+// RegionSaleItem represents a single row from the region sale report.
+// GET /api/v1/analytics/region-sale?dateFrom=...&dateTo=...
+//
+// Grain: one row per (nm_id, city_name, region_name, country_name) for the requested period.
+type RegionSaleItem struct {
+	CityName                 string  `json:"cityName"`
+	CountryName              string  `json:"countryName"`
+	FoName                   string  `json:"foName"`
+	NmID                     int     `json:"nmID"`
+	RegionName               string  `json:"regionName"`
+	Sa                       string  `json:"sa"`
+	SaleInvoiceCostPrice     float64 `json:"saleInvoiceCostPrice"`
+	SaleInvoiceCostPricePerc float64 `json:"saleInvoiceCostPricePerc"`
+	SaleItemInvoiceQty       int     `json:"saleItemInvoiceQty"`
+}
+
+// RegionSaleResponse wraps the API response for the region sale endpoint.
+type RegionSaleResponse struct {
+	Report []RegionSaleItem `json:"report"`
+}

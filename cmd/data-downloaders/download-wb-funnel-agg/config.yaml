@@ -46,4 +46,4 @@ funnel_aggregated:
 
   # Хранилище
   # db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
-  db_path: "test-fun-agg-script.db"
+  # db_path: "test-fun-agg-script.db"

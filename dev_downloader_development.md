@@ -10,15 +10,25 @@
 cmd/data-downloaders/<name>/
 ├── main.go           # CLI flags, config loading, orchestration
 ├── downloader.go     # Download logic (pagination, period splitting)
+├── utils.go          # Local helpers: repeat(), maskAPIKey()
 ├── types.go          # API response types (optional, if not in pkg/wb)
 └── config.yaml       # YAML configuration with ${ENV} expansion
+
+Existing downloaders:
+  download-wb-sales          # WB Sales/Statistics API → SQLite
+  download-wb-promotion      # WB Promotion/Advertising API → SQLite
+  download-wb-feedbacks      # WB Feedbacks API → SQLite
+  download-wb-funnel         # WB Analytics v3 daily funnel → SQLite
+  download-wb-funnel-agg     # WB Analytics v3 aggregated funnel → SQLite
+  download-wb-stocks         # WB Analytics warehouse stock snapshots → SQLite
+  download-wb-stock-history  # WB Analytics historical stock CSV reports → SQLite
 
 pkg/
 ├── config/           # LoadYAML(), shared config types (PromotionConfig, etc.)
 ├── storage/sqlite/   # SQLiteSalesRepository (all tables, all methods)
-├── progress/         # ProgressTracker interface + CLITracker
+├── progress/         # ProgressTracker interface + CLITracker (available, unused by downloaders)
 ├── testing/          # Mock data generators (GenerateSalesRows, etc.)
-├── utils/            # Display, DateRange helpers
+├── utils/            # Display, DateRange helpers (available, downloaders use local copies)
 └── wb/               # WB client, API types, rate limiting
 ```
 
@@ -47,8 +57,12 @@ if err := config.LoadYAML("config.yaml", &cfg); err != nil {
 - `FeedbacksConfig` — feedbacks downloader settings (with `GetDefaults()`)
 - `FunnelConfig` — funnel downloader settings (with `GetDefaults()`)
 - `FunnelAggregatedConfig` — aggregated funnel settings (with `GetDefaults()`)
+- `StocksConfig` — warehouse stock snapshot settings (with `GetDefaults()`)
+- `StockHistoryConfig` — historical stock CSV report settings (with `GetDefaults()`)
 
 Each config type has a `GetDefaults()` method that fills zero values with sensible defaults.
+
+**Important**: Do NOT default `Days` field in `GetDefaults()` — it would override explicit `From`/`To` dates set in config. Default Days in `main.go` only when both From and To are empty (see Common Pitfalls #8).
 
 **Pattern**: Each downloader wraps shared types in a local `Config` struct:
 ```go
@@ -76,22 +90,44 @@ repo.Save(ctx, salesRows)
 repo.Exists(ctx, rrdID)
 
 // Funnel methods
-repo.SaveFunnelMetrics(ctx, metrics)
 repo.SaveFunnelHistoryWithWindow(ctx, rows, refreshDays)
 
 // Promotion methods
 repo.SaveCampaigns(ctx, campaigns)
-repo.SaveCampaignDailyStats(ctx, stats)
+repo.SaveCampaignAppStats(ctx, appRows)
+repo.SaveCampaignNmStats(ctx, nmRows)
 
 // Feedbacks methods
 repo.SaveFeedbacks(ctx, feedbacks)
 repo.SaveQuestions(ctx, questions)
-repo.CountFeedbacks(ctx)
+
+// Stocks methods
+repo.SaveStocks(ctx, snapshotDate, items)
+
+// Aggregated funnel methods
+repo.SaveFunnelAggregatedBatch(ctx, batch)
 ```
 
-**Schema**: `initSchema()` in `repository.go` creates ALL tables. New tables should be added via `GetXxxSchemaSQL()` constants in `schema.go`.
+**Interface vs Struct**: `SalesRepository` interface has 8 core methods (Save, Exists, Count, etc.). The `SQLiteSalesRepository` struct has 40+ public methods. Downloaders call struct methods directly — no need to add every method to the interface.
+
+**Schema**: `initSchema()` in `repository.go` creates ALL tables + runs ALTER TABLE migrations for schema evolution. New tables should be added via `GetXxxSchemaSQL()` constants.
+
+**Available schema functions**:
+- `GetSchemaSQL()` — Main sales table (83 fields)
+- `GetServiceRecordsSchemaSQL()` — Service records (logistics, deductions)
+- `GetCreateViewSQL()` — FBW view
+- `GetFunnelSchemaSQL()` — Funnel analytics (products, funnel_metrics_daily)
+- `GetPromotionSchemaSQL()` — Campaigns (campaigns, campaign_stats_daily, campaign_products)
+- `GetFunnelAggregatedSchemaSQL()` — Aggregated funnel metrics
+- `GetCampaignFullstatsSchemaSQL()` — Campaign detailed stats (app, nm, booster)
+- `GetFeedbacksSchemaSQL()` — Feedbacks and questions
+- `GetQualitySchemaSQL()` — Product quality summary (LLM analysis)
+- `GetStockHistorySchemaSQL()` — Stock history CSV reports (in `stock_history_schema.go`)
+- `GetStocksWarehouseSchemaSQL()` — Warehouse stock snapshots
 
 ### pkg/progress — Progress Tracking
+
+> **Note**: Currently unused by downloaders — all use manual `fmt.Printf` for progress output. Available for future use.
 
 ```go
 import "github.com/ilkoid/poncho-ai/pkg/progress"
@@ -128,15 +164,17 @@ questions := pkgtesting.GenerateQuestions(rng, 30)
 
 ### pkg/utils — Display & Date Utilities
 
+> **Note**: Downloaders define local `repeat()` and `maskAPIKey()` helpers in their own `utils.go` for zero-dependency simplicity. The `pkg/utils` versions are available but not imported by downloaders.
+
 ```go
 import "github.com/ilkoid/poncho-ai/pkg/utils"
 
-// Display helpers
+// Display helpers (available, but downloaders use local copies)
 utils.Repeat("=", 71)        // "====..."
 utils.MaskAPIKey("sk-xxx")   // "sk-xx...xxx"
 utils.FormatDuration(d)      // "1m 30s"
 
-// Date utilities
+// Date utilities (useful for period splitting in downloaders)
 dr := utils.DateRange{From: start, To: end}
 periods := dr.Split(30)              // Split into 30-day chunks
 fromTs, toTs := dr.ToInt()           // YYYYMMDD format
@@ -159,6 +197,74 @@ client.Get(ctx, "tool_id", baseURL, rateLimit, burst, "/api/path", params, &resp
 ```
 
 See [dev_limits.md](dev_limits.md) for full rate limiting documentation.
+
+---
+
+## API Key Retrieval Patterns
+
+Two patterns exist in the codebase. Choose based on your downloader's needs:
+
+### Pattern A: YAML Env Expansion (simpler)
+
+Used by: `download-wb-sales`, `download-wb-funnel`, `download-wb-funnel-agg`
+
+```yaml
+# config.yaml
+wb:
+  api_key: ${WB_STAT}                        # Expanded by config.LoadYAML()
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+```
+
+```go
+// main.go — read directly from config, detect unresolved placeholders
+apiKey := cfg.WB.APIKey
+if apiKey == "" || apiKey == "${WB_STAT}" {
+    log.Fatal("❌ WB_STAT not set")
+}
+client := wb.New(apiKey)
+```
+
+**Pros**: Simple, one-liner. **Cons**: Placeholder detection is string-matching (`"${WB_STAT}"`), not generic.
+
+### Pattern B: `getAPIKey()` Helper (explicit)
+
+Used by: `download-wb-promotion`, `download-wb-feedbacks`, `download-wb-stocks`, `download-wb-stock-history`
+
+```yaml
+# config.yaml — api_key is empty or omitted, rely on env vars
+wb:
+  api_key: ""
+```
+
+```go
+// main.go — explicit priority chain
+func getAPIKey(cfg *Config) string {
+    // Priority: primary env > fallback env > config value
+    if key := os.Getenv("WB_API_ANALYTICS_AND_PROMO_KEY"); key != "" {
+        return key
+    }
+    if key := os.Getenv("WB_API_KEY"); key != "" {
+        return key
+    }
+    return cfg.WB.APIKey
+}
+```
+
+**Pros**: Clean priority chain, no placeholder detection needed. **Cons**: More code.
+
+**Recommendation**: Use Pattern B (`getAPIKey()`) for new downloaders. It's cleaner and avoids fragile `${...}` string checks.
+
+**API Keys by Downloader**:
+
+| Downloader | Primary Env Var | Fallback | Config Field |
+|------------|----------------|----------|--------------|
+| sales | `WB_STAT` | — | `cfg.WB.APIKey` |
+| promotion | `WB_API_ANALYTICS_AND_PROMO_KEY` | `WB_API_KEY` | `cfg.WB.APIKey` |
+| feedbacks | `WB_API_FEEDBACK_KEY` | `WB_API_KEY` | `cfg.WB.APIKey` |
+| funnel | `WB_API_ANALYTICS_AND_PROMO_KEY` | `WB_STAT` | `cfg.WB.AnalyticsAPIKey` |
+| funnel-agg | `WB_API_ANALYTICS_AND_PROMO_KEY` | `WB_STAT` | `cfg.WB.AnalyticsAPIKey` |
+| stocks | configurable (`api_key_env`) | `WB_API_ANALYTICS_AND_PROMO_KEY` | `cfg.WB.APIKey` |
+| stock-history | `WB_API_KEY` | — | `cfg.WB.APIKey` |
 
 ---
 
@@ -223,11 +329,25 @@ repo.SaveFunnelHistoryWithWindow(ctx, rows, refreshDays)
 // Internally: recent rows → REPLACE, old rows → IGNORE
 ```
 
-### 4. No Resume (download-wb-feedbacks, download-wb-funnel-agg)
+### 4. No Resume (download-wb-feedbacks, download-wb-funnel-agg, download-wb-stocks)
 
 **When**: Data is append-only or fully replaceable.
 
-**Implementation**: Just `INSERT OR IGNORE` (feedbacks) or `INSERT OR REPLACE` (funnel-agg). Rely on SQL UNIQUE constraints for deduplication.
+**Implementation**: Just `INSERT OR IGNORE` (feedbacks) or `INSERT OR REPLACE` (funnel-agg, stocks). Rely on SQL UNIQUE constraints for deduplication.
+
+### Resume and CLI Flags
+
+| Downloader | Strategy | `--resume` CLI flag | Config field |
+|------------|----------|---------------------|--------------|
+| sales | Smart Resume | ❌ No | `download.resume` |
+| promotion | Per-Entity Date | ✅ Yes | `promotion.resume` |
+| stock-history | CSV Report Resume | ✅ Yes | `stock_history.resume` |
+| funnel | Refresh Window | ❌ No | N/A |
+| funnel-agg | No Resume | ❌ No | N/A |
+| feedbacks | No Resume | ❌ No | N/A |
+| stocks | No Resume | ❌ No | N/A |
+
+**Note**: `--resume` is not universal. Only promotion and stock-history support it as a CLI flag. Sales uses config-only resume (`download.resume: true`).
 
 ---
 
@@ -254,7 +374,8 @@ type MyDownloaderConfig struct {
 
 func (c MyDownloaderConfig) GetDefaults() MyDownloaderConfig {
     if c.DbPath == "" { c.DbPath = "my_data.db" }
-    if c.Days == 0 { c.Days = 7 }
+    // NOTE: Days is NOT defaulted here — default in main.go only when From/To empty
+    // See Common Pitfalls #8
     if c.RateLimit == 0 { c.RateLimit = 100 }
     return c
 }
@@ -274,7 +395,6 @@ import (
     "log"
     "os"
     "os/signal"
-    "strings"
     "syscall"
     "time"
 
@@ -290,50 +410,96 @@ type Config struct {
 }
 
 func main() {
-    // 1. Parse flags
-    configPath := flag.String("config", "config.yaml", "Path to config file")
-    days := flag.Int("days", 0, "Days from today")
-    help := flag.Bool("help", false, "Show help")
+    // 1. Parse flags (tiered: core + period + optional)
+    configPath := flag.String("config", "config.yaml", "путь к конфигу")
+    days := flag.Int("days", 0, "дней от сегодня (default: 7)")
+    begin := flag.String("begin", "", "начало периода YYYY-MM-DD")
+    end := flag.String("end", "", "конец периода YYYY-MM-DD")
+    dbPath := flag.String("db", "", "путь к базе (overrides config)")
+    mockMode := flag.Bool("mock", false, "mock mode (no API calls)")
+    help := flag.Bool("help", false, "справка")
+    flag.BoolVar(help, "h", false, "справка")
     flag.Parse()
     if *help { printHelp(); return }
 
     // 2. Load config with ENV expansion
     cfg, err := loadConfig(*configPath)
     if err != nil {
-        log.Printf("Config not found, using defaults: %v", err)
-        cfg = defaultConfig()
+        log.Fatalf("❌ Failed to load config: %v", err)
     }
-    cfg.MySection = cfg.MySection.GetDefaults()
-    cfg.WB = cfg.WB.GetDefaults()
+    defaults := cfg.MySection.GetDefaults()
 
     // 3. Apply CLI overrides
-    if *days > 0 { cfg.MySection.Days = *days }
+    if *days > 0 { defaults.Days = *days }
+    if *begin != "" { defaults.From = *begin }
+    if *end != "" { defaults.To = *end }
+    if *dbPath != "" { defaults.DbPath = *dbPath }
 
-    // 4. Handle Ctrl+C
+    // 4. Calculate dates: CLI flags > config from/to > config days > default 7
+    if defaults.From == "" || defaults.To == "" {
+        if defaults.Days == 0 { defaults.Days = 7 }
+        beginDate, endDate := calculateDateRange(defaults.Days)
+        defaults.From = beginDate
+        defaults.To = endDate
+    }
+
+    // 5. Get API key (priority: env > config, with placeholder detection)
+    apiKey := getAPIKey(cfg)
+    if apiKey == "" {
+        log.Fatal("❌ No API key. Set WB_API_KEY or configure yaml api_key.")
+    }
+
+    // 6. Handle Ctrl+C
     ctx, cancel := context.WithCancel(context.Background())
     defer cancel()
     sigChan := make(chan os.Signal, 1)
     signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-    go func() { <-sigChan; fmt.Println("\nInterrupted!"); cancel() }()
+    go func() { <-sigChan; fmt.Println("\n⚠️  Прервано"); cancel() }()
 
-    // 5. Open database (schema + PRAGMAs in one call)
-    repo, err := sqlite.NewSQLiteSalesRepository(cfg.MySection.DbPath)
-    if err != nil { log.Fatalf("Failed to create repository: %v", err) }
+    // 7. Open database (schema + PRAGMAs in one call)
+    repo, err := sqlite.NewSQLiteSalesRepository(defaults.DbPath)
+    if err != nil { log.Fatalf("❌ Failed to open database: %v", err) }
     defer repo.Close()
 
-    // 6. Create API client with adaptive rate limiting
-    apiKey := os.Getenv("WB_API_KEY")
+    // 8. Create API client with adaptive rate limiting
     client := wb.New(apiKey)
-    defaults := cfg.MySection.GetDefaults()
-    client.SetRateLimit("my_tool", defaults.RateLimit, defaults.BurstLimit,
-        defaults.RateLimitApi, defaults.BurstLimitApi)
+    rl := defaults.RateLimits
+    client.SetRateLimit("my_tool_id", rl.MyEndpoint, rl.MyEndpointBurst,
+        rl.MyEndpointApi, rl.MyEndpointApiBurst)
     client.SetAdaptiveParams(0, defaults.AdaptiveProbeAfter, defaults.MaxBackoffSeconds)
 
-    // 7. Download data
-    // ... call your download function ...
+    // 9. Download data (mock or real)
+    if *mockMode {
+        fmt.Println("🧪 MOCK MODE")
+        // ... call mock download function ...
+    } else {
+        // ... call real download function ...
+    }
 
-    // 8. Print summary
+    // 10. Print summary
     fmt.Println("Download complete!")
+}
+
+// getAPIKey retrieves API key with priority: env var > config value.
+// Detects unresolved ${ENV} placeholders from YAML.
+func getAPIKey(cfg *Config) string {
+    if key := os.Getenv("WB_API_KEY"); key != "" {
+        return key
+    }
+    apiKey := cfg.WB.APIKey
+    if apiKey == "" || strings.HasPrefix(apiKey, "${") {
+        return ""
+    }
+    return apiKey
+}
+
+// calculateDateRange computes date range from today.
+// days=7 means last 7 complete days, excluding today.
+func calculateDateRange(days int) (string, string) {
+    now := time.Now()
+    endDate := now.AddDate(0, 0, -1).Format("2006-01-02") // yesterday
+    beginDate := now.AddDate(0, 0, -days).Format("2006-01-02")
+    return beginDate, endDate
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -343,11 +509,15 @@ func loadConfig(path string) (*Config, error) {
     }
     return &cfg, nil
 }
-
-func defaultConfig() *Config { return &Config{} }
 ```
 
-### 4. Create downloader.go
+**API Key Retrieval Patterns** (two approaches in the codebase):
+
+1. **YAML env expansion** (simpler, used by funnel/funnel-agg): Set `api_key: ${WB_API_KEY}` in config.yaml. `config.LoadYAML()` calls `os.ExpandEnv()`. Read via `cfg.WB.APIKey`. Detect unresolved `${...}` placeholders.
+
+2. **`os.Getenv()` priority chain** (explicit, used by promotion/feedbacks/stocks): Define `getAPIKey()` helper that checks env vars first, falls back to config value. Preferred for downloaders that need multiple env var fallbacks.
+
+### 4. Create downloader.go (or loader.go)
 
 ```go
 package main
@@ -355,39 +525,73 @@ package main
 import (
     "context"
     "fmt"
+    "time"
 
+    "github.com/ilkoid/poncho-ai/pkg/config"
     "github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
     "github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
-func DownloadMyData(
-    ctx context.Context,
-    client *wb.Client,
-    repo *sqlite.SQLiteSalesRepository,
-    dateFrom, dateTo string,
-) (int, error) {
-    total := 0
-    // ... pagination, API calls, repo.SaveXxx() ...
-    return total, nil
+type LoadResult struct {
+    RecordsSaved int
+    RequestsMade int
+    Duration     time.Duration
+}
+
+type LoaderConfig struct {
+    Client *wb.Client
+    Repo   *sqlite.SQLiteSalesRepository
+    Config config.MyDownloaderConfig
+}
+
+func DownloadMyData(ctx context.Context, cfg LoaderConfig) (*LoadResult, error) {
+    start := time.Now()
+    result := &LoadResult{}
+
+    // ... period splitting, pagination, API calls, repo.SaveXxx() ...
+    // Use continue on error (not return) in batch loops
+
+    return result, nil
 }
 ```
+
+**Note**: File naming varies across downloaders:
+- `downloader.go` (sales, promotion, feedbacks)
+- `loader.go` (funnel, funnel-agg)
+- `stocks_loader.go` (stocks)
+
+Choose whichever feels natural for the download logic.
 
 ### 5. Create config.yaml
 
 ```yaml
+# API key — two approaches:
+#   Option A (YAML env expansion): api_key: ${WB_API_KEY}     ← simpler
+#   Option B (os.Getenv in code):  api_key: ""                 ← for getAPIKey() helper
 wb:
-  api_key: ${WB_API_KEY}
-  rate_limit: 100
-  burst_limit: 10
+  api_key: ${WB_API_KEY}         # Option A: expanded by config.LoadYAML()
+  # analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}  # For Analytics API endpoints
   timeout: 30s
 
 my_section:
-  db_path: my_data.db
+  # Period (Days is NOT defaulted in GetDefaults() — see Common Pitfalls #8)
   days: 7
-  rate_limit: 3
-  rate_limit_api: 3
-  burst_limit: 3
-  burst_limit_api: 1
+  # from: "2025-03-01"    # Explicit dates override days
+  # to: "2025-03-31"
+
+  # Database
+  db_path: my_data.db
+
+  # Rate limiting (two-level adaptive: desired + api floor)
+  rate_limits:
+    my_endpoint: 3           # desired rate (req/min)
+    my_endpoint_burst: 1     # desired burst
+    my_endpoint_api: 3       # swagger-documented rate (recovery floor)
+    my_endpoint_api_burst: 1 # swagger burst
+
+  # Adaptive tuning (see dev_limits.md)
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
 ```
 
 ### 6. Add tests
@@ -399,44 +603,56 @@ package main
 import (
     "context"
     "testing"
-    "os"
 
     "github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
-    pkgtesting "github.com/ilkoid/poncho-ai/pkg/testing"
+    "github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
-func TestBasicDownload(t *testing.T) {
+func TestSaveRegionSales(t *testing.T) {
     dbPath := t.TempDir() + "/test.db"
     repo, err := sqlite.NewSQLiteSalesRepository(dbPath)
     if err != nil { t.Fatal(err) }
     defer repo.Close()
 
-    // Generate mock data
-    mockClient := wb.NewMockClient()
-    mockClient.AddMockData(pkgtesting.GenerateMyData(10))
+    // Test with sample data (no mock client needed for save tests)
+    items := []wb.MyDataType{
+        {ID: 1, Name: "test", Value: 100},
+    }
 
-    // Download
-    count, err := DownloadMyData(ctx, mockClient, repo, "2025-01-01", "2025-01-31")
-    if err != nil { t.Fatal(err) }
-    if count == 0 { t.Error("expected some rows") }
+    saved, err := repo.SaveMyData(context.Background(), items)
+    if err != nil { t.Fatalf("SaveMyData: %v", err) }
+    if saved != 1 { t.Errorf("expected 1 saved, got %d", saved) }
+
+    // Verify idempotency (re-save should succeed)
+    saved2, err := repo.SaveMyData(context.Background(), items)
+    if err != nil { t.Fatalf("SaveMyData (idempotent): %v", err) }
 }
 ```
+
+**Note**: Tests focus on repository save logic with real SQLite (in-memory). Mock HTTP clients are used sparingly — the real value is testing INSERT/UPSERT SQL logic.
 
 ---
 
 ## Checklist: Adding New Downloader
 
-- [ ] Config type added to `pkg/config/utility.go` (with `GetDefaults()`)
-- [ ] Schema SQL added to `pkg/storage/sqlite/schema.go`
+- [ ] Config type added to `pkg/config/utility.go` (with `GetDefaults()`, **no Days default**)
+- [ ] Schema SQL added to `pkg/storage/sqlite/schema.go` (or new `xxx_schema.go`)
+- [ ] Schema registered in `initSchema()` in `pkg/storage/sqlite/repository.go`
 - [ ] Repository methods added to `pkg/storage/sqlite/` (new file)
 - [ ] API types in `pkg/wb/` (or local `types.go` if downloader-specific)
 - [ ] `main.go` uses `config.LoadYAML()` for config loading
 - [ ] `main.go` uses `sqlite.NewSQLiteSalesRepository()` for single DB open
-- [ ] Adaptive rate limiting configured via `client.SetRateLimit()` + `SetAdaptiveParams()`
-- [ ] CLI flags: `--config`, `--days/--begin/--end`, `--db`, `--mock`, `--help`
+- [ ] API key via `getAPIKey()` helper or YAML env expansion
+- [ ] Adaptive rate limiting: `wb.New(apiKey)` + `SetRateLimit()` + `SetAdaptiveParams()`
 - [ ] Ctrl+C handling with `context.WithCancel`
 - [ ] `config.yaml` with `${ENV}` expansion
-- [ ] Mock mode for testing without API
+- [ ] CLI flags:
+  - **Core** (all): `--config`, `--help`/`-h`
+  - **Period** (most): `--days`, `--begin`, `--end`
+  - **Optional** (as needed): `--db`, `--mock`, `--resume`, `--clean`
+  - **Specific**: `--funnel`, `--statuses`, `--date`, etc.
+- [ ] Date calculation: `endDate = yesterday` (exception: funnel uses `today`)
+- [ ] Local helpers: `repeat()` and `maskAPIKey()` in `utils.go`
 - [ ] E2E test with mock client
 
 ---
@@ -450,6 +666,44 @@ func TestBasicDownload(t *testing.T) {
 5. **Config not expanding `${ENV}`**: Use `config.LoadYAML()` which handles `os.ExpandEnv()`.
 6. **Shared database between utilities**: If multiple downloaders write to the same database file (e.g., `wb-sales.db`), be aware that all data is stored together. To reset a specific utility's data, you can manually delete the relevant tables or use separate database files per utility.
 7. **Ignoring 5xx errors**: The WB API may return transient 5xx errors (503, 500, 502, 504). The `wb.Client` automatically retries these with exponential backoff (5s, 10s, 15s). No manual retry logic needed in downloaders.
+
+8. **`Days` default in `GetDefaults()` overrides explicit `from/to`**:
+
+**❌ Wrong** — `GetDefaults()` sets Days=7, which then overrides explicit dates:
+```go
+// pkg/config/utility.go
+func (c *MyConfig) GetDefaults() MyConfig {
+    result := *c
+    if result.Days == 0 { result.Days = 7 } // ← Always triggers when days not set
+    return result
+}
+
+// main.go
+defaults := cfg.MySection.GetDefaults() // Days is now 7
+if defaults.Days > 0 {  // ← Always true now!
+    begin, end := calculateDateRange(defaults.Days) // ← Overwrites from/to!
+}
+```
+
+**✅ Correct** — Don't default Days in `GetDefaults()`, default it in `main.go` only when both From and To are empty:
+```go
+// pkg/config/utility.go — NO Days default
+func (c *MyConfig) GetDefaults() MyConfig {
+    result := *c
+    // Days is NOT defaulted here — see main.go
+    return result
+}
+
+// main.go — default Days only when no explicit dates
+if defaults.From == "" || defaults.To == "" {
+    if defaults.Days == 0 { defaults.Days = 7 }
+    begin, end := calculateDateRange(defaults.Days)
+    defaults.From = begin
+    defaults.To = end
+}
+```
+
+**Why**: User may set `from: "2025-01-01"` and `to: "2025-01-31"` in config but leave `days: 0`. If `GetDefaults()` sets `days: 7`, the `days > 0` check would recalculate dates, overwriting the explicit ones.
 
 ---
 
@@ -562,6 +816,8 @@ beginDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
 ```
 
 **Pattern used**: `days: 7` means "last 7 complete days", excluding today.
+
+**Exception**: `download-wb-funnel` includes today (`end = now`) because the Analytics API returns per-day data where today's partial data is still useful for trend analysis.
 
 ---
 

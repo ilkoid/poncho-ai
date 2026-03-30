@@ -578,3 +578,66 @@ func (c *StockHistoryConfig) GetDefaults() StockHistoryConfig {
 	if result.PollTimeoutMin == 0 { result.PollTimeoutMin = 30 }
 	return result
 }
+
+// RegionSalesConfig — конфигурация для download-wb-region-sales утилиты.
+//
+// Используется для загрузки данных о продажах по регионам с WB Seller Analytics API.
+// Двухуровневый rate limiting: desired + api (swagger floor для восстановления).
+type RegionSalesConfig struct {
+	DbPath             string                  `yaml:"db_path"`
+	Days               int                     `yaml:"days"`
+	Begin              string                  `yaml:"begin"`
+	End                string                  `yaml:"end"`
+	APIKeyEnv          string                  `yaml:"api_key_env"`
+	RateLimits         RegionSalesRateLimits   `yaml:"rate_limits"`
+	AdaptiveProbeAfter int                     `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int                     `yaml:"max_backoff_seconds"`
+}
+
+// RegionSalesRateLimits — rate limits для region sale API endpoint.
+//
+// Seller Analytics API: 1 req/10sec (6 req/min), burst 5 (swagger).
+type RegionSalesRateLimits struct {
+	RegionSale         int `yaml:"region_sale"`
+	RegionSaleBurst    int `yaml:"region_sale_burst"`
+	RegionSaleApi      int `yaml:"region_sale_api"`
+	RegionSaleApiBurst int `yaml:"region_sale_api_burst"`
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+// Каскадные дефолты: api -> desired, api_burst -> desired_burst.
+// NOTE: Days is NOT defaulted here — default in main.go only when Begin/End empty.
+func (c *RegionSalesConfig) GetDefaults() RegionSalesConfig {
+	result := *c
+	if result.DbPath == "" {
+		result.DbPath = "sales.db"
+	}
+	if result.APIKeyEnv == "" {
+		result.APIKeyEnv = "WB_API_ANALYTICS_AND_PROMO_KEY"
+	}
+
+	// Region sale rate limits (two-level adaptive)
+	// Swagger: 1 req/10sec = 6 req/min, burst 5
+	if result.RateLimits.RegionSaleApi == 0 {
+		result.RateLimits.RegionSaleApi = 6
+	}
+	if result.RateLimits.RegionSale == 0 {
+		result.RateLimits.RegionSale = result.RateLimits.RegionSaleApi
+	}
+	if result.RateLimits.RegionSaleApiBurst == 0 {
+		result.RateLimits.RegionSaleApiBurst = 5
+	}
+	if result.RateLimits.RegionSaleBurst == 0 {
+		result.RateLimits.RegionSaleBurst = result.RateLimits.RegionSaleApiBurst
+	}
+
+	// Adaptive tuning defaults
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+
+	return result
+}

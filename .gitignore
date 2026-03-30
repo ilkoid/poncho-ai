@@ -177,5 +177,6 @@ style.css
 # E2E test comparison reports
 comparison_report.txt
 
-download-wb-stocks
-download-wb-stock-history
+/download-wb-stocks
+/download-wb-stock-history
+/download-wb-region-sales

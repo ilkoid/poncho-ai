@@ -1,0 +1,14 @@
+wb:
+  api_key: ""
+  timeout: "60s"
+
+region_sales:
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  rate_limits:
+    region_sale: 6
+    region_sale_burst: 5
+    region_sale_api: 6
+    region_sale_api_burst: 5
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
