@@ -477,3 +477,28 @@ func (c *Client) GetProductsByArticles(ctx context.Context, toolID string, baseU
 
 	return results, nil
 }
+
+// GetCardsList fetches one page of cards from WB Content API.
+// POST /content/v2/get/cards/list with cursor-based pagination.
+// Max 100 cards per page. Rate limit: 100 req/min, burst 5.
+// Returns cards slice and response cursor (nil if last page or error).
+func (c *Client) GetCardsList(
+	ctx context.Context,
+	settings CardsSettings,
+	rateLimit, burst int,
+) ([]ProductCard, *CardsCursorResponse, error) {
+	reqBody := CardsListRequest{Settings: settings}
+	var resp CardsListResponse
+	err := c.Post(ctx, "get_cards_list", cardsBaseURL, rateLimit, burst, "/content/v2/get/cards/list", reqBody, &resp)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cards list: %w", err)
+	}
+
+	if resp.Error {
+		return nil, nil, fmt.Errorf("cards list API error: %s", resp.ErrorText)
+	}
+
+	return resp.Cards, resp.Cursor, nil
+}
+
+const cardsBaseURL = "https://content-api.wildberries.ru"

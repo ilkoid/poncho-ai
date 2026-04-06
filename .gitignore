@@ -180,3 +180,7 @@ comparison_report.txt
 /download-wb-stocks
 /download-wb-stock-history
 /download-wb-region-sales
+
+# Compiled downloaders (project-specific)
+download-wb-*
+!download-wb-*/

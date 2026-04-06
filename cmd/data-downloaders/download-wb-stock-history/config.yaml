@@ -9,14 +9,14 @@ wb:
 # Stock History Download Settings
 stock_history:
   # Database path (SQLite)
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-cards.db"
 
   # Date range (alternative to --days flag)
   #begin: "2026-01-01"  # YYYY-MM-DD
   #end: "2026-01-31"    # YYYY-MM-DD
 
   # Days from today (alternative to begin/end)
-  days: 31
+  days: 15
 
   # Report type: "metrics" (monthly) or "daily" (daily stock levels)
   report_type: "daily"

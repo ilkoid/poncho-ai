@@ -12,19 +12,19 @@ wb:
   # Burst capacity
   #burst: 2
   # Request timeout
-  timeout: 30s
+  timeout: 120s
 
 # Promotion Download Settings
 promotion:
   # Database path (SQLite)
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-cards.db"
 
   # Date range (alternative to --days flag)
   #begin: "2026-01-01"  # YYYY-MM-DD
   #end: "2026-01-02"    # YYYY-MM-DD
 
   # Days from today (alternative to begin/end)
-  days: 14
+  days: 28
 
   # Filter by campaign status (comma-separated: 9,11 = active + paused)
   # -1 = deleted, 4 = ready, 7 = finished, 8 = canceled, 9 = active, 11 = paused
@@ -35,11 +35,11 @@ promotion:
 
   # Skip downloading campaign details (name, payment_type, placements)
   # Saves ~35s for 8800+ campaigns. Use when you only need stats numbers.
-  skip_details: false
+  skip_details: true
 
   # Skip loading campaign list from /adv/v1/promotion/count (reuse IDs from DB)
   # Use when campaigns are already in DB and you only need to update details or stats.
-  skip_campaigns: false
+  skip_campaigns: true
 
   # Skip downloading stats from /adv/v3/fullstats
   # Use when you only need to update campaign details.

@@ -641,3 +641,149 @@ func (c *RegionSalesConfig) GetDefaults() RegionSalesConfig {
 
 	return result
 }
+
+// ============================================================================
+// Content Cards (product catalog) — WB Content API
+// ============================================================================
+
+// CardsConfig — конфигурация для download-wb-cards утилиты.
+//
+// Используется для загрузки карточек товаров с WB Content API (/content/v2/get/cards/list).
+// Курсорная пагинация (не date-based). Нет поля Days.
+// Двухуровневый rate limiting: desired + api (swagger floor для восстановления).
+type CardsConfig struct {
+	DbPath             string          `yaml:"db_path"`
+	APIKeyEnv          string          `yaml:"api_key_env"`
+	RateLimits         CardsRateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter int             `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int             `yaml:"max_backoff_seconds"`
+}
+
+// CardsRateLimits — rate limits для cards list API endpoint.
+//
+// Content API: 100 req/min, burst 5 (swagger).
+//
+// Два уровня rate:
+//   - desired:      желаемый rate (можно превышать swagger — adaptive limiter обработает 429)
+//   - desired_burst: burst для desired rate
+//   - api:           swagger-documented rate (recovery floor после 429)
+//   - api_burst:     burst для api rate
+//
+// Если desired не указан — используется api (без превышения swagger).
+type CardsRateLimits struct {
+	CardsList         int `yaml:"cards_list"`
+	CardsListBurst    int `yaml:"cards_list_burst"`
+	CardsListApi      int `yaml:"cards_list_api"`
+	CardsListApiBurst int `yaml:"cards_list_api_burst"`
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+// Каскадные дефолты: api -> desired, api_burst -> desired_burst.
+// NOTE: Нет Days поля — cards используют курсорную пагинацию, не date ranges.
+func (c *CardsConfig) GetDefaults() CardsConfig {
+	result := *c
+	if result.DbPath == "" {
+		result.DbPath = "cards.db"
+	}
+	if result.APIKeyEnv == "" {
+		result.APIKeyEnv = "WB_API_KEY"
+	}
+
+	// Cards list rate limits (two-level adaptive)
+	// Swagger: 100 req/min, burst 5
+	if result.RateLimits.CardsListApi == 0 {
+		result.RateLimits.CardsListApi = 100
+	}
+	if result.RateLimits.CardsList == 0 {
+		result.RateLimits.CardsList = result.RateLimits.CardsListApi
+	}
+	if result.RateLimits.CardsListApiBurst == 0 {
+		result.RateLimits.CardsListApiBurst = 5
+	}
+	if result.RateLimits.CardsListBurst == 0 {
+		result.RateLimits.CardsListBurst = result.RateLimits.CardsListApiBurst
+	}
+
+	// Adaptive tuning defaults
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+
+	return result
+}
+
+// ============================================================================
+// Product Prices (Discounts-Prices API)
+// ============================================================================
+
+// PricesConfig — конфигурация для download-wb-prices утилиты.
+//
+// Используется для загрузки текущих цен товаров с WB Discounts-Prices API.
+// Offset-пагинация (не date-based). Нет поля Days — snapshot делается на момент запуска.
+// Двухуровневый rate limiting: desired + api (swagger floor для восстановления).
+type PricesConfig struct {
+	DbPath             string           `yaml:"db_path"`
+	APIKeyEnv          string           `yaml:"api_key_env"`
+	RateLimits         PricesRateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter int              `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int              `yaml:"max_backoff_seconds"`
+}
+
+// PricesRateLimits — rate limits для prices list API endpoint.
+//
+// Discounts-Prices API: 10 req/6sec (~100 req/min), burst 5 (swagger).
+//
+// Два уровня rate:
+//   - desired:      желаемый rate (можно превышать swagger — adaptive limiter обработает 429)
+//   - desired_burst: burst для desired rate
+//   - api:           swagger-documented rate (recovery floor после 429)
+//   - api_burst:     burst для api rate
+//
+// Если desired не указан — используется api (без превышения swagger).
+type PricesRateLimits struct {
+	PricesList         int `yaml:"prices_list"`
+	PricesListBurst    int `yaml:"prices_list_burst"`
+	PricesListApi      int `yaml:"prices_list_api"`
+	PricesListApiBurst int `yaml:"prices_list_api_burst"`
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+// Каскадные дефолты: api -> desired, api_burst -> desired_burst.
+// NOTE: Нет Days поля — prices snapshot делается на момент запуска.
+func (c *PricesConfig) GetDefaults() PricesConfig {
+	result := *c
+	if result.DbPath == "" {
+		result.DbPath = "sales.db"
+	}
+	if result.APIKeyEnv == "" {
+		result.APIKeyEnv = "WB_API_KEY"
+	}
+
+	// Prices list rate limits (two-level adaptive)
+	// Swagger: 10 req/6sec ≈ 100 req/min, burst 5
+	if result.RateLimits.PricesListApi == 0 {
+		result.RateLimits.PricesListApi = 100
+	}
+	if result.RateLimits.PricesList == 0 {
+		result.RateLimits.PricesList = result.RateLimits.PricesListApi
+	}
+	if result.RateLimits.PricesListApiBurst == 0 {
+		result.RateLimits.PricesListApiBurst = 5
+	}
+	if result.RateLimits.PricesListBurst == 0 {
+		result.RateLimits.PricesListBurst = result.RateLimits.PricesListApiBurst
+	}
+
+	// Adaptive tuning defaults
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+
+	return result
+}

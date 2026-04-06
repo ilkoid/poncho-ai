@@ -9,7 +9,7 @@ wb:
 # Sales download settings (used by default, without --funnel flag)
 # Priority: CLI flags (--days/--begin/--end) > download.days > download.from/to
 download:
-  days: 7                        # Load last 7 days (alternative to from/to, default: 7)
+  days: 14                        # Load last 7 days (alternative to from/to, default: 7)
   # from: "2026-03-01T00:00:00+03:00"  # Start date (YYYY-MM-DD or RFC3339) - overridden by days
   # to: "2026-03-26T23:59:59+03:00"    # End date (YYYY-MM-DD or RFC3339) - overridden by days
   resume: false
@@ -20,4 +20,5 @@ download:
   max_backoff_seconds: 60        # Cap for exponential backoff
 
 storage:
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+#  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-cards.db"

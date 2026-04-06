@@ -3,8 +3,8 @@ wb:
   timeout: "60s"
 
 stocks:
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
-  first_date: "2026-03-29"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-cards.db"
+  first_date: "2026-03-31"
   api_key_env: "WB_API_KEY"  # Можно изменить на: WB_API_CONTENT_KEY, WB_API_MARKET_KEY, и т.д.
   rate_limits:
     warehouse: 3

@@ -109,6 +109,7 @@ func isRetryableError(err error) bool {
 		"EOF",
 		"timeout",
 		"temporary failure",
+		"stream error",       // HTTP/2 INTERNAL_ERROR from peer (large responses)
 	}
 	for _, pattern := range retryablePatterns {
 		if strings.Contains(errStr, pattern) {
@@ -1338,10 +1339,31 @@ func (c *Client) ReportDetailByPeriodIterator(
 	totalCount := 0
 	rrdid := 0
 
+	// Retry settings for transient network errors
+	const maxRetries = 3
+	const baseBackoff = 5 * time.Second
+
 	for {
-		page, err := c.ReportDetailByPeriodPage(ctx, baseURL, rateLimit, burst, dateFrom, dateTo, rrdid)
-		if err != nil {
-			return totalCount, err
+		var page *ReportDetailByPeriodPageResult
+		var err error
+
+		// Retry loop with exponential backoff
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			page, err = c.ReportDetailByPeriodPage(ctx, baseURL, rateLimit, burst, dateFrom, dateTo, rrdid)
+			if err == nil {
+				break // Success
+			}
+
+			// Check if error is retryable (timeout, network error)
+			isRetryable := isRetryableError(err)
+			if !isRetryable || attempt == maxRetries-1 {
+				return totalCount, err
+			}
+
+			// Calculate backoff: 5s, 10s, 20s
+			backoff := baseBackoff * time.Duration(1<<attempt)
+			fmt.Printf("  ⚠️  Сетевая ошибка, повтор #%d через %v: %v\n", attempt+1, backoff, err)
+			time.Sleep(backoff)
 		}
 
 		// Конец пагинации
@@ -1433,4 +1455,53 @@ func (c *Client) ReportDetailByPeriodIteratorWithTime(
 	}
 
 	return totalCount, nil
+}
+
+// ============================================================================
+// Product Prices (Discounts-Prices API)
+// ============================================================================
+
+const pricesBaseURL = "https://discounts-prices-api.wildberries.ru"
+
+// GetPrices fetches one page of products with prices from WB Discounts-Prices API.
+// GET /api/v2/list/goods/filter with offset-based pagination.
+// Max 1000 products per page. Rate limit: 10 req/6sec, burst 5.
+// Returns parsed products, count fetched, and error.
+func (c *Client) GetPrices(ctx context.Context, limit, offset, rateLimit, burst int) ([]ProductPrice, int, error) {
+	params := url.Values{}
+	params.Set("limit", fmt.Sprintf("%d", limit))
+	params.Set("offset", fmt.Sprintf("%d", offset))
+
+	var resp PricesResponse
+	err := c.Get(ctx, "get_prices", pricesBaseURL, rateLimit, burst, "/api/v2/list/goods/filter", params, &resp)
+	if err != nil {
+		return nil, 0, fmt.Errorf("get prices: %w", err)
+	}
+
+	if resp.Error {
+		return nil, 0, fmt.Errorf("prices API error: %s", resp.ErrorText)
+	}
+
+	// Flatten response: extract price from sizes[0] (all sizes have same price)
+	prices := make([]ProductPrice, 0, len(resp.Data.ListGoods))
+	for _, item := range resp.Data.ListGoods {
+		p := ProductPrice{
+			NmID:              item.NmID,
+			VendorCode:        item.VendorCode,
+			Discount:          item.Discount,
+			ClubDiscount:      item.ClubDiscount,
+			Currency:          item.CurrencyIsoCode4217,
+			EditableSizePrice: item.EditableSizePrice,
+		}
+
+		if len(item.Sizes) > 0 {
+			p.Price = item.Sizes[0].Price
+			p.DiscountedPrice = item.Sizes[0].DiscountedPrice
+			p.ClubDiscountedPrice = item.Sizes[0].ClubDiscountedPrice
+		}
+
+		prices = append(prices, p)
+	}
+
+	return prices, len(prices), nil
 }

@@ -1,0 +1,14 @@
+wb:
+  api_key: ""
+  timeout: 30s
+
+prices:
+  db_path: "/home/ilkoid/archive/db/sales.db"
+  api_key_env: "WB_API_KEY"
+  rate_limits:
+    prices_list: 100
+    prices_list_burst: 5
+    prices_list_api: 100
+    prices_list_api_burst: 5
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60

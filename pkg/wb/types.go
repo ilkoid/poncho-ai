@@ -2,6 +2,8 @@
 
 package wb
 
+import "encoding/json"
+
 // Common Response Wrapper
 type APIResponse[T any] struct {
 	Data      T           `json:"data"`
@@ -238,8 +240,13 @@ type CardsCursor struct {
 
 // CardsFilter содержит параметры фильтрации карточек.
 type CardsFilter struct {
-	TextSearch string `json:"textSearch,omitempty"` // Поиск по артикулу/названию
-	// Другие поля фильтра можно добавить по необходимости
+	WithPhoto             int      `json:"withPhoto,omitempty"`               // -1=all, 0=no photo, 1=with photo
+	TextSearch            string   `json:"textSearch,omitempty"`              // Поиск по артикулу/названию
+	TagIDs                []int    `json:"tagIDs,omitempty"`                  // Поиск по ID тегов
+	AllowedCategoriesOnly bool     `json:"allowedCategoriesOnly,omitempty"`   // Только разрешенные категории
+	ObjectIDs             []int    `json:"objectIDs,omitempty"`               // Поиск по ID предметов
+	Brands                []string `json:"brands,omitempty"`                  // Поиск по брендам
+	ImtID                 int      `json:"imtID,omitempty"`                   // Поиск по ID объединенной карточки
 }
 
 // CardsSort содержит параметры сортировки.
@@ -263,26 +270,94 @@ type CardsCursorResponse struct {
 }
 
 // ProductCard представляет карточку товара от Content API.
+// GET /content/v2/get/cards/list — полный каталог с вложенными данными.
 type ProductCard struct {
-	NmID       int    `json:"nmID"`
-	ImtID      int    `json:"imtID"`
-	NmUUID     string `json:"nmUUID"`
-	SubjectID  int    `json:"subjectID"`
-	SubjectName string `json:"subjectName"`
-	VendorCode string `json:"vendorCode"` // Артикул поставщика!
-	Brand      string `json:"brand"`
-	Title      string `json:"title"`
-	Description string `json:"description"`
-	Photos     []ProductPhoto `json:"photos"`
-	CreatedAt  string `json:"createdAt"`
-	UpdatedAt  string `json:"updatedAt"`
+	NmID            int                   `json:"nmID"`
+	ImtID           int                   `json:"imtID"`
+	NmUUID          string                `json:"nmUUID"`
+	SubjectID       int                   `json:"subjectID"`
+	SubjectName     string                `json:"subjectName"`
+	VendorCode      string                `json:"vendorCode"` // Артикул поставщика
+	Brand           string                `json:"brand"`
+	Title           string                `json:"title"`
+	Description     string                `json:"description"`
+	NeedKiz         bool                  `json:"needKiz"`
+	Photos          []ProductPhoto        `json:"photos"`
+	Video           string                `json:"video"`
+	Wholesale       *CardWholesale        `json:"wholesale"`
+	Dimensions      *CardDimensions       `json:"dimensions"`
+	Characteristics []CardCharacteristic  `json:"characteristics"`
+	Sizes           []CardSize            `json:"sizes"`
+	Tags            []CardTag             `json:"tags"`
+	CreatedAt       string                `json:"createdAt"`
+	UpdatedAt       string                `json:"updatedAt"`
 }
 
 // ProductPhoto представляет фото товара.
 type ProductPhoto struct {
 	Big      string `json:"big"`
 	C246x328 string `json:"c246x328"`
+	C516x688 string `json:"c516x688"`
 	Square   string `json:"square"`
+	Tm       string `json:"tm"`
+}
+
+// CardWholesale — оптовая продажа карточки.
+type CardWholesale struct {
+	Enabled bool `json:"enabled"`
+	Quantum int  `json:"quantum"`
+}
+
+// CardDimensions — габариты и вес товара с упаковкой.
+type CardDimensions struct {
+	Length       float64 `json:"length"`
+	Width        float64 `json:"width"`
+	Height       float64 `json:"height"`
+	WeightBrutto float64 `json:"weightBrutto"`
+	IsValid      bool    `json:"isValid"`
+}
+
+// CardCharacteristic — характеристика товара.
+// Value — массив значений произвольного типа (string, float64, bool).
+// WB API может возвращать как массивы, так и скаляры в поле value.
+type CardCharacteristic struct {
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	ValueRaw json.RawMessage `json:"value"`
+}
+
+// Values parses ValueRaw into []interface{}, normalizing scalars into single-element arrays.
+// WB API can return value as array ["red","blue"] or scalar (number 200, string "red").
+func (c *CardCharacteristic) Values() []interface{} {
+	if len(c.ValueRaw) == 0 {
+		return nil
+	}
+	// Try array first
+	var arr []interface{}
+	if err := json.Unmarshal(c.ValueRaw, &arr); err == nil {
+		return arr
+	}
+	// Scalar: wrap in single-element array
+	var scalar interface{}
+	if err := json.Unmarshal(c.ValueRaw, &scalar); err == nil {
+		return []interface{}{scalar}
+	}
+	return nil
+}
+
+// CardSize — размер/вариант товара с баркодами.
+type CardSize struct {
+	ChrtID   int      `json:"chrtID"`
+	TechSize string   `json:"techSize"`
+	WBSize   string   `json:"wbSize"`
+	Skus     []string `json:"skus"`
+}
+
+// CardTag — тег (метка) карточки товара.
+type CardTag struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
 }
 
 // ============================================================================
@@ -826,4 +901,51 @@ type RegionSaleItem struct {
 // RegionSaleResponse wraps the API response for the region sale endpoint.
 type RegionSaleResponse struct {
 	Report []RegionSaleItem `json:"report"`
+}
+
+// ============================================================================
+// Product Prices Types (Discounts-Prices API — /api/v2/list/goods/filter)
+// ============================================================================
+
+// ProductPrice represents price data for a single product from the Discounts-Prices API.
+// Prices are extracted from sizes[0] since all sizes have the same price.
+type ProductPrice struct {
+	NmID                int     `json:"nmID"`
+	VendorCode          string  `json:"vendorCode"`
+	Price               int     `json:"price"`
+	DiscountedPrice     float64 `json:"discountedPrice"`
+	ClubDiscountedPrice float64 `json:"clubDiscountedPrice"`
+	Discount            int     `json:"discount"`
+	ClubDiscount        int     `json:"clubDiscount"`
+	Currency            string  `json:"currencyIsoCode4217"`
+	EditableSizePrice   bool    `json:"editableSizePrice"`
+}
+
+// PricesResponse is the API response for GET /api/v2/list/goods/filter.
+type PricesResponse struct {
+	Data struct {
+		ListGoods []PricesResponseItem `json:"listGoods"`
+	} `json:"data"`
+	Error     bool   `json:"error"`
+	ErrorText string `json:"errorText"`
+}
+
+// PricesResponseItem is a single product in the prices API response.
+type PricesResponseItem struct {
+	NmID                int          `json:"nmID"`
+	VendorCode          string       `json:"vendorCode"`
+	Sizes               []PriceSize  `json:"sizes"`
+	Discount            int          `json:"discount"`
+	ClubDiscount        int          `json:"clubDiscount"`
+	CurrencyIsoCode4217 string       `json:"currencyIsoCode4217"`
+	EditableSizePrice   bool         `json:"editableSizePrice"`
+}
+
+// PriceSize holds price data for a single size variant.
+type PriceSize struct {
+	SizeID              int     `json:"sizeID"`
+	Price               int     `json:"price"`
+	DiscountedPrice     float64 `json:"discountedPrice"`
+	ClubDiscountedPrice float64 `json:"clubDiscountedPrice"`
+	TechSizeName        string  `json:"techSizeName"`
 }

@@ -241,6 +241,16 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+		// Create content cards tables (WB Content API - /content/v2/get/cards/list)
+		_, err = r.db.Exec(GetCardsSchemaSQL())
+		if err != nil {
+			return err
+		}
+		// Create product prices table (WB Discounts-Prices API — /api/v2/list/goods/filter)
+		_, err = r.db.Exec(GetPricesSchemaSQL())
+		if err != nil {
+			return err
+		}
 	return nil
 }
 

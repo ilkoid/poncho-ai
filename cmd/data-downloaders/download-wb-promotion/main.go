@@ -110,7 +110,14 @@ func main() {
 		if apiKey == "" {
 			log.Fatal("❌ No API key. Set WB_API_KEY or WB_API_ANALYTICS_AND_PROMO_KEY")
 		}
-		wbClient := wb.New(apiKey)
+		wbClient, err := wb.NewFromConfig(config.WBConfig{
+			APIKey:        apiKey,
+			Timeout:       cfg.WB.Timeout,
+			RetryAttempts: 3,
+		})
+		if err != nil {
+			log.Fatalf("❌ Failed to create WB client: %v", err)
+		}
 		applyRateLimits(wbClient, cfg.Promotion.GetDefaults().RateLimits)
 		wbClient.SetAdaptiveParams(
 			0, // adaptive_recover_after: deprecated, limiter drops to api floor immediately
