@@ -25,6 +25,7 @@ Existing downloaders:
   download-wb-cards          # WB Content API cards → SQLite (cursor-based pagination)
   download-wb-region-sales   # WB Analytics region sales → SQLite (31-day horizon)
   download-wb-prices         # WB Content API prices → SQLite
+  download-1c-data           # 1C/PIM product catalog + 25 price types → SQLite (streaming JSON)
 
 pkg/
 ├── config/           # LoadYAML(), shared config types (PromotionConfig, etc.)
@@ -268,6 +269,7 @@ func getAPIKey(cfg *Config) string {
 | funnel-agg | `WB_API_ANALYTICS_AND_PROMO_KEY` | `WB_STAT` | `cfg.WB.AnalyticsAPIKey` |
 | stocks | configurable (`api_key_env`) | `WB_API_ANALYTICS_AND_PROMO_KEY` | `cfg.WB.APIKey` |
 | stock-history | `WB_API_KEY` | — | `cfg.WB.APIKey` |
+| 1c-data | `ONEC_API_URL` | `ONEC_PIM_URL` | `cfg.OneC.APIUrl` / `cfg.OneC.PIMUrl` |
 
 ---
 

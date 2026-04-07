@@ -15,7 +15,7 @@ Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI
 - `pkg/app/components.go` - Context propagation (Rule 11)
 - `pkg/app/tool_setup.go` - **OCP: Config-driven tool setup** (2026-02-01)
 - `pkg/app/presets.go` - Preset system for quick launch
-- `pkg/config/utility.go` - Shared config types for cmd/ utilities (PromotionConfig, DownloadConfig, FeedbacksConfig, FunnelConfig, FunnelAggregatedConfig, WBClientConfig)
+- `pkg/config/utility.go` - Shared config types for cmd/ utilities (PromotionConfig, DownloadConfig, FeedbacksConfig, FunnelConfig, FunnelAggregatedConfig, WBClientConfig, OneCConfig)
 - `pkg/agent/Client` - Simple 2-line agent API (Facade)
 - `pkg/events/` - Port & Adapter for UI decoupling
 - `pkg/prompts/` - **OCP: Prompt loading with source pattern** (2026-02-01)
@@ -580,6 +580,9 @@ cd cmd/data-downloaders/download-wb-feedbacks && go run . --days=7
 cd cmd/data-downloaders/download-wb-funnel && go run . --days=7
 cd cmd/data-downloaders/download-wb-funnel-agg && go run . --days=7
 
+# 1C/PIM data download (basic auth in URL via env vars)
+cd cmd/data-downloaders/download-1c-data && ONEC_API_URL="https://user:pass@api.playtoday.ru/feeds/ones" ONEC_PIM_URL="https://user:pass@api.playtoday.ru/feeds/pim" go run .
+
 # Analyze utilities (LLM-powered)
 cd cmd/data-analyzers/analyze-wb-feedbacks && OPENROUTER_API_KEY=sk-or-... go run . --days=30
 ```
@@ -595,6 +598,12 @@ Production utilities organized by purpose:
 - `download-wb-feedbacks` - WB Feedbacks/Questions → SQLite
 - `download-wb-funnel` - WB Analytics v3 funnel → SQLite
 - `download-wb-funnel-agg` - WB Analytics v3 aggregated funnel → SQLite
+- `download-wb-stocks` - WB warehouse stock snapshots → SQLite
+- `download-wb-stock-history` - WB historical stock CSV reports → SQLite
+- `download-wb-cards` - WB Content API cards → SQLite (cursor pagination)
+- `download-wb-region-sales` - WB region sales → SQLite (31-day horizon)
+- `download-wb-prices` - WB Discounts-Prices API → SQLite (offset pagination)
+- `download-1c-data` - 1C/PIM product catalog + 25 price types → SQLite (streaming JSON decode)
 
 **`data-analyzers/`** - LLM-powered data analysis
 - `analyze-wb-feedbacks` - Feedback quality analysis via OpenRouter (two-level LLM aggregation)
@@ -640,6 +649,8 @@ Verification and demonstration utilities per Rule 9:
 | `WB_API_FEEDBACK_KEY` | Wildberries Feedbacks API (separate key) |
 | `WB_STAT_API_KEY` | Wildberries Statistics API (optional) |
 | `OPENROUTER_API_KEY` | OpenRouter (LLM gateway for analyzers) |
+| `ONEC_API_URL` | 1C Goods+Prices API URL with basic auth (Rule 12) |
+| `ONEC_PIM_URL` | PIM Goods API URL with basic auth (Rule 12) |
 
 ---
 
@@ -961,6 +972,12 @@ start at desired rate, auto-reduce on 429, recover to api floor, probe desired a
 | `download-wb-feedbacks` | Feedbacks + questions (39 fields) | `config.yaml` |
 | `download-wb-funnel` | Analytics v3 funnel (daily per product) | `config.yaml` |
 | `download-wb-funnel-agg` | Analytics v3 aggregated funnel | `config.yaml` |
+| `download-wb-cards` | Content API cards (cursor pagination) | `config.yaml` |
+| `download-wb-prices` | Discounts-Prices API (offset pagination) | `config.yaml` |
+| `download-wb-region-sales` | Region-level sales (31-day horizon) | `config.yaml` |
+| `download-wb-stocks` | Warehouse stock snapshots | `config.yaml` |
+| `download-wb-stock-history` | Historical stock CSV reports | `config.yaml` |
+| `download-1c-data` | 1C/PIM catalog + prices (streaming JSON) | `config.yaml` |
 | `download-all-articles` | S3 article processing | — |
 
 **Example**:
@@ -973,6 +990,39 @@ go run main.go --days 7 --output sales.db
 cd cmd/download-wb-promotion
 go run main.go --begin 2025-01-01 --end 2025-01-31 --resume
 ```
+
+---
+
+## 1C/PIM Data Downloader (2026-04-08)
+
+Fetches product catalog and prices from 1C accounting system + PIM validation system.
+
+**Three APIs** (sequential download, streaming JSON decode):
+| API | Endpoint | Records | Size |
+|-----|----------|---------|------|
+| 1C Goods | `/feeds/ones/goods/` | 26,968 | ~30MB |
+| 1C Prices | `/feeds/ones/prices/` | 445,822 | ~55MB |
+| PIM Goods | `/feeds/pim/goods/` | 25,737 | ~228MB |
+
+**Four SQLite tables** (raw data, no computed mapping):
+- `onec_goods` — product dictionary (guid PK, article, brand, category, season, etc.)
+- `onec_goods_sku` — size variants (composite PK: sku_guid + guid; sku_guid is NOT globally unique)
+- `onec_prices` — 25 price types per product, snapshot-based (PK: good_guid + snapshot_date + type_guid)
+- `pim_goods` — 24 dedicated columns + values_json blob for remaining ~85 attributes
+
+**Streaming JSON decode**: `json.Decoder` processes one record at a time → constant memory regardless of file size. Each record is decoded and saved in batches of 500.
+
+**1C → WB price mapping** (for price control):
+```
+onec_prices(good_guid) → onec_goods(guid) → onec_goods.article → cards.vendor_code → cards.nm_id
+```
+- 1C `Розничная цена ОЭК` = WB `price` (price without discount)
+- 1C `FullRetailPriceMAX` = initial maximum retail price
+- PIM `wildberries` field = nmID (alternative direct mapping, 95.1% coverage)
+
+**Files**: `cmd/data-downloaders/download-1c-data/` (main.go, client.go, models.go, config.yaml)
+**Storage**: `pkg/storage/sqlite/onec_*.go` (schema, types, repo)
+**Config**: `pkg/config/utility.go` → `OneCConfig`
 
 ---
 
@@ -1053,5 +1103,5 @@ rates := client.RateLimiters()
 
 ---
 
-**Last Updated**: 2026-03-28
-**Version**: 12.0 (testing infrastructure, adaptive rate limiting tests, toolID mismatch pitfall)
+**Last Updated**: 2026-04-08
+**Version**: 13.0 (1C/PIM data downloader, streaming JSON decode, 1C-WB price mapping)

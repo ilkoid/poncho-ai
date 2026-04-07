@@ -789,6 +789,29 @@ func (c *PricesConfig) GetDefaults() PricesConfig {
 }
 
 // ============================================================================
+// 1C/PIM Data (product catalog + prices from accounting system)
+// ============================================================================
+
+// OneCConfig — конфигурация для download-1c-data утилиты.
+//
+// Загружает данные из трёх API: 1C Goods (товары), 1C Prices (цены), PIM Goods (атрибуты).
+// URL содержат basic auth (user:pass@host) и подставляются через ENV (Rule 12).
+type OneCConfig struct {
+	APIUrl string `yaml:"api_url"` // 1C Goods+Prices base URL (с basic auth)
+	PIMUrl string `yaml:"pim_url"` // PIM goods URL (с basic auth)
+	DbPath string `yaml:"db_path"` // Путь к SQLite базе
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c OneCConfig) GetDefaults() OneCConfig {
+	result := c
+	if result.DbPath == "" {
+		result.DbPath = "db/wb-cards.db"
+	}
+	return result
+}
+
+// ============================================================================
 // Freshness Checker (data quality verification)
 // ============================================================================
 

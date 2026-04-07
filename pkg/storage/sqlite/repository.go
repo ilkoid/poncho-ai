@@ -251,6 +251,11 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+		// Create 1C/PIM tables (1C Goods, SKUs, Prices + PIM Goods)
+		_, err = r.db.Exec(GetOneCSchemaSQL())
+		if err != nil {
+			return err
+		}
 	return nil
 }
 
