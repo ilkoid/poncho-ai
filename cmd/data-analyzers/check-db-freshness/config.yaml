@@ -5,7 +5,7 @@
 
 freshness:
   # Путь к базе данных (относительно текущей директории или абсолютный)
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-cards.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
 
   # Порог предупреждения в днях (старше → ⚠️ STALE)
   warn_age_days: 3

@@ -3,7 +3,7 @@ wb:
   timeout: 30s
 
 prices:
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-price-control.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
   api_key_env: "WB_API_KEY"
   rate_limits:
     prices_list: 100

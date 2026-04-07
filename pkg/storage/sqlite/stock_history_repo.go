@@ -26,12 +26,28 @@ type StockHistoryReport struct {
 
 // SaveStockHistoryReport saves report metadata to database.
 // Uses INSERT OR REPLACE for idempotency (resume mode).
+// Deletes child records for existing report before REPLACE to avoid FOREIGN KEY constraint.
 func (r *SQLiteSalesRepository) SaveStockHistoryReport(ctx context.Context, report *StockHistoryReport) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Find existing report with same unique key to delete its children before REPLACE
+	var oldID string
+	_ = tx.QueryRowContext(ctx,
+		`SELECT id FROM stock_history_reports WHERE report_type = ? AND start_date = ? AND end_date = ? AND stock_type = ?`,
+		report.ReportType, report.StartDate, report.EndDate, report.StockType,
+	).Scan(&oldID)
+	if oldID != "" && oldID != report.ID {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM stock_history_daily WHERE report_id = ?`, oldID); err != nil {
+			return fmt.Errorf("delete old daily rows: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM stock_history_metrics WHERE report_id = ?`, oldID); err != nil {
+			return fmt.Errorf("delete old metrics rows: %w", err)
+		}
+	}
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT OR REPLACE INTO stock_history_reports

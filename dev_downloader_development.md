@@ -22,6 +22,9 @@ Existing downloaders:
   download-wb-funnel-agg     # WB Analytics v3 aggregated funnel → SQLite
   download-wb-stocks         # WB Analytics warehouse stock snapshots → SQLite
   download-wb-stock-history  # WB Analytics historical stock CSV reports → SQLite
+  download-wb-cards          # WB Content API cards → SQLite (cursor-based pagination)
+  download-wb-region-sales   # WB Analytics region sales → SQLite (31-day horizon)
+  download-wb-prices         # WB Content API prices → SQLite
 
 pkg/
 ├── config/           # LoadYAML(), shared config types (PromotionConfig, etc.)

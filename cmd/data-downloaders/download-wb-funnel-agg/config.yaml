@@ -15,7 +15,7 @@ funnel_aggregated:
   brand_names: []
   subject_ids: []
   tag_ids: []
-  skip_deleted_nm: false
+  skip_deleted_nm: true
 
   # Сортировка (optional)
   order_by_field: ""  # openCard, orders, buyouts, etc.
@@ -47,4 +47,5 @@ funnel_aggregated:
   # Хранилище
   # db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
   # db_path: "test-fun-agg-script.db"
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-cards.db"
+#  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-cards.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
