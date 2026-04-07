@@ -389,18 +389,25 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
-		// Record time just before HTTP request
-		requestTime := time.Now()
-		c.mu.Lock()
-		c.lastRequestTime[toolID] = requestTime
-		c.mu.Unlock()
 		fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: HTTP request at %s\n",
-			toolID, requestTime.Format("15:04:05.000"))
+			toolID, time.Now().Format("15:04:05.000"))
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			lastErr = err
-			continue // Сетевая ошибка, пробуем еще
+			// Exponential backoff for network errors (5s, 10s, 15s...)
+			if i < c.retryAttempts-1 {
+				backoff := time.Duration(i+1) * 5 * time.Second
+				fmt.Fprintf(os.Stderr, "⚠️  Network error for %s: %v, retrying in %v... (attempt %d/%d)\n",
+					toolID, err, backoff.Truncate(time.Second), i+2, c.retryAttempts)
+				select {
+				case <-ctx.Done():
+					return err
+				case <-time.After(backoff):
+					continue
+				}
+			}
+			continue
 		}
 		defer resp.Body.Close()
 
@@ -466,6 +473,13 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 
 		// Track successful request for adaptive recovery
 		c.adaptiveRecoverOK(toolID)
+
+		// Update lastRequestTime AFTER response consumed (not before request).
+		// This ensures min_interval accounts for full request-response cycle,
+		// preventing 429 when API responses are slow (e.g., fullstats takes 45s).
+		c.mu.Lock()
+		c.lastRequestTime[toolID] = time.Now()
+		c.mu.Unlock()
 
 		if err := json.Unmarshal(body, dest); err != nil {
 			return fmt.Errorf("unmarshal error: %w", err)
@@ -597,17 +611,24 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
-		// Record time just before HTTP request
-		requestTime := time.Now()
-		c.mu.Lock()
-		c.lastRequestTime[toolID] = requestTime
-		c.mu.Unlock()
 		fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: HTTP request at %s\n",
-			toolID, requestTime.Format("15:04:05.000"))
+			toolID, time.Now().Format("15:04:05.000"))
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			lastErr = err
+			// Exponential backoff for network errors (5s, 10s, 15s...)
+			if i < c.retryAttempts-1 {
+				backoff := time.Duration(i+1) * 5 * time.Second
+				fmt.Fprintf(os.Stderr, "⚠️  Network error for %s: %v, retrying in %v... (attempt %d/%d)\n",
+					toolID, err, backoff.Truncate(time.Second), i+2, c.retryAttempts)
+				select {
+				case <-ctx.Done():
+					return err
+				case <-time.After(backoff):
+					continue
+				}
+			}
 			continue
 		}
 
@@ -684,6 +705,10 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 			resp.Body.Close()
 			return fmt.Errorf("stream unmarshal error: %w", err)
 		}
+		// Update lastRequestTime AFTER response consumed.
+		c.mu.Lock()
+		c.lastRequestTime[toolID] = time.Now()
+		c.mu.Unlock()
 		resp.Body.Close()
 		return nil
 	}
@@ -1001,11 +1026,6 @@ func (c *Client) GetRaw(ctx context.Context, toolID string, baseURL string, rate
 			}
 		}
 
-		// Update last request time before HTTP call
-		c.mu.Lock()
-		c.lastRequestTime[toolID] = time.Now()
-		c.mu.Unlock()
-
 		// Make HTTP request
 		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 		if err != nil {
@@ -1020,6 +1040,18 @@ func (c *Client) GetRaw(ctx context.Context, toolID string, baseURL string, rate
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("http request: %w", err)
+			// Exponential backoff for network errors (5s, 10s, 15s...)
+			if i < c.retryAttempts-1 {
+				backoff := time.Duration(i+1) * 5 * time.Second
+				fmt.Fprintf(os.Stderr, "⚠️  Network error for %s: %v, retrying in %v... (attempt %d/%d)\n",
+					toolID, err, backoff.Truncate(time.Second), i+2, c.retryAttempts)
+				select {
+				case <-ctx.Done():
+					return nil, err
+				case <-time.After(backoff):
+					continue
+				}
+			}
 			continue
 		}
 		defer resp.Body.Close()
@@ -1051,6 +1083,10 @@ func (c *Client) GetRaw(ctx context.Context, toolID string, baseURL string, rate
 		if err != nil {
 			return nil, fmt.Errorf("read response body: %w", err)
 		}
+		// Update lastRequestTime AFTER response consumed.
+		c.mu.Lock()
+		c.lastRequestTime[toolID] = time.Now()
+		c.mu.Unlock()
 
 		return data, nil
 	}

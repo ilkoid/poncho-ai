@@ -156,6 +156,7 @@ cmd/fix-utilities/fix-fake-png/
 cmd/data-downloaders/download-all-articles/download-all-articles
 cmd/data-downloaders/download-wb-*/download-wb-*
 cmd/data-analyzers/analyze-wb-*/analyze-wb-*
+cmd/data-analyzers/check-db-freshness/check-db-freshness
 
 # Downloaded data folders
 cmd/data-downloaders/download-all-articles/ЗАГРУЗКИ/

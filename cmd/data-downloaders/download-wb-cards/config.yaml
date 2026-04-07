@@ -5,8 +5,8 @@ wb:
 
 cards:
   # Database path (can be overridden by --db flag)
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-cards.db"
-  
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-price-control.db"
+
   # Environment variable for API key (Pattern B from dev_downloader_development.md)
   # Priority: configured env var > WB_API_KEY > config value
   api_key_env: "WB_API_KEY"

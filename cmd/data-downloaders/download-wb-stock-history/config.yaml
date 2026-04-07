@@ -19,7 +19,7 @@ stock_history:
   days: 15
 
   # Report type: "metrics" (monthly) or "daily" (daily stock levels)
-  report_type: "daily"
+  report_type: "monthly"
 
   # Stock type filter: "", "wb", or "mp"
   # "" = all warehouses, "wb" = WB warehouses only, "mp" = seller warehouses only

@@ -787,3 +787,34 @@ func (c *PricesConfig) GetDefaults() PricesConfig {
 
 	return result
 }
+
+// ============================================================================
+// Freshness Checker (data quality verification)
+// ============================================================================
+
+// FreshnessConfig — конфигурация для check-db-freshness утилиты.
+//
+// Используется для проверки свежести данных в SQLite базе.
+// Проверяет последнюю дату в каждой таблице и сравнивает с порогами.
+type FreshnessConfig struct {
+	DbPath      string   `yaml:"db_path"`       // Путь к SQLite базе данных
+	Tables      []string `yaml:"tables"`        // Список таблиц для проверки (пусто = все)
+	WarnAgeDays int      `yaml:"warn_age_days"` // Порог предупреждения в днях (default: 7)
+	CritAgeDays int      `yaml:"crit_age_days"` // Порог критичности в днях (default: 14)
+	Verbose     bool     `yaml:"verbose"`       // Подробный вывод
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c *FreshnessConfig) GetDefaults() FreshnessConfig {
+	result := *c
+	if result.DbPath == "" {
+		result.DbPath = "db/wb-sales.db"
+	}
+	if result.WarnAgeDays == 0 {
+		result.WarnAgeDays = 7
+	}
+	if result.CritAgeDays == 0 {
+		result.CritAgeDays = 14
+	}
+	return result
+}

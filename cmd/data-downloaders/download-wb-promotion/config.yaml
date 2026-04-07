@@ -17,14 +17,14 @@ wb:
 # Promotion Download Settings
 promotion:
   # Database path (SQLite)
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-cards.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
 
   # Date range (alternative to --days flag)
   #begin: "2026-01-01"  # YYYY-MM-DD
   #end: "2026-01-02"    # YYYY-MM-DD
 
   # Days from today (alternative to begin/end)
-  days: 28
+  days: 21
 
   # Filter by campaign status (comma-separated: 9,11 = active + paused)
   # -1 = deleted, 4 = ready, 7 = finished, 8 = canceled, 9 = active, 11 = paused
@@ -64,9 +64,9 @@ promotion:
     # /adv/v3/fullstats
     # Swagger says: 3 req/min, but "global limiter per seller" is stricter in practice
     # Real limit: 2 req/min (30s interval) to avoid 429 errors
-    fullstats: 2
+    fullstats: 3
     fullstats_burst: 1
-    fullstats_api: 2           # practical limit (swagger says 3, but 429 occurs)
+    fullstats_api: 3           # practical limit (swagger says 3, but 429 occurs)
     fullstats_api_burst: 1
 
   # Adaptive rate limiting tuning (see dev_limits.md)
