@@ -1,0 +1,35 @@
+# 1C vs WB Price Comparison Configuration
+#
+# Compares 1C retail prices with WB marketplace prices for all matched products.
+# Extended for finance director requirements (СР price, special price, WB SPP).
+# No LLM needed — pure SQL joins and arithmetic.
+#
+# USAGE:
+#   go run .                          # latest snapshot from each system
+#   go run . --date 2026-04-08        # specific date
+#   go run . --force                  # rebuild even if results exist
+#   go run . --csv                    # also export to CSV
+
+source:
+  # Source database with all raw data (WB + 1C tables)
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+
+results:
+  # BI knowledge database
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/bi.db"
+
+comparison:
+  # 1C price type name for base retail price
+  onec_base_price_type: "Розничная цена ОЭК"
+  # SPP discount percentage (applied to onec_base_price)
+  spp25_percent: 25
+  # Price difference thresholds (in rubles)
+  match_threshold: 50       # |diff| <= 50 RUB => "match"
+  warning_threshold: 500    # |diff| <= 500 RUB => "warning"
+
+  # Additional 1C price types (finance director requirements)
+  onec_sr_price_type: "Розничная цена СР"           # retail store price
+  onec_special_price_type: "Спец цена для акции"     # loyalty program flag (price=1 => active)
+
+  # WB SPP calculation from sales data
+  spp_days_back: 3          # average SPP over last N days
