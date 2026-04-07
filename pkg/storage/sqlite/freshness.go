@@ -95,6 +95,12 @@ func AllTableSpecs() []TableSpec {
 		// LOGISTICS
 		{"Logistics", "region_sales", "date_to"},
 
+		// 1C / PIM
+		{"1C", "onec_goods", "downloaded_at"},
+		{"1C", "onec_goods_sku", "N/A"},
+		{"1C", "onec_prices", "snapshot_date"},
+		{"1C", "pim_goods", "downloaded_at"},
+
 		// SERVICE
 		{"Service", "service_records", "created_at"},
 		{"Service", "product_quality_summary", "analyzed_at"},
@@ -341,6 +347,8 @@ func CategoryEmoji(category string) string {
 		return "💬"
 	case "Logistics":
 		return "🌍"
+	case "1C":
+		return "🏢"
 	case "Service":
 		return "⚙️ "
 	default:
