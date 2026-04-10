@@ -1,0 +1,22 @@
+# 1C ↔ Marketplace Mapping Configuration
+#
+# Builds three mapping tables in bi.db:
+#   1. barcode_mapping — barcode → nm_id, vendor_code, article
+#   2. pim_product_mapping — pim_article → nm_id, vendor_code, article
+#   3. nm_product_mapping — nm_id → article, pim_article, vendor_code
+#
+# USAGE:
+#   go run .                          # Build both mappings
+#   go run . --force                  # Drop and rebuild tables
+#   go run . --csv                    # Export to CSV after build
+#   go run . --source /path/to/db     # Override source DB path
+#   go run . --output /path/to/db     # Override results DB path
+
+source:
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+
+results:
+  db_path: "/mnt/d/db/bi.db"
+
+mapping:
+  batch_size: 500

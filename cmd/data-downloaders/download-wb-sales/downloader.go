@@ -53,10 +53,16 @@ type DownloadResult struct {
 
 // DownloadSales downloads sales data for all date ranges.
 // Smart resume: adjusts periods based on last record in database.
-func DownloadSales(ctx context.Context, cfg DownloadConfig, ranges []DateRange, resume bool) (*DownloadResult, error) {
+func DownloadSales(ctx context.Context, cfg DownloadConfig, ranges []DateRange, resume bool, rewrite bool) (*DownloadResult, error) {
 	start := time.Now()
 	result := &DownloadResult{
 		PeriodsCount: len(ranges),
+	}
+
+	// Rewrite overrides resume: can't skip periods if we're deleting data
+	if rewrite && resume {
+		fmt.Println("⚠️  rewrite + resume: rewrite takes priority, resume disabled")
+		resume = false
 	}
 
 	// Smart resume: get last and first records from database
@@ -117,6 +123,24 @@ func DownloadSales(ctx context.Context, cfg DownloadConfig, ranges []DateRange, 
 
 	// Load only adjusted periods
 	for i, dr := range adjustedRanges {
+		// Rewrite mode: delete existing data before downloading
+		if rewrite {
+			from := dr.From.Format("2006-01-02T15:04:05Z07:00")
+			to := dr.To.Format("2006-01-02T15:04:05Z07:00")
+			deleted, err := cfg.Repo.DeleteSalesByDateRange(ctx, from, to)
+			if err != nil {
+				return result, fmt.Errorf("delete sales for %s: %w", dr.String(), err)
+			}
+			svcDeleted, err := cfg.Repo.DeleteServiceRecordsByDateRange(ctx, from, to)
+			if err != nil {
+				return result, fmt.Errorf("delete service records for %s: %w", dr.String(), err)
+			}
+			if deleted > 0 || svcDeleted > 0 {
+				fmt.Printf("  🗑️  Period %s: deleted %d sales, %d service records\n",
+					dr.String(), deleted, svcDeleted)
+			}
+		}
+
 		// resume=false because filtering is no longer needed!
 		periodResult, err := downloadPeriod(ctx, cfg, dr, i+1, len(adjustedRanges), false)
 		if err != nil {

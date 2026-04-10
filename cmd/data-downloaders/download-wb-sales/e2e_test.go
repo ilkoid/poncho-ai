@@ -48,7 +48,7 @@ func TestE2EDownloadWithMocks(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		result, err := DownloadSales(ctx, downloadCfg, ranges, false)
+		result, err := DownloadSales(ctx, downloadCfg, ranges, false, false)
 		if err != nil {
 			t.Fatalf("Download failed: %v", err)
 		}
@@ -107,7 +107,7 @@ func TestE2EDownloadWithMocks(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		result, err := DownloadSales(ctx, downloadCfg, []DateRange{{From: time.Now(), To: time.Now()}}, false)
+		result, err := DownloadSales(ctx, downloadCfg, []DateRange{{From: time.Now(), To: time.Now()}}, false, false)
 		if err != nil {
 			t.Fatalf("Download failed: %v", err)
 		}
@@ -146,7 +146,7 @@ func TestE2EDownloadWithMocks(t *testing.T) {
 		ctx := context.Background()
 
 		// First download
-		result1, err := DownloadSales(ctx, downloadCfg, []DateRange{{From: time.Now(), To: time.Now()}}, false)
+		result1, err := DownloadSales(ctx, downloadCfg, []DateRange{{From: time.Now(), To: time.Now()}}, false, false)
 		if err != nil {
 			t.Fatalf("First download failed: %v", err)
 		}
@@ -156,7 +156,7 @@ func TestE2EDownloadWithMocks(t *testing.T) {
 
 		// Second download with resume - should use rrd_id deduplication
 		// The resume mode checks if rrd_id already exists in DB
-		_, err = DownloadSales(ctx, downloadCfg, []DateRange{{From: time.Now(), To: time.Now()}}, true)
+		_, err = DownloadSales(ctx, downloadCfg, []DateRange{{From: time.Now(), To: time.Now()}}, true, false)
 		if err != nil {
 			t.Fatalf("Resume download failed: %v", err)
 		}
@@ -243,7 +243,7 @@ func TestE2ERetryLogic(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		result, err := DownloadSales(ctx, downloadCfg, []DateRange{{From: time.Now(), To: time.Now()}}, false)
+		result, err := DownloadSales(ctx, downloadCfg, []DateRange{{From: time.Now(), To: time.Now()}}, false, false)
 		if err != nil {
 			t.Fatalf("Download failed after retries: %v", err)
 		}

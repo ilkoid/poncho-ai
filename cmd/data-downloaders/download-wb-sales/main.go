@@ -40,6 +40,7 @@ func main() {
 	mockMode := flag.Bool("mock", false, "Mock mode (generate test data, no API calls)")
 	funnelMode := flag.Bool("funnel", false, "Funnel mode (load analytics funnel instead of sales)")
 	help := flag.Bool("help", false, "Show help")
+	rewrite := flag.Bool("rewrite", false, "Delete existing data before downloading (full rewrite)")
 	flag.Parse()
 
 	if *help {
@@ -249,8 +250,11 @@ func main() {
 			Burst:     cfg.WB.BurstLimit,
 		}
 
+		// Rewrite: CLI flag overrides config
+		rewriteMode := *rewrite || cfg.Download.Rewrite
+
 		// Execute download
-		result, err = DownloadSales(ctx, downloadCfg, ranges, cfg.Download.Resume)
+		result, err = DownloadSales(ctx, downloadCfg, ranges, cfg.Download.Resume, rewriteMode)
 		if err != nil {
 			log.Fatalf("❌ Download failed: %v", err)
 		}

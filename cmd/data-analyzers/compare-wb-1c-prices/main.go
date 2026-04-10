@@ -24,6 +24,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"time"
 	"os/signal"
 	"syscall"
 	"text/tabwriter"
@@ -47,13 +48,16 @@ type ResultsConfig struct {
 }
 
 type ComparisonConfig struct {
-	OneCBasePriceType    string  `yaml:"onec_base_price_type"`
-	SPP25Percent         float64 `yaml:"spp25_percent"`
-	MatchThreshold       float64 `yaml:"match_threshold"`
-	WarningThreshold     float64 `yaml:"warning_threshold"`
-	OneCSRPriceType      string  `yaml:"onec_sr_price_type"`
-	OneCSpecialPriceType string  `yaml:"onec_special_price_type"`
-	SPPDaysBack          int     `yaml:"spp_days_back"`
+	OneCBasePriceType      string  `yaml:"onec_base_price_type"`
+	SPP25Percent           float64 `yaml:"spp25_percent"`
+	SPPUserPercent         float64 `yaml:"spp_user_percent"`
+	MatchThreshold         float64 `yaml:"match_threshold"`
+	WarningThreshold       float64 `yaml:"warning_threshold"`
+	OneCSRPriceType        string  `yaml:"onec_sr_price_type"`
+	OneCSpecialPriceType   string  `yaml:"onec_special_price_type"`
+	SPPDaysBack            int     `yaml:"spp_days_back"`
+	WBWalletPercent        float64 `yaml:"wb_wallet_percent"`
+	LoyaltyDiscountPercent float64 `yaml:"loyalty_discount_percent"`
 }
 
 func main() {
@@ -117,6 +121,19 @@ func main() {
 	fmt.Printf("Source DB:   %s\n", cfg.Source.DBPath)
 	fmt.Printf("Results DB:  %s\n", cfg.Results.DBPath)
 	fmt.Printf("SPP window:  %d days\n", cfg.Comparison.SPPDaysBack)
+
+		// Warn about snapshot date mismatch
+		if wbTime, err1 := time.Parse("2006-01-02", wbDate); err1 == nil {
+			if onecTime, err2 := time.Parse("2006-01-02", onecDate); err2 == nil {
+				diff := onecTime.Sub(wbTime)
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff > 24*time.Hour {
+					log.Printf("WARNING: snapshot dates differ by %v — results may be inaccurate", diff)
+				}
+			}
+		}
 	fmt.Println("================================================================================")
 
 	// Check existing results
@@ -175,6 +192,13 @@ func main() {
 	}
 	fmt.Printf("Saved %d rows to %s\n", len(comparisonResults), cfg.Results.DBPath)
 
+	// Defragment after DROP+INSERT cycle
+	if _, err := results.db.ExecContext(ctx, "VACUUM"); err != nil {
+		log.Printf("Warning: VACUUM failed: %v", err)
+	} else {
+		fmt.Println("Database defragmented (VACUUM)")
+	}
+
 	// Print summary
 	printSummary(ctx, results, wbDate, onecDate, unmatched, len(sourceData))
 
@@ -199,6 +223,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Comparison.SPP25Percent == 0 {
 		cfg.Comparison.SPP25Percent = 25
 	}
+	if cfg.Comparison.SPPUserPercent == 0 {
+		cfg.Comparison.SPPUserPercent = cfg.Comparison.SPP25Percent
+	}
 	if cfg.Comparison.MatchThreshold == 0 {
 		cfg.Comparison.MatchThreshold = 50
 	}
@@ -214,23 +241,92 @@ func applyDefaults(cfg *Config) {
 	if cfg.Comparison.SPPDaysBack == 0 {
 		cfg.Comparison.SPPDaysBack = 3
 	}
+	if cfg.Comparison.WBWalletPercent == 0 {
+		cfg.Comparison.WBWalletPercent = 3
+	}
+	if cfg.Comparison.LoyaltyDiscountPercent == 0 {
+		cfg.Comparison.LoyaltyDiscountPercent = 10
+	}
 }
 
 func calculateComparison(s SourceData, wbDate, onecDate string, cfg ComparisonConfig) ComparisonResult {
 	diffBase := float64(s.WBPrice) - s.OneCBasePrice
-	diffDiscounted := s.WBDiscountPrice - s.OneCSPP25Price
+
+	// 1. onec_spp25_price — legacy, computed from config (backward compatibility)
+	onecSPP25Price := s.OneCBasePrice * (1 - cfg.SPP25Percent/100)
+
+	// 2. Effective SPP for WB: WB sales API → user fallback
+	var effectiveSPP float64
+	var sppType string
+	if s.AvgWBSPP3d > 0 {
+		effectiveSPP = s.AvgWBSPP3d
+		sppType = "wb_api"
+	} else {
+		effectiveSPP = cfg.SPPUserPercent
+		sppType = "user_fallback"
+	}
+
+	// 3. ОЭК с СПП — ALWAYS uses user SPP (14-40%), never WB API SPP
+	onecPriceWithSPP := s.OneCBasePrice * (1 - cfg.SPPUserPercent/100)
+
+	// 4. РЦ WB с СПП — uses discounted price (NOT base), WB API SPP or user fallback
+	wbPriceWithSPP := s.WBDiscountPrice * (1 - effectiveSPP/100)
+
+	// 5. РЦ WB с СПП и кошельком = [РЦ WB с СПП] × (1 − [WB кошелёк %])
+	wbPriceWithSPPAndWallet := wbPriceWithSPP * (1 - cfg.WBWalletPercent/100)
+
+	// 6. Цена СР со скидкой лояльности
+	var srPriceWithLoyalty float64
+	if s.OneCSpecialPrice == 1 {
+		// Спец. цена применяется — без скидки лояльности
+		srPriceWithLoyalty = s.OneCSRPrice
+	} else {
+		// Спец. цена НЕ применяется — со скидкой "Яркие вместе"
+		srPriceWithLoyalty = s.OneCSRPrice * (1 - cfg.LoyaltyDiscountPercent/100)
+	}
+
+	// 7. Fixed deviations: diff_discounted through onecPriceWithSPP
+	diffDiscounted := s.WBDiscountPrice - onecPriceWithSPP
 
 	var diffBasePct, diffDiscPct float64
 	if s.OneCBasePrice > 0 {
 		diffBasePct = (diffBase / s.OneCBasePrice) * 100
 	}
-	if s.OneCSPP25Price > 0 {
-		diffDiscPct = (diffDiscounted / s.OneCSPP25Price) * 100
+	if onecPriceWithSPP > 0 {
+		diffDiscPct = (diffDiscounted / onecPriceWithSPP) * 100
 	}
 
 	isSpecial := 0
 	if s.OneCSpecialPrice == 1 {
 		isSpecial = 1
+	}
+
+	// 8. Direct customer price comparison: what client pays on WB vs own store
+	diffCustomer := s.WBDiscountPrice - s.OneCBasePrice
+	var diffCustomerPct float64
+	if s.OneCBasePrice > 0 {
+		diffCustomerPct = (diffCustomer / s.OneCBasePrice) * 100
+	}
+	customerStatus := classifyDiff(diffCustomer, s.OneCBasePrice, cfg.MatchThreshold, cfg.WarningThreshold)
+
+	// 9. Отклонение СР от РЦ WB = [Цена СР со скидкой лояльности] - [РЦ WB с СПП и кошельком]
+	diffSRVsWBWallet := srPriceWithLoyalty - wbPriceWithSPPAndWallet
+	var diffSRVsWBWalletPct float64
+	if srPriceWithLoyalty > 0 {
+		diffSRVsWBWalletPct = (diffSRVsWBWallet / srPriceWithLoyalty) * 100
+	}
+
+	// 10. Отклонение СР от ОЭК с СПП = [Цена СР со скидкой лояльности] - [Цена ОЭК с СПП]
+	diffSRVsOneCSPP := srPriceWithLoyalty - onecPriceWithSPP
+	var diffSRVsOneCSPPPct float64
+	if srPriceWithLoyalty > 0 {
+		diffSRVsOneCSPPPct = (diffSRVsOneCSPP / srPriceWithLoyalty) * 100
+	}
+
+	// 11. Stock flag
+	hasStock := 0
+	if s.StockWB+s.StockMP > 0 {
+		hasStock = 1
 	}
 
 	return ComparisonResult{
@@ -262,7 +358,7 @@ func calculateComparison(s SourceData, wbDate, onecDate string, cfg ComparisonCo
 		ModelStatus:       s.ModelStatus,
 		PIMEnabled:        s.PIMEnabled,
 		OneCBasePrice:     s.OneCBasePrice,
-		OneCSPP25Price:    s.OneCSPP25Price,
+		OneCSPP25Price:    onecSPP25Price,
 		WBPrice:           s.WBPrice,
 		WBDiscountedPrice: s.WBDiscountPrice,
 		WBDiscountPct:     s.WBDiscountPct,
@@ -276,7 +372,7 @@ func calculateComparison(s SourceData, wbDate, onecDate string, cfg ComparisonCo
 		DiffBasePct:       diffBasePct,
 		DiffDiscountedPct: diffDiscPct,
 		BaseStatus:        classifyDiff(diffBase, s.OneCBasePrice, cfg.MatchThreshold, cfg.WarningThreshold),
-		DiscStatus:        classifyDiff(diffDiscounted, s.OneCSPP25Price, cfg.MatchThreshold, cfg.WarningThreshold),
+		DiscStatus:        classifyDiff(diffDiscounted, onecPriceWithSPP, cfg.MatchThreshold, cfg.WarningThreshold),
 		// Extended fields
 		OneCSRPrice:        s.OneCSRPrice,
 		OneCSpecialPrice:   s.OneCSpecialPrice,
@@ -284,6 +380,24 @@ func calculateComparison(s SourceData, wbDate, onecDate string, cfg ComparisonCo
 		AvgWBSPP3d:         s.AvgWBSPP3d,
 		SPPSource:          s.SPPSource,
 		AvgWBSPPAssortment: s.AvgWBSPPAssortment,
+		// Effective SPP fields
+		EffectiveSPP:     effectiveSPP,
+		SPPType:          sppType,
+		OneCPriceWithSPP: onecPriceWithSPP,
+		WBPriceWithSPP:   wbPriceWithSPP,
+		// Direct customer price comparison
+		DiffCustomer:    diffCustomer,
+		DiffCustomerPct: diffCustomerPct,
+		CustomerStatus:  customerStatus,
+		// New finance director fields
+		WBPriceWithSPPAndWallet: wbPriceWithSPPAndWallet,
+		SRPriceWithLoyalty:      srPriceWithLoyalty,
+		DiffSRVsWBWallet:        diffSRVsWBWallet,
+		DiffSRVsWBWalletPct:     diffSRVsWBWalletPct,
+		DiffSRVsOneCSPP:         diffSRVsOneCSPP,
+		DiffSRVsOneCSPPPct:      diffSRVsOneCSPPPct,
+		// Stock flag
+		HasStock: hasStock,
 	}
 }
 
@@ -325,6 +439,13 @@ func printSummary(ctx context.Context, results *ResultsRepo, wbDate, onecDate st
 	if err == nil {
 		printStatusCounts(discCounts, total)
 	}
+
+		fmt.Println()
+		fmt.Println("Customer price comparison (WB discounted vs 1C retail):")
+		custCounts, err := results.GetStatusCounts(ctx, wbDate, onecDate, "customer")
+		if err == nil {
+			printStatusCounts(custCounts, total)
+		}
 
 	// SPP coverage
 	fmt.Println()

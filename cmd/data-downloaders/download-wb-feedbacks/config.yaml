@@ -19,7 +19,7 @@ feedbacks:
   end: ""    # YYYY-MM-DD
 
   # Days from today (alternative to begin/end)
-  days: 15
+  days: 5
 
   # What to download (set to false to skip)
   feedbacks: true   # download feedbacks

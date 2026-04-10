@@ -16,13 +16,16 @@ source:
 
 results:
   # BI knowledge database
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/bi.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/bi2.db"
+#  db_path: "/mnt/d/db/bi2.db"
 
 comparison:
   # 1C price type name for base retail price
   onec_base_price_type: "Розничная цена ОЭК"
-  # SPP discount percentage (applied to onec_base_price)
+  # SPP discount percentage (applied to onec_base_price, legacy)
   spp25_percent: 25
+  # User SPP fallback when no WB sales data available
+  spp_user_percent: 25
   # Price difference thresholds (in rubles)
   match_threshold: 50       # |diff| <= 50 RUB => "match"
   warning_threshold: 500    # |diff| <= 500 RUB => "warning"
@@ -33,3 +36,7 @@ comparison:
 
   # WB SPP calculation from sales data
   spp_days_back: 3          # average SPP over last N days
+
+  # Finance director: WB wallet and loyalty parameters
+  wb_wallet_percent: 3              # WB кошелёк %: 2, 3 or 5
+  loyalty_discount_percent: 10      # Скидка "Яркие вместе": 5.5, 10, 13.5, 19, 25 or 50

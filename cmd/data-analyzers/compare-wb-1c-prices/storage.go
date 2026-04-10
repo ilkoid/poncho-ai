@@ -13,7 +13,8 @@ import (
 
 // priceComparisonSchema defines the bi.db table for price comparison results.
 const priceComparisonSchema = `
-CREATE TABLE IF NOT EXISTS price_comparison (
+DROP TABLE IF EXISTS price_comparison;
+CREATE TABLE price_comparison (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     wb_snapshot_date    TEXT    NOT NULL,
     onec_snapshot_date  TEXT    NOT NULL,
@@ -93,6 +94,30 @@ CREATE TABLE IF NOT EXISTS price_comparison (
     spp_source          TEXT    DEFAULT '',
     avg_wb_spp_assortment REAL  DEFAULT 0,
 
+    -- ===== ЭФФЕКТИВНЫЙ СПП (исправленные расчёты) =====
+    effective_spp        REAL    DEFAULT 0,
+    spp_type             TEXT    DEFAULT '',
+    onec_price_with_spp  REAL    DEFAULT 0,
+    wb_price_with_spp    REAL    DEFAULT 0,
+
+    -- ===== ПРЯМОЕ СРАВНЕНИЕ КЛИЕНТСКИХ ЦЕН (WB discounted vs 1C retail) =====
+    diff_customer        REAL    DEFAULT 0,   -- wb_discounted_price - onec_base_price
+    diff_customer_pct    REAL    DEFAULT 0,   -- diff_customer / onec_base_price * 100
+    customer_status      TEXT    DEFAULT '',  -- match/warning/overpriced/underpriced
+
+    -- ===== ФИНДИРЕКТОР: РЦ WB С КОШЕЛЬКОМ =====
+    wb_price_with_spp_and_wallet REAL DEFAULT 0,   -- [Цена WB со скидкой]*(1-СПП)*(1-кошелёк%)
+    sr_price_with_loyalty        REAL DEFAULT 0,   -- Цена СР со скидкой лояльности
+
+    -- ===== ФИНДИРЕКТОР: ОТКЛОНЕНИЯ СР =====
+    diff_sr_vs_wb_wallet        REAL DEFAULT 0,   -- СР_лояльность - РЦ_WB_кошелёк
+    diff_sr_vs_wb_wallet_pct    REAL DEFAULT 0,   -- / СР_лояльность * 100
+    diff_sr_vs_onec_spp         REAL DEFAULT 0,   -- СР_лояльность - ОЭК_с_СПП
+    diff_sr_vs_onec_spp_pct     REAL DEFAULT 0,   -- / СР_лояльность * 100
+
+    -- ===== ОСТАТКИ =====
+    has_stock            INTEGER DEFAULT 0,   -- 1 if stock_wb + stock_mp > 0
+
     compared_at         TEXT    DEFAULT CURRENT_TIMESTAMP,
 
     UNIQUE(vendor_code, nm_id, wb_snapshot_date, onec_snapshot_date)
@@ -164,6 +189,24 @@ type ComparisonResult struct {
 	AvgWBSPP3d         float64
 	SPPSource          string
 	AvgWBSPPAssortment float64
+	// Effective SPP fields (fixed calculations)
+	EffectiveSPP     float64
+	SPPType          string
+	OneCPriceWithSPP float64
+	WBPriceWithSPP   float64
+	// Direct customer price comparison
+	DiffCustomer     float64
+	DiffCustomerPct  float64
+	CustomerStatus   string
+	// Finance director: WB wallet and SR loyalty
+	WBPriceWithSPPAndWallet float64
+	SRPriceWithLoyalty      float64
+	DiffSRVsWBWallet        float64
+	DiffSRVsWBWalletPct     float64
+	DiffSRVsOneCSPP         float64
+	DiffSRVsOneCSPPPct      float64
+	// Stock flag
+	HasStock         int
 }
 
 // ResultsRepo manages the bi.db — stores price comparison results.
@@ -229,13 +272,21 @@ INSERT OR REPLACE INTO price_comparison (
     base_status, disc_status,
     onec_sr_price, onec_special_price, is_special_price,
     avg_wb_spp_3d, spp_source, avg_wb_spp_assortment,
+    effective_spp, spp_type, onec_price_with_spp, wb_price_with_spp,
+    diff_customer, diff_customer_pct, customer_status,
+    wb_price_with_spp_and_wallet, sr_price_with_loyalty,
+    diff_sr_vs_wb_wallet, diff_sr_vs_wb_wallet_pct,
+    diff_sr_vs_onec_spp, diff_sr_vs_onec_spp_pct,
+    has_stock,
     compared_at
 ) VALUES (
     ?,?,?,?,?,?,?,?,?,?,
     ?,?,?,?,?,?,?,?,?,?,
     ?,?,?,?,?,?,?,?,?,?,
     ?,?,?,?,?,?,?,?,?,?,
-    ?,?,?,?,?,?,?,?,?,?
+    ?,?,?,?,?,?,?,?,?,?,
+    ?,?,?,?,?,?,?,?,?,?,
+    ?,?,?,?
 )`
 
 // SaveResults saves comparison results in batches.
@@ -274,6 +325,12 @@ func (r *ResultsRepo) SaveResults(ctx context.Context, results []ComparisonResul
 			res.BaseStatus, res.DiscStatus,
 			res.OneCSRPrice, res.OneCSpecialPrice, res.IsSpecialPrice,
 			res.AvgWBSPP3d, res.SPPSource, res.AvgWBSPPAssortment,
+			res.EffectiveSPP, res.SPPType, res.OneCPriceWithSPP, res.WBPriceWithSPP,
+			res.DiffCustomer, res.DiffCustomerPct, res.CustomerStatus,
+			res.WBPriceWithSPPAndWallet, res.SRPriceWithLoyalty,
+			res.DiffSRVsWBWallet, res.DiffSRVsWBWalletPct,
+			res.DiffSRVsOneCSPP, res.DiffSRVsOneCSPPPct,
+			res.HasStock,
 			now,
 		)
 		if err != nil {
@@ -434,7 +491,13 @@ func (r *ResultsRepo) ExportCSV(ctx context.Context, wbDate, onecDate, csvPath s
 		       diff_base, diff_discounted, diff_base_pct, diff_discounted_pct,
 		       base_status, disc_status,
 		       onec_sr_price, onec_special_price, is_special_price,
-		       avg_wb_spp_3d, spp_source, avg_wb_spp_assortment
+		       avg_wb_spp_3d, spp_source, avg_wb_spp_assortment,
+		       effective_spp, spp_type, onec_price_with_spp, wb_price_with_spp,
+		       diff_customer, diff_customer_pct, customer_status,
+		       wb_price_with_spp_and_wallet, sr_price_with_loyalty,
+		       diff_sr_vs_wb_wallet, diff_sr_vs_wb_wallet_pct,
+		       diff_sr_vs_onec_spp, diff_sr_vs_onec_spp_pct,
+		       has_stock
 		FROM price_comparison
 		WHERE wb_snapshot_date = ? AND onec_snapshot_date = ?
 		ORDER BY vendor_code`, wbDate, onecDate)
@@ -465,6 +528,12 @@ func (r *ResultsRepo) ExportCSV(ctx context.Context, wbDate, onecDate, csvPath s
 		"base_status", "disc_status",
 		"onec_sr_price", "onec_special_price", "is_special_price",
 		"avg_wb_spp_3d", "spp_source", "avg_wb_spp_assortment",
+		"effective_spp", "spp_type", "onec_price_with_spp", "wb_price_with_spp",
+			"diff_customer", "diff_customer_pct", "customer_status",
+			"wb_price_with_spp_and_wallet", "sr_price_with_loyalty",
+			"diff_sr_vs_wb_wallet", "diff_sr_vs_wb_wallet_pct",
+			"diff_sr_vs_onec_spp", "diff_sr_vs_onec_spp_pct",
+			"has_stock",
 	}
 	if err := w.Write(header); err != nil {
 		return 0, fmt.Errorf("write csv header: %w", err)
@@ -486,6 +555,12 @@ func (r *ResultsRepo) ExportCSV(ctx context.Context, wbDate, onecDate, csvPath s
 			&r.BaseStatus, &r.DiscStatus,
 			&r.OneCSRPrice, &r.OneCSpecialPrice, &r.IsSpecialPrice,
 			&r.AvgWBSPP3d, &r.SPPSource, &r.AvgWBSPPAssortment,
+				&r.EffectiveSPP, &r.SPPType, &r.OneCPriceWithSPP, &r.WBPriceWithSPP,
+				&r.DiffCustomer, &r.DiffCustomerPct, &r.CustomerStatus,
+				&r.WBPriceWithSPPAndWallet, &r.SRPriceWithLoyalty,
+				&r.DiffSRVsWBWallet, &r.DiffSRVsWBWalletPct,
+				&r.DiffSRVsOneCSPP, &r.DiffSRVsOneCSPPPct,
+				&r.HasStock,
 		)
 		if err != nil {
 			return count, fmt.Errorf("scan csv row: %w", err)
@@ -506,6 +581,12 @@ func (r *ResultsRepo) ExportCSV(ctx context.Context, wbDate, onecDate, csvPath s
 			r.BaseStatus, r.DiscStatus,
 			fmt.Sprintf("%.2f", r.OneCSRPrice), fmt.Sprintf("%.2f", r.OneCSpecialPrice), fmt.Sprintf("%d", r.IsSpecialPrice),
 			fmt.Sprintf("%.2f", r.AvgWBSPP3d), r.SPPSource, fmt.Sprintf("%.2f", r.AvgWBSPPAssortment),
+			fmt.Sprintf("%.2f", r.EffectiveSPP), r.SPPType, fmt.Sprintf("%.2f", r.OneCPriceWithSPP), fmt.Sprintf("%.2f", r.WBPriceWithSPP),
+				fmt.Sprintf("%.2f", r.DiffCustomer), fmt.Sprintf("%.1f", r.DiffCustomerPct), r.CustomerStatus,
+				fmt.Sprintf("%.2f", r.WBPriceWithSPPAndWallet), fmt.Sprintf("%.2f", r.SRPriceWithLoyalty),
+				fmt.Sprintf("%.2f", r.DiffSRVsWBWallet), fmt.Sprintf("%.1f", r.DiffSRVsWBWalletPct),
+				fmt.Sprintf("%.2f", r.DiffSRVsOneCSPP), fmt.Sprintf("%.1f", r.DiffSRVsOneCSPPPct),
+				fmt.Sprintf("%d", r.HasStock),
 		}
 		if err := w.Write(record); err != nil {
 			return count, fmt.Errorf("write csv row: %w", err)

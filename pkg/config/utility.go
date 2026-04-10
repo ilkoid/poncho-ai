@@ -130,6 +130,7 @@ type DownloadConfig struct {
 	DbPath      string `yaml:"db_path"`      // Путь к SQLite базе данных
 	FBWOnly     bool   `yaml:"fbw_only"`     // Только FBW продажи
 	Resume      bool   `yaml:"resume"`       // Продолжить с последней даты
+	Rewrite     bool   `yaml:"rewrite"`      // Удалить данные за период перед загрузкой
 	IntervalDays int   `yaml:"interval_days"` // Дней на один API запрос (default: 30)
 }
 

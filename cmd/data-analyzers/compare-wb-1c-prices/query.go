@@ -36,7 +36,6 @@ type SourceData struct {
 	BrandCountry    string
 	PIMEnabled      int
 	OneCBasePrice   float64
-	OneCSPP25Price  float64
 	WBPrice         int
 	WBDiscountPrice float64
 	WBDiscountPct   int
@@ -124,7 +123,6 @@ SELECT
     COALESCE(p.enabled, 1)         AS pim_enabled,
 
     op.price        AS onec_base_price,
-    ROUND(op.price * 0.75, 2) AS onec_spp25_price,
 
     pp.price        AS wb_price,
     pp.discounted_price AS wb_discounted_price,
@@ -139,9 +137,9 @@ SELECT
     COALESCE(op_sr.price, 0)  AS onec_sr_price,
     COALESCE(op_sp.price, 0)  AS onec_special_price,
 
-    COALESCE(spp.avg_spp_3d, oa.avg_spp_assortment) AS avg_wb_spp_3d,
+    COALESCE(spp.avg_spp_3d, 0) AS avg_wb_spp_3d,
     CASE
-        WHEN spp.avg_spp_3d IS NULL THEN 'assortment'
+        WHEN spp.avg_spp_3d IS NULL THEN 'none'
         ELSE 'product'
     END AS spp_source,
     oa.avg_spp_assortment AS avg_wb_spp_assortment
@@ -234,7 +232,7 @@ func (r *SourceRepo) ComparePrices(ctx context.Context, params CompareParams) ([
 			&s.Sex, &s.Season, &s.Collection, &s.Color, &s.CountryOfOrigin,
 			&s.IsSale, &s.IsNew, &s.ModelStatus,
 			&s.YearCollection, &s.Minicollection, &s.Naznacenie, &s.AgeCategory, &s.BrandCountry, &s.PIMEnabled,
-			&s.OneCBasePrice, &s.OneCSPP25Price,
+			&s.OneCBasePrice,
 			&s.WBPrice, &s.WBDiscountPrice, &s.WBDiscountPct, &s.WBClubPrice, &s.WBClubDiscount,
 			&s.StockWB, &s.StockMP, &s.ProductRating,
 			&s.OneCSRPrice, &s.OneCSpecialPrice,

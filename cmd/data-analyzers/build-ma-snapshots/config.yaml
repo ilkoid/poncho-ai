@@ -1,0 +1,24 @@
+# MA Snapshots Builder Configuration
+#
+# Computes daily moving average snapshots (MA-3, MA-7, MA-14, MA-28) for product sales.
+# Reads raw sales from wb-sales.db, enriches with 1C/PIM attributes, writes to bi.db.
+#
+# USAGE:
+#   go run .                              # snapshot for yesterday
+#   go run . --date 2026-03-27            # specific date
+#   go run . --force                      # rebuild even if snapshot exists
+#   go run . --source /path/to/source.db  # override source DB
+
+source:
+  # Source database with all raw data (WB + 1C tables)
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+
+results:
+  # BI knowledge database
+  db_path: "/mnt/d/db/bi.db"
+#  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/bi.db"
+
+ma:
+  windows: [3, 7, 14, 28]
+  # Minimum days with data required to compute MA (otherwise NULL)
+  min_days: 1

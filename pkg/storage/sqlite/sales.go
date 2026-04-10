@@ -214,6 +214,34 @@ func (r *SQLiteSalesRepository) SaveServiceRecords(ctx context.Context, rows []w
 	return nil
 }
 
+// DeleteSalesByDateRange deletes all sales records within a date range.
+// Uses rr_dt (report date) to match API filtering behavior.
+// Returns number of rows deleted.
+func (r *SQLiteSalesRepository) DeleteSalesByDateRange(ctx context.Context, from, to string) (int64, error) {
+	result, err := r.db.ExecContext(ctx,
+		"DELETE FROM sales WHERE rr_dt >= ? AND rr_dt <= ?",
+		from, to,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete sales by date range: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// DeleteServiceRecordsByDateRange deletes all service records within a date range.
+// Uses rr_dt (report date) to match API filtering behavior.
+// Returns number of rows deleted.
+func (r *SQLiteSalesRepository) DeleteServiceRecordsByDateRange(ctx context.Context, from, to string) (int64, error) {
+	result, err := r.db.ExecContext(ctx,
+		"DELETE FROM service_records WHERE rr_dt >= ? AND rr_dt <= ?",
+		from, to,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete service records by date range: %w", err)
+	}
+	return result.RowsAffected()
+}
+
 // Exists checks if row with given rrdID already exists.
 // Used for resume functionality after interruption.
 func (r *SQLiteSalesRepository) Exists(ctx context.Context, rrdID int) (bool, error) {

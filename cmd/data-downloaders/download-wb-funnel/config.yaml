@@ -3,7 +3,7 @@ wb:
   timeout: 30m
 
 funnel:
-  days: 7
+  days: 5
   batch_size: 20
 #  rate_limit: 4    # Legacy (для совместимости)
 #  burst: 3         # Legacy (для совместимости)

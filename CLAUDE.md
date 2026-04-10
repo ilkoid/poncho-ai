@@ -1103,5 +1103,75 @@ rates := client.RateLimiters()
 
 ---
 
-**Last Updated**: 2026-04-08
-**Version**: 13.0 (1C/PIM data downloader, streaming JSON decode, 1C-WB price mapping)
+## PDF Documentation
+
+For creating PDF documents (reports, documentation, reference materials), use the **reportlab** library with DejaVu Sans font for Cyrillic support.
+
+**Quick Start**:
+```bash
+# Generate database tables reference PDF
+/tmp/pdf_venv/bin/python reports/database_tables_pdf.py
+```
+
+**File Structure**:
+- Scripts: `reports/*_pdf.py`
+- Generated PDFs: `reports/*.pdf` (gitignored, regenerate from scripts)
+- Guide: [`dev_pdf.md`](dev_pdf.md) — comprehensive PDF generation guide
+
+**Key Patterns**:
+- Always use `Paragraph()` objects for table cells (enables text wrapping)
+- Register DejaVu Sans font before creating styles: `pdfmetrics.registerFont(TTFont('Cyrillic', '/path/to/DejaVuSans.ttf'))`
+- Use `mm` units for measurements (more intuitive than points)
+- Set `repeatRows=1` on tables for headers on each page
+
+**Existing PDF Generator**: [`reports/database_tables_pdf.py`](reports/database_tables_pdf.py)
+- Documents all 30 database tables with API endpoints, primary keys, unique constraints
+- Maps tables to their corresponding downloader utilities
+- Landscape A4, Cyrillic font, wrapped text in all cells
+
+---
+
+## Database Schema Reference
+
+The project uses **SQLite** with 30 tables across 9 categories for data storage from WB APIs and 1C/PIM systems.
+
+**Quick Reference**:
+```bash
+# Generate full schema reference as PDF
+/tmp/pdf_venv/bin/python reports/database_tables_pdf.py
+```
+
+**Schema Files** (`pkg/storage/sqlite/`):
+- `schema.go` — Main schemas (sales, service, funnel, promotion, feedbacks, stocks)
+- `onec_schema.go` — 1C/PIM system schemas
+- `cards_schema.go` — Content API product cards
+- `prices_schema.go` — Product prices
+- `region_sales_schema.go` — Geographic sales
+- `stock_history_schema.go` — Stock history CSV reports
+
+**Table Categories**:
+
+| Category | Tables | API Source | Utility |
+|----------|--------|------------|---------|
+| Sales & Service | 2 | Statistics API | `download-wb-sales` |
+| Funnel Analytics | 3 | Analytics API v3 | `download-wb-funnel` / `download-wb-funnel-agg` |
+| Promotion/Advertising | 6 | Advertising API | `download-wb-promotion` |
+| Feedbacks | 3 | Feedbacks API | `download-wb-feedbacks` |
+| Stocks | 4 | Analytics API | `download-wb-stocks` / `download-wb-stock-history` |
+| Content Cards | 6 | Content API | `download-wb-cards` |
+| Prices | 1 | Discounts-Prices API | `download-wb-prices` |
+| Region Sales | 1 | Seller Analytics API | `download-wb-region-sales` |
+| 1C/PIM Data | 4 | Custom 1C/PIM APIs | `download-1c-data` |
+
+**Key Design Patterns**:
+- **Composite natural keys** for UNIQUE constraints (e.g., `nm_id + date`) → safe upserts via `INSERT OR REPLACE`
+- **Surrogate keys** (`INTEGER AUTOINCREMENT`) for foreign key relationships
+- **Partial indexes** for sparse financial fields (`WHERE penalty > 0`)
+- **CASCADE DELETE** on card-related tables for automatic cleanup
+
+**Schema Initialization**: All tables created in `pkg/storage/sqlite/repository.go` via `initSchema()` method (lines 104-260).
+
+---
+
+**Last Updated**: 2026-04-09
+**Version**: 13.1 (PDF documentation guide, database schema reference)

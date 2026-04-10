@@ -155,8 +155,21 @@ cmd/fix-utilities/fix-fake-png/
 # Go compiled binaries (binary name = directory name)
 cmd/data-downloaders/download-all-articles/download-all-articles
 cmd/data-downloaders/download-wb-*/download-wb-*
+cmd/data-downloaders/download-1c-data/download-1c-data
 cmd/data-analyzers/analyze-wb-*/analyze-wb-*
+cmd/data-analyzers/compare-wb-1c-prices/compare-wb-1c-prices
+cmd/data-analyzers/1c_mktpl_mapping/1c_mktpl_mapping
+cmd/data-analyzers/build-ma-snapshots/build-ma-snapshots
 cmd/data-analyzers/check-db-freshness/check-db-freshness
+/compare-wb-1c-prices
+/1c_mktpl_mapping
+/build-ma-snapshots
+
+# Stray sqlite parameter file
+"?mode=ro"
+
+# Price comparison CSV exports
+cmd/data-analyzers/compare-wb-1c-prices/*.csv
 
 # Downloaded data folders
 cmd/data-downloaders/download-all-articles/ЗАГРУЗКИ/
