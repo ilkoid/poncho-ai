@@ -1,7 +1,8 @@
 // Package main provides a utility to build daily moving average snapshots for product sales.
 //
 // Computes MA-3, MA-7, MA-14, MA-28 per product (nm_id) from sales data in wb-sales.db,
-// enriches with 1C/PIM attributes, and stores results in bi.db for PowerBI consumption.
+// enriches with 1C/PIM attributes, and stores results in a flat ma_daily table in bi.db
+// for PowerBI consumption (no JOINs needed).
 //
 // Usage:
 //
@@ -26,9 +27,10 @@ import (
 
 // Config represents the YAML configuration.
 type Config struct {
-	Source  SourceConfig `yaml:"source"`
+	Source  SourceConfig  `yaml:"source"`
 	Results ResultsConfig `yaml:"results"`
-	MA      MAConfig     `yaml:"ma"`
+	MA      MAConfig      `yaml:"ma"`
+	Force   bool          `yaml:"force"`
 }
 
 type SourceConfig struct {
@@ -72,6 +74,9 @@ func main() {
 	}
 	if *outputPath != "" {
 		cfg.Results.DBPath = *outputPath
+	}
+	if *force {
+		cfg.Force = true
 	}
 
 	// Resolve reference date
@@ -118,7 +123,7 @@ func main() {
 	defer results.Close()
 
 	// Check existing
-	if !*force {
+	if !cfg.Force {
 		exists, err := results.HasSnapshot(ctx, refDate)
 		if err != nil {
 			log.Fatalf("Check existing: %v", err)
@@ -164,30 +169,27 @@ func main() {
 	}
 	fmt.Printf("%d products matched\n", len(attrs))
 
-	// Attach attributes to rows and collect unique attrs for saving
-	attrSet := make(map[int]*ProductAttrs)
+	// Attach all attributes to rows
 	for i := range rows {
 		if a, ok := attrs[rows[i].NmID]; ok {
 			rows[i].Article = a.Article
 			rows[i].Identifier = a.Identifier
 			rows[i].VendorCode = a.VendorCode
-			attrSet[rows[i].NmID] = a
+			rows[i].Name = a.Name
+			rows[i].NameIM = a.NameIM
+			rows[i].Brand = a.Brand
+			rows[i].Type = a.Type
+			rows[i].Category = a.Category
+			rows[i].CategoryLevel1 = a.CategoryLevel1
+			rows[i].CategoryLevel2 = a.CategoryLevel2
+			rows[i].Sex = a.Sex
+			rows[i].Season = a.Season
+			rows[i].Color = a.Color
+			rows[i].Collection = a.Collection
 		}
 	}
 
-	// Step 4: Save product attributes
-	uniqueAttrs := make([]ProductAttrs, 0, len(attrSet))
-	for _, a := range attrSet {
-		uniqueAttrs = append(uniqueAttrs, *a)
-	}
-	fmt.Print("Saving product attributes... ")
-	savedAttrs, err := results.SaveProductAttrs(ctx, uniqueAttrs)
-	if err != nil {
-		log.Fatalf("Save attrs: %v", err)
-	}
-	fmt.Printf("%d rows\n", savedAttrs)
-
-	// Step 5: Save MA snapshots
+	// Step 4: Save MA snapshots (flat — all attributes included)
 	fmt.Print("Saving MA snapshots... ")
 	saved, err := results.SaveMASnapshots(ctx, rows)
 	if err != nil {
@@ -214,7 +216,8 @@ func printSummary(rows []MARow) {
 	// Count products with data per MA window
 	var withMA3, withMA7, withMA14, withMA28 int
 	var totalSold int
-	topByDelta := make(map[int]*MARow) // window → top positive delta
+	var topPct float64
+	var topIdx int = -1
 
 	for i := range rows {
 		totalSold += rows[i].Sold
@@ -231,10 +234,12 @@ func printSummary(rows []MARow) {
 			withMA28++
 		}
 
-		// Track largest positive delta vs MA-7
-		if rows[i].DeltaMA7Pct != nil {
-			if t, ok := topByDelta[7]; !ok || *rows[i].DeltaMA7Pct > *t.DeltaMA7Pct {
-				topByDelta[7] = &rows[i]
+		// Track largest positive delta vs MA-7 (computed on-the-fly)
+		if rows[i].MA7 != nil && *rows[i].MA7 > 0 {
+			pct := float64(rows[i].Sold) / *rows[i].MA7 * 100
+			if topIdx < 0 || pct > topPct {
+				topPct = pct
+				topIdx = i
 			}
 		}
 	}
@@ -247,17 +252,18 @@ func printSummary(rows []MARow) {
 	fmt.Printf("With MA-28:     %d\n", withMA28)
 
 	// Top movers vs MA-7
-	if top, ok := topByDelta[7]; ok && top.DeltaMA7Pct != nil {
+	if topIdx >= 0 {
+		top := rows[topIdx]
+		delta := float64(top.Sold) - *top.MA7
+		pct := delta / *top.MA7 * 100
 		fmt.Println()
 		fmt.Println("Top mover vs MA-7:")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(w, "  nm_id:\t%d\n", top.NmID)
 		fmt.Fprintf(w, "  article:\t%s\n", top.Article)
 		fmt.Fprintf(w, "  sold:\t%d\n", top.Sold)
-		if top.MA7 != nil {
-			fmt.Fprintf(w, "  MA-7:\t%.1f\n", *top.MA7)
-		}
-		fmt.Fprintf(w, "  delta:\t%+.1f%%\n", *top.DeltaMA7Pct)
+		fmt.Fprintf(w, "  MA-7:\t%.1f\n", *top.MA7)
+		fmt.Fprintf(w, "  delta:\t%+.1f%%\n", pct)
 		w.Flush()
 	}
 }

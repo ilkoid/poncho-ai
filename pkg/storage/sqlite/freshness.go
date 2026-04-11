@@ -29,6 +29,7 @@ const (
 	StatusFresh    FreshnessStatus = "FRESH"
 	StatusStale    FreshnessStatus = "STALE"
 	StatusCritical FreshnessStatus = "CRITICAL"
+	StatusEmpty    FreshnessStatus = "EMPTY"
 	StatusError    FreshnessStatus = "ERROR"
 )
 
@@ -45,6 +46,11 @@ type FreshnessResult struct {
 // IsCritical возвращает true, если статус критический.
 func (r *FreshnessResult) IsCritical() bool {
 	return r.Status == StatusCritical
+}
+
+// IsEmpty возвращает true, если таблица пуста.
+func (r *FreshnessResult) IsEmpty() bool {
+	return r.Status == StatusEmpty
 }
 
 // IsStale возвращает true, если данные устарели.
@@ -141,7 +147,9 @@ type FreshnessChecker struct {
 //
 // Открывает SQLite соединение с оптимизационными PRAGMAs.
 func NewFreshnessChecker(dbPath string) (*FreshnessChecker, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
+	// DSN parameters persist across reconnects (see repository.go for details)
+	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_cache_size=-65536&_busy_timeout=10000&_foreign_keys=1", dbPath)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -152,13 +160,13 @@ func NewFreshnessChecker(dbPath string) (*FreshnessChecker, error) {
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	// Оптимизационные PRAGMAs (как в repository.go)
+	// Single connection for consistency
+	db.SetMaxOpenConns(1)
+
+	// PRAGMAs not supported in DSN
 	pragmas := []string{
-		"PRAGMA journal_mode = WAL",
-		"PRAGMA synchronous = NORMAL",
-		"PRAGMA busy_timeout = 10000",
-		"PRAGMA page_size = 8192",
-		"PRAGMA cache_size = -65536",
+		"PRAGMA mmap_size = 268435456",
+		"PRAGMA temp_store = MEMORY",
 	}
 	for _, p := range pragmas {
 		if _, err := db.Exec(p); err != nil {
@@ -216,8 +224,8 @@ func (fc *FreshnessChecker) CheckTable(ctx context.Context, spec TableSpec, warn
 	result.RecordCount = count
 
 	// Если таблица пуста
-	if !maxDateStr.Valid {
-		result.Status = StatusCritical
+	if !maxDateStr.Valid || count == 0 {
+		result.Status = StatusEmpty
 		result.AgeDays = -1 // Специальное значение для пустой таблицы
 		return result
 	}
@@ -323,6 +331,8 @@ func StatusIndicator(status FreshnessStatus) string {
 		return "⚠️ "
 	case StatusCritical:
 		return "❌"
+	case StatusEmpty:
+		return "📭"
 	case StatusError:
 		return "💥"
 	default:

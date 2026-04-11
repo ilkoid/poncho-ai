@@ -9,60 +9,21 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// maDailySchema defines the main MA snapshot table in bi.db.
+// maDailySchema defines the flat MA snapshot table in bi.db.
+// All product identifiers and attributes are denormalized into a single table
+// so PowerBI can query without JOINs.
+// Delta columns are intentionally omitted — PowerBI computes them as DAX measures.
 const maDailySchema = `
 CREATE TABLE IF NOT EXISTS ma_daily (
-    snapshot_date  TEXT NOT NULL,
-    nm_id          INTEGER NOT NULL,
+    snapshot_date   TEXT NOT NULL,
+    nm_id           INTEGER NOT NULL,
 
     -- Product identifiers
-    article        TEXT DEFAULT '',
-    identifier     TEXT DEFAULT '',
-    vendor_code    TEXT DEFAULT '',
-
-    -- Actual sales
-    sold           INTEGER DEFAULT 0,
-    sold_prev      INTEGER DEFAULT 0,
-
-    -- Moving averages (N complete days BEFORE snapshot_date, not including it)
-    ma_3           REAL,
-    ma_7           REAL,
-    ma_14          REAL,
-    ma_28          REAL,
-
-    -- Deltas vs previous day
-    delta_1d       INTEGER,
-    delta_1d_pct   REAL,
-
-    -- Deltas vs moving averages
-    delta_ma3      REAL,
-    delta_ma3_pct  REAL,
-    delta_ma7      REAL,
-    delta_ma7_pct  REAL,
-    delta_ma14     REAL,
-    delta_ma14_pct REAL,
-    delta_ma28     REAL,
-    delta_ma28_pct REAL,
-
-    computed_at    TEXT DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY (snapshot_date, nm_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_ma_snapshot_date ON ma_daily(snapshot_date);
-CREATE INDEX IF NOT EXISTS idx_ma_nm_id ON ma_daily(nm_id);
-CREATE INDEX IF NOT EXISTS idx_ma_article ON ma_daily(article);
-CREATE INDEX IF NOT EXISTS idx_ma_vendor_code ON ma_daily(vendor_code);
-CREATE INDEX IF NOT EXISTS idx_ma_date_article ON ma_daily(snapshot_date, article);
-`
-
-// productAttrsSchema defines the product dimension table for PowerBI filtering.
-const productAttrsSchema = `
-CREATE TABLE IF NOT EXISTS product_attrs (
-    nm_id           INTEGER PRIMARY KEY,
     article         TEXT DEFAULT '',
     identifier      TEXT DEFAULT '',
     vendor_code     TEXT DEFAULT '',
+
+    -- Product attributes (from onec_goods/pim_goods)
     name            TEXT DEFAULT '',
     name_im         TEXT DEFAULT '',
     brand           TEXT DEFAULT '',
@@ -74,17 +35,36 @@ CREATE TABLE IF NOT EXISTS product_attrs (
     season          TEXT DEFAULT '',
     color           TEXT DEFAULT '',
     collection      TEXT DEFAULT '',
-    updated_at      TEXT DEFAULT CURRENT_TIMESTAMP
+
+    -- Actual sales
+    sold            INTEGER DEFAULT 0,
+    sold_prev       INTEGER DEFAULT 0,
+
+    -- Moving averages (N complete days BEFORE snapshot_date, not including it)
+    ma_3            REAL,
+    ma_7            REAL,
+    ma_14           REAL,
+    ma_28           REAL,
+
+    computed_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (snapshot_date, nm_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pa_article ON product_attrs(article);
-CREATE INDEX IF NOT EXISTS idx_pa_brand ON product_attrs(brand);
-CREATE INDEX IF NOT EXISTS idx_pa_type ON product_attrs(type);
-CREATE INDEX IF NOT EXISTS idx_pa_category ON product_attrs(category);
-CREATE INDEX IF NOT EXISTS idx_pa_season ON product_attrs(season);
+CREATE INDEX IF NOT EXISTS idx_ma_snapshot_date ON ma_daily(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_ma_nm_id ON ma_daily(nm_id);
+CREATE INDEX IF NOT EXISTS idx_ma_article ON ma_daily(article);
+CREATE INDEX IF NOT EXISTS idx_ma_vendor_code ON ma_daily(vendor_code);
+CREATE INDEX IF NOT EXISTS idx_ma_date_article ON ma_daily(snapshot_date, article);
+CREATE INDEX IF NOT EXISTS idx_ma_brand ON ma_daily(brand);
+CREATE INDEX IF NOT EXISTS idx_ma_type ON ma_daily(type);
+CREATE INDEX IF NOT EXISTS idx_ma_category ON ma_daily(category);
+CREATE INDEX IF NOT EXISTS idx_ma_season ON ma_daily(season);
+CREATE INDEX IF NOT EXISTS idx_ma_date_brand ON ma_daily(snapshot_date, brand);
+CREATE INDEX IF NOT EXISTS idx_ma_date_category ON ma_daily(snapshot_date, category);
 `
 
-// ResultsRepo manages the bi.db — stores MA snapshots and product attributes.
+// ResultsRepo manages the bi.db — stores flat MA snapshots.
 type ResultsRepo struct {
 	db *sql.DB
 }
@@ -104,6 +84,14 @@ func NewResultsRepo(dbPath string) (*ResultsRepo, error) {
 	}
 	for _, p := range pragmas {
 		if _, err := db.Exec(fmt.Sprintf("PRAGMA %s = %s", p.key, p.val)); err != nil {
+			if p.key == "journal_mode" {
+				// WAL fails on WSL2 Windows mounts (NTFS via 9P) — fallback to DELETE
+				if _, fbErr := db.Exec("PRAGMA journal_mode = DELETE"); fbErr != nil {
+					db.Close()
+					return nil, fmt.Errorf("PRAGMA journal_mode WAL failed: %v, DELETE fallback also failed: %w", err, fbErr)
+				}
+				continue
+			}
 			db.Close()
 			return nil, fmt.Errorf("PRAGMA %s: %w", p.key, err)
 		}
@@ -112,10 +100,6 @@ func NewResultsRepo(dbPath string) (*ResultsRepo, error) {
 	if _, err := db.Exec(maDailySchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create ma_daily schema: %w", err)
-	}
-	if _, err := db.Exec(productAttrsSchema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("create product_attrs schema: %w", err)
 	}
 
 	return &ResultsRepo{db: db}, nil
@@ -135,28 +119,17 @@ func (r *ResultsRepo) HasSnapshot(ctx context.Context, date string) (bool, error
 
 const insertMADailySQL = `
 INSERT OR REPLACE INTO ma_daily (
-    snapshot_date, nm_id, article, identifier, vendor_code,
+    snapshot_date, nm_id,
+    article, identifier, vendor_code,
+    name, name_im, brand, type,
+    category, category_level1, category_level2,
+    sex, season, color, collection,
     sold, sold_prev,
     ma_3, ma_7, ma_14, ma_28,
-    delta_1d, delta_1d_pct,
-    delta_ma3, delta_ma3_pct,
-    delta_ma7, delta_ma7_pct,
-    delta_ma14, delta_ma14_pct,
-    delta_ma28, delta_ma28_pct,
     computed_at
-) VALUES (
-    ?,?,?,?,?,
-    ?,?,
-    ?,?,?,?,
-    ?,?,
-    ?,?,
-    ?,?,
-    ?,?,
-    ?,?,
-    ?
-)`
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
-// SaveMASnapshots saves MA snapshot rows in batches.
+// SaveMASnapshots saves flat MA snapshot rows in batches.
 func (r *ResultsRepo) SaveMASnapshots(ctx context.Context, rows []MARow) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -180,14 +153,13 @@ func (r *ResultsRepo) SaveMASnapshots(ctx context.Context, rows []MARow) (int, e
 
 	for i, row := range rows {
 		_, err := stmt.ExecContext(ctx,
-			row.SnapshotDate, row.NmID, row.Article, row.Identifier, row.VendorCode,
+			row.SnapshotDate, row.NmID,
+			row.Article, row.Identifier, row.VendorCode,
+			row.Name, row.NameIM, row.Brand, row.Type,
+			row.Category, row.CategoryLevel1, row.CategoryLevel2,
+			row.Sex, row.Season, row.Color, row.Collection,
 			row.Sold, row.SoldPrev,
 			row.MA3, row.MA7, row.MA14, row.MA28,
-			row.Delta1D, row.Delta1DPct,
-			row.DeltaMA3, row.DeltaMA3Pct,
-			row.DeltaMA7, row.DeltaMA7Pct,
-			row.DeltaMA14, row.DeltaMA14Pct,
-			row.DeltaMA28, row.DeltaMA28Pct,
 			now,
 		)
 		if err != nil {
@@ -212,55 +184,6 @@ func (r *ResultsRepo) SaveMASnapshots(ctx context.Context, rows []MARow) (int, e
 
 	if err := tx.Commit(); err != nil {
 		return saved, fmt.Errorf("commit final: %w", err)
-	}
-	return saved, nil
-}
-
-const insertProductAttrSQL = `
-INSERT OR REPLACE INTO product_attrs (
-    nm_id, article, identifier, vendor_code,
-    name, name_im, brand, type, category, category_level1, category_level2,
-    sex, season, color, collection, updated_at
-) VALUES (
-    ?,?,?,?,?,?,?,?,?,?,
-    ?,?,?,?,?,?
-)`
-
-// SaveProductAttrs saves product attributes in batches.
-func (r *ResultsRepo) SaveProductAttrs(ctx context.Context, attrs []ProductAttrs) (int, error) {
-	if len(attrs) == 0 {
-		return 0, nil
-	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, insertProductAttrSQL)
-	if err != nil {
-		return 0, fmt.Errorf("prepare insert: %w", err)
-	}
-	defer stmt.Close()
-
-	now := time.Now().Format(time.RFC3339)
-	saved := 0
-
-	for _, a := range attrs {
-		_, err := stmt.ExecContext(ctx,
-			a.NmID, a.Article, a.Identifier, a.VendorCode,
-			a.Name, a.NameIM, a.Brand, a.Type, a.Category, a.CategoryLevel1, a.CategoryLevel2,
-			a.Sex, a.Season, a.Color, a.Collection, now,
-		)
-		if err != nil {
-			return saved, fmt.Errorf("insert attrs nm_id=%d: %w", a.NmID, err)
-		}
-		saved++
-	}
-
-	if err := tx.Commit(); err != nil {
-		return saved, fmt.Errorf("commit attrs: %w", err)
 	}
 	return saved, nil
 }

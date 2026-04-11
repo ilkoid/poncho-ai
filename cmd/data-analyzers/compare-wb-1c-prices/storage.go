@@ -244,16 +244,16 @@ func NewResultsRepo(dbPath string) (*ResultsRepo, error) {
 
 // HasResultsForDate checks if comparison results already exist for given dates.
 func (r *ResultsRepo) HasResultsForDate(ctx context.Context, wbDate, onecDate string) (bool, error) {
-	var count int
+	var exists int
 	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM price_comparison
-		 WHERE wb_snapshot_date = ? AND onec_snapshot_date = ? LIMIT 1`,
+		`SELECT EXISTS(SELECT 1 FROM price_comparison
+		 WHERE wb_snapshot_date = ? AND onec_snapshot_date = ?)`,
 		wbDate, onecDate,
-	).Scan(&count)
+	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check existing results: %w", err)
 	}
-	return count > 0, nil
+	return exists == 1, nil
 }
 
 const insertSQL = `
@@ -338,6 +338,7 @@ func (r *ResultsRepo) SaveResults(ctx context.Context, results []ComparisonResul
 		}
 
 		if (i+1)%batchSize == 0 {
+			stmt.Close()
 			if err := tx.Commit(); err != nil {
 				return fmt.Errorf("commit batch at %d: %w", i+1, err)
 			}
@@ -349,7 +350,6 @@ func (r *ResultsRepo) SaveResults(ctx context.Context, results []ComparisonResul
 			if err != nil {
 				return fmt.Errorf("prepare insert after batch: %w", err)
 			}
-			defer stmt.Close()
 		}
 	}
 

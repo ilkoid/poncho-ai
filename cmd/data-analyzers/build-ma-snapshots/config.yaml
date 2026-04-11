@@ -15,10 +15,13 @@ source:
 
 results:
   # BI knowledge database
-  db_path: "/mnt/d/db/bi.db"
-#  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/bi.db"
+#  db_path: "/mnt/d/db/bi2.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/bi2.db"
 
 ma:
   windows: [3, 7, 14, 28]
   # Minimum days with data required to compute MA (otherwise NULL)
   min_days: 1
+
+# Rebuild even if snapshot already exists for the date
+force: true

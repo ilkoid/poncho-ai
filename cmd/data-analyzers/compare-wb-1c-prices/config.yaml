@@ -39,4 +39,4 @@ comparison:
 
   # Finance director: WB wallet and loyalty parameters
   wb_wallet_percent: 3              # WB кошелёк %: 2, 3 or 5
-  loyalty_discount_percent: 10      # Скидка "Яркие вместе": 5.5, 10, 13.5, 19, 25 or 50
+  loyalty_discount_percent: 5.5      # Скидка "Яркие вместе": 5.5, 10, 13.5, 19, 25 or 50

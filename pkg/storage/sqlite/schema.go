@@ -96,6 +96,12 @@ CREATE INDEX IF NOT EXISTS idx_sales_rr_dt ON sales(rr_dt);
 
 -- Index for rrd_id pagination lookups
 CREATE INDEX IF NOT EXISTS idx_sales_rrd_id ON sales(rrd_id);
+
+-- Index for 1C↔WB mapping JOINs (10+ queries join on barcode)
+CREATE INDEX IF NOT EXISTS idx_sales_barcode ON sales(barcode);
+
+-- Index for analytics queries filtering canceled sales by doc type
+CREATE INDEX IF NOT EXISTS idx_sales_cancel_doctype ON sales(is_cancel, doc_type_name);
 `
 
 	// ServiceRecordsSchemaSQL defines the service_records table structure.

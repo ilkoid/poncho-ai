@@ -60,27 +60,25 @@ type SQLiteSalesRepository struct {
 // NewSQLiteSalesRepository creates a new SQLite repository.
 // Opens database at given path and initializes schema.
 func NewSQLiteSalesRepository(dbPath string) (*SQLiteSalesRepository, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	// DSN parameters set PRAGMAs on every connection (persist across reconnects).
+	// Supported by go-sqlite3: _journal_mode, _cache_size, _busy_timeout, _foreign_keys, _synchronous.
+	// _journal_mode=WAL also auto-sets synchronous=NORMAL.
+	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_cache_size=-65536&_busy_timeout=10000&_foreign_keys=1", dbPath)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
 
-	// Enable foreign keys and WAL mode for better concurrency
-	_, err = db.Exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
+	// Single connection: prevents pool from creating unconfigured connections.
+	// Safe for SQLite (single-writer, WAL allows concurrent reads on separate connections,
+	// but this repo is used sequentially by downloaders).
+	db.SetMaxOpenConns(1)
 
-	// Performance PRAGMAs for bulk-loaded databases
+	// PRAGMAs not supported in DSN — set via Exec (persist as long as connection lives)
 	pragmas := []string{
-		"PRAGMA page_size = 8192",        // 2x pages (only effective for new DBs)
-		"PRAGMA cache_size = -65536",     // 64MB page cache (vs default 2MB)
-		"PRAGMA mmap_size = 268435456",   // 256MB memory-mapped I/O
-		"PRAGMA synchronous = NORMAL",    // Safe with WAL, faster than FULL
-		"PRAGMA busy_timeout = 10000",    // 10s wait on locked DB
-		"PRAGMA wal_autocheckpoint = 5000", // Less frequent checkpoints
-		"PRAGMA temp_store = MEMORY",     // Temp tables in RAM
+		"PRAGMA mmap_size = 268435456",      // 256MB memory-mapped I/O
+		"PRAGMA wal_autocheckpoint = 5000",   // Less frequent checkpoints
+		"PRAGMA temp_store = MEMORY",         // Temp tables in RAM
 	}
 	for _, p := range pragmas {
 		if _, err := db.Exec(p); err != nil {

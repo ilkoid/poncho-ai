@@ -47,7 +47,6 @@ LEFT JOIN pim_goods pm  ON pm.identifier = p.vendor_code
 WHERE p.nm_id IN (%s)
 `
 
-
 // SourceRepo provides read-only access to wb-sales.db.
 type SourceRepo struct {
 	db *sql.DB
@@ -86,8 +85,9 @@ func (r *SourceRepo) QueryDailySales(ctx context.Context, refDate string) (map[i
 	return result, rows.Err()
 }
 
-// QueryProductAttrs returns product attributes for the given nm_ids.
-func (r *SourceRepo) QueryProductAttrs(ctx context.Context, nmIDs []int) (map[int]*ProductAttrs, error) {
+// QueryProductAttrs returns product attributes for the given nm_ids as MARow values.
+// SCAN from source DB goes directly into MARow fields — no intermediate struct needed.
+func (r *SourceRepo) QueryProductAttrs(ctx context.Context, nmIDs []int) (map[int]*MARow, error) {
 	if len(nmIDs) == 0 {
 		return nil, nil
 	}
@@ -106,9 +106,9 @@ func (r *SourceRepo) QueryProductAttrs(ctx context.Context, nmIDs []int) (map[in
 	}
 	defer rows.Close()
 
-	result := make(map[int]*ProductAttrs, len(nmIDs))
+	result := make(map[int]*MARow, len(nmIDs))
 	for rows.Next() {
-		var a ProductAttrs
+		var a MARow
 		if err := rows.Scan(
 			&a.NmID, &a.Article, &a.Identifier, &a.VendorCode,
 			&a.Name, &a.NameIM, &a.Brand, &a.Type, &a.Category, &a.CategoryLevel1, &a.CategoryLevel2,

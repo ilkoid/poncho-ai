@@ -97,12 +97,14 @@ func printHeader(cfg *Config) {
 
 // printSummary выводит итоговую статистику.
 func printSummary(results []sqlite.FreshnessResult, duration time.Duration) {
-	var fresh, stale, critical, errors int
+	var fresh, empty, stale, critical, errors int
 
 	for _, r := range results {
 		switch r.Status {
 		case sqlite.StatusFresh:
 			fresh++
+		case sqlite.StatusEmpty:
+			empty++
 		case sqlite.StatusStale:
 			stale++
 		case sqlite.StatusCritical:
@@ -118,6 +120,9 @@ func printSummary(results []sqlite.FreshnessResult, duration time.Duration) {
 	fmt.Println(strings.Repeat("═", 60))
 	fmt.Printf("Tables checked:  %d\n", len(results))
 	fmt.Printf("Fresh (✅):      %d\n", fresh)
+	if empty > 0 {
+		fmt.Printf("Empty (📭):      %d\n", empty)
+	}
 	fmt.Printf("Stale (⚠️ ):       %d\n", stale)
 	fmt.Printf("Critical (❌):   %d\n", critical)
 	if errors > 0 {
@@ -125,12 +130,12 @@ func printSummary(results []sqlite.FreshnessResult, duration time.Duration) {
 	}
 	fmt.Printf("Duration:        %s\n", duration.Round(time.Millisecond))
 
-	// Список устаревших таблиц
-	if stale > 0 || critical > 0 {
+	// Список таблиц, требующих внимания
+	if empty > 0 || stale > 0 || critical > 0 {
 		fmt.Println()
-		fmt.Println("⚠️  Tables requiring update:")
+		fmt.Println("⚠️  Tables requiring attention:")
 		for _, r := range results {
-			if r.IsStale() || r.IsCritical() {
+			if r.IsEmpty() || r.IsStale() || r.IsCritical() {
 				emoji := sqlite.StatusIndicator(r.Status)
 				fmt.Printf("   %s %s (%s)\n", emoji, r.Table, sqlite.FormatAge(r.AgeDays))
 			}
@@ -288,7 +293,7 @@ func main() {
 	// Определяем exit code
 	exitCode := 0
 	for _, r := range results {
-		if r.IsCritical() || r.IsStale() {
+		if r.IsEmpty() || r.IsCritical() || r.IsStale() {
 			exitCode = 1
 			break
 		}
