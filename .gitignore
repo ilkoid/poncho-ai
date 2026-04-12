@@ -198,6 +198,10 @@ comparison_report.txt
 /download-wb-stock-history
 /download-wb-region-sales
 
+# Compiled check-db-freshness binaries
+/check-db-freshness
+cmd/check-db-freshness
+
 # Compiled downloaders (project-specific)
 download-wb-*
 !download-wb-*/
