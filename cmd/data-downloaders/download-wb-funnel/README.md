@@ -258,8 +258,10 @@ ORDER BY len;
 
 | Переменная | Описание |
 |------------|----------|
-| `WB_API_ANALYTICS_AND_PROMO_KEY` | Analytics API ключ (тоже что `WB_API_KEY`) |
-| `WB_API_KEY` | Альтернативный ключ для Analytics API |
+| `WB_API_ANALYTICS_AND_PROMO_KEY` | Analytics API v3 ключ (требуется) |
+| `WB_API_KEY` | Альтернативный ключ (Content API, также подходит для Analytics) |
+
+**Примечание**: Утилита использует только `analytics_api_key` из конфигурации. Ключ должен иметь доступ к WB Analytics API v3 (`/api/analytics/v3/sales-funnel/products/history`).
 
 ## Смотрите также
 

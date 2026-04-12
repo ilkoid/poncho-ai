@@ -180,6 +180,9 @@ cmd/data-downloaders/download-all-articles/ЗАГРУЗКИ/
 # PDF documents (generated from markdown)
 *.pdf
 
+# Reports (local only, not synced to remote)
+reports/
+
 # Markdown reports and plans (business docs)
 *_REPORT.md
 *_PLAN.md
