@@ -28,7 +28,8 @@ import (
 type Config struct {
 	WB      config.WBClientConfig `yaml:"wb"`
 	Funnel  config.FunnelConfig   `yaml:"funnel"`
-	Storage StorageConfig         `yaml:"storage"`
+	Storage StorageConfig             `yaml:"storage"`
+	Filter  config.FunnelFilterConfig `yaml:"filter"`
 }
 
 // StorageConfig holds storage-related configuration.
@@ -146,6 +147,7 @@ func main() {
 		From:          funnelDefaults.From,
 		To:            funnelDefaults.To,
 		MaxBatches:    funnelDefaults.MaxBatches,
+		Filter:        cfg.Filter,
 	}
 	funnelResult, err := LoadFunnelHistory(ctx, funnelCfg)
 	if err != nil {

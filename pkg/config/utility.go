@@ -217,6 +217,18 @@ func (c *FunnelConfig) GetDefaults() FunnelConfig {
 	return result
 }
 
+// FunnelFilterConfig — фильтрация товаров по артикулу (supplier_article)
+// для утилиты download-wb-funnel.
+//
+// Позволяет исключать товары по длине артикула и году производства (извлекается из 2-3 цифры).
+type FunnelFilterConfig struct {
+	// Исключить артикулы определённой длины
+	ExcludeLengths []int `yaml:"exclude_lengths"` // Например: [6] — исключить 6-значные
+
+	// Фильтрация по году производства (из 2-3 цифры артикула)
+	AllowedYears []int `yaml:"allowed_years"` // Например: [24, 25, 26] — только 2024-2026
+}
+
 // WBClientConfig — расширенная конфигурация WB клиента для утилит.
 //
 // Включает дополнительные поля, специфичные для cmd/ утилит.

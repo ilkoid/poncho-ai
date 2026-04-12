@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -31,7 +33,8 @@ type FunnelLoaderConfig struct {
 	RefreshWindow int    // Refresh window in days (0 = always replace, 7 = update last 7 days)
 	From          string // Start date YYYY-MM-DD (optional, takes precedence over Days)
 	To            string // End date YYYY-MM-DD (optional, takes precedence over Days)
-	MaxBatches    int    // Max batches to load (0 = all, useful for testing)
+	MaxBatches    int                        // Max batches to load (0 = all, useful for testing)
+	Filter        config.FunnelFilterConfig   // Product filtering by supplier_article
 }
 
 // LoadFunnelHistory loads funnel analytics history for all products in sales table.
@@ -62,6 +65,56 @@ func LoadFunnelHistory(ctx context.Context, cfg FunnelLoaderConfig) (*FunnelLoad
 	}
 
 	fmt.Printf("📊 Найдено товаров: %d\n", len(nmIDs))
+
+	// Apply filter if configured
+	if len(cfg.Filter.ExcludeLengths) > 0 || len(cfg.Filter.AllowedYears) > 0 {
+		before := len(nmIDs)
+
+		// Get supplier_articles for these nm_ids
+		articlesMap, err := cfg.Repo.GetSupplierArticlesByNmIDs(ctx, nmIDs)
+		if err != nil {
+			return result, fmt.Errorf("get supplier articles for filtering: %w", err)
+		}
+
+		// Helper function to check if slice contains value
+		contains := func(slice []int, value int) bool {
+			for _, v := range slice {
+				if v == value {
+					return true
+				}
+			}
+			return false
+		}
+
+		var filtered []int
+		for _, nmID := range nmIDs {
+			article := articlesMap[nmID]
+			if article == "" {
+				// Skip if no article found
+				continue
+			}
+
+			// Check length exclusion
+			if contains(cfg.Filter.ExcludeLengths, len(article)) {
+				continue
+			}
+
+			// Check year filter (extract from digits 2-3)
+			if len(cfg.Filter.AllowedYears) > 0 && len(article) >= 3 {
+				yearDigits := article[1:3] // 2nd and 3rd characters (0-indexed)
+				year, err := strconv.Atoi(yearDigits)
+				if err == nil && !contains(cfg.Filter.AllowedYears, year) {
+					continue
+				}
+			}
+
+			filtered = append(filtered, nmID)
+		}
+
+		nmIDs = filtered
+		fmt.Printf("🔍 После фильтрации: %d товаров (исключено %d)\n",
+			len(nmIDs), before-len(nmIDs))
+	}
 
 	// Show period info
 	if cfg.From != "" && cfg.To != "" {

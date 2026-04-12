@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/storage"
@@ -480,4 +481,43 @@ func (r *SQLiteSalesRepository) SaveFunnelHistoryWithWindow(
 	}
 
 	return nil
+}
+
+// GetSupplierArticlesByNmIDs returns a map of nm_id to supplier_article for the given nm_ids.
+// Used for filtering products by article properties (length, year digits).
+func (r *SQLiteSalesRepository) GetSupplierArticlesByNmIDs(ctx context.Context, nmIDs []int) (map[int]string, error) {
+	if len(nmIDs) == 0 {
+		return make(map[int]string), nil
+	}
+
+	// Build IN clause placeholders
+	placeholders := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(
+		"SELECT DISTINCT nm_id, supplier_article FROM sales WHERE nm_id IN (%s) AND supplier_article IS NOT NULL AND supplier_article != ''",
+		strings.Join(placeholders, ","),
+	)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query supplier articles: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]string)
+	for rows.Next() {
+		var nmID int
+		var article string
+		if err := rows.Scan(&nmID, &article); err != nil {
+			return nil, fmt.Errorf("scan row: %w", err)
+		}
+		result[nmID] = article
+	}
+
+	return result, rows.Err()
 }
