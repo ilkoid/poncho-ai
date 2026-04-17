@@ -40,11 +40,12 @@ type SKURow struct {
 	SizesInStock   int
 	FillPct        float64
 
-	// MA (global per barcode, not per region)
-	MA3  *float64
-	MA7  *float64
-	MA14 *float64
-	MA28 *float64
+	// MA (regional per chrt_id, N/A when insufficient data)
+	MA3        *float64
+	MA7        *float64
+	MA14       *float64
+	MA28       *float64
+	MARegional bool // true = MA computed from this region's sales
 
 	// Derived metrics
 	SDRDays  *float64 // stock_qty / MA-7 (days until stockout)
@@ -87,7 +88,7 @@ type AlertsParams struct {
 //
 // Parameters:
 //   - stocks:  map of StockKey → StockInfo (from stocks_daily_warehouses)
-//   - maData:  map of nm_id → chrt_id → dayMap (global sales per barcode)
+//   - maData:  map of nm_id → chrt_id → region → date → sold (regional sales)
 //   - sizes:   map of (nm_id, region) → SizeInfo (size row completion)
 //   - refDate: snapshot date YYYY-MM-DD
 //   - windows: MA windows (e.g. [3, 7, 14, 28])
@@ -95,7 +96,7 @@ type AlertsParams struct {
 //   - alerts:  alert thresholds
 func ComputeSKUSnapshots(
 	stocks map[StockKey]StockInfo,
-	maData map[int]map[int64]map[string]int, // nm_id → chrt_id → date → sold
+	maData map[int]map[int64]map[string]map[string]int, // nm_id → chrt_id → region → date → sold
 	sizes map[SizeRegionKey]SizeInfo,
 	refDate string,
 	windows []int,
@@ -129,23 +130,27 @@ func ComputeSKUSnapshots(
 			}
 		}
 
-		// MA: lookup dayMap for this (nm_id, chrt_id)
+		// MA: lookup regional dayMap for this (nm_id, chrt_id, region_name)
+		// No fallback to global MA — prevents overstocking in low-data regions.
 		if chrtMap, ok1 := maData[key.NmID]; ok1 {
-			if dayMap, ok2 := chrtMap[key.ChrtID]; ok2 {
-				for _, w := range windows {
-					ma := analytics.ComputeMA(dayMap, ref, w, minDays)
-					if ma == nil {
-						continue
-					}
-					switch w {
-					case 3:
-						row.MA3 = ma
-					case 7:
-						row.MA7 = ma
-					case 14:
-						row.MA14 = ma
-					case 28:
-						row.MA28 = ma
+			if regionMap, ok2 := chrtMap[key.ChrtID]; ok2 {
+				if dayMap, ok3 := regionMap[key.RegionName]; ok3 {
+					row.MARegional = true
+					for _, w := range windows {
+						ma := analytics.ComputeMA(dayMap, ref, w, minDays)
+						if ma == nil {
+							continue
+						}
+						switch w {
+						case 3:
+							row.MA3 = ma
+						case 7:
+							row.MA7 = ma
+						case 14:
+							row.MA14 = ma
+						case 28:
+							row.MA28 = ma
+						}
 					}
 				}
 			}

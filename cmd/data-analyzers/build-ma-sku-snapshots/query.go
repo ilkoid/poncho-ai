@@ -12,87 +12,337 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// addressFOPatterns maps address substring patterns to federal district names.
+// Ordered by specificity: international first, then region-level (край/область/республика),
+// then city-level fallbacks. First match wins.
+var addressFOPatterns = []struct{ Pattern, FO string }{
+	// International (check first — unambiguous)
+	{"Беларусь", "Беларусь"},
+	{"Минская обл", "Беларусь"},
+	{"Гродно", "Беларусь"},
+	{"Брест", "Беларусь"},
+	{"Казахстан", "Казахстан"},
+	{"Нур-Султан", "Казахстан"},
+	{"Астана", "Казахстан"},
+	{"Алматы", "Казахстан"},
+	{"Атакент", "Казахстан"},
+	{"Актобе", "Казахстан"},
+	{"Шымкент", "Казахстан"},
+	{"Байсерке", "Казахстан"},
+	{"Караганда", "Казахстан"},
+	{"Армения", "Армения"},
+	{"Узбекистан", "Узбекистан"},
+	{"Ташкент", "Узбекистан"},
+	{"Таджикистан", "Таджикистан"},
+	{"Душанбе", "Таджикистан"},
+	{"Dushanbe", "Таджикистан"},
+	{"Грузия", "Грузия"},
+	{"Тбилиси", "Грузия"},
+	{"Tbilisi", "Грузия"},
+	{"Кыргызстан", "Кыргызстан"},
+
+	// Северо-Кавказский ФО (check before ЮФО)
+	{"Дагестан", "Северо-Кавказский"},
+	{"РСО-Алания", "Северо-Кавказский"},
+	{"Северная Осетия", "Северо-Кавказский"},
+	{"Ставропольский край", "Северо-Кавказский"},
+	{"Ингушетия", "Северо-Кавказский"},
+	{"Кабардино-Балкар", "Северо-Кавказский"},
+	{"Карачаево-Черкес", "Северо-Кавказский"},
+	{"Чеченск", "Северо-Кавказский"},
+
+	// Южный ФО
+	{"Краснодарский край", "Южный"},
+	{"Астраханская обл", "Южный"},
+	{"Волгоградская обл", "Южный"},
+	{"Ростовская обл", "Южный"},
+	{"Республика Адыгея", "Южный"},
+	{"Калмыкия", "Южный"},
+	{"Республика Крым", "Южный"},
+	{"Симферополь", "Южный"},
+	{"Севастополь", "Южный"},
+
+	// Дальневосточный ФО (check before СФО — Забайкальский край moved to ДФО in 2018)
+	{"Приморский край", "Дальневосточный"},
+	{"Хабаровский край", "Дальневосточный"},
+	{"Амурская обл", "Дальневосточный"},
+	{"Забайкальский край", "Дальневосточный"},
+	{"Республика Саха", "Дальневосточный"},
+	{"Камчатский край", "Дальневосточный"},
+	{"Магаданская обл", "Дальневосточный"},
+	{"Сахалинская обл", "Дальневосточный"},
+	{"Чукотск", "Дальневосточный"},
+	{"Бурятия", "Дальневосточный"},
+
+	// Сибирский ФО
+	{"Новосибирская обл", "Сибирский"},
+	{"Кемеровская обл", "Сибирский"},
+	{"Кемеровская область", "Сибирский"},
+	{"Томская обл", "Сибирский"},
+	{"Омская обл", "Сибирский"},
+	{"Иркутская обл", "Сибирский"},
+	{"Алтайский край", "Сибирский"},
+	{"Красноярский край", "Сибирский"},
+	{"Республика Хакасия", "Сибирский"},
+	{"Республика Алтай", "Сибирский"},
+	{"Республика Тыва", "Сибирский"},
+
+	// Уральский ФО
+	{"Свердловская обл", "Уральский"},
+	{"Тюменская обл", "Уральский"},
+	{"Челябинская обл", "Уральский"},
+	{"Курганская обл", "Уральский"},
+	{"Ханты-Мансий", "Уральский"},
+	{"Ямало-Ненецк", "Уральский"},
+
+	// Приволжский ФО
+	{"Республика Татарстан", "Приволжский"},
+	{"Республика Башкортостан", "Приволжский"},
+	{"Башкортостан", "Приволжский"},
+	{"Удмуртск", "Приволжский"},
+	{"Чувашск", "Приволжский"},
+	{"Мордовия", "Приволжский"},
+	{"Марий Эл", "Приволжский"},
+	{"Пермский край", "Приволжский"},
+	{"Кировская обл", "Приволжский"},
+	{"Нижегородская обл", "Приволжский"},
+	{"Оренбургская обл", "Приволжский"},
+	{"Пензенская обл", "Приволжский"},
+	{"Самарская обл", "Приволжский"},
+	{"Саратовская обл", "Приволжский"},
+	{"Ульяновская обл", "Приволжский"},
+
+	// Северо-Западный ФО
+	{"Ленинградская обл", "Северо-Западный"},
+	{"Архангельская обл", "Северо-Западный"},
+	{"Вологодская обл", "Северо-Западный"},
+	{"Калининградская обл", "Северо-Западный"},
+	{"Мурманская обл", "Северо-Западный"},
+	{"Новгородская обл", "Северо-Западный"},
+	{"Псковская обл", "Северо-Западный"},
+	{"Республика Карелия", "Северо-Западный"},
+	{"Республика Коми", "Северо-Западный"},
+	{"Ненецк", "Северо-Западный"},
+
+	// Центральный ФО
+	{"Московская обл", "Центральный"},
+	{"Московская область", "Центральный"},
+	{"Белгородская обл", "Центральный"},
+	{"Брянская обл", "Центральный"},
+	{"Владимирская обл", "Центральный"},
+	{"Воронежская обл", "Центральный"},
+	{"Ивановская обл", "Центральный"},
+	{"Калужская обл", "Центральный"},
+	{"Костромская обл", "Центральный"},
+	{"Курская обл", "Центральный"},
+	{"Липецкая обл", "Центральный"},
+	{"Орловская обл", "Центральный"},
+	{"Рязанская обл", "Центральный"},
+	{"Смоленская обл", "Центральный"},
+	{"Тамбовская обл", "Центральный"},
+	{"Тверская обл", "Центральный"},
+	{"Тульская обл", "Центральный"},
+	{"Ярославская обл", "Центральный"},
+
+	// City-level fallbacks (for addresses without region info, matched in address or warehouse name)
+	{"Подольск", "Центральный"},
+	{"Коледино", "Центральный"},
+	{"Электросталь", "Центральный"},
+	{"Чехов", "Центральный"},
+	{"Домодедово", "Центральный"},
+	{"Калуга", "Центральный"},
+	{"Тверь", "Центральный"},
+	{"Курск", "Центральный"},
+	{"Липецк", "Центральный"},
+	{"Владимир", "Центральный"},
+	{"Смоленск", "Центральный"},
+	{"Воронеж", "Центральный"},
+	{"Рязань", "Центральный"},
+	{"Ярославль", "Центральный"},
+	{"Брянск", "Центральный"},
+	{"Тамбов", "Центральный"},
+	{"Котовск", "Центральный"},
+	{"Иваново", "Центральный"},
+	{"Обухово", "Центральный"},
+	{"Софьино", "Центральный"},
+	{"Чашниково", "Центральный"},
+	{"Солнечногорск", "Центральный"},
+	{"Пушкино", "Центральный"},
+	{"Истра", "Центральный"},
+	{"Раменский", "Центральный"},
+	{"Дмитровск", "Центральный"},
+	{"Климовск", "Центральный"},
+	{"Щербинка", "Центральный"},
+	{"Голицыно", "Центральный"},
+	{"Никольское", "Центральный"},
+	{"Радумля", "Центральный"},
+	{"Софрино", "Центральный"},
+	{"Белая Дача", "Центральный"},
+	{"Белые Столбы", "Центральный"},
+	{"Москва", "Центральный"},
+	{"Тула", "Центральный"},
+	{"Внуково", "Центральный"},
+	{"Шушары", "Северо-Западный"},
+	{"Мурманск", "Северо-Западный"},
+	{"Псков", "Северо-Западный"},
+	{"Вологда", "Северо-Западный"},
+	{"Череповец", "Северо-Западный"},
+	{"Калининград", "Северо-Западный"},
+	{"Сыктывкар", "Северо-Западный"},
+	{"Архангельск", "Северо-Западный"},
+	{"Красный Бор", "Северо-Западный"},
+	{"Ломоносовский", "Северо-Западный"},
+	{"Новосибирск", "Сибирский"},
+	{"Кемерово", "Сибирский"},
+	{"Томск", "Сибирский"},
+	{"Омск", "Сибирский"},
+	{"Барнаул", "Сибирский"},
+	{"Абакан", "Сибирский"},
+	{"Новокузнецк", "Сибирский"},
+	{"Иркутск", "Сибирский"},
+	{"Красноярск", "Сибирский"},
+	{"Юрга", "Сибирский"},
+	{"Екатеринбург", "Уральский"},
+	{"Тюмень", "Уральский"},
+	{"Сургут", "Уральский"},
+	{"Челябинск", "Уральский"},
+	{"Нижний Тагил", "Уральский"},
+	{"Ноябрьск", "Уральский"},
+	{"Казань", "Приволжский"},
+	{"Ульяновск", "Приволжский"},
+	{"Уфа", "Приволжский"},
+	{"Пермь", "Приволжский"},
+	{"Чебоксары", "Приволжский"},
+	{"Сарапул", "Приволжский"},
+	{"Новосемейкино", "Приволжский"},
+	{"Ижевск", "Приволжский"},
+	{"Оренбург", "Приволжский"},
+	{"Кузнецк", "Приволжский"},
+	{"Киров", "Приволжский"},
+	{"Нижний Новгород", "Приволжский"},
+	{"Пенза", "Приволжский"},
+	{"Набережные Челны", "Приволжский"},
+	{"Краснодар", "Южный"},
+	{"Астрахань", "Южный"},
+	{"Волгоград", "Южный"},
+	{"Ростов", "Южный"},
+	{"Крыловская", "Южный"},
+	{"Владикавказ", "Северо-Кавказский"},
+	{"Махачкала", "Северо-Кавказский"},
+	{"Невинномысск", "Северо-Кавказский"},
+	{"Пятигорск", "Северо-Кавказский"},
+	{"Хабаровск", "Дальневосточный"},
+	{"Владивосток", "Дальневосточный"},
+	{"Артем", "Дальневосточный"},
+	{"Белогорск", "Дальневосточный"},
+	{"Чита", "Дальневосточный"},
+	{"Гомель", "Беларусь"},
+	{"Минск", "Беларусь"},
+	{"Ереван", "Армения"},
+	{"Остальные", "Центральный"},
+	{"Вёшки", "Центральный"},
+	{"Вешки", "Центральный"},
+}
+
+// parseAddressToFO extracts federal district from a warehouse address and name.
+// First tries address patterns, then falls back to warehouse name matching.
+// Uses case-insensitive comparison for robustness.
+func parseAddressToFO(address, whName string) string {
+	addrLower := strings.ToLower(address)
+	whLower := strings.ToLower(whName)
+	// 1. Try address patterns
+	for _, p := range addressFOPatterns {
+		if strings.Contains(addrLower, strings.ToLower(p.Pattern)) {
+			return p.FO
+		}
+	}
+	// 2. Try warehouse name patterns
+	for _, p := range addressFOPatterns {
+		if strings.Contains(whLower, strings.ToLower(p.Pattern)) {
+			return p.FO
+		}
+	}
+	return ""
+}
+
 // SQL queries for source DB (wb-sales.db, read-only).
 
-// Stock positions aggregated by (nm_id, chrt_id, region_name).
+// Stock positions aggregated by (nm_id, chrt_id, warehouse_id).
+// Region is resolved via warehouse FO map in Go code (warehouse_id → FO).
 // Includes in_way_from_client (returns from customers) as available stock.
 const stockPositionsSQL = `
-SELECT nm_id, chrt_id, region_name,
+SELECT nm_id, chrt_id, warehouse_id,
        SUM(quantity + COALESCE(in_way_from_client, 0)) AS stock_qty
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
   AND nm_id IN (%s)
-GROUP BY nm_id, chrt_id, region_name
+GROUP BY nm_id, chrt_id, warehouse_id
 `
 
 // All stock positions without year filter (allowed_years empty).
-// Includes in_way_from_client (returns from customers) as available stock.
 const stockPositionsAllSQL = `
-SELECT nm_id, chrt_id, region_name,
+SELECT nm_id, chrt_id, warehouse_id,
        SUM(quantity + COALESCE(in_way_from_client, 0)) AS stock_qty
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
-GROUP BY nm_id, chrt_id, region_name
+GROUP BY nm_id, chrt_id, warehouse_id
 `
 
-// Total unique sizes per nm_id (globally, not per region).
-const totalSizesSQL = `
-SELECT nm_id, COUNT(DISTINCT chrt_id) AS total_sizes
-FROM stocks_daily_warehouses
-WHERE snapshot_date = ?
-  AND nm_id IN (%s)
+// Total unique sizes per nm_id from card_sizes (complete size reference).
+const totalSizesFromCardsSQL = `
+SELECT nm_id, COUNT(*) AS total_sizes
+FROM card_sizes
+WHERE nm_id IN (%s)
 GROUP BY nm_id
 `
 
-const totalSizesAllSQL = `
-SELECT nm_id, COUNT(DISTINCT chrt_id) AS total_sizes
-FROM stocks_daily_warehouses
-WHERE snapshot_date = ?
+const totalSizesFromCardsAllSQL = `
+SELECT nm_id, COUNT(*) AS total_sizes
+FROM card_sizes
 GROUP BY nm_id
 `
 
-// Sizes with stock > threshold per (nm_id, region).
-// Includes in_way_from_client (returns from customers) as available stock.
+// Sizes with stock > threshold per (nm_id, warehouse_id).
+// Region is resolved via warehouse FO map in Go code (warehouse_id → FO).
 const sizesInStockSQL = `
-SELECT nm_id, region_name, COUNT(DISTINCT chrt_id) AS sizes_in_stock
+SELECT nm_id, warehouse_id, COUNT(DISTINCT chrt_id) AS sizes_in_stock
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
   AND (quantity + COALESCE(in_way_from_client, 0)) > ?
   AND nm_id IN (%s)
-GROUP BY nm_id, region_name
+GROUP BY nm_id, warehouse_id
 `
 
 // Sizes with stock > threshold without year filter.
-// Includes in_way_from_client (returns from customers) as available stock.
 const sizesInStockAllSQL = `
-SELECT nm_id, region_name, COUNT(DISTINCT chrt_id) AS sizes_in_stock
+SELECT nm_id, warehouse_id, COUNT(DISTINCT chrt_id) AS sizes_in_stock
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
   AND (quantity + COALESCE(in_way_from_client, 0)) > ?
-GROUP BY nm_id, region_name
+GROUP BY nm_id, warehouse_id
 `
 
-// Daily sales per (nm_id, barcode) for MA computation.
-// MA is global (no region filter) — sales are counted across all warehouses.
-const dailySalesByBarcodeSQL = `
-SELECT nm_id, barcode, date(sale_dt) AS d,
+// Daily sales per (nm_id, barcode, office_name) for regional MA computation.
+// office_name from sales maps to region_name via warehouse region map.
+const dailySalesByRegionSQL = `
+SELECT nm_id, barcode, office_name, date(sale_dt) AS d,
        SUM(CASE WHEN doc_type_name = 'Продажа' THEN quantity ELSE 0 END) AS sold
 FROM sales
 WHERE date(sale_dt) >= date(?, '-29 days')
   AND date(sale_dt) <= ?
   AND is_cancel = 0
   AND nm_id IN (%s)
-GROUP BY nm_id, barcode, date(sale_dt)
+GROUP BY nm_id, barcode, office_name, date(sale_dt)
 `
 
-const dailySalesByBarcodeAllSQL = `
-SELECT nm_id, barcode, date(sale_dt) AS d,
+const dailySalesByRegionAllSQL = `
+SELECT nm_id, barcode, office_name, date(sale_dt) AS d,
        SUM(CASE WHEN doc_type_name = 'Продажа' THEN quantity ELSE 0 END) AS sold
 FROM sales
 WHERE date(sale_dt) >= date(?, '-29 days')
   AND date(sale_dt) <= ?
   AND is_cancel = 0
-GROUP BY nm_id, barcode, date(sale_dt)
+GROUP BY nm_id, barcode, office_name, date(sale_dt)
 `
 
 // Card sizes mapping: chrt_id → (nm_id, tech_size, barcode from skus_json).
@@ -151,6 +401,12 @@ GROUP BY sg.barcode
 HAVING incoming > 0
 `
 
+// Warehouse addresses for FO mapping from wb_warehouses.
+// Returns id for direct JOIN with stocks_daily_warehouses.warehouse_id.
+const warehouseAddressesSQL = `
+SELECT id, name, address FROM wb_warehouses
+`
+
 // SourceRepo provides read-only access to wb-sales.db.
 type SourceRepo struct {
 	db *sql.DB
@@ -165,8 +421,9 @@ func NewSourceRepo(dbPath string) (*SourceRepo, error) {
 	return &SourceRepo{db: db}, nil
 }
 
-// QueryStockPositions returns stock data grouped by (nm_id, chrt_id, region).
-func (r *SourceRepo) QueryStockPositions(ctx context.Context, date string, nmIDs []int) (map[StockKey]StockInfo, error) {
+// QueryStockPositions returns stock data grouped by (nm_id, chrt_id, fo_name).
+// Uses warehouse_id from stocks, resolved to FO via warehouseIDFOmap.
+func (r *SourceRepo) QueryStockPositions(ctx context.Context, date string, nmIDs []int, warehouseIDFOmap map[int]string) (map[StockKey]StockInfo, error) {
 	var query string
 	var args []any
 
@@ -186,29 +443,45 @@ func (r *SourceRepo) QueryStockPositions(ctx context.Context, date string, nmIDs
 	defer rows.Close()
 
 	result := make(map[StockKey]StockInfo)
+	var unmappedWh int
 	for rows.Next() {
-		var key StockKey
+		var nmID int
+		var chrtID int64
+		var whID int
 		var qty int64
-		if err := rows.Scan(&key.NmID, &key.ChrtID, &key.RegionName, &qty); err != nil {
+		if err := rows.Scan(&nmID, &chrtID, &whID, &qty); err != nil {
 			return nil, fmt.Errorf("scan stock position: %w", err)
 		}
-		result[key] = StockInfo{StockQty: qty}
+
+		fo, ok := warehouseIDFOmap[whID]
+		if !ok {
+			unmappedWh++
+			continue
+		}
+
+		key := StockKey{NmID: nmID, ChrtID: chrtID, RegionName: fo}
+		info := result[key]
+		info.StockQty += qty
+		result[key] = info
+	}
+	if unmappedWh > 0 {
+		fmt.Printf("  (skipped %d stock rows: unmapped warehouse_id)\n", unmappedWh)
 	}
 	return result, rows.Err()
 }
 
-// QueryTotalSizes returns total unique sizes per nm_id.
-func (r *SourceRepo) QueryTotalSizes(ctx context.Context, date string, nmIDs []int) (map[int]int, error) {
+// QueryTotalSizes returns total unique sizes per nm_id from card_sizes.
+func (r *SourceRepo) QueryTotalSizes(ctx context.Context, nmIDs []int) (map[int]int, error) {
 	var query string
 	var args []any
 
 	if len(nmIDs) > 0 {
 		ph, a := placeholders(nmIDs)
-		query = fmt.Sprintf(totalSizesSQL, ph)
-		args = append([]any{date}, a...)
+		query = fmt.Sprintf(totalSizesFromCardsSQL, ph)
+		args = a
 	} else {
-		query = totalSizesAllSQL
-		args = []any{date}
+		query = totalSizesFromCardsAllSQL
+		args = nil
 	}
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -228,8 +501,9 @@ func (r *SourceRepo) QueryTotalSizes(ctx context.Context, date string, nmIDs []i
 	return result, rows.Err()
 }
 
-// QuerySizesInStock returns sizes with stock > threshold per (nm_id, region).
-func (r *SourceRepo) QuerySizesInStock(ctx context.Context, date string, threshold int, nmIDs []int) (map[SizeRegionKey]int, error) {
+// QuerySizesInStock returns sizes with stock > threshold per (nm_id, fo_name).
+// Uses warehouse_id from stocks, resolved to FO via warehouseIDFOmap.
+func (r *SourceRepo) QuerySizesInStock(ctx context.Context, date string, threshold int, nmIDs []int, warehouseIDFOmap map[int]string) (map[SizeRegionKey]int, error) {
 	var query string
 	var args []any
 
@@ -250,62 +524,206 @@ func (r *SourceRepo) QuerySizesInStock(ctx context.Context, date string, thresho
 
 	result := make(map[SizeRegionKey]int)
 	for rows.Next() {
-		var key SizeRegionKey
+		var nmID int
+		var whID int
 		var count int
-		if err := rows.Scan(&key.NmID, &key.RegionName, &count); err != nil {
+		if err := rows.Scan(&nmID, &whID, &count); err != nil {
 			return nil, fmt.Errorf("scan sizes in stock: %w", err)
 		}
-		result[key] = count
+
+		fo, ok := warehouseIDFOmap[whID]
+		if !ok {
+			continue
+		}
+
+		key := SizeRegionKey{NmID: nmID, RegionName: fo}
+		result[key] += count
 	}
 	return result, rows.Err()
 }
 
-// QueryDailySalesByBarcode returns daily sales per (nm_id, barcode) for 29-day window.
-func (r *SourceRepo) QueryDailySalesByBarcode(ctx context.Context, refDate string, nmIDs []int) (map[int]map[string]map[string]int, error) {
+// QueryDailySalesByRegion returns daily sales per (nm_id, chrt_id, region, date) for 29-day window.
+// Maps office_name → region_name via warehouseRegionMap, then barcode → chrt_id via barcodeToChrt.
+// Returns: nm_id → chrt_id → region_name → date → sold.
+// Sales with unmapped office_name are skipped (MA will be N/A for those positions).
+func (r *SourceRepo) QueryDailySalesByRegion(
+	ctx context.Context,
+	refDate string,
+	nmIDs []int,
+	warehouseRegionMap map[string]string,
+	barcodeToChrt map[string]int64,
+) (map[int]map[int64]map[string]map[string]int, error) {
 	var query string
 	var args []any
 
 	if len(nmIDs) > 0 {
 		ph, a := placeholders(nmIDs)
-		query = fmt.Sprintf(dailySalesByBarcodeSQL, ph)
+		query = fmt.Sprintf(dailySalesByRegionSQL, ph)
 		args = append([]any{refDate, refDate}, a...)
 	} else {
-		query = dailySalesByBarcodeAllSQL
+		query = dailySalesByRegionAllSQL
 		args = []any{refDate, refDate}
 	}
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query daily sales by barcode: %w", err)
+		return nil, fmt.Errorf("query daily sales by region: %w", err)
 	}
 	defer rows.Close()
 
-	// nm_id → barcode → date → sold
-	result := make(map[int]map[string]map[string]int)
+	// nm_id → chrt_id → region_name → date → sold
+	result := make(map[int]map[int64]map[string]map[string]int)
+	var skippedOffice, skippedBarcode int
+
 	for rows.Next() {
 		var nmID int
-		var barcode, d string
+		var barcode, officeName, d string
 		var sold int
-		if err := rows.Scan(&nmID, &barcode, &d, &sold); err != nil {
+		if err := rows.Scan(&nmID, &barcode, &officeName, &d, &sold); err != nil {
 			return nil, fmt.Errorf("scan daily sales: %w", err)
 		}
+
+		// Map office_name → region_name
+		region := MatchOfficeToRegion(officeName, warehouseRegionMap)
+		if region == "" {
+			skippedOffice += sold
+			continue
+		}
+
+		// Map barcode → chrt_id
+		chrtID, ok := barcodeToChrt[barcode]
+		if !ok {
+			skippedBarcode += sold
+			continue
+		}
+
 		if result[nmID] == nil {
-			result[nmID] = make(map[string]map[string]int)
+			result[nmID] = make(map[int64]map[string]map[string]int)
 		}
-		if result[nmID][barcode] == nil {
-			result[nmID][barcode] = make(map[string]int)
+		if result[nmID][chrtID] == nil {
+			result[nmID][chrtID] = make(map[string]map[string]int)
 		}
-		result[nmID][barcode][d] = sold
+		if result[nmID][chrtID][region] == nil {
+			result[nmID][chrtID][region] = make(map[string]int)
+		}
+		result[nmID][chrtID][region][d] += sold
+	}
+	if skippedOffice > 0 {
+		fmt.Printf("  (skipped %d sold units: unmapped office_name)\n", skippedOffice)
+	}
+	if skippedBarcode > 0 {
+		fmt.Printf("  (skipped %d sold units: unmapped barcode)\n", skippedBarcode)
 	}
 	return result, rows.Err()
 }
 
-// CardSizeEntry maps chrt_id to nm_id, tech_size, and barcode (from skus_json).
+// QueryWarehouseFOMaps returns warehouse_id → fo_name and warehouse_name → fo_name mappings.
+// Parses addresses from wb_warehouses (primary source), then enriches from stock warehouse names
+// for IDs not present in wb_warehouses (FBS warehouses, small/closed warehouses).
+// byID is used for stock queries (warehouse_id from stocks_daily_warehouses).
+// byName is used for sales queries (office_name from sales table).
+func (r *SourceRepo) QueryWarehouseFOMaps(ctx context.Context, date string) (map[int]string, map[string]string, error) {
+	// Step 1: Parse wb_warehouses addresses → build byID and byName maps
+	rows, err := r.db.QueryContext(ctx, warehouseAddressesSQL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("query warehouse addresses: %w", err)
+	}
+	defer rows.Close()
+
+	byID := make(map[int]string)
+	byName := make(map[string]string)
+
+	for rows.Next() {
+		var id int
+		var name, address string
+		if err := rows.Scan(&id, &name, &address); err != nil {
+			return nil, nil, fmt.Errorf("scan warehouse address: %w", err)
+		}
+		fo := parseAddressToFO(address, name)
+		if fo != "" {
+			byID[id] = fo
+			byName[name] = fo
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	// Step 2: Enrich from stock warehouse names for IDs not in wb_warehouses.
+	// Some warehouses (FBS seller warehouses, small warehouses) exist in stocks
+	// but not in wb_warehouses. Parse their names directly for FO mapping.
+	stockRows, err := r.db.QueryContext(ctx,
+		`SELECT DISTINCT warehouse_id, warehouse_name FROM stocks_daily_warehouses WHERE snapshot_date = ?`, date)
+	if err != nil {
+		return nil, nil, fmt.Errorf("query stock warehouse names: %w", err)
+	}
+	defer stockRows.Close()
+
+	var enriched int
+	for stockRows.Next() {
+		var whID int
+		var whName string
+		if err := stockRows.Scan(&whID, &whName); err != nil {
+			return nil, nil, fmt.Errorf("scan stock warehouse: %w", err)
+		}
+
+		// Already mapped from wb_warehouses? Ensure name variant is in byName.
+		// Stock and wb names can differ for the same warehouse_id
+		// (e.g., "Кемерово" vs "СЦ Кемерово", "Краснодар" vs "Краснодар (Тихорецкая)").
+		if fo, ok := byID[whID]; ok {
+			if _, nameOk := byName[whName]; !nameOk {
+				byName[whName] = fo
+			}
+			continue
+		}
+
+		// ID not in wb_warehouses — try parsing warehouse name directly
+		fo := parseAddressToFO("", whName)
+		if fo != "" {
+			byID[whID] = fo
+			byName[whName] = fo
+			enriched++
+		}
+	}
+	if err := stockRows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if enriched > 0 {
+		fmt.Printf("  (enriched %d warehouses from stock names)\n", enriched)
+	}
+
+	return byID, byName, nil
+}
+
+// MatchOfficeToRegion maps a sales office_name to region_name using the warehouse map.
+// Pipeline: exact match → substring match (office contained in warehouse or vice versa).
+// Returns empty string if no match found.
+func MatchOfficeToRegion(officeName string, warehouseMap map[string]string) string {
+	if officeName == "" {
+		return ""
+	}
+
+	// 1. Exact match
+	if region, ok := warehouseMap[officeName]; ok {
+		return region
+	}
+
+	// 2. Substring match: office_name contained in warehouse_name
+	for whName, region := range warehouseMap {
+		if strings.Contains(whName, officeName) || strings.Contains(officeName, whName) {
+			return region
+		}
+	}
+
+	return ""
+}
+
+// CardSizeEntry maps chrt_id to nm_id, tech_size, and barcodes (from skus_json).
 type CardSizeEntry struct {
-	ChrtID   int64
-	NmID     int
-	TechSize string
-	Barcode  string // first barcode from skus_json
+	ChrtID    int64
+	NmID      int
+	TechSize  string
+	Barcodes  []string // all barcodes from skus_json
 }
 
 // QueryCardSizes returns all card_sizes entries with parsed barcodes.
@@ -325,16 +743,16 @@ func (r *SourceRepo) QueryCardSizes(ctx context.Context) ([]CardSizeEntry, error
 			return nil, fmt.Errorf("scan card sizes: %w", err)
 		}
 
-		barcode := parseFirstBarcode(skusJSON)
-		if barcode == "" {
-			continue // skip entries without barcode
+		barcodes := parseAllBarcodes(skusJSON)
+		if len(barcodes) == 0 {
+			continue
 		}
 
 		result = append(result, CardSizeEntry{
 			ChrtID:   chrtID,
 			NmID:     nmID,
 			TechSize: techSize,
-			Barcode:  barcode,
+			Barcodes: barcodes,
 		})
 	}
 	return result, rows.Err()
@@ -427,20 +845,17 @@ func (r *SourceRepo) QuerySupplyIncoming(ctx context.Context) (map[string]int64,
 	return result, rows.Err()
 }
 
-// parseFirstBarcode extracts the first barcode from skus_json array.
+// parseAllBarcodes extracts all barcodes from skus_json array.
 // skus_json format: ["4630047636342"] or ["barcode1","barcode2"]
-func parseFirstBarcode(skusJSON string) string {
+func parseAllBarcodes(skusJSON string) []string {
 	if skusJSON == "" || skusJSON == "[]" {
-		return ""
+		return nil
 	}
 	var barcodes []string
 	if err := json.Unmarshal([]byte(skusJSON), &barcodes); err != nil {
-		return ""
+		return nil
 	}
-	if len(barcodes) == 0 {
-		return ""
-	}
-	return barcodes[0]
+	return barcodes
 }
 
 // placeholders generates comma-separated "?" placeholders and args for nmIDs.

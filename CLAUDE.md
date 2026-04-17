@@ -605,8 +605,9 @@ Production utilities organized by purpose:
 - `download-wb-prices` - WB Discounts-Prices API → SQLite (offset pagination)
 - `download-1c-data` - 1C/PIM product catalog + 25 price types → SQLite (streaming JSON decode)
 
-**`data-analyzers/`** - LLM-powered data analysis
+**`data-analyzers/`** - Data analysis and computation utilities
 - `analyze-wb-feedbacks` - Feedback quality analysis via OpenRouter (two-level LLM aggregation)
+- `build-ma-sku-snapshots` - SKU-level stock analysis with regional moving averages (MA-3/7/14/28, risk flags, supply incoming)
 
 **`fix-utilities/`** - Data fix/cleanup tools
 - `fix-fake-png` - Fix PNG/JSON file naming

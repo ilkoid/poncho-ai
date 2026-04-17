@@ -139,9 +139,17 @@ func main() {
 		fmt.Printf("%d products match years %v\n", len(filteredNmIDs), cfg.Filter.AllowedYears)
 	}
 
-	// Step 1: Query stock positions
+	// Step 1: Build warehouse → FO mapping (from address parsing)
+	fmt.Print("Querying warehouse FO map... ")
+	whByID, whByName, err := source.QueryWarehouseFOMaps(ctx, refDate)
+	if err != nil {
+		log.Fatalf("Query warehouse FO map: %v", err)
+	}
+	fmt.Printf("%d by ID, %d by name\n", len(whByID), len(whByName))
+
+	// Step 2: Query stock positions (grouped by FO)
 	fmt.Print("Querying stock positions... ")
-	stocks, err := source.QueryStockPositions(ctx, refDate, filteredNmIDs)
+	stocks, err := source.QueryStockPositions(ctx, refDate, filteredNmIDs, whByID)
 	if err != nil {
 		log.Fatalf("Query stocks: %v", err)
 	}
@@ -155,17 +163,17 @@ func main() {
 	// Collect unique nm_ids from stock data
 	stockNmIDs := collectNmIDs(stocks)
 
-	// Step 2: Size info (total sizes per nm_id, sizes in stock per region)
+	// Step 3: Size info (total sizes per nm_id, sizes in stock per FO)
 	fmt.Print("Querying size info... ")
-	totalSizes, err := source.QueryTotalSizes(ctx, refDate, filteredNmIDs)
+	totalSizes, err := source.QueryTotalSizes(ctx, filteredNmIDs)
 	if err != nil {
 		log.Fatalf("Query total sizes: %v", err)
 	}
-	sizesInStock, err := source.QuerySizesInStock(ctx, refDate, cfg.Alerts.ZeroStockThreshold, filteredNmIDs)
+	sizesInStock, err := source.QuerySizesInStock(ctx, refDate, cfg.Alerts.ZeroStockThreshold, filteredNmIDs, whByID)
 	if err != nil {
 		log.Fatalf("Query sizes in stock: %v", err)
 	}
-	fmt.Printf("%d products, %d regions\n", len(totalSizes), len(sizesInStock))
+	fmt.Printf("%d products, %d FO groups\n", len(totalSizes), len(sizesInStock))
 
 	// Combine into SizeInfo map
 	sizeInfoMap := make(map[SizeRegionKey]SizeInfo)
@@ -200,40 +208,26 @@ func main() {
 		log.Fatalf("Query card sizes: %v", err)
 	}
 
-	// Build maps: chrt_id → CardSizeEntry, barcode → chrt_id
+	// Build maps: chrt_id → CardSizeEntry, barcode → chrt_id (all barcodes per entry)
 	chrtToEntry := make(map[int64]CardSizeEntry, len(cardSizes))
 	barcodeToChrt := make(map[string]int64, len(cardSizes))
 	for _, cs := range cardSizes {
 		chrtToEntry[cs.ChrtID] = cs
-		barcodeToChrt[cs.Barcode] = cs.ChrtID
+		for _, bc := range cs.Barcodes {
+			barcodeToChrt[bc] = cs.ChrtID
+		}
 	}
 	fmt.Printf("%d mappings (barcode → chrt_id)\n", len(barcodeToChrt))
 
-	// Step 4: Daily sales by barcode for MA
-	fmt.Print("Querying daily sales by barcode... ")
-	salesByBarcode, err := source.QueryDailySalesByBarcode(ctx, refDate, stockNmIDs)
+	// Step 5: Daily sales by FO for MA
+	fmt.Print("Querying daily sales by region... ")
+	maData, err := source.QueryDailySalesByRegion(ctx, refDate, stockNmIDs, whByName, barcodeToChrt)
 	if err != nil {
 		log.Fatalf("Query sales: %v", err)
 	}
+	fmt.Printf("%d products with regional sales data\n", len(maData))
 
-	// Convert: nm_id → barcode → dayMap → nm_id → chrt_id → dayMap
-	// (remap barcode to chrt_id using barcodeToChrt map)
-	maData := make(map[int]map[int64]map[string]int)
-	for nmID, barcodeMap := range salesByBarcode {
-		for barcode, dayMap := range barcodeMap {
-			chrtID, ok := barcodeToChrt[barcode]
-			if !ok {
-				continue // skip barcodes not in card_sizes
-			}
-			if maData[nmID] == nil {
-				maData[nmID] = make(map[int64]map[string]int)
-			}
-			maData[nmID][chrtID] = dayMap
-		}
-	}
-	fmt.Printf("%d products with sales data\n", len(maData))
-
-	// Step 5: Compute SKU snapshots
+	// Step 6: Compute SKU snapshots (regional MA, no fallback)
 	fmt.Print("Computing SKU snapshots... ")
 	alerts := AlertsParams{
 		ZeroStockThreshold: cfg.Alerts.ZeroStockThreshold,

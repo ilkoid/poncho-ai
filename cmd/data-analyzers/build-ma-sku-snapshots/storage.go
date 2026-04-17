@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS ma_sku_daily (
     sizes_in_stock  INTEGER DEFAULT 0,
     fill_pct        REAL DEFAULT 0,
 
-    -- MA (global per barcode)
+    -- MA (regional per chrt_id, N/A when insufficient data)
+    ma_regional     INTEGER DEFAULT 0,
     ma_3            REAL,
     ma_7            REAL,
     ma_14           REAL,
@@ -115,6 +116,16 @@ func NewResultsRepo(dbPath string) (*ResultsRepo, error) {
 		return nil, fmt.Errorf("create ma_sku_daily table: %w", err)
 	}
 
+	// Migrate: add ma_regional column if missing (pre-existing tables)
+	var hasMARegional int
+	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ma_sku_daily') WHERE name = 'ma_regional'`).Scan(&hasMARegional)
+	if hasMARegional == 0 {
+		if _, err := db.Exec(`ALTER TABLE ma_sku_daily ADD COLUMN ma_regional INTEGER DEFAULT 0`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate add ma_regional: %w", err)
+		}
+	}
+
 	return &ResultsRepo{db: db}, nil
 }
 
@@ -176,11 +187,11 @@ INSERT OR REPLACE INTO ma_sku_daily (
     name, brand, type, category, category_level1, category_level2,
     sex, season, color, collection,
     stock_qty, supply_incoming, total_sizes, sizes_in_stock, fill_pct,
-    ma_3, ma_7, ma_14, ma_28,
+    ma_regional, ma_3, ma_7, ma_14, ma_28,
     sdr_days, trend_pct,
     risk, critical, out_of_stock, broken_grid,
     computed_at
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 // SaveSKUSnapshots saves flat SKU snapshot rows in a single transaction.
 // Drop indexes before calling, then CreateIndexes() after.
@@ -210,7 +221,7 @@ func (r *ResultsRepo) SaveSKUSnapshots(ctx context.Context, rows []SKURow) (int,
 			row.Name, row.Brand, row.Type, row.Category, row.CategoryLevel1, row.CategoryLevel2,
 			row.Sex, row.Season, row.Color, row.Collection,
 			row.StockQty, row.SupplyIncoming, row.TotalSizes, row.SizesInStock, row.FillPct,
-			row.MA3, row.MA7, row.MA14, row.MA28,
+			boolToInt(row.MARegional), row.MA3, row.MA7, row.MA14, row.MA28,
 			row.SDRDays, row.TrendPct,
 			boolToInt(row.Risk), boolToInt(row.Critical), boolToInt(row.OutOfStock), boolToInt(row.BrokenGrid),
 			now,

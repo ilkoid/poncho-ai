@@ -32,7 +32,7 @@ echo "--- Cards + 1C/PIM catalog ---"
 
 # Phase 3: Stock snapshots (depends on cards being loaded)
 echo "--- Stock snapshots ---"
-(cd cmd/data-downloaders/download-wb-stocks && go run . --date 2026-04-16 --config ../../../$CONFIG_DIR/download-wb-stocks.yaml) || exit $?
+(cd cmd/data-downloaders/download-wb-stocks && go run . --date $(date +%Y-%m-%d) --config ../../../$CONFIG_DIR/download-wb-stocks.yaml) || exit $?
 
 # Phase 4: Supplies (incoming stock data for supply_incoming column)
 echo "--- Supplies ---"

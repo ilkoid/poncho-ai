@@ -133,6 +133,15 @@ TABLES_DATA = [
         'rate_limit': '30/мин',
         'utility': 'download-wb-supplies'
     },
+    {
+        'category': 'SKU-аналитика с MA (вычисляемая)',
+        'tables': [
+            ('ma_sku_daily', 'Вычисляется из stocks + sales + cards + onec_goods', 'Составной: (snapshot_date, nm_id, chrt_id, region_name)', '(сам PK составной)'),
+        ],
+        'api_url': 'Нет (вычисляемая таблица)',
+        'rate_limit': 'N/A',
+        'utility': 'build-ma-sku-snapshots'
+    },
 ]
 
 API_URLS = [
