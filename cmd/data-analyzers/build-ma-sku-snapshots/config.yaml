@@ -1,0 +1,38 @@
+# MA SKU Snapshots Builder Configuration
+#
+# Анализ остатков по размерам (SKU) на региональных складах.
+# MA из sales, остатки из stocks_daily_warehouses, результат — плоская таблица для BI.
+#
+# USAGE:
+#   go run .                              # снэпшот за вчера
+#   go run . --date 2026-04-15            # конкретная дата
+#   go run . --dry-run                    # сводка в консоль, без записи в БД
+#   go run . --force                      # пересчитать даже если снэпшот есть
+
+source:
+  # База с сырыми данными (WB + 1C таблицы)
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+
+results:
+  # База аналитики для BI
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/bi2.db"
+
+ma:
+  windows: [3, 7, 14, 28]
+  min_days: 1
+
+alerts:
+  # Порог нулевого остатка: stock_qty <= этого значения = "товара нет"
+  zero_stock_threshold: 1
+  # Окно подсортировки (дней). Если SDR <= reorder_window → риск
+  reorder_window: 7
+  # SDR <= critical_days → критично
+  critical_days: 3
+
+filter:
+  # Фильтрация по году производства (извлекается из 2-3 цифры артикула продавца)
+  # Например: 12621749 → год "26" (2026), 32311215 → год "23" (2023)
+  # Пустой список = все товары
+  allowed_years: [25, 26]
+
+force: false

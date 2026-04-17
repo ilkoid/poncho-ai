@@ -1,6 +1,10 @@
 package main
 
-import "time"
+import (
+	"time"
+
+	"github.com/ilkoid/poncho-ai/pkg/analytics"
+)
 
 // MARow represents one row in the flat ma_daily table.
 // All product identifiers and attributes are denormalized into this single struct.
@@ -70,7 +74,7 @@ func ComputeMASnapshots(daily map[int]map[string]int, refDate string, windows []
 
 		// Compute MAs for each window
 		for _, w := range windows {
-			ma := computeMA(dayMap, ref, w, minDays)
+			ma := analytics.ComputeMA(dayMap, ref, w, minDays)
 			if ma == nil {
 				continue
 			}
@@ -93,26 +97,3 @@ func ComputeMASnapshots(daily map[int]map[string]int, refDate string, windows []
 	return result
 }
 
-// computeMA calculates the average of daily sales over the N days before refDate.
-// Zero-sales days (days without entries in dayMap) are counted as 0.
-// Returns nil if fewer than minDays have any sales data in the window.
-func computeMA(dayMap map[string]int, ref time.Time, window, minDays int) *float64 {
-	var sum float64
-	var daysWithData int
-
-	for i := 1; i <= window; i++ {
-		d := ref.AddDate(0, 0, -i).Format("2006-01-02")
-		v := dayMap[d] // returns 0 if key missing — zero-sales day
-		sum += float64(v)
-		if v > 0 {
-			daysWithData++
-		}
-	}
-
-	if daysWithData < minDays {
-		return nil
-	}
-
-	avg := sum / float64(window)
-	return &avg
-}

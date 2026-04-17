@@ -160,10 +160,12 @@ cmd/data-analyzers/analyze-wb-*/analyze-wb-*
 cmd/data-analyzers/compare-wb-1c-prices/compare-wb-1c-prices
 cmd/data-analyzers/1c_mktpl_mapping/1c_mktpl_mapping
 cmd/data-analyzers/build-ma-snapshots/build-ma-snapshots
+cmd/data-analyzers/build-ma-sku-snapshots/build-ma-sku-snapshots
 cmd/data-analyzers/check-db-freshness/check-db-freshness
 /compare-wb-1c-prices
 /1c_mktpl_mapping
 /build-ma-snapshots
+/build-ma-sku-snapshots
 
 # Stray sqlite parameter file
 "?mode=ro"

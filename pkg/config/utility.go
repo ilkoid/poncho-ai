@@ -923,6 +923,81 @@ func (c *SupplyConfig) GetDefaults() SupplyConfig {
 }
 
 // ============================================================================
+// Analytics (shared types for data-analyzers utilities)
+// ============================================================================
+
+// AlertsConfig — параметры рисков для аналитических утилит.
+//
+// Используется в build-ma-sku-snapshots для определения порогов тревоги.
+type AlertsConfig struct {
+	ZeroStockThreshold int `yaml:"zero_stock_threshold"` // stock <= threshold = "нет товара" (default: 1)
+	ReorderWindow      int `yaml:"reorder_window"`       // SDR <= window → риск (default: 7)
+	CriticalDays       int `yaml:"critical_days"`         // SDR <= days → критично (default: 3)
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c *AlertsConfig) GetDefaults() AlertsConfig {
+	result := *c
+	if result.ZeroStockThreshold == 0 {
+		result.ZeroStockThreshold = 1
+	}
+	if result.ReorderWindow == 0 {
+		result.ReorderWindow = 7
+	}
+	if result.CriticalDays == 0 {
+		result.CriticalDays = 3
+	}
+	return result
+}
+
+// YearFilterConfig — фильтрация товаров по году производства.
+//
+// Год извлекается из 2-3 цифры vendor_code (артикула продавца).
+// Используется в build-ma-sku-snapshots, download-wb-funnel и др.
+type YearFilterConfig struct {
+	AllowedYears []int `yaml:"allowed_years"` // [25, 26] = только 2025-2026. Пустой = без фильтра
+}
+
+// YearEntry — входная запись для FilterNmIDsByYear: пара (NmID, VendorCode).
+type YearEntry struct {
+	NmID       int
+	VendorCode string
+}
+
+// FilterNmIDsByYear фильтрует nm_id по году производства (из vendor_code).
+//
+// Год = SUBSTR(vendor_code, 2, 2) как int (напр. "12621749" → 26).
+// Если allowedYears пуст — возвращаются все nm_id без фильтрации.
+// Записи с vendor_code короче 3 символов пропускаются.
+func FilterNmIDsByYear(entries []YearEntry, allowedYears []int) []int {
+	if len(allowedYears) == 0 {
+		result := make([]int, len(entries))
+		for i, e := range entries {
+			result[i] = e.NmID
+		}
+		return result
+	}
+
+	yearSet := make(map[int]bool, len(allowedYears))
+	for _, y := range allowedYears {
+		yearSet[y] = true
+	}
+
+	var result []int
+	for _, e := range entries {
+		if len(e.VendorCode) < 3 {
+			continue
+		}
+		yearDigits := e.VendorCode[1:3]
+		year := int(yearDigits[0]-'0')*10 + int(yearDigits[1]-'0')
+		if yearSet[year] {
+			result = append(result, e.NmID)
+		}
+	}
+	return result
+}
+
+// ============================================================================
 // Freshness Checker (data quality verification)
 // ============================================================================
 
