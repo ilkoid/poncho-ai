@@ -825,6 +825,104 @@ func (c OneCConfig) GetDefaults() OneCConfig {
 }
 
 // ============================================================================
+// FBW Supplies (supplies-api.wildberries.ru)
+// ============================================================================
+
+// SupplyConfig — конфигурация для download-wb-supplies утилиты.
+//
+// Загружает поставки FBW с WB Supplies API (supplies-api.wildberries.ru).
+// Справочники (склады, тарифы) + поставки + товары + упаковка.
+// Двухуровневый rate limiting: desired + api (swagger floor для восстановления).
+type SupplyConfig struct {
+	DbPath           string           `yaml:"db_path"`             // Путь к SQLite базе (default: sales.db)
+	Days             int              `yaml:"days"`                // Дней от сегодня (альтернатива begin/end)
+	Begin            string           `yaml:"begin"`               // Начальная дата (YYYY-MM-DD)
+	End              string           `yaml:"end"`                 // Конечная дата (YYYY-MM-DD)
+	DateFilterType   string           `yaml:"date_filter_type"`    // Тип дат: updatedDate, createDate, factDate (default: updatedDate)
+	RateLimits       SupplyRateLimits `yaml:"rate_limits"`         // Rate limits per endpoint
+	AdaptiveProbeAfter int            `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds  int            `yaml:"max_backoff_seconds"`  // Cap for exponential backoff (default: 60)
+}
+
+// SupplyRateLimits — rate limits для supplies API endpoints.
+//
+// Supplies API: 30 req/min для поставок (list/goods/package), 6 req/min для справочников.
+//
+// Два уровня rate:
+//   - desired:      желаемый rate (можно превышать swagger — adaptive limiter обработает 429)
+//   - desired_burst: burst для desired rate
+//   - api:           swagger-documented rate (recovery floor после 429)
+//   - api_burst:     burst для api rate
+type SupplyRateLimits struct {
+	// Список поставок (POST /api/v1/supplies) — 30 req/min
+	List      int `yaml:"list"`        // desired rate (default: 30)
+	ListBurst int `yaml:"list_burst"`  // desired burst (default: 10)
+	ListApi   int `yaml:"list_api"`    // swagger rate (default: 30)
+	ListApiBurst int `yaml:"list_api_burst"` // swagger burst (default: 10)
+
+	// Товары поставки (GET /api/v1/supplies/{ID}/goods) — 30 req/min
+	Goods      int `yaml:"goods"`        // desired rate (default: 30)
+	GoodsBurst int `yaml:"goods_burst"`  // desired burst (default: 10)
+	GoodsApi   int `yaml:"goods_api"`    // swagger rate (default: 30)
+	GoodsApiBurst int `yaml:"goods_api_burst"` // swagger burst (default: 10)
+
+	// Упаковка поставки (GET /api/v1/supplies/{ID}/package) — 30 req/min
+	Package      int `yaml:"package"`        // desired rate (default: 30)
+	PackageBurst int `yaml:"package_burst"`  // desired burst (default: 10)
+	PackageApi   int `yaml:"package_api"`    // swagger rate (default: 30)
+	PackageApiBurst int `yaml:"package_api_burst"` // swagger burst (default: 10)
+
+	// Справочники (GET warehouses, transit-tariffs) — 6 req/min
+	Ref      int `yaml:"ref"`        // desired rate (default: 6)
+	RefBurst int `yaml:"ref_burst"`  // desired burst (default: 6)
+	RefApi   int `yaml:"ref_api"`    // swagger rate (default: 6)
+	RefApiBurst int `yaml:"ref_api_burst"` // swagger burst (default: 6)
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+// Каскадные дефолты: api -> desired, api_burst -> desired_burst.
+// NOTE: Days is NOT defaulted here — default in main.go only when Begin/End empty.
+func (c *SupplyConfig) GetDefaults() SupplyConfig {
+	result := *c
+	if result.DbPath == "" {
+		result.DbPath = "sales.db"
+	}
+	if result.DateFilterType == "" {
+		result.DateFilterType = "updatedDate"
+	}
+
+	// List rate limits (two-level adaptive)
+	if result.RateLimits.ListApi == 0 { result.RateLimits.ListApi = 30 }
+	if result.RateLimits.List == 0 { result.RateLimits.List = result.RateLimits.ListApi }
+	if result.RateLimits.ListApiBurst == 0 { result.RateLimits.ListApiBurst = 10 }
+	if result.RateLimits.ListBurst == 0 { result.RateLimits.ListBurst = result.RateLimits.ListApiBurst }
+
+	// Goods rate limits
+	if result.RateLimits.GoodsApi == 0 { result.RateLimits.GoodsApi = 30 }
+	if result.RateLimits.Goods == 0 { result.RateLimits.Goods = result.RateLimits.GoodsApi }
+	if result.RateLimits.GoodsApiBurst == 0 { result.RateLimits.GoodsApiBurst = 10 }
+	if result.RateLimits.GoodsBurst == 0 { result.RateLimits.GoodsBurst = result.RateLimits.GoodsApiBurst }
+
+	// Package rate limits
+	if result.RateLimits.PackageApi == 0 { result.RateLimits.PackageApi = 30 }
+	if result.RateLimits.Package == 0 { result.RateLimits.Package = result.RateLimits.PackageApi }
+	if result.RateLimits.PackageApiBurst == 0 { result.RateLimits.PackageApiBurst = 10 }
+	if result.RateLimits.PackageBurst == 0 { result.RateLimits.PackageBurst = result.RateLimits.PackageApiBurst }
+
+	// Reference data rate limits (warehouses, tariffs)
+	if result.RateLimits.RefApi == 0 { result.RateLimits.RefApi = 6 }
+	if result.RateLimits.Ref == 0 { result.RateLimits.Ref = result.RateLimits.RefApi }
+	if result.RateLimits.RefApiBurst == 0 { result.RateLimits.RefApiBurst = 6 }
+	if result.RateLimits.RefBurst == 0 { result.RateLimits.RefBurst = result.RateLimits.RefApiBurst }
+
+	// Adaptive tuning defaults
+	if result.AdaptiveProbeAfter == 0 { result.AdaptiveProbeAfter = 10 }
+	if result.MaxBackoffSeconds == 0 { result.MaxBackoffSeconds = 60 }
+
+	return result
+}
+
+// ============================================================================
 // Freshness Checker (data quality verification)
 // ============================================================================
 

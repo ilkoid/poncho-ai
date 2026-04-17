@@ -254,6 +254,11 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+		// Create supply tables (warehouses, tariffs, supplies, goods, packages)
+		_, err = r.db.Exec(GetSupplySchemaSQL())
+		if err != nil {
+			return err
+		}
 	return nil
 }
 
