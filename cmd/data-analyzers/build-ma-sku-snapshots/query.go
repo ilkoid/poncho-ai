@@ -96,7 +96,8 @@ SELECT chrt_id, nm_id, tech_size, skus_json
 FROM card_sizes
 `
 
-// Product attributes via 3-table JOIN (same pattern as build-ma-snapshots).
+// Product attributes via 3-table JOIN.
+// Uses cards table (populated by download-wb-cards) instead of products (populated by funnel downloaders).
 const productAttrsSQL = `
 SELECT
     p.nm_id,
@@ -113,22 +114,23 @@ SELECT
     COALESCE(o.season, '')            AS season,
     COALESCE(o.color, '')             AS color,
     COALESCE(o.collection, '')        AS collection
-FROM products p
+FROM cards p
 LEFT JOIN onec_goods o  ON o.article = p.vendor_code
 LEFT JOIN pim_goods pm  ON pm.identifier = p.vendor_code
 WHERE p.nm_id IN (%s)
 `
 
 // Vendor codes for year filtering.
+// Uses cards table (populated by download-wb-cards) instead of products (populated by funnel downloaders).
 const vendorCodesSQL = `
 SELECT DISTINCT nm_id, vendor_code
-FROM products
+FROM cards
 WHERE nm_id IN (%s)
 `
 
 const vendorCodesAllSQL = `
 SELECT DISTINCT nm_id, vendor_code
-FROM products
+FROM cards
 `
 
 // SourceRepo provides read-only access to wb-sales.db.

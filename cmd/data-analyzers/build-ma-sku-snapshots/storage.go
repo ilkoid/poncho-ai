@@ -9,10 +9,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// maSKUDailySchema defines the flat SKU snapshot table in bi2.db.
-// All product identifiers, attributes, stock, MA, derived metrics, and risk flags
-// are denormalized into a single table so PowerBI can query without JOINs.
-const maSKUDailySchema = `
+// maSKUDailyTable is the table-only DDL (no indexes — created after bulk insert).
+const maSKUDailyTable = `
 CREATE TABLE IF NOT EXISTS ma_sku_daily (
     snapshot_date   TEXT NOT NULL,
     nm_id           INTEGER NOT NULL,
@@ -63,7 +61,10 @@ CREATE TABLE IF NOT EXISTS ma_sku_daily (
 
     PRIMARY KEY (snapshot_date, nm_id, chrt_id, region_name)
 );
+`
 
+// maSKUDailyIndexes created AFTER bulk insert for performance.
+const maSKUDailyIndexes = `
 CREATE INDEX IF NOT EXISTS idx_msd_snapshot_date ON ma_sku_daily(snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_msd_nm_id ON ma_sku_daily(nm_id);
 CREATE INDEX IF NOT EXISTS idx_msd_article ON ma_sku_daily(article);
@@ -80,7 +81,8 @@ type ResultsRepo struct {
 	db *sql.DB
 }
 
-// NewResultsRepo opens/creates the bi.db with WAL mode and creates schema.
+// NewResultsRepo opens/creates the results DB with optimized PRAGMAs.
+// Indexes are NOT created here — call CreateIndexes() after bulk insert.
 func NewResultsRepo(dbPath string) (*ResultsRepo, error) {
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
@@ -96,7 +98,6 @@ func NewResultsRepo(dbPath string) (*ResultsRepo, error) {
 	for _, p := range pragmas {
 		if _, err := db.Exec(fmt.Sprintf("PRAGMA %s = %s", p.key, p.val)); err != nil {
 			if p.key == "journal_mode" {
-				// WAL fails on WSL2 Windows mounts (NTFS via 9P) — fallback to DELETE
 				if _, fbErr := db.Exec("PRAGMA journal_mode = DELETE"); fbErr != nil {
 					db.Close()
 					return nil, fmt.Errorf("PRAGMA journal_mode WAL failed: %v, DELETE fallback also failed: %w", err, fbErr)
@@ -108,24 +109,54 @@ func NewResultsRepo(dbPath string) (*ResultsRepo, error) {
 		}
 	}
 
-	if _, err := db.Exec(maSKUDailySchema); err != nil {
+	if _, err := db.Exec(maSKUDailyTable); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("create ma_sku_daily schema: %w", err)
+		return nil, fmt.Errorf("create ma_sku_daily table: %w", err)
 	}
 
 	return &ResultsRepo{db: db}, nil
 }
 
+// CreateIndexes builds all indexes. Call AFTER bulk insert for performance.
+func (r *ResultsRepo) CreateIndexes(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, maSKUDailyIndexes)
+	if err != nil {
+		return fmt.Errorf("create indexes: %w", err)
+	}
+	return nil
+}
+
+// DropIndexes removes all indexes for faster subsequent bulk inserts.
+func (r *ResultsRepo) DropIndexes(ctx context.Context) error {
+	drops := []string{
+		"DROP INDEX IF EXISTS idx_msd_snapshot_date",
+		"DROP INDEX IF EXISTS idx_msd_nm_id",
+		"DROP INDEX IF EXISTS idx_msd_article",
+		"DROP INDEX IF EXISTS idx_msd_vendor_code",
+		"DROP INDEX IF EXISTS idx_msd_region",
+		"DROP INDEX IF EXISTS idx_msd_brand",
+		"DROP INDEX IF EXISTS idx_msd_category",
+		"DROP INDEX IF EXISTS idx_msd_risk_flags",
+		"DROP INDEX IF EXISTS idx_msd_date_region",
+	}
+	for _, d := range drops {
+		if _, err := r.db.ExecContext(ctx, d); err != nil {
+			return fmt.Errorf("drop index: %w", err)
+		}
+	}
+	return nil
+}
+
 // HasSnapshot checks if a snapshot already exists for the given date.
 func (r *ResultsRepo) HasSnapshot(ctx context.Context, date string) (bool, error) {
-	var count int
+	var exists int
 	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM ma_sku_daily WHERE snapshot_date = ? LIMIT 1`, date,
-	).Scan(&count)
+		`SELECT EXISTS(SELECT 1 FROM ma_sku_daily WHERE snapshot_date = ?)`, date,
+	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check existing snapshot: %w", err)
 	}
-	return count > 0, nil
+	return exists == 1, nil
 }
 
 // DeleteSnapshot removes all rows for the given date (used with --force).
@@ -150,7 +181,8 @@ INSERT OR REPLACE INTO ma_sku_daily (
     computed_at
 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
-// SaveSKUSnapshots saves flat SKU snapshot rows in batches.
+// SaveSKUSnapshots saves flat SKU snapshot rows in a single transaction.
+// Drop indexes before calling, then CreateIndexes() after.
 func (r *ResultsRepo) SaveSKUSnapshots(ctx context.Context, rows []SKURow) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -169,8 +201,6 @@ func (r *ResultsRepo) SaveSKUSnapshots(ctx context.Context, rows []SKURow) (int,
 	defer stmt.Close()
 
 	now := time.Now().Format(time.RFC3339)
-	saved := 0
-	const batchSize = 500
 
 	for i, row := range rows {
 		_, err := stmt.ExecContext(ctx,
@@ -185,29 +215,14 @@ func (r *ResultsRepo) SaveSKUSnapshots(ctx context.Context, rows []SKURow) (int,
 			now,
 		)
 		if err != nil {
-			return saved, fmt.Errorf("insert nm_id=%d chrt_id=%d region=%s: %w", row.NmID, row.ChrtID, row.RegionName, err)
-		}
-		saved++
-
-		if (i+1)%batchSize == 0 {
-			if err := tx.Commit(); err != nil {
-				return saved, fmt.Errorf("commit batch at %d: %w", i+1, err)
-			}
-			tx, err = r.db.BeginTx(ctx, nil)
-			if err != nil {
-				return saved, fmt.Errorf("begin tx after batch: %w", err)
-			}
-			stmt, err = tx.PrepareContext(ctx, insertSKUSQL)
-			if err != nil {
-				return saved, fmt.Errorf("prepare insert after batch: %w", err)
-			}
+			return i, fmt.Errorf("insert nm_id=%d chrt_id=%d region=%s: %w", row.NmID, row.ChrtID, row.RegionName, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return saved, fmt.Errorf("commit final: %w", err)
+		return 0, fmt.Errorf("commit: %w", err)
 	}
-	return saved, nil
+	return len(rows), nil
 }
 
 // Close closes the results database.

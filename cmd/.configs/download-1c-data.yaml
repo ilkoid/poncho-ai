@@ -1,0 +1,10 @@
+# 1C/PIM data downloader configuration
+# Rule 12: secrets via ENV, not hardcoded
+
+onec:
+  # 1C Goods+Prices API URL (basic auth in URL)
+  api_url: ${ONEC_API_URL}
+  # PIM Goods API URL (basic auth in URL)
+  pim_url: ${ONEC_PIM_URL}
+  # Target SQLite database (shared with cards/prices)
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-podsort.db"

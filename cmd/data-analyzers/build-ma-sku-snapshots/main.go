@@ -176,13 +176,19 @@ func main() {
 		}
 	}
 	// Fill missing regions (products with no sizes above threshold)
+	// Build nm_id → set of regions from stocks for O(N+M) lookup.
+	nmRegions := make(map[int]map[string]bool)
+	for key := range stocks {
+		if nmRegions[key.NmID] == nil {
+			nmRegions[key.NmID] = make(map[string]bool)
+		}
+		nmRegions[key.NmID][key.RegionName] = true
+	}
 	for nmID, total := range totalSizes {
-		for key := range stocks {
-			if key.NmID == nmID {
-				sk := SizeRegionKey{NmID: nmID, RegionName: key.RegionName}
-				if _, ok := sizeInfoMap[sk]; !ok {
-					sizeInfoMap[sk] = SizeInfo{TotalSizes: total, SizesInStock: 0}
-				}
+		for region := range nmRegions[nmID] {
+			sk := SizeRegionKey{NmID: nmID, RegionName: region}
+			if _, ok := sizeInfoMap[sk]; !ok {
+				sizeInfoMap[sk] = SizeInfo{TotalSizes: total, SizesInStock: 0}
 			}
 		}
 	}
@@ -305,13 +311,25 @@ func main() {
 		}
 	}
 
-	// Save
+	// Drop indexes for fast bulk insert, then recreate after
+	fmt.Print("Dropping indexes for fast insert... ")
+	if err := results.DropIndexes(ctx); err != nil {
+		log.Fatalf("Drop indexes: %v", err)
+	}
+	fmt.Println("done")
+
 	fmt.Print("Saving SKU snapshots... ")
 	saved, err := results.SaveSKUSnapshots(ctx, rows)
 	if err != nil {
 		log.Fatalf("Save snapshots: %v", err)
 	}
 	fmt.Printf("%d rows\n", saved)
+
+	fmt.Print("Creating indexes... ")
+	if err := results.CreateIndexes(ctx); err != nil {
+		log.Fatalf("Create indexes: %v", err)
+	}
+	fmt.Println("done")
 
 	// Summary
 	fmt.Println("========================================================================")

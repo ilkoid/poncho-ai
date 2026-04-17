@@ -11,11 +11,11 @@
 
 source:
   # База с сырыми данными (WB + 1C таблицы)
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-podsort.db"
 
 results:
   # База аналитики для BI
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/bi2.db"
+  db_path: "/mnt/d/db/sku-analytics.db"
 
 ma:
   windows: [3, 7, 14, 28]
@@ -25,14 +25,14 @@ alerts:
   # Порог нулевого остатка: stock_qty <= этого значения = "товара нет"
   zero_stock_threshold: 1
   # Окно подсортировки (дней). Если SDR <= reorder_window → риск
-  reorder_window: 7
+  reorder_window: 12
   # SDR <= critical_days → критично
-  critical_days: 3
+  critical_days: 7
 
 filter:
   # Фильтрация по году производства (извлекается из 2-3 цифры артикула продавца)
   # Например: 12621749 → год "26" (2026), 32311215 → год "23" (2023)
   # Пустой список = все товары
-  allowed_years: [25, 26]
+  allowed_years: [26]
 
 force: false

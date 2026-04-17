@@ -7,12 +7,13 @@
 ## Запуск
 
 ```bash
-go run .                              # снэпшот за вчера
-go run . --date 2026-04-15            # конкретная дата
-go run . --dry-run                    # сводка в консоль, без записи в БД
-go run . --force                      # пересчитать даже если снэпшот есть
-go run . --source /path/to/source.db  # override source DB
-go run . --db /path/to/bi.db          # override results DB
+go run .                                      # снэпшот за вчера
+go run . --date 2026-04-15                    # конкретная дата
+go run . --dry-run                            # сводка в консоль, без записи в БД
+go run . --force                              # пересчитать даже если снэпшот есть
+go run . --config /path/to/config.yaml        # кастомный путь к конфигу
+go run . --source /path/to/source.db          # override source DB
+go run . --db /path/to/bi.db                  # override results DB
 ```
 
 ### Загрузка данных

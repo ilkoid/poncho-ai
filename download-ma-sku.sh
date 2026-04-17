@@ -14,6 +14,7 @@
 cd "$(dirname "$0")"
 
 DAYS="${1:-}"
+CONFIG_DIR="cmd/.configs"
 
 echo "=== MA SKU Data Download ==="
 echo "Started: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -21,16 +22,16 @@ START=$SECONDS
 
 # Phase 1: Fast — catalog + attributes (high rate limits)
 echo "--- Cards + 1C/PIM catalog ---"
-(cd cmd/data-downloaders/download-wb-cards && go run .) || exit $?
-(cd cmd/data-downloaders/download-1c-data && go run .) || exit $?
+#(cd cmd/data-downloaders/download-wb-cards && go run . --config ../../../$CONFIG_DIR/download-wb-cards.yaml) || exit $?
+#(cd cmd/data-downloaders/download-1c-data && go run . --config ../../../$CONFIG_DIR/download-1c-data.yaml) || exit $?
 
 # Phase 2: Sales for MA computation
-echo "--- Sales ---"
-(cd cmd/data-downloaders/download-wb-sales && go run . ${DAYS:+--days=$DAYS}) || exit $?
+#echo "--- Sales ---"
+#(cd cmd/data-downloaders/download-wb-sales && go run . --config ../../../$CONFIG_DIR/download-wb-sales.yaml ${DAYS:+--days=$DAYS}) || exit $?
 
 # Phase 3: Stock snapshots (depends on cards being loaded)
 echo "--- Stock snapshots ---"
-(cd cmd/data-downloaders/download-wb-stocks && go run .) || exit $?
+(cd cmd/data-downloaders/download-wb-stocks && go run . --config ../../../$CONFIG_DIR/download-wb-stocks.yaml) || exit $?
 
 ELAPSED=$(( SECONDS - START ))
 echo "=== Download completed in ${ELAPSED}s ==="
