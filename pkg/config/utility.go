@@ -872,6 +872,12 @@ type SupplyRateLimits struct {
 	PackageApi   int `yaml:"package_api"`    // swagger rate (default: 30)
 	PackageApiBurst int `yaml:"package_api_burst"` // swagger burst (default: 10)
 
+	// Детали поставки (GET /api/v1/supplies/{ID}) — 30 req/min
+	Details      int `yaml:"details"`         // desired rate (default: 30)
+	DetailsBurst int `yaml:"details_burst"`   // desired burst (default: 10)
+	DetailsApi   int `yaml:"details_api"`     // swagger rate (default: 30)
+	DetailsApiBurst int `yaml:"details_api_burst"` // swagger burst (default: 10)
+
 	// Справочники (GET warehouses, transit-tariffs) — 6 req/min
 	Ref      int `yaml:"ref"`        // desired rate (default: 6)
 	RefBurst int `yaml:"ref_burst"`  // desired burst (default: 6)
@@ -908,6 +914,12 @@ func (c *SupplyConfig) GetDefaults() SupplyConfig {
 	if result.RateLimits.Package == 0 { result.RateLimits.Package = result.RateLimits.PackageApi }
 	if result.RateLimits.PackageApiBurst == 0 { result.RateLimits.PackageApiBurst = 10 }
 	if result.RateLimits.PackageBurst == 0 { result.RateLimits.PackageBurst = result.RateLimits.PackageApiBurst }
+
+	// Details rate limits
+	if result.RateLimits.DetailsApi == 0 { result.RateLimits.DetailsApi = 30 }
+	if result.RateLimits.Details == 0 { result.RateLimits.Details = result.RateLimits.DetailsApi }
+	if result.RateLimits.DetailsApiBurst == 0 { result.RateLimits.DetailsApiBurst = 10 }
+	if result.RateLimits.DetailsBurst == 0 { result.RateLimits.DetailsBurst = result.RateLimits.DetailsApiBurst }
 
 	// Reference data rate limits (warehouses, tariffs)
 	if result.RateLimits.RefApi == 0 { result.RateLimits.RefApi = 6 }

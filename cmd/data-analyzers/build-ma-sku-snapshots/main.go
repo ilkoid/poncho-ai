@@ -255,6 +255,30 @@ func main() {
 		}
 	}
 
+	// Step 6b: Enrich with incoming supply data
+	fmt.Print("Querying supply incoming... ")
+	supplyIncoming, err := source.QuerySupplyIncoming(ctx)
+	if err != nil {
+		log.Fatalf("Query supply incoming: %v", err)
+	}
+	// Build chrt_id → incoming map via barcode lookup
+	chrtIncoming := make(map[int64]int64)
+	for barcode, incoming := range supplyIncoming {
+		if chrtID, ok := barcodeToChrt[barcode]; ok {
+			chrtIncoming[chrtID] += incoming
+		}
+	}
+	// Apply to rows
+	var totalIncoming int64
+	for i := range rows {
+		if inc, ok := chrtIncoming[rows[i].ChrtID]; ok {
+			rows[i].SupplyIncoming = inc
+			totalIncoming += inc
+		}
+	}
+	fmt.Printf("%d barcodes, %d chrt_ids, %d total incoming units\n",
+		len(supplyIncoming), len(chrtIncoming), totalIncoming)
+
 	// Step 7: Enrich with product attributes
 	fmt.Print("Querying product attributes... ")
 	attrs, err := source.QueryProductAttrs(ctx, stockNmIDs)
@@ -374,8 +398,8 @@ func printDryRunSummary(rows []SKURow) {
 	})
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "nm_id\tchrt_id\tarticle\tbrand\tsize\tregion\tstock\tMA-7\tSDR\tstatus\n")
-	fmt.Fprintf(w, "─────\t───────\t───────\t─────\t────\t──────\t─────\t────\t───\t──────\n")
+	fmt.Fprintf(w, "nm_id\tchrt_id\tarticle\tbrand\tsize\tregion\tstock\tsupply\tMA-7\tSDR\tstatus\n")
+	fmt.Fprintf(w, "─────\t───────\t───────\t─────\t────\t──────\t─────\t───────\t────\t───\t──────\n")
 
 	printed := 0
 	const maxRows = 100
@@ -395,9 +419,9 @@ func printDryRunSummary(rows []SKURow) {
 			ma7 = fmt.Sprintf("%.1f", *r.MA7)
 		}
 
-		fmt.Fprintf(w, "%d\t%d\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%d\t%d\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
 			r.NmID, r.ChrtID, r.Article, r.Brand, r.TechSize,
-			truncate(r.RegionName, 20), r.StockQty, ma7, sdr, status)
+			truncate(r.RegionName, 20), r.StockQty, r.SupplyIncoming, ma7, sdr, status)
 		printed++
 		if printed >= maxRows {
 			break
@@ -473,10 +497,11 @@ func countFlagged(rows []SKURow) int {
 
 func printSummary(rows []SKURow) {
 	var withMA7, critical, risk, outOfStock, brokenGrid int
-	var totalStock int64
+	var totalStock, totalIncoming int64
 
 	for _, r := range rows {
 		totalStock += r.StockQty
+		totalIncoming += r.SupplyIncoming
 		if r.MA7 != nil {
 			withMA7++
 		}
@@ -496,6 +521,7 @@ func printSummary(rows []SKURow) {
 
 	fmt.Printf("Total rows:     %d\n", len(rows))
 	fmt.Printf("Total stock:    %d\n", totalStock)
+	fmt.Printf("Supply incoming:%d\n", totalIncoming)
 	fmt.Printf("With MA-7:      %d\n", withMA7)
 	fmt.Printf("Critical:       %d\n", critical)
 	fmt.Printf("Out of stock:   %d\n", outOfStock)

@@ -34,10 +34,11 @@ type SKURow struct {
 	Collection     string
 
 	// Stock
-	StockQty     int64
-	TotalSizes   int
-	SizesInStock int
-	FillPct      float64
+	StockQty       int64
+	SupplyIncoming int64 // from active supplies: quantity - ready_for_sale_quantity
+	TotalSizes     int
+	SizesInStock   int
+	FillPct        float64
 
 	// MA (global per barcode, not per region)
 	MA3  *float64

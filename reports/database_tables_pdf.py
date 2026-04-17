@@ -120,6 +120,19 @@ TABLES_DATA = [
         'rate_limit': 'N/A',
         'utility': 'download-1c-data'
     },
+    {
+        'category': 'Поставки FBW (Supplies API)',
+        'tables': [
+            ('wb_warehouses', 'GET /api/v1/warehouses', 'id INTEGER', '(сам PK)'),
+            ('wb_transit_tariffs', 'GET /api/v1/transit-tariffs', 'id INTEGER AUTOINCREMENT', '(сам PK)'),
+            ('supplies', 'POST /api/v1/supplies + GET /api/v1/supplies/{ID}', 'Составной: (supply_id, preorder_id)', '(сам PK составной)'),
+            ('supply_goods', 'GET /api/v1/supplies/{ID}/goods', 'id INTEGER AUTOINCREMENT', 'UNIQUE(supply_id, preorder_id, barcode)'),
+            ('supply_packages', 'GET /api/v1/supplies/{ID}/package', 'id INTEGER AUTOINCREMENT', 'UNIQUE(supply_id, preorder_id, package_code)'),
+        ],
+        'api_url': 'https://supplies-api.wildberries.ru',
+        'rate_limit': '30/мин',
+        'utility': 'download-wb-supplies'
+    },
 ]
 
 API_URLS = [
@@ -129,6 +142,7 @@ API_URLS = [
     ('Content API', 'https://content-api.wildberries.ru', '100/мин'),
     ('Advertising API', 'https://advert-api.wildberries.ru', '20-100/мин'),
     ('Discounts-Prices API', 'https://discounts-prices-api.wildberries.ru', '100/мин'),
+    ('Supplies API (FBW)', 'https://supplies-api.wildberries.ru', '30/мин'),
     ('1C/PIM', 'Кастомные URL через ENV', 'N/A'),
 ]
 

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS ma_sku_daily (
 
     -- Stock
     stock_qty       INTEGER DEFAULT 0,
+    supply_incoming INTEGER DEFAULT 0,
     total_sizes     INTEGER DEFAULT 0,
     sizes_in_stock  INTEGER DEFAULT 0,
     fill_pct        REAL DEFAULT 0,
@@ -174,12 +175,12 @@ INSERT OR REPLACE INTO ma_sku_daily (
     article, identifier, vendor_code,
     name, brand, type, category, category_level1, category_level2,
     sex, season, color, collection,
-    stock_qty, total_sizes, sizes_in_stock, fill_pct,
+    stock_qty, supply_incoming, total_sizes, sizes_in_stock, fill_pct,
     ma_3, ma_7, ma_14, ma_28,
     sdr_days, trend_pct,
     risk, critical, out_of_stock, broken_grid,
     computed_at
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 // SaveSKUSnapshots saves flat SKU snapshot rows in a single transaction.
 // Drop indexes before calling, then CreateIndexes() after.
@@ -208,7 +209,7 @@ func (r *ResultsRepo) SaveSKUSnapshots(ctx context.Context, rows []SKURow) (int,
 			row.Article, row.Identifier, row.VendorCode,
 			row.Name, row.Brand, row.Type, row.Category, row.CategoryLevel1, row.CategoryLevel2,
 			row.Sex, row.Season, row.Color, row.Collection,
-			row.StockQty, row.TotalSizes, row.SizesInStock, row.FillPct,
+			row.StockQty, row.SupplyIncoming, row.TotalSizes, row.SizesInStock, row.FillPct,
 			row.MA3, row.MA7, row.MA14, row.MA28,
 			row.SDRDays, row.TrendPct,
 			boolToInt(row.Risk), boolToInt(row.Critical), boolToInt(row.OutOfStock), boolToInt(row.BrokenGrid),

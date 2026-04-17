@@ -19,6 +19,7 @@ type SuppliesClient interface {
 	GetWarehouses(ctx context.Context, rateLimit, burst int) ([]wb.Warehouse, error)
 	GetTransitTariffs(ctx context.Context, rateLimit, burst int) ([]wb.TransitTariff, error)
 	GetSupplies(ctx context.Context, rateLimit, burst int, filter wb.SuppliesFilterRequest, limit, offset int) ([]wb.Supply, error)
+	GetSupplyDetails(ctx context.Context, rateLimit, burst int, supplyID int64) (*wb.SupplyDetails, error)
 	GetSupplyGoods(ctx context.Context, rateLimit, burst int, supplyID int64, limit, offset int) ([]wb.GoodInSupply, error)
 	GetSupplyPackages(ctx context.Context, rateLimit, burst int, supplyID int64) ([]wb.Box, error)
 }

@@ -102,7 +102,7 @@ func DownloadSupplies(
 	return allSupplies, requests, nil
 }
 
-// DownloadSupplyDetails downloads goods and packages for each supply.
+// DownloadSupplyDetails downloads details (warehouse info), goods and packages for each supply.
 func DownloadSupplyDetails(
 	ctx context.Context,
 	client SuppliesClient,
@@ -113,11 +113,19 @@ func DownloadSupplyDetails(
 	totalGoods := 0
 	totalPackages := 0
 	totalRequests := 0
+	now := time.Now().Format("2006-01-02 15:04:05")
+
+	// Collect detail rows for batch save after loop
+	var detailRows []sqlite.SupplyRow
 
 	for i, pair := range supplyIDs {
 		// Check context cancellation
 		select {
 		case <-ctx.Done():
+			// Save any collected detail rows before exiting
+			if len(detailRows) > 0 {
+				repo.SaveSupplies(ctx, detailRows)
+			}
 			return totalGoods, totalPackages, totalRequests, ctx.Err()
 		default:
 		}
@@ -125,6 +133,18 @@ func DownloadSupplyDetails(
 		// Skip unplanned supplies (supply_id=0) — they have no goods/packages
 		if pair.SupplyID == 0 {
 			continue
+		}
+
+		// Download details (warehouse info) for this supply
+		details, err := client.GetSupplyDetails(ctx, rl.Details, rl.DetailsBurst, pair.SupplyID)
+		totalRequests++
+		if err != nil {
+			fmt.Printf("  ❌ Ошибка детали supply_id=%d: %v\n", pair.SupplyID, err)
+		} else if details != nil {
+			row := sqlite.SupplyFromAPIDetail(details, now)
+			row.SupplyID = pair.SupplyID
+			row.PreorderID = pair.PreorderID
+			detailRows = append(detailRows, row)
 		}
 
 		// Download goods
@@ -171,6 +191,16 @@ func DownloadSupplyDetails(
 		if (i+1)%10 == 0 || i+1 == len(supplyIDs) {
 			fmt.Printf("  Обработано поставок: %d/%d (товаров: %d, упаковок: %d)\n",
 				i+1, len(supplyIDs), totalGoods, totalPackages)
+		}
+	}
+
+	// Batch save all detail rows (INSERT OR REPLACE updates warehouse fields)
+	if len(detailRows) > 0 {
+		saved, err := repo.SaveSupplies(ctx, detailRows)
+		if err != nil {
+			fmt.Printf("  ❌ Ошибка сохранения деталей поставок: %v\n", err)
+		} else {
+			fmt.Printf("  ✅ Деталей поставок обновлено: %d\n", saved)
 		}
 	}
 

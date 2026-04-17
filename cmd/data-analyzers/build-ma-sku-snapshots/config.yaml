@@ -11,7 +11,7 @@
 
 source:
   # База с сырыми данными (WB + 1C таблицы)
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-podsort.db"
+  db_path: "/mnt/d/db/wb-podsort.db"
 
 results:
   # База аналитики для BI

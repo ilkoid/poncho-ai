@@ -15,9 +15,10 @@ import (
 // SQL queries for source DB (wb-sales.db, read-only).
 
 // Stock positions aggregated by (nm_id, chrt_id, region_name).
+// Includes in_way_from_client (returns from customers) as available stock.
 const stockPositionsSQL = `
 SELECT nm_id, chrt_id, region_name,
-       SUM(quantity) AS stock_qty
+       SUM(quantity + COALESCE(in_way_from_client, 0)) AS stock_qty
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
   AND nm_id IN (%s)
@@ -25,9 +26,10 @@ GROUP BY nm_id, chrt_id, region_name
 `
 
 // All stock positions without year filter (allowed_years empty).
+// Includes in_way_from_client (returns from customers) as available stock.
 const stockPositionsAllSQL = `
 SELECT nm_id, chrt_id, region_name,
-       SUM(quantity) AS stock_qty
+       SUM(quantity + COALESCE(in_way_from_client, 0)) AS stock_qty
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
 GROUP BY nm_id, chrt_id, region_name
@@ -50,20 +52,23 @@ GROUP BY nm_id
 `
 
 // Sizes with stock > threshold per (nm_id, region).
+// Includes in_way_from_client (returns from customers) as available stock.
 const sizesInStockSQL = `
 SELECT nm_id, region_name, COUNT(DISTINCT chrt_id) AS sizes_in_stock
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
-  AND quantity > ?
+  AND (quantity + COALESCE(in_way_from_client, 0)) > ?
   AND nm_id IN (%s)
 GROUP BY nm_id, region_name
 `
 
+// Sizes with stock > threshold without year filter.
+// Includes in_way_from_client (returns from customers) as available stock.
 const sizesInStockAllSQL = `
 SELECT nm_id, region_name, COUNT(DISTINCT chrt_id) AS sizes_in_stock
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
-  AND quantity > ?
+  AND (quantity + COALESCE(in_way_from_client, 0)) > ?
 GROUP BY nm_id, region_name
 `
 
@@ -131,6 +136,19 @@ WHERE nm_id IN (%s)
 const vendorCodesAllSQL = `
 SELECT DISTINCT nm_id, vendor_code
 FROM cards
+`
+
+// Incoming supply per barcode from active (non-completed) supplies.
+// quantity - ready_for_sale_quantity = units not yet reflected in stock.
+// status_id 5 = completed, excluded because those are already in stock.
+const supplyIncomingSQL = `
+SELECT sg.barcode,
+       SUM(sg.quantity) - SUM(sg.ready_for_sale_quantity) AS incoming
+FROM supply_goods sg
+JOIN supplies s ON s.supply_id = sg.supply_id AND s.preorder_id = sg.preorder_id
+WHERE s.status_id NOT IN (5)
+GROUP BY sg.barcode
+HAVING incoming > 0
 `
 
 // SourceRepo provides read-only access to wb-sales.db.
@@ -386,6 +404,27 @@ func (r *SourceRepo) QueryVendorCodes(ctx context.Context, nmIDs []int) ([]confi
 // Close closes the source database.
 func (r *SourceRepo) Close() error {
 	return r.db.Close()
+}
+
+// QuerySupplyIncoming returns incoming stock per barcode from active supplies.
+// Returns map of barcode → incoming units (quantity - ready_for_sale_quantity).
+func (r *SourceRepo) QuerySupplyIncoming(ctx context.Context) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, supplyIncomingSQL)
+	if err != nil {
+		return nil, fmt.Errorf("query supply incoming: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]int64)
+	for rows.Next() {
+		var barcode string
+		var incoming int64
+		if err := rows.Scan(&barcode, &incoming); err != nil {
+			return nil, fmt.Errorf("scan supply incoming: %w", err)
+		}
+		result[barcode] = incoming
+	}
+	return result, rows.Err()
 }
 
 // parseFirstBarcode extracts the first barcode from skus_json array.

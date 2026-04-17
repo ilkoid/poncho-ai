@@ -53,6 +53,38 @@ func runMock(ctx context.Context, repo *sqlite.SQLiteSalesRepository, supplyCfg 
 	sSaved, _ := repo.SaveSupplies(ctx, rows)
 	fmt.Printf("  ✅ Поставок: %d\n", sSaved)
 
+	// 3b. Mock supply details (warehouse info)
+	whID1 := 507
+	whID2 := 117198
+	detailRows := []sqlite.SupplyRow{
+		func() sqlite.SupplyRow {
+			r := sqlite.SupplyFromAPIDetail(&wb.SupplyDetails{
+				StatusID: 2, BoxTypeID: 5, Phone: "+7 916 *** 33 33",
+				CreateDate: "2024-12-29T16:57:59+03:00",
+				WarehouseID: whID1, WarehouseName: "Коледино",
+				ActualWarehouseID: &whID1, ActualWarehouseName: strPtr("Коледино"),
+				Quantity: 10, ReadyForSaleQuantity: 5, AcceptedQuantity: 8,
+			}, now)
+			r.SupplyID = supplyID1
+			r.PreorderID = 34601223
+			return r
+		}(),
+		func() sqlite.SupplyRow {
+			r := sqlite.SupplyFromAPIDetail(&wb.SupplyDetails{
+				StatusID: 6, BoxTypeID: 2, Phone: "+7 000 *** 36 76",
+				CreateDate: "2024-08-22T18:10:59+03:00",
+				WarehouseID: whID2, WarehouseName: "Казань",
+				ActualWarehouseID: &whID2, ActualWarehouseName: strPtr("Казань ДЦ"),
+				Quantity: 20, ReadyForSaleQuantity: 20, AcceptedQuantity: 20,
+			}, now)
+			r.SupplyID = supplyID2
+			r.PreorderID = 27363170
+			return r
+		}(),
+	}
+	dSaved, _ := repo.SaveSupplies(ctx, detailRows)
+	fmt.Printf("  ✅ Деталей поставок: %d\n", dSaved)
+
 	// 4. Mock goods
 	goods := []wb.GoodInSupply{
 		{Barcode: "1234567891234", VendorCode: "wb4sewt0vg", NmID: 987456654, TechSize: "C", NeedKiz: true, Tnved: strPtr("6204430000"), Color: strPtr("красный"), SupplierBoxAmount: intPtr(10), Quantity: 10},

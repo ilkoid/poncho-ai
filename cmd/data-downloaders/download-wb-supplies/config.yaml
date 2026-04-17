@@ -8,10 +8,10 @@ wb:
 supply:
   # Путь к общей базе данных
 #  db_path: "wb-sales-test.db"
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+  db_path: "/mnt/d/db/wb-podsort.db"
 
   # Период загрузки (days — альтернатива begin/end)
-  days: 14
+  days: 29
   # begin: ""
   # end: ""
 
@@ -37,6 +37,12 @@ supply:
     goods_burst: 10
     goods_api: 10
     goods_api_burst: 10
+
+    # Детали поставки (GET /api/v1/supplies/{ID}) — warehouse info
+    details: 10
+    details_burst: 10
+    details_api: 10
+    details_api_burst: 10
 
     # Упаковка поставки (GET /api/v1/supplies/{ID}/package)
     package: 10
