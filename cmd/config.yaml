@@ -1,0 +1,21 @@
+# Конфигурация утилиты check-db-freshness
+#
+# Проверяет свежесть данных в SQLite базе wb-sales.db.
+# Для каждой таблицы находится последняя дата и сравнивается с порогами.
+
+freshness:
+  # Путь к базе данных (относительно текущей директории или абсолютный)
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+
+  # Порог предупреждения в днях (старше → ⚠️ STALE)
+  warn_age_days: 3
+
+  # Порог критичности в днях (старше → ❌ CRITICAL)
+  crit_age_days: 7
+
+  # Список таблиц для проверки (пустой = все известные таблицы)
+  # Пример: ["sales", "funnel_metrics_daily", "stocks_daily_warehouses"]
+  tables: []
+
+  # Подробный вывод (показывает ошибки и детали)
+  verbose: false
