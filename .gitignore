@@ -207,3 +207,4 @@ cmd/check-db-freshness
 # Compiled downloaders (project-specific)
 download-wb-*
 !download-wb-*/
+!cmd/.configs/download-wb-*

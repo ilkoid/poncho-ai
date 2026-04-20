@@ -1,0 +1,62 @@
+# WB Supplies API configuration
+# API: supplies-api.wildberries.ru (FBW Supplies)
+
+wb:
+  api_key: ""
+  timeout: "60s"
+
+supply:
+  # Путь к общей базе данных
+#  db_path: "wb-sales-test.db"
+#  db_path: "/mnt/d/db/wb-podsort.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-podsort.db"
+
+  # Период загрузки (days — альтернатива begin/end)
+  days: 29
+  # begin: ""
+  # end: ""
+
+  # Тип фильтра по датам:
+  #   updatedDate  — дата изменения поставки (default)
+  #   createDate   — дата создания поставки
+  #   factDate     — дата фактической отгрузки
+  #   supplyDate   — плановая дата отгрузки
+  date_filter_type: "updatedDate"
+
+  # Rate limits (two-level adaptive)
+  # Supplies API: 30 req/min, burst 10 (supply endpoints)
+  # Reference: 6 req/min, burst 6 (warehouses, tariffs)
+  rate_limits:
+    # Список поставок (POST /api/v1/supplies)
+    list: 10
+    list_burst: 10
+    list_api: 10
+    list_api_burst: 10
+
+    # Товары поставки (GET /api/v1/supplies/{ID}/goods)
+    goods: 10
+    goods_burst: 10
+    goods_api: 10
+    goods_api_burst: 10
+
+    # Детали поставки (GET /api/v1/supplies/{ID}) — warehouse info
+    details: 10
+    details_burst: 10
+    details_api: 10
+    details_api_burst: 10
+
+    # Упаковка поставки (GET /api/v1/supplies/{ID}/package)
+    package: 10
+    package_burst: 5
+    package_api: 10
+    package_api_burst: 5
+
+    # Справочники (GET /api/v1/warehouses, /api/v1/transit-tariffs)
+    ref: 7
+    ref_burst: 5
+    ref_api: 7
+    ref_api_burst: 5
+
+  # Adaptive tuning
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60

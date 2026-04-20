@@ -1,0 +1,29 @@
+# WB Content Cards Downloader Configuration
+wb:
+  api_key: ""  # Not recommended; use WB_API_KEY env var instead
+  timeout: "60s"
+
+cards:
+  # Database path (can be overridden by --db flag)
+#  db_path: "/mnt/d/db/wb-podsort.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-podsort.db"
+
+  # Environment variable for API key (Pattern B from dev_downloader_development.md)
+  # Priority: configured env var > WB_API_KEY > config value
+  api_key_env: "WB_API_KEY"
+
+  rate_limits:
+    # Client-side desired rate (requests per minute)
+    cards_list: 100
+    cards_list_burst: 5
+
+    # API floor rate (for 429 recovery)
+    cards_list_api: 100
+    cards_list_api_burst: 5
+
+  # Adaptive rate limiting parameters
+  # How many consecutive OK responses before probing desired rate again
+  adaptive_probe_after: 10
+
+  # Maximum backoff seconds when reducing rate on 429
+  max_backoff_seconds: 60

@@ -1,0 +1,16 @@
+wb:
+  api_key: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  timeout: "60s"
+
+stocks:
+#  db_path: "/mnt/d/db/wb-podsort.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-podsort.db"
+  first_date: "2026-04-17"
+  api_key_env: "WB_API_KEY"  # Можно изменить на: WB_API_CONTENT_KEY, WB_API_MARKET_KEY, и т.д.
+  rate_limits:
+    warehouse: 3
+    warehouse_burst: 1
+    warehouse_api: 3
+    warehouse_api_burst: 1
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
