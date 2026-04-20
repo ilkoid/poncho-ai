@@ -68,6 +68,7 @@ db/
 dist/
 build/
 bin/
+logs/
 # Debug logs
 debug_logs/
 

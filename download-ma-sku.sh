@@ -22,7 +22,7 @@ echo "Started: $(date '+%Y-%m-%d %H:%M:%S')"
 START=$SECONDS
 
 # Phase 2: Sales for MA computation
-#echo "--- Sales ---"
+echo "--- Sales ---"
 (cd cmd/data-downloaders/download-wb-sales && go run . --no-service  --config ../../../$CONFIG_DIR/download-wb-sales.yaml ${DAYS:+--days=$DAYS}) || exit $?
 
 # Phase 1: Fast — catalog + attributes (high rate limits)
