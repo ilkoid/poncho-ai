@@ -131,7 +131,8 @@ type DownloadConfig struct {
 	FBWOnly     bool   `yaml:"fbw_only"`     // Только FBW продажи
 	Resume      bool   `yaml:"resume"`       // Продолжить с последней даты
 	Rewrite     bool   `yaml:"rewrite"`      // Удалить данные за период перед загрузкой
-	IntervalDays int   `yaml:"interval_days"` // Дней на один API запрос (default: 30)
+	IntervalDays       int  `yaml:"interval_days"`        // Дней на один API запрос (default: 30)
+	SkipServiceRecords bool `yaml:"skip_service_records"` // Пропускать служебные записи (логистика, штрафы)
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.

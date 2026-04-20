@@ -37,10 +37,11 @@ type SalesIterator interface {
 
 // DownloadConfig holds configuration for download process.
 type DownloadConfig struct {
-	Client    SalesIterator
-	Repo      *sqlite.SQLiteSalesRepository
-	RateLimit int
-	Burst     int
+	Client             SalesIterator
+	Repo               *sqlite.SQLiteSalesRepository
+	RateLimit          int
+	Burst              int
+	SkipServiceRecords bool
 }
 
 // DownloadResult holds statistics after download completion.
@@ -131,9 +132,12 @@ func DownloadSales(ctx context.Context, cfg DownloadConfig, ranges []DateRange, 
 			if err != nil {
 				return result, fmt.Errorf("delete sales for %s: %w", dr.String(), err)
 			}
-			svcDeleted, err := cfg.Repo.DeleteServiceRecordsByDateRange(ctx, from, to)
-			if err != nil {
-				return result, fmt.Errorf("delete service records for %s: %w", dr.String(), err)
+			var svcDeleted int64
+			if !cfg.SkipServiceRecords {
+				svcDeleted, err = cfg.Repo.DeleteServiceRecordsByDateRange(ctx, from, to)
+				if err != nil {
+					return result, fmt.Errorf("delete service records for %s: %w", dr.String(), err)
+				}
 			}
 			if deleted > 0 || svcDeleted > 0 {
 				fmt.Printf("  🗑️  Period %s: deleted %d sales, %d service records\n",
@@ -192,7 +196,7 @@ func downloadPeriod(ctx context.Context, cfg DownloadConfig, dr DateRange, perio
 			dr.FromRFC3339(),
 			dr.ToRFC3339(),
 			func(rows []wb.RealizationReportRow) error {
-				return saveRows(ctx, cfg.Repo, rows, resume, result)
+				return saveRows(ctx, cfg.Repo, rows, resume, cfg.SkipServiceRecords, result)
 			},
 		)
 		if err != nil {
@@ -209,7 +213,7 @@ func downloadPeriod(ctx context.Context, cfg DownloadConfig, dr DateRange, perio
 			dr.FromInt(),
 			dr.ToInt(),
 			func(rows []wb.RealizationReportRow) error {
-				return saveRows(ctx, cfg.Repo, rows, resume, result)
+				return saveRows(ctx, cfg.Repo, rows, resume, cfg.SkipServiceRecords, result)
 			},
 		)
 		if err != nil {
@@ -236,7 +240,7 @@ func downloadPeriod(ctx context.Context, cfg DownloadConfig, dr DateRange, perio
 // Splits records into two tables:
 //   - sales: real sales/returns (nm_id > 0 AND doc_type_name not empty)
 //   - service_records: logistics, deductions, etc. (nm_id = 0 OR empty doc_type_name)
-func saveRows(ctx context.Context, repo *sqlite.SQLiteSalesRepository, rows []wb.RealizationReportRow, resume bool, result *periodResult) error {
+func saveRows(ctx context.Context, repo *sqlite.SQLiteSalesRepository, rows []wb.RealizationReportRow, resume bool, skipService bool, result *periodResult) error {
 	processingStart := time.Now()
 
 	if len(rows) == 0 {
@@ -251,10 +255,8 @@ func saveRows(ctx context.Context, repo *sqlite.SQLiteSalesRepository, rows []wb
 	var logisticsWithProduct int // Counter for nm_id > 0 with empty doc_type_name
 	for _, row := range rows {
 		if row.NmID > 0 && row.DocTypeName != "" {
-			// Real sale or return with product info
 			salesRows = append(salesRows, row)
 		} else {
-			// Service record (logistics, deductions, or product-specific logistics)
 			serviceRows = append(serviceRows, row)
 			if row.NmID > 0 && row.DocTypeName == "" {
 				logisticsWithProduct++
@@ -262,8 +264,11 @@ func saveRows(ctx context.Context, repo *sqlite.SQLiteSalesRepository, rows []wb
 		}
 	}
 
-	// Log splitting
-	if len(serviceRows) > 0 {
+	if skipService {
+		if len(serviceRows) > 0 {
+			fmt.Printf("  ⏭️  Пропущено %d служебных записей\n", len(serviceRows))
+		}
+	} else if len(serviceRows) > 0 {
 		fmt.Printf("  🔧 Разделение: %d строк → %d продаж + %d служебных (из них %d логистика по товарам)\n",
 			len(rows), len(salesRows), len(serviceRows), logisticsWithProduct)
 	}
@@ -275,7 +280,7 @@ func saveRows(ctx context.Context, repo *sqlite.SQLiteSalesRepository, rows []wb
 	dbStart := time.Now()
 
 	// Save service records (no resume check needed - just INSERT OR IGNORE)
-	if len(serviceRows) > 0 {
+	if !skipService && len(serviceRows) > 0 {
 		if err := repo.SaveServiceRecords(ctx, serviceRows); err != nil {
 			return fmt.Errorf("save %d service records: %w", len(serviceRows), err)
 		}
@@ -319,7 +324,10 @@ func saveRows(ctx context.Context, repo *sqlite.SQLiteSalesRepository, rows []wb
 	result.Pages++
 
 	// Show progress bar with timing breakdown
-	progress := len(toSave) + len(serviceRows)
+	progress := len(toSave)
+	if !skipService {
+		progress += len(serviceRows)
+	}
 	fmt.Printf("  [%s] Страница %d: %s %d строк (обработка: %s, БД: %s)\n",
 		processingStart.Format("15:04:05"),
 		result.Pages,
@@ -365,7 +373,7 @@ func progressBar(progress, max int) string {
 }
 
 // PrintSummary prints download summary with FBW analysis and service records.
-func PrintSummary(result *DownloadResult, repo *sqlite.SQLiteSalesRepository) {
+func PrintSummary(result *DownloadResult, repo *sqlite.SQLiteSalesRepository, skipServiceRecords bool) {
 	fmt.Println("\n" + repeat("=", 71))
 	fmt.Printf("🕐 Окончание загрузки: %s\n", time.Now().Format("2006-01-02 15:04:05"))
 	fmt.Printf("✅ Загружено: %d продаж за %d периодов\n", result.TotalRows, result.PeriodsCount)
@@ -376,22 +384,25 @@ func PrintSummary(result *DownloadResult, repo *sqlite.SQLiteSalesRepository) {
 	defer cancel()
 
 	// Show service records statistics
-	fmt.Println("\n📊 СЛУЖЕБНЫЕ ЗАПИСИ (логистика, ПВЗ, удержания):")
-	serviceStats, err := repo.GetServiceRecordStats(ctx)
-	if err != nil {
-		log.Printf("⚠️  Не удалось получить статистику служебных записей: %v", err)
-	} else if serviceStats.Total == 0 {
-		fmt.Println("  ⚠️  Служебных записей нет")
+	if skipServiceRecords {
+		fmt.Println("\n📊 СЛУЖЕБНЫЕ ЗАПИСИ: ПРОПУЩЕНЫ (--no-service)")
 	} else {
-		fmt.Printf("  Всего: %d записей\n", serviceStats.Total)
-		fmt.Println("  По типам операций:")
-		for oper, count := range serviceStats.ByOperation {
-			// Shorten long operation names
-			shortName := oper
-			if len(oper) > 50 {
-				shortName = oper[:47] + "..."
+		fmt.Println("\n📊 СЛУЖЕБНЫЕ ЗАПИСИ (логистика, ПВЗ, удержания):")
+		serviceStats, err := repo.GetServiceRecordStats(ctx)
+		if err != nil {
+			log.Printf("⚠️  Не удалось получить статистику служебных записей: %v", err)
+		} else if serviceStats.Total == 0 {
+			fmt.Println("  ⚠️  Служебных записей нет")
+		} else {
+			fmt.Printf("  Всего: %d записей\n", serviceStats.Total)
+			fmt.Println("  По типам операций:")
+			for oper, count := range serviceStats.ByOperation {
+				shortName := oper
+				if len(oper) > 50 {
+					shortName = oper[:47] + "..."
+				}
+				fmt.Printf("    - %s: %d\n", shortName, count)
 			}
-			fmt.Printf("    - %s: %d\n", shortName, count)
 		}
 	}
 

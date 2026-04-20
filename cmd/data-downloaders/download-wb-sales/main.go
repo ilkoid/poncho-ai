@@ -41,6 +41,7 @@ func main() {
 	funnelMode := flag.Bool("funnel", false, "Funnel mode (load analytics funnel instead of sales)")
 	help := flag.Bool("help", false, "Show help")
 	rewrite := flag.Bool("rewrite", false, "Delete existing data before downloading (full rewrite)")
+	noService := flag.Bool("no-service", false, "Skip service records (logistics, deductions, penalties)")
 	flag.Parse()
 
 	if *help {
@@ -218,6 +219,7 @@ func main() {
 	}
 
 	var result *DownloadResult
+	skipService := *noService || cfg.Download.SkipServiceRecords
 
 	if *mockMode {
 		// Mock mode: use generated data instead of API calls
@@ -244,10 +246,11 @@ func main() {
 
 		// Download configuration
 		downloadCfg := DownloadConfig{
-			Client:    wbClient,
-			Repo:      repo,
-			RateLimit: cfg.WB.RateLimit,
-			Burst:     cfg.WB.BurstLimit,
+			Client:             wbClient,
+			Repo:               repo,
+			RateLimit:          cfg.WB.RateLimit,
+			Burst:              cfg.WB.BurstLimit,
+			SkipServiceRecords: skipService,
 		}
 
 		// Rewrite: CLI flag overrides config
@@ -268,7 +271,7 @@ func main() {
 	}
 
 	// Print summary with delivery method analysis
-	PrintSummary(result, repo)
+	PrintSummary(result, repo, skipService)
 }
 
 // loadConfig loads configuration from YAML file with ENV expansion.
