@@ -21,14 +21,14 @@ echo "=== MA SKU Data Download ==="
 echo "Started: $(date '+%Y-%m-%d %H:%M:%S')"
 START=$SECONDS
 
+# Phase 2: Sales for MA computation
+#echo "--- Sales ---"
+(cd cmd/data-downloaders/download-wb-sales && go run . --no-service  --config ../../../$CONFIG_DIR/download-wb-sales.yaml ${DAYS:+--days=$DAYS}) || exit $?
+
 # Phase 1: Fast — catalog + attributes (high rate limits)
 echo "--- Cards + 1C/PIM catalog ---"
 (cd cmd/data-downloaders/download-wb-cards && go run . --config ../../../$CONFIG_DIR/download-wb-cards.yaml) || exit $?
 (cd cmd/data-downloaders/download-1c-data && go run . --config ../../../$CONFIG_DIR/download-1c-data.yaml) || exit $?
-
-# Phase 2: Sales for MA computation
-#echo "--- Sales ---"
-(cd cmd/data-downloaders/download-wb-sales && go run . --config ../../../$CONFIG_DIR/download-wb-sales.yaml ${DAYS:+--days=$DAYS}) || exit $?
 
 # Phase 3: Stock snapshots (depends on cards being loaded)
 echo "--- Stock snapshots ---"
@@ -43,5 +43,5 @@ echo "=== Download completed in ${ELAPSED}s ==="
 echo "Finished: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
 echo "Now run:"
-cd /home/ilkoid/go-workspace/src/poncho-ai/cmd/data-analyzers/build-ma-sku-snapshots && go run .
+#cd /home/ilkoid/go-workspace/src/poncho-ai/cmd/data-analyzers/build-ma-sku-snapshots && go run .
 
