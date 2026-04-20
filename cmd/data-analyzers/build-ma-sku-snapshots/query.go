@@ -302,24 +302,25 @@ FROM card_sizes
 GROUP BY nm_id
 `
 
-// Sizes with stock > threshold per (nm_id, warehouse_id).
-// Region is resolved via warehouse FO map in Go code (warehouse_id → FO).
+// Sizes with stock > threshold: raw rows for deduplication in Go.
+// Go code maps warehouse_id → FO and counts DISTINCT chrt_id per (nm_id, FO)
+// to avoid double-counting when same chrt_id appears in multiple warehouses.
 const sizesInStockSQL = `
-SELECT nm_id, warehouse_id, COUNT(DISTINCT chrt_id) AS sizes_in_stock
+SELECT nm_id, chrt_id, warehouse_id
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
   AND (quantity + COALESCE(in_way_from_client, 0)) > ?
   AND nm_id IN (%s)
-GROUP BY nm_id, warehouse_id
+GROUP BY nm_id, chrt_id, warehouse_id
 `
 
 // Sizes with stock > threshold without year filter.
 const sizesInStockAllSQL = `
-SELECT nm_id, warehouse_id, COUNT(DISTINCT chrt_id) AS sizes_in_stock
+SELECT nm_id, chrt_id, warehouse_id
 FROM stocks_daily_warehouses
 WHERE snapshot_date = ?
   AND (quantity + COALESCE(in_way_from_client, 0)) > ?
-GROUP BY nm_id, warehouse_id
+GROUP BY nm_id, chrt_id, warehouse_id
 `
 
 // Daily sales per (nm_id, barcode, office_name) for regional MA computation.
@@ -501,8 +502,8 @@ func (r *SourceRepo) QueryTotalSizes(ctx context.Context, nmIDs []int) (map[int]
 	return result, rows.Err()
 }
 
-// QuerySizesInStock returns sizes with stock > threshold per (nm_id, fo_name).
-// Uses warehouse_id from stocks, resolved to FO via warehouseIDFOmap.
+// QuerySizesInStock returns count of distinct sizes with stock > threshold per (nm_id, fo_name).
+// Deduplicates chrt_id across warehouses within the same FO to prevent fill_pct > 100%.
 func (r *SourceRepo) QuerySizesInStock(ctx context.Context, date string, threshold int, nmIDs []int, warehouseIDFOmap map[int]string) (map[SizeRegionKey]int, error) {
 	var query string
 	var args []any
@@ -522,12 +523,17 @@ func (r *SourceRepo) QuerySizesInStock(ctx context.Context, date string, thresho
 	}
 	defer rows.Close()
 
-	result := make(map[SizeRegionKey]int)
+	type dedupKey struct {
+		NmID       int
+		RegionName string
+		ChrtID     int64
+	}
+	seen := make(map[dedupKey]bool)
 	for rows.Next() {
 		var nmID int
+		var chrtID int64
 		var whID int
-		var count int
-		if err := rows.Scan(&nmID, &whID, &count); err != nil {
+		if err := rows.Scan(&nmID, &chrtID, &whID); err != nil {
 			return nil, fmt.Errorf("scan sizes in stock: %w", err)
 		}
 
@@ -536,10 +542,17 @@ func (r *SourceRepo) QuerySizesInStock(ctx context.Context, date string, thresho
 			continue
 		}
 
-		key := SizeRegionKey{NmID: nmID, RegionName: fo}
-		result[key] += count
+		seen[dedupKey{NmID: nmID, RegionName: fo, ChrtID: chrtID}] = true
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make(map[SizeRegionKey]int, len(seen))
+	for dk := range seen {
+		result[SizeRegionKey{NmID: dk.NmID, RegionName: dk.RegionName}]++
+	}
+	return result, nil
 }
 
 // QueryDailySalesByRegion returns daily sales per (nm_id, chrt_id, region, date) for 29-day window.

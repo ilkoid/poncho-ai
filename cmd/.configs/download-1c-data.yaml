@@ -7,4 +7,5 @@ onec:
   # PIM Goods API URL (basic auth in URL)
   pim_url: ${ONEC_PIM_URL}
   # Target SQLite database (shared with cards/prices)
-  db_path: "/mnt/d/db/wb-podsort.db"
+#  db_path: "/mnt/d/db/wb-podsort.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-podsort.db"

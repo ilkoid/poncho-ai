@@ -6,46 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Poncho AI is a **Go-based LLM-agnostic, tool-centric framework** for building AI agents with ReAct pattern.
 
-**Key Philosophy**: "Raw In, String Out" - tools receive raw JSON from LLM and return strings.
+**Key Philosophy**: "Raw In, String Out" — tools receive raw JSON from LLM and return strings.
 
 **Architecture**:
-- `pkg/state/CoreState` - Framework core (reusable, e-commerce helpers)
-- `pkg/tui/` - TUI components with primitives layer (BaseModel, InterruptionModel)
-- `pkg/chain/ReActCycle` - Chain + Agent interfaces
-- `pkg/app/components.go` - Context propagation (Rule 11)
-- `pkg/app/tool_setup.go` - **OCP: Config-driven tool setup** (2026-02-01)
-- `pkg/app/presets.go` - Preset system for quick launch
-- `pkg/config/utility.go` - Shared config types for cmd/ utilities (PromotionConfig, DownloadConfig, FeedbacksConfig, FunnelConfig, FunnelAggregatedConfig, WBClientConfig, OneCConfig)
-- `pkg/agent/Client` - Simple 2-line agent API (Facade)
-- `pkg/events/` - Port & Adapter for UI decoupling
-- `pkg/prompts/` - **OCP: Prompt loading with source pattern** (2026-02-01)
-- `pkg/chain/bundle_resolver.go` - Token optimization (98% savings)
+- `pkg/state/CoreState` — Framework core (reusable, e-commerce helpers)
+- `pkg/tui/` — TUI components with primitives layer (BaseModel, InterruptionModel)
+- `pkg/chain/ReActCycle` — Chain + Agent interfaces
+- `pkg/app/components.go` — Context propagation (Rule 11)
+- `pkg/app/tool_setup.go` — OCP: Config-driven tool setup
+- `pkg/agent/Client` — Simple 2-line agent API (Facade)
+- `pkg/events/` — Port & Adapter for UI decoupling
+- `pkg/prompts/` — OCP: Prompt loading with source pattern
+- `pkg/chain/bundle_resolver.go` — Token optimization (98% savings)
 - Rule 6 Compliant: `pkg/` has NO imports from `internal/`
-
----
-
-## Architecture Overview
-
-### High-Level Structure
-
-```
-poncho-ai/
-├── cmd/                    # Production utilities
-│   ├── data-downloaders/   # Data collection from APIs
-│   ├── data-analyzers/     # LLM-powered data analysis
-│   ├── fix-utilities/      # Data fix/cleanup tools
-│   └── test-utils/         # API debugging (not for production)
-├── examples/              # Verification & demos (Rule 9)
-│   ├── e2e-testing/        # E2E infrastructure
-│   ├── api-demos/          # API demonstrations
-│   └── feature-demos/      # Framework features (interruptions, etc.)
-├── internal/              # App-specific logic (ui/)
-├── pkg/                   # Reusable library packages
-├── prompts/              # Prompt templates
-└── config.yaml           # Main config
-```
-
-**Rule 9 Compliance**: Verification via `/examples` utilities, not unit tests initially.
 
 ---
 
@@ -53,99 +26,80 @@ poncho-ai/
 
 | Rule | Description |
 |------|-------------|
-| **0: Code Reuse** | Use existing solutions first |
-| **1: Tool Interface** | NEVER change - `Definition() ToolDefinition`, `Execute(ctx, argsJSON string) (string, error)` |
+| **0: Code Reuse** | Use existing solutions first — see [dev_best_practices.md](dev_best_practices.md) |
+| **1: Tool Interface** | NEVER change — `Definition() ToolDefinition`, `Execute(ctx, argsJSON string) (string, error)` |
 | **2: Configuration** | YAML with ENV support only |
 | **3: Registry** | All tools via `Registry.Register()` |
 | **4: LLM Abstraction** | Work through `Provider` interface only |
 | **5: State** | Layered, thread-safe, no globals |
-| **6: Package Structure** ⭐ | `pkg/` = reusable, `internal/` = app-specific, `cmd/` = test utilities |
+| **6: Package Structure** ⭐ | `pkg/` = reusable, `internal/` = app-specific, `cmd/` = entry points |
 | **7: Error Handling** | No `panic()` in business logic |
 | **8: Extensibility** | Add via tools, LLM adapters, config |
 | **9: Testing** | Use CLI utilities in `/examples` for verification |
-  - Examples: `examples/wb-funnel-demo/` - autonomous WB Analytics v3 verification |
 | **10: Documentation** | Godoc on public APIs |
 | **11: Context Propagation** | All long-running ops accept `context.Context` |
 | **12: Security & Secrets** | Never hardcode secrets, use ENV, HTTPS only |
 | **13: Resource Localization** | Autonomous `/cmd` and `/examples` apps |
 
-### Rule 6: Package Structure (Port & Adapter) ⭐
+### Rule 6: Package Structure (Port & Adapter)
 
 ```
-pkg/       - Library code, ready for reuse
-internal/  - Application-specific logic
-cmd/       - Entry points, test utilities only
+pkg/       — Library code, ready for reuse
+internal/  — Application-specific logic
+cmd/       — Entry points, test utilities only
 ```
 
-**Port & Adapter:**
 - Library (`pkg/`) defines Port interface (`events.Emitter`, `events.Subscriber`)
 - Adapter (`pkg/tui`) implements Port (Rule 6 compliant: no imports from `pkg/agent`, `pkg/chain`)
 - Business logic via **callback pattern** from `cmd/`
 
-**Rule 11 Status**: ✅ FULLY COMPLIANT
-- `pkg/app/components.go`: `Initialize(parentCtx, ...)` and `Execute(parentCtx, ...)`
-- Context in Model struct for Bubble Tea
-- All entry points pass context
-
 ---
 
-## Architectural Patterns
+## Architecture
+
+### High-Level Structure
+
+```
+poncho-ai/
+├── cmd/                    # Production utilities
+│   ├── data-downloaders/   # Data collection from APIs
+│   ├── data-analyzers/     # Data analysis & computation
+│   └── fix-utilities/      # Data fix/cleanup tools
+├── examples/              # Verification & demos (Rule 9)
+├── internal/              # App-specific logic
+├── pkg/                   # Reusable library packages
+├── prompts/               # Prompt templates
+└── config.yaml            # Main config
+```
+
+### Core Data Flow
+
+```
+Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
+                    ↓ Tool calls
+              Registry (pkg/tools) → Tool.Execute(ctx, argsJSON)
+                    ↓ Events
+              Emitter (pkg/events) → Subscriber (pkg/tui)
+```
 
 ### Port & Adapter
-```
-Library (pkg/agent) → Port (events.Emitter) ← Adapter (pkg/tui)
-```
-- `pkg/events` - Port (Emitter, Subscriber interfaces)
-- `pkg/tui` - Adapter (implements Subscriber)
-- `pkg/agent` - Library (uses Emitter)
 
-### Primitives-Based TUI
-UI built from 5 primitives in `pkg/tui/primitives/`:
+- `pkg/events` — Port (Emitter, Subscriber interfaces)
+- `pkg/tui` — Adapter (implements Subscriber)
+- `pkg/agent` — Library (uses Emitter)
 
-| Primitive | Purpose | Pattern |
-|-----------|---------|---------|
-| **ViewportManager** | Smart scroll, resize | Repository |
-| **StatusBarManager** | Spinner, status bar | State |
-| **EventHandler** | Pluggable event renderers | Strategy |
-| **InterruptionManager** | User input, channel | Callback |
-| **DebugManager** | Screen save, JSON logs | Facade |
+### Event System
 
-### Event System Flow
-Six-phase flow: Emission → Transport (channel) → Subscription → Conversion → Processing → Rendering
+Event types: `EventThinking`, `EventThinkingChunk`, `EventToolCall`, `EventToolResult`, `EventUserInterruption`, `EventMessage`, `EventError`, `EventDone`
 
-**Event Types**:
-- `EventThinking` - starts thinking
-- `EventThinkingChunk` - streaming reasoning content
-- `EventToolCall` - tool execution started
-- `EventToolResult` - tool execution completed
-- `EventUserInterruption` - user interrupted
-- `EventMessage` - agent message
-- `EventError` - error occurred
-- `EventDone` - finished
-
-### Interruption Mechanism
-User can interrupt execution in real-time with message.
-
-**Flow**:
-```
-User → TUI → inputChan (size=10) →
-ReActExecutor (between iterations) →
-loadInterruptionPrompt() (YAML or fallback) →
-Emit EventUserInterruption → TUI
-```
-
-**Key Features**:
-- Buffered channel (size=10) for inter-goroutine comms
-- Non-blocking checks via `select` with `default`
-- YAML config: `chains.default.interruption_prompt`
-- Event emission via `EventUserInterruption`
+Flow: Emission → Transport (channel) → Subscription → Conversion → Processing → Rendering
 
 ---
 
 ## Core Components
 
 ### Tool System (`pkg/tools/`)
-**Interface**:
+
 ```go
 type Tool interface {
     Definition() ToolDefinition
@@ -155,374 +109,95 @@ type Tool interface {
 
 **Categories**: WB API (Content, Analytics v3, Feedbacks, Advertising), S3 (basic/batch/download), Vision, Planner.
 
-**WB Analytics API v3 Tools** (2026-02-10):
-- `get_wb_product_funnel` - Sales funnel with 15+ metrics (buyouts, cancellations, WB Club, stocks, ratings)
-- `get_wb_product_funnel_history` - Daily funnel trends (1-7 days free, up to 365 with subscription)
-- `get_wb_search_positions` - Product search visibility
-- `get_wb_top_search_queries` - Top search queries by product
-- `get_wb_top_organic_positions` - Organic search positions
+**Registration** — Config-driven via `pkg/app/tool_setup.go`:
+- `SetupToolsFromConfig()` iterates `cfg.ToolCategories`, calls `registerTool()` for each
+- Adding new platform (e.g., Ozon): add to `config.yaml` + add switch case to `registerTool()`
 
-**Rate Limits**: Two-level adaptive rate limiting for all downloaders (see [dev_limits.md](dev_limits.md)).
-Analytics API: 3 req/min swagger. Content/Advertising API: higher limits (100-300/min).
+### State Management (`pkg/state/`)
 
-**Tool Registration** (OCP Refactored - 2026-02-01):
-Config-driven via `pkg/app/tool_setup.go` with factory pattern in `registerTool()`:
+Repository Pattern with type-safe operations.
 
-```go
-// pkg/app/tool_setup.go
-func SetupToolsFromConfig(
-    st *state.CoreState,
-    cfg *config.AppConfig,
-    clients map[string]any,  // Dependency injection container
-) error {
-    // Iterates cfg.ToolCategories, calls registerTool() for each tool
-}
+**Generic Helpers** (`pkg/state/generic.go`): `GetType[T]()`, `SetType[T]()`, `UpdateType[T]()`
 
-func registerTool(name string, ...) error {
-    switch name {
-    case "search_wb_products":
-        tool = std.NewWbProductSearchTool(client.(*wb.Client), toolCfg, cfg.WB)
-    // ... 50+ tools covered
-    }
-}
-```
+**Repository Interfaces**: `MessageRepository`, `FileRepository`, `TodoRepository`, `DictionaryRepository`, `StorageRepository`, `ToolsRepository`
 
-**Adding Ozon** (without modifying core code):
-1. Add `ozon` category to `config.yaml`
-2. Add `ozon_client` to clients map
-3. Add cases to `registerTool()` switch
+### Client Storage
 
-**No setupOzonTools() function needed!**
-
-### Model Registry (`pkg/models/`)
-Centralized LLM provider management with dynamic switching.
-
-**Features**:
-- Models from `config.yaml` registered at startup
-- Thread-safe via `sync.RWMutex`
-- Fallback: `GetWithFallback(requested, default)`
-- Runtime switching via post-prompts
-
-### LLM Abstraction (`pkg/llm/`)
-**Options Pattern**:
-```go
-llm.Generate(ctx, messages, llm.WithModel("glm-4.6"), llm.WithTemperature(0.5))
-```
-
-**StreamingProvider Interface**:
-```go
-type StreamingProvider interface {
-    Provider  // Extends base Provider
-    GenerateStream(ctx, messages, callback func(StreamChunk), opts) (Message, error)
-}
-```
-
-**StreamChunk Types**:
-- `ChunkThinking` - reasoning_content from thinking mode
-- `ChunkContent` - regular response content
-- `ChunkError` - streaming error
-- `ChunkDone` - streaming complete
-
-**Features**:
-- Opt-out design (enabled by default)
-- Thinking mode support (Zai GLM)
-- Thread-safe callback
-- Event-based UI updates via EventThinkingChunk
-
-### Bundle System (`pkg/chain/bundle_resolver.go`)
-**Purpose**: Token optimization through dynamic tool expansion.
-
-**Token Savings**:
-- Without bundles: 100 tools = ~15,000 tokens
-- With bundles: 10 bundles = ~300 tokens (98% savings)
-
-**Flow**:
-1. LLM sees bundle definitions (~300 tokens)
-2. LLM calls bundle name (e.g., "wb_content_tools")
-3. BundleResolver.expandBundle() detects bundle call
-4. Expands to real tool definitions
-5. Injects as system message
-6. Re-runs LLM with expanded context
-
-**Configuration**:
-```yaml
-tool_resolution_mode: "bundle-first"  # or "flat"
-enable_bundles: ["wb-tools", "vision-tools"]
-tool_bundles:
-  wb_content_tools:
-    description: "Wildberries Content API..."
-    tools: ["search_wb_products", "get_wb_parent_categories", ...]
-```
-
-### Preset System (`pkg/app/presets.go`)
-**Purpose**: Quick app launch with predefined configurations.
-
-**Built-in Presets**:
-- `simple-cli` - Minimal CLI interface
-- `interactive-tui` - Full TUI with streaming
-- `full-featured` - All features enabled
-
-**Usage**:
-```go
-// Load config and apply preset overlay
-client, _ := agent.NewFromPreset(ctx, "interactive-tui", "config.yaml")
-
-// Or manually
-preset, _ := app.GetPreset("interactive-tui")
-cfg, _ := app.LoadConfigWithPreset("config.yaml", preset)
-```
-
-**Custom Presets**:
-```go
-app.RegisterPreset("my-ecommerce", &app.PresetConfig{
-    Type: app.AppTypeTUI,
-    EnableBundles: []string{"wb-tools", "vision-tools"},
-    Models: app.ModelSelection{Reasoning: "glm-4.6"},
-    UI: app.TUIConfig{Title: "My E-commerce AI"},
-})
-```
+| Client | Stored In | Access |
+|--------|-----------|--------|
+| **S3 Client** | `CoreState.store` | `state.GetStorage()` |
+| **LLM Providers** | `ModelRegistry` | `modelRegistry.Get()` |
+| **WB Client** | DI (not in State) | Passed to tools |
 
 ### ReActCycle (`pkg/chain/`)
-**PHASE 1-5 COMPLETE**: Template-Execution separation with Observer pattern.
 
-**Architecture** (SRP Refactored):
-```
-ReActCycle (Immutable Template) → Execute() →
-ReActExecution (Runtime State) → Execute() →
-ReActExecutor (Orchestrator) → Observer Notifications
-```
-
-**Executor Methods** (Extracted from 268-line `Execute()`):
-| Method | Purpose |
-|--------|---------|
-| `initializeExecution()` | Initialize execution, notify observers |
-| `executeLLMStep()` | Execute LLM invocation, emit events |
-| `handleToolExecution()` | Execute tools, emit results |
-| `handleToolInterruption()` | Process user interruption |
-| `checkUserInterruption()` | Non-blocking interruption check |
-| `finalizeExecution()` | Build output, notify observers |
-| `notifyIterationStart()` | Observer notification helper |
-| `notifyIterationEnd()` | Observer notification helper |
-| `notifyFinishWithError()` | Error handling helper |
-
-**Key**:
-- Template immutable (thread-safe for concurrent Execute())
-- Execution per call (never shared)
-- Observer pattern for cross-cutting concerns
-- Type-safe signals (SignalFinalAnswer, etc.)
-- Streaming support via `StreamingProvider`
-- Rule 11: Context propagated
+Template-Execution separation with Observer pattern:
+- `ReActCycle` — Immutable template (thread-safe for concurrent `Execute()`)
+- `ReActExecution` — Per-call runtime state (never shared)
+- `ReActExecutor` — Orchestrator with extracted methods
 
 ### Simple Agent API (`pkg/agent/`)
-**Facade Pattern**: Ultra-simple 2-line API.
 
 ```go
 client, _ := agent.New(agent.Config{ConfigPath: "config.yaml"})
 result, _ := client.Run(ctx, query)
 ```
 
-**Features**:
-- Auto-loads config.yaml
-- Auto-registers tools (only `enabled: true`)
-- Creates ModelRegistry, ToolsRegistry, CoreState
-- Thread-safe
-- Supports streaming and interruptions
-
-**With Interruptions**:
-```go
-inputChan := make(chan string, 10)
-output, _ := client.Execute(ctx, chain.ChainInput{
-    UserQuery:    "Analyze",
-    State:        client.GetState(),
-    Registry:     client.GetToolsRegistry(),
-    UserInputChan: inputChan,
-})
-```
-
-### Event System (`pkg/events/`)
-**Port & Adapter**: Decouple agent from UI via event interfaces.
-
-**Interfaces**:
-```go
-type Emitter interface {
-    Emit(ctx context.Context, event Event)
-}
-
-type Subscriber interface {
-    Events() <-chan Event
-    Close()
-}
-```
-
-**Event Data**:
-- `ThinkingChunkData` - streaming reasoning
-- `ToolCallData` - tool invocation
-- `ToolResultData` - execution result
-- `UserInterruptionData` - interruption with message
-
-### TUI Package (`pkg/tui/`)
-Adapter between `pkg/events` and Bubble Tea.
-
-**Primitives** (`pkg/tui/primitives/`):
-- ViewportManager - smart scroll, resize
-- StatusBarManager - spinner, status bar
-- EventHandler - pluggable event renderers
-- InterruptionManager - user input, channel
-- DebugManager - screen save, JSON logs
-
-**Models**:
-1. **BaseModel** - foundation (embeds all 5 primitives)
-2. **InterruptionModel** - interruption support (requires `SetOnInput()` callback)
-
-**Rule 6**: Only reusable code in `pkg/tui`, no app-specific logic.
-
 ### App Initialization (`pkg/app/`)
-**Rule 11**: Context propagation through all layers.
 
-**Architecture** (SRP Refactored):
-The `Initialize()` function (lines 390-442) has been refactored from 211 lines to 35 lines by extracting focused helper functions:
-
-| Helper Function | Purpose |
-|-----------------|---------|
-| `createS3Client()` | Creates optional S3 client |
-| `createWBClient()` | Creates WB API client with ping check |
-| `loadWBDictionaries()` | Loads e-commerce dictionaries |
-| `createModelRegistry()` | Creates LLM model registry |
-| `createCoreState()` | Creates CoreState with TodoManager |
-| `getVisionLLM()` | Retrieves vision model from registry |
-| `loadAgentPrompts()` | Loads system and tool post-prompts |
-| `createReActCycle()` | Creates ReActCycle instance |
-| `setupReActCycleDependencies()` | Sets registry, state, bundle resolver |
-| `configureReActCycle()` | Full ReActCycle configuration |
-| `attachDebugRecorder()` | Attaches debug recorder |
-
-**Usage**:
 ```go
 components, err := app.Initialize(ctx, cfg, 10, "")
 result, err := app.Execute(ctx, components, query, timeout)
 ```
 
-**Components**:
-```go
-type Components struct {
-    Config        *config.AppConfig
-    State         *state.CoreState
-    ModelRegistry *models.Registry
-    VisionLLM     llm.Provider
-    WBClient      *wb.Client
-    Orchestrator  *chain.ReActCycle
-}
-```
+Returns `Components` struct with: Config, State, ModelRegistry, VisionLLM, WBClient, Orchestrator.
 
-### State Management (`pkg/state/`)
-**Repository Pattern** with type-safe operations.
+### Bundle System (`pkg/chain/bundle_resolver.go`)
 
-**Typed Keys** (pkg/state/keys.go):
-- `KeyHistory`, `KeyFiles`, `KeyCurrentArticle`, `KeyTodo`
-- `KeyDictionaries`, `KeyStorage`, `KeyToolsRegistry`
-
-**Generic Helpers** (pkg/state/generic.go):
-- `GetType[T](s, key)`, `SetType[T](s, key, value)`, `UpdateType[T](s, key, fn)`
-
-**Repository Interfaces**:
-- `MessageRepository` - chat history
-- `FileRepository` - file management with vision
-- `TodoRepository` - task management
-- `DictionaryRepository` - e-commerce dictionaries
-- `StorageRepository` - S3 client
-- `ToolsRepository` - tool registry
-
-### Client Storage Architecture
-
-| Client | Stored In | Pattern | Access |
-|--------|-----------|---------|--------|
-| **S3 Client** | `CoreState.store` | Repository | `state.GetStorage()` |
-| **LLM Providers** | `ModelRegistry` | Registry | `modelRegistry.Get()` |
-| **WB Client** | ❌ NOT in State | DI | Passed to tools |
-
-**WB Client Factory**:
-```go
-// pkg/wb/client.go
-client := wb.New(apiKey)                    // Simple creation
-client, err := wb.NewFromConfig(cfg.WB)    // Config-based
-
-// Adaptive rate limiting (MUST call before API methods)
-client.SetRateLimit("tool_id", desiredRate, desiredBurst, apiRate, apiBurst)
-client.SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff)
-```
-
-**Important**: `NewFromConfig()` does NOT use `WBConfig.RateLimit`/`BurstLimit` fields.
-Always call `SetRateLimit()` explicitly for adaptive behavior. See [dev_limits.md](dev_limits.md).
-
-**HTTP Methods**:
-- `Get()` → `doRequest()` — buffered (io.ReadAll + json.Unmarshal)
-- `GetStream()` — streaming (json.Decoder, for large payloads like fullstats)
-- `Post()` → `doRequest()` — for request bodies
-
-**Demo Mode**: `client.IsDemoKey()` returns `true` for `demo_key`, enabling mock responses.
-
-**Thread Safety**:
-- CoreState: `sync.RWMutex`
-- ModelRegistry: `sync.RWMutex`
-- WB Client: `sync.RWMutex` (rate limiters map + adaptive state map)
-
-### S3 Batch Tools (`pkg/tools/std/s3_batch.go`)
-**Purpose**: Batch operations with classification and vision analysis.
-
-**Context Overflow Problem** (SOLVED):
-- Parallel image calls → context overflow (~550KB)
-- Solution: `analyze_article_images_batch` - sequential with aggregation
-
-**Tools**:
-- `classify_and_download_s3_files` - classify by tags (sketch, plm_data, marketing)
-- `analyze_article_images_batch` - sequential vision analysis (max_images limit)
-
-### S3 Download Tool (`pkg/tools/std/s3_download.go`)
-**Purpose**: Download files/folders from S3.
-
-**Safety**:
-- No bucket download (key cannot be "/")
-- Path traversal detection
-- Max depth: 1 folder
-
-### Debug System (`pkg/debug/`)
-JSON trace recording with base64 truncation.
-
-**Features**:
-- Detects and truncates base64 images (>100 chars)
-- Configurable `max_result_size`
-- Includes tool args/results in logs
+Token optimization: 100 tools (~15K tokens) → 10 bundles (~300 tokens). Flow: LLM calls bundle name → expandBundle() → inject real definitions → re-run LLM.
 
 ### Prompt System (`pkg/prompts/`)
-**OCP Refactored** (2026-02-01): Source pattern with fallback chain.
 
-**PromptSource Interface**:
+Source pattern with fallback chain: File sources (YAML) → Default source (Go code). `PromptSource` interface with implementations: `FileSource`, `DefaultSource`, `APISource`, `DatabaseSource`.
+
+### LLM Abstraction (`pkg/llm/`)
+
+**Options Pattern**:
 ```go
-type PromptSource interface {
-    Load(promptID string) (*PromptFile, error)
-}
+llm.Generate(ctx, messages, llm.WithModel("glm-4.6"), llm.WithTemperature(0.5))
 ```
 
-**Source Registry** with fallback chain:
-1. File sources (YAML files from `cfg.App.PromptsDir`)
-2. Default source (Go defaults)
+**StreamingProvider** extends base `Provider` with `GenerateStream()` for real-time responses.
 
-**Implementations**:
-- `FileSource` - YAML files (`<base_dir>/<promptID>.yaml`)
-- `DefaultSource` - Go hardcoded defaults (fallback)
-- `APISource` - HTTP REST API (example)
-- `DatabaseSource` - SQL database (example)
+**StreamChunk Types**: `ChunkThinking` (reasoning), `ChunkContent` (response), `ChunkError`, `ChunkDone`.
 
-**Usage**:
+Features: opt-out design (streaming by default), thinking mode support (Zai GLM), thread-safe callback.
+
+### Model Registry (`pkg/models/`)
+
+Centralized LLM provider management with dynamic switching. Thread-safe via `sync.RWMutex`. Fallback: `GetWithFallback(requested, default)`. Runtime model switching via post-prompts.
+
+### Preset System (`pkg/app/presets.go`)
+
+Quick app launch with predefined configurations.
+
+**Built-in Presets**: `simple-cli` (minimal CLI), `interactive-tui` (full TUI + streaming), `full-featured` (all features).
+
 ```go
-registry, _ := prompts.CreateSourceRegistry(cfg)
-file, err := registry.Load("agent_system")
-// Fallback: file.yaml → Go default
+client, _ := agent.NewFromPreset(ctx, "interactive-tui", "config.yaml")
+// Custom:
+app.RegisterPreset("my-app", &app.PresetConfig{Type: app.AppTypeTUI, ...})
 ```
 
----
+### Interruption Mechanism
 
-## Design Patterns
+User can interrupt execution in real-time with a message.
+
+**Flow**: User → TUI → `inputChan` (buffered, size=10) → ReActExecutor (between iterations) → `loadInterruptionPrompt()` (YAML or fallback) → Emit `EventUserInterruption` → TUI
+
+Key: non-blocking checks via `select` with `default`, YAML config at `chains.default.interruption_prompt`.
+
+### Design Patterns
 
 | Pattern | Location | Purpose |
 |---------|----------|---------|
@@ -532,16 +207,14 @@ file, err := registry.Load("agent_system")
 | **Repository** | `pkg/state/` | Unified storage |
 | **Registry** | `pkg/tools/`, `pkg/models/` | Registration/discovery |
 | **Factory** | `pkg/models/`, `pkg/app/tool_setup.go` | LLM/tool creation |
-| **Adapter** | `pkg/prompts/registry_factory.go` | Source pattern adapters |
 | **Options** | `pkg/llm/` | Runtime parameter overrides |
-| **Dependency Injection** | `pkg/app/`, `pkg/tools/std/` | DI for WB client |
-| **ReAct** | `pkg/chain/` | Agent reasoning |
-| **Chain of Responsibility** | `pkg/chain/` | Modular execution |
+| **DI** | `pkg/app/`, `pkg/tools/std/` | Client injection |
+| **ReAct** | `pkg/chain/` | Agent reasoning loop |
 | **Template-Execution** | `pkg/chain/` | Immutable + runtime state |
 | **Observer** | `pkg/chain/` | Cross-cutting concerns |
 | **Streaming** | `pkg/llm/StreamingProvider` | Real-time responses |
 | **Fallback** | `pkg/prompts/source_registry.go` | Prompt source chain |
-| **Source** | `pkg/prompts/` | OCP: Extensible prompt loading |
+| **Source** | `pkg/prompts/` | OCP: extensible prompt loading |
 
 ---
 
@@ -554,88 +227,108 @@ go run cmd/poncho/main.go
 # Simple agent
 go run cmd/simple-agent/main.go "show categories"
 
-# wb-ping-util-v2 (2-line API demo)
-go run cmd/wb-ping-util-v2/main.go
+# Run all tests
+go test ./...
 
-# Streaming test
-go run cmd/streaming-test/main.go "Explain quantum computing"
+# Run specific package
+go test ./pkg/wb/ -v
 
-# Feature demo: Interruptions with TUI
-cd examples/feature-demos/interruption-test && go run main.go [config_path]
+# Run specific test
+go test ./pkg/wb/ -run TestAdaptiveRateLimit_ReducesOn429 -v
 
-# WB Analytics Funnel Demo (API v3 verification)
-cd examples/api-demos/wb-funnel-demo
-go run main.go                              # Mock mode (demo_key)
-WB_API_KEY=your_key go run main.go         # Real API
-WB_API_KEY=your_key go run main.go --nmIds 123456 --days 30  # Custom args
-
-# E2E Mock Collector (create snapshot database)
-cd examples/e2e-testing/e2e-mock-collector
-go run main.go --days 7 --output ../e2e-snapshot.db
-
-# Download utilities (production)
-cd cmd/data-downloaders/download-wb-sales && go run main.go --days 7
-cd cmd/data-downloaders/download-wb-promotion && go run main.go --begin 2025-01-01 --end 2025-01-31
-cd cmd/data-downloaders/download-wb-feedbacks && go run . --days=7
-cd cmd/data-downloaders/download-wb-funnel && go run . --days=7
-cd cmd/data-downloaders/download-wb-funnel-agg && go run . --days=7
-
-# 1C/PIM data download (basic auth in URL via env vars)
-cd cmd/data-downloaders/download-1c-data && ONEC_API_URL="https://user:pass@api.playtoday.ru/feeds/ones" ONEC_PIM_URL="https://user:pass@api.playtoday.ru/feeds/pim" go run .
-
-# Analyze utilities (LLM-powered)
-cd cmd/data-analyzers/analyze-wb-feedbacks && OPENROUTER_API_KEY=sk-or-... go run . --days=30
+# Run with coverage
+go test ./... -coverprofile=coverage.out
 ```
 
-### cmd/ Directory
+### cmd/data-downloaders/ — Data collection from external APIs
 
-Production utilities organized by purpose:
+| Utility | Purpose |
+|---------|---------|
+| `download-wb-sales` | Sales + funnel metrics by period |
+| `download-wb-promotion` | Campaigns + daily stats (4-level hierarchy) |
+| `download-wb-feedbacks` | Feedbacks + questions (39 fields) |
+| `download-wb-funnel` | Analytics v3 funnel (daily per product) |
+| `download-wb-funnel-agg` | Analytics v3 aggregated funnel |
+| `download-wb-cards` | Content API cards (cursor pagination) |
+| `download-wb-prices` | Discounts-Prices API (offset pagination) |
+| `download-wb-region-sales` | Region-level sales (31-day horizon) |
+| `download-wb-stocks` | Warehouse stock snapshots |
+| `download-wb-stock-history` | Historical stock CSV reports |
+| `download-wb-supplies` | FBW supply tracking |
+| `download-1c-data` | 1C/PIM catalog + prices (streaming JSON) |
+| `download-all-articles` | S3 article processing |
 
-**`data-downloaders/`** - Data collection from external APIs
-- `download-all-articles` - S3 mass download
-- `download-wb-sales` - WB Sales/Analytics → SQLite
-- `download-wb-promotion` - WB Promotion → SQLite
-- `download-wb-feedbacks` - WB Feedbacks/Questions → SQLite
-- `download-wb-funnel` - WB Analytics v3 funnel → SQLite
-- `download-wb-funnel-agg` - WB Analytics v3 aggregated funnel → SQLite
-- `download-wb-stocks` - WB warehouse stock snapshots → SQLite
-- `download-wb-stock-history` - WB historical stock CSV reports → SQLite
-- `download-wb-cards` - WB Content API cards → SQLite (cursor pagination)
-- `download-wb-region-sales` - WB region sales → SQLite (31-day horizon)
-- `download-wb-prices` - WB Discounts-Prices API → SQLite (offset pagination)
-- `download-1c-data` - 1C/PIM product catalog + 25 price types → SQLite (streaming JSON decode)
+### cmd/data-analyzers/ — Data analysis & computation
 
-**`data-analyzers/`** - Data analysis and computation utilities
-- `analyze-wb-feedbacks` - Feedback quality analysis via OpenRouter (two-level LLM aggregation)
-- `build-ma-sku-snapshots` - SKU-level stock analysis with regional moving averages (MA-3/7/14/28, risk flags, supply incoming)
+| Utility | Purpose |
+|---------|---------|
+| `analyze-wb-feedbacks` | Feedback quality analysis via OpenRouter (two-level LLM aggregation) |
+| `build-ma-snapshots` | Daily product MA-3/7/14/28 snapshots for PowerBI |
+| `build-ma-sku-snapshots` | SKU-level stock analysis with regional MA, risk flags, supply incoming |
+| `1c_mktpl_mapping` | Maps products between 1C, PIM, and marketplace systems (barcode + PIM) |
+| `compare-wb-1c-prices` | Compares 1C retail prices with WB marketplace prices |
+| `check-db-freshness` | Checks data freshness in SQLite tables against configurable thresholds |
 
-**`fix-utilities/`** - Data fix/cleanup tools
-- `fix-fake-png` - Fix PNG/JSON file naming
+### cmd/fix-utilities/
 
-**`test-utils/`** - API debugging utilities (not for production)
-- `test-wb-*` - Various WB API testing tools
+- `fix-fake-png` — Fix PNG/JSON file naming
+- `migrate-feedbacks-to-unified` — One-time migration: feedbacks.db + quality_reports.db → unified wb-sales.db
 
-### examples/ Directory
+---
 
-Verification and demonstration utilities per Rule 9:
+## WB Client & Rate Limiting
 
-**`e2e-testing/`** - E2E infrastructure
-- `e2e-mock-collector` - Collects real data to SQLite
-- `e2e-snapshot-test` - SnapshotDBClient verification
-- `e2e-real-test` - API vs SQLite comparison
-- `e2e-v2-test` - V2 transformation verification
+**Setup** (required for all downloaders):
+```go
+client := wb.New(apiKey)
+client.SetRateLimit("tool_id", desiredRate, desiredBurst, apiRate, apiBurst)
+client.SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff)
+```
 
-**`api-demos/`** - API demonstrations
-- `wb-funnel-demo` - WB Analytics API v3 (15+ metrics)
-- `wb-list-products` - Seller products listing
-- `wb-service-demo` - WbService layer demo
+**Critical**: `NewFromConfig()` does NOT use `WBConfig.RateLimit` fields. Always call `SetRateLimit()` explicitly.
 
-**`db-inspectors/`** - SQLite database inspection tools
-- `funnel-db-inspector` - Funnel data queries
-- `sales-db-inspector` - Sales data queries
+**Recovery cycle**: `desired` → 429 → `api floor` (after 5 OKs) → `probe desired` (after 10 OKs) → repeat.
 
-**`feature-demos/`** - Framework features
-- `interruption-test` - Interruption mechanism with TUI
+**Common pitfalls** (full guide: [dev_limits.md](dev_limits.md)):
+1. Forgetting `SetRateLimit()` → limiter never reduces
+2. **ToolID mismatch** — `SetRateLimit("tool_A")` + `Get("tool_B")` creates separate limiter with no adaptive state
+
+**HTTP Methods**: `Get()` (buffered), `GetStream()` (streaming, for large payloads), `Post()` (request bodies).
+
+**Demo Mode**: `client.IsDemoKey()` returns `true` for `demo_key`, enabling mock responses.
+
+**API Rate Limits**:
+
+| API | Rate Limit | Key |
+|-----|-----------|-----|
+| Statistics | 100/min | `WB_STAT_API_KEY` |
+| Content | 100/min | `WB_API_KEY` |
+| Analytics v3 | **3/min** (CRITICAL) | `WB_API_KEY` |
+| Advertising | 100/min (list), 20/min (stats) | `WB_API_KEY` |
+| Feedbacks | 3 req/sec | `WB_API_FEEDBACK_KEY` |
+
+---
+
+## Testing
+
+### Test Layers
+
+**Unit tests** (`pkg/`): Mock HTTP client (`mockHTTPClient`) for wb.Client internals (rate limiting, retries). Mock service clients (`MockClient`, `MockPromotionClient`) for downloader logic.
+
+**E2E tests** (`cmd/`): Test downloader logic with mock clients + SQLite.
+
+### Two Mock Levels
+
+| Mock | Tests | Skips |
+|------|-------|-------|
+| `mockHTTPClient` (HTTPClient) | `doRequest()` retry loop, `adaptiveReduce()` | Service layer |
+| `MockClient` / `MockPromotionClient` (Service) | Batch logic, DB save, resume | Rate limiting |
+
+### E2E Snapshot Testing
+
+`SnapshotDBClient` (`pkg/wb/snapshot_client.go`) reads from SQLite instead of WB API. Use `wb.NewSnapshotDBClient("e2e-snapshot.db")` for fast, deterministic tests.
+
+Collector: `examples/e2e-mock-collector/` — collects real API data into SQLite. **Collection order matters**: Sales first (extracts nmIDs), then funnel, campaigns, feedbacks.
 
 ---
 
@@ -645,534 +338,70 @@ Verification and demonstration utilities per Rule 9:
 |----------|---------|
 | `ZAI_API_KEY` | LLM provider |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | Storage |
-| `WB_API_KEY` | Wildberries API (Content, Analytics, Advertising) |
-| `WB_API_ANALYTICS_AND_PROMO_KEY` | Analytics + Advertising API (alternative key) |
-| `WB_API_FEEDBACK_KEY` | Wildberries Feedbacks API (separate key) |
-| `WB_STAT_API_KEY` | Wildberries Statistics API (optional) |
+| `WB_API_KEY` | WB Content, Analytics, Advertising APIs |
+| `WB_API_ANALYTICS_AND_PROMO_KEY` | Analytics + Advertising (alternative) |
+| `WB_API_FEEDBACK_KEY` | WB Feedbacks API (separate key) |
+| `WB_STAT_API_KEY` | WB Statistics API (optional) |
 | `OPENROUTER_API_KEY` | OpenRouter (LLM gateway for analyzers) |
-| `ONEC_API_URL` | 1C Goods+Prices API URL with basic auth (Rule 12) |
-| `ONEC_PIM_URL` | PIM Goods API URL with basic auth (Rule 12) |
+| `ONEC_API_URL` | 1C Goods+Prices API URL with basic auth |
+| `ONEC_PIM_URL` | PIM Goods API URL with basic auth |
 
 ---
 
-## WB Analytics API v3
+## Thread Safety
 
-### Migration from API v2 (2026-02-10)
+All core components use `sync.RWMutex`: CoreState, ModelRegistry, ToolsRegistry, WB Client, TodoManager, TUI MainModel.
 
-**What Changed**: Migrated from `/api/v2/nm-report/detail` to `/api/analytics/v3/sales-funnel/products`
+ReActCycle: multiple `Execute()` calls safe (immutable template). ReActExecution: per-call (never shared). No global mutex during LLM or tool calls.
 
-**New Metrics** (15+ additions):
-| Metric | API v2 | API v3 |
-|--------|--------|--------|
-| Views | ✅ | ✅ |
-| Cart | ✅ | ✅ |
-| Orders | ✅ | ✅ |
-| **Buyouts** | ❌ | ✅ |
-| **Cancellations** | ❌ | ✅ |
-| **Wishlist** | ❌ | ✅ |
-| **Order Sums** | ❌ | ✅ |
-| **Average Price** | ❌ | ✅ |
-| **WB Club** | ❌ | ✅ |
-| **Stocks (WB/MP)** | ❌ | ✅ |
-| **Product Rating** | ❌ | ✅ |
-| **Feedback Rating** | ❌ | ✅ |
-| **Time to Ready** | ❌ | ✅ |
-| **Localization %** | ❌ | ✅ |
+---
 
-**Updated Tools**:
-- `get_wb_product_funnel` - Sales funnel with full v3 metrics
-- `get_wb_product_funnel_history` - Daily trends (1-7 days free, 365 with subscription)
-- `get_wb_search_positions` - Search visibility
-- `get_wb_top_search_queries` - Top search queries
-- `get_wb_top_organic_positions` - Organic positions
+## Database Schema
 
-**Rate Limits** (Analytics API — CRITICAL):
-```
-Period: 1 minute
-Limit:  3 requests
-Interval: 20 seconds
-Burst:  3 requests
-```
-> ⚠️ Note: Content API uses higher limits (`rate_limit: 100`). Analytics tools override this in config.yaml.
+**SQLite** with 30 tables across 9 categories. Schema files in `pkg/storage/sqlite/`:
+`schema.go`, `onec_schema.go`, `cards_schema.go`, `prices_schema.go`, `region_sales_schema.go`, `stock_history_schema.go`
 
-**Post-Prompts**:
-- `prompts/wb/analytics/product_funnel.ru.yaml` - Funnel analysis with insights
-- `prompts/wb/analytics/funnel_history.ru.yaml` - Daily trends with seasonality
+**Design patterns**:
+- Composite natural keys for UNIQUE (e.g., `nm_id + date`) → safe upserts via `INSERT OR REPLACE`
+- Surrogate keys for FK relationships
+- Partial indexes for sparse fields, CASCADE DELETE on card tables
 
-**Implementation**: [pkg/tools/std/wb_analytics.go](pkg/tools/std/wb_analytics.go)
+All tables created in `pkg/storage/sqlite/repository.go` via `initSchema()`.
+
+---
+
+## 1C/PIM Integration
+
+Fetches product catalog and prices from 1C accounting + PIM validation systems via streaming JSON decode.
+
+**SQLite tables**: `onec_goods` (product dict), `onec_goods_sku` (size variants), `onec_prices` (25 price types), `pim_goods` (24 columns + values_json)
+
+**1C → WB mapping**: `onec_prices(good_guid) → onec_goods(guid) → article → cards.vendor_code → cards.nm_id`
+
+**Files**: `cmd/data-downloaders/download-1c-data/`, `pkg/storage/sqlite/onec_*.go`
 
 ---
 
 ## Key Dependencies
 
-- `github.com/charmbracelet/bubbletea` - TUI framework
-- `github.com/minio/minio-go/v7` - S3 client
-- `github.com/sashabaranov/go-openai` - OpenAI API
-- `github.com/mattn/go-sqlite3` - SQLite driver (CGo)
-- `golang.org/x/time/rate` - Rate limiting
-- `gopkg.in/yaml.v3` - YAML config parsing
-
----
-
-## Thread-Safe Components
-
-| Component | Mutex | Purpose |
-|-----------|-------|---------|
-| **CoreState** | `sync.RWMutex` | Store map (read/write) |
-| **ModelRegistry** | `sync.RWMutex` | Models map |
-| **ToolsRegistry** | `sync.RWMutex` | Tools map |
-| **WB Client** | `sync.RWMutex` | Rate limiters map |
-| **TodoManager** | `sync.RWMutex` | Task list |
-| **TUI MainModel** | `sync.RWMutex` | UI state |
-
-**Concurrent Execution**:
-- **ReActCycle**: Multiple `Execute()` calls safe
-- **ReActExecution**: Per execution (never shared)
-- **No Global Mutex**: No blocking during LLM or tool calls
-
----
-
-## Code Quality Notes
-
-**SRP Refactoring Completed** (2026-02-01):
-- `Initialize()`: 211 → 35 lines (83% reduction)
-- `Execute()`: 268 → 57 lines (79% reduction)
-- `setupWBTools()`: 166 → 20 lines (88% reduction)
-- Total: 645 → 112 lines (83% reduction)
-- All refactoring focused on extracting focused, single-responsibility functions
-- Maintained compilation and functionality throughout
-
-**Design Philosophy**:
-- SOLID principles as best practices, not dogmatic rules
-- Reasonable balance between clean code and practicality
-- Functions should have clear, single purposes without excessive complexity
-
----
-
-## OCP Refactoring (2026-02-01)
-
-**Open/Closed Principle**: Open for extension, closed for modification.
-
-### Tool Categories — Config-Driven (No Interface)
-
-**Rationale**: Only 1 category type exists → interface not justified (dev_solid.md principle).
-
-**Adding Ozon now requires only:**
-1. Add `ozon` section to `config.yaml`
-2. Add `ozon_client` to clients map in `Initialize()`
-3. Add cases to `registerTool()` switch in `pkg/app/tool_setup.go`
-
-**No `setupOzonTools()` function needed!**
-
-```yaml
-# config.yaml
-tool_categories:
-  ozon:
-    enabled: true
-    client: ozon_client
-    tools:
-      - search_ozon_products
-      - get_ozon_categories
-```
-
-```go
-// pkg/app/tool_setup.go - registerTool()
-switch name {
-// ... existing cases ...
-case "search_ozon_products":
-    tool = std.NewOzonProductSearchTool(client.(*ozon.Client), toolCfg, cfg.Ozon)
-}
-```
-
-**Files**: [pkg/app/tool_setup.go](pkg/app/tool_setup.go), [config.yaml](config.yaml)
-
-### Prompt Loading — Source Pattern (Interface Justified)
-
-**Rationale**: ≥3 implementations (File, Database, API) → interface justified.
-
-**Fallback Chain**: File sources (YAML) → Default source (Go code)
-
-```yaml
-# config.yaml
-prompt_sources:
-  - type: file
-    config:
-      base_dir: "${PROMPTS_DIR:-./prompts}"
-  # Optional: Database source
-  # - type: database
-  #   config:
-  #     connection_string: "${DB_URL}"
-  #     table: "prompts"
-```
-
-**Adding new prompt source:**
-1. Implement `Load(promptID) (*PromptData, error)` in `pkg/prompts/sources/`
-2. Add adapter in `pkg/prompts/registry_factory.go` (3 lines)
-3. Add type to `config.yaml`
-
-**No loader functions need modification!**
-
-**Files**:
-- [pkg/prompts/source.go](pkg/prompts/source.go) - PromptSource interface
-- [pkg/prompts/types.go](pkg/prompts/types.go) - PromptFile, ErrNotFound
-- [pkg/prompts/source_registry.go](pkg/prompts/source_registry.go) - SourceRegistry with fallback
-- [pkg/prompts/registry_factory.go](pkg/prompts/registry_factory.go) - Factory + adapters
-- [pkg/prompts/sources/file_source.go](pkg/prompts/sources/file_source.go) - YAML files
-- [pkg/prompts/sources/default_source.go](pkg/prompts/sources/default_source.go) - Go defaults
-- [pkg/prompts/sources/api_source.go](pkg/prompts/sources/api_source.go) - HTTP API (example)
-- [pkg/prompts/sources/database_source.go](pkg/prompts/sources/database_source.go) - SQL DB (example)
-
-### OCP Benefits Summary
-
-| Aspect | Before | After |
-|--------|--------|-------|
-| **Adding new e-commerce API** | Modify `SetupTools()`, add `setupXxxTools()` | Add to config.yaml, add switch cases |
-| **Adding new prompt source** | Rewrite loader functions | Implement PromptSource interface |
-| **Configuration** | Partially hardcoded | Fully declarative YAML |
-| **Rule 6 compliance** | Partial | Full (pkg/ independent) |
-| **Interface justification** | N/A | Source: ≥3 impl, Category: no interface |
-
-**YAML-first Philosophy**: All configuration through YAML, Go code provides sensible defaults.
-
----
-
-## Testing
-
-```bash
-# Run all tests
-go test ./...
-
-# Run specific package
-go test ./pkg/wb/ -v
-go test ./cmd/data-downloaders/download-wb-sales/ -v
-
-# Run specific test
-go test ./pkg/wb/ -run TestAdaptiveRateLimit_ReducesOn429 -v
-
-# Run with coverage
-go test ./... -coverprofile=coverage.out
-```
-
-### Test Layers
-
-**Unit tests** (`pkg/`): Test internal logic with mocked dependencies.
-- `pkg/wb/client_adaptive_test.go` — Adaptive rate limiting: 429 recovery, toolID mismatch detection, retry behavior. Uses `mockHTTPClient` (implements `HTTPClient` interface) to exercise real retry loop + `adaptiveReduce()` without network.
-- `pkg/chain/*_test.go` — ReAct cycle components (6 files)
-- `pkg/tui/*_test.go` — TUI primitives (7 files)
-
-**E2E tests** (`cmd/`): Test downloader logic with mock clients + SQLite.
-- `cmd/data-downloaders/download-wb-sales/e2e_test.go` — Download, resume mode, retry on failure
-- `cmd/data-downloaders/download-wb-promotion/e2e_test.go` — Campaign loading, stats hierarchy, resume
-
-### Test Patterns
-
-```go
-// Mock HTTP client (for testing wb.Client internals — rate limiting, retries)
-mockHTTP := &mockHTTPClient{responses: []*mockResponse{
-    {status: 429, header: map[string]string{"X-Ratelimit-Retry": "1"}},
-    {status: 200, body: `[]`},
-}}
-client := wb.New("test_key")
-client.SetHTTPClient(mockHTTP)
-client.SetRateLimit("tool_id", 6000, 100, 3000, 100)
-// Verify: client.RateLimiters()["tool_id"] after 429
-
-// Mock service client (for testing downloader logic — skips HTTP entirely)
-mockClient := wb.NewMockClient()
-mockClient.AddMockSales(rows...)
-mockClient.SetFailCount(2) // fail first 2 requests, succeed on 3rd
-
-// App-level mock (implements PromotionClient interface)
-mock := NewMockPromotionClient()
-PopulateMockData(mock, 5, 7) // 5 campaigns, 7 days
-```
-
-### Key: Why Two Mock Levels
-
-| Mock | What it tests | Skips |
-|------|--------------|-------|
-| `mockHTTPClient` (HTTPClient) | `doRequest()` retry loop, `adaptiveReduce()`, `getOrCreateLimiter()` | Service layer |
-| `MockClient` / `MockPromotionClient` (Service) | Downloader batch logic, DB save, resume mode | Rate limiting |
-
-Service-level mocks are **faster** but **cannot catch rate limiting bugs** (they bypass HTTP).
-HTTP-level mocks exercise the real retry loop and catch configuration/runtime mismatches.
-
----
-
-## E2E Testing Infrastructure
-
-### SnapshotDBClient (`pkg/wb/snapshot_client.go`)
-
-**Purpose**: Fast, deterministic E2E tests without API rate limits.
-
-SnapshotDBClient reads data from SQLite database instead of WB API.
-
-**Services**:
-- `Sales()` - funnel metrics, sales data
-- `Advertising()` - campaigns, daily stats
-- `Feedbacks()` - feedbacks, questions
-
-**Required Tables**:
-```
-sales, funnel_metrics_daily, products,
-campaigns, campaign_stats_daily,
-feedbacks_items, questions_items
-```
-
-**Usage**:
-```go
-client, _ := wb.NewSnapshotDBClient("e2e-snapshot.db")
-defer client.Close()
-
-// Use like regular Service
-svc := wb.NewServiceFromSnapshot(client)
-funnel, _ := svc.Sales().GetFunnel(ctx, nmIDs, dateFrom, dateTo)
-```
-
-**Files**:
-- [pkg/wb/snapshot_client.go](pkg/wb/snapshot_client.go) - Main client
-- [pkg/wb/snapshot_sales.go](pkg/wb/snapshot_sales.go) - SalesService impl
-- [pkg/wb/snapshot_advertising.go](pkg/wb/snapshot_advertising.go) - AdvertisingService impl
-- [pkg/wb/snapshot_feedbacks.go](pkg/wb/snapshot_feedbacks.go) - FeedbackService impl
-
-### E2E Mock Collector (`examples/e2e-mock-collector/`)
-
-**Purpose**: Collect real data from WB APIs and store in SQLite for testing.
-
-**Collection Order** (CRITICAL):
-1. **Sales FIRST** - extracts real nmIDs for the period
-2. Funnel metrics (uses nmIDs from sales)
-3. Search positions, organic positions
-4. Campaigns and daily stats
-5. Feedbacks (answered + unanswered)
-6. Questions (answered + unanswered)
-
-**Rate Limits**:
-| API | Delay | Limit |
-|-----|-------|-------|
-| Analytics | 21s | 3 req/min |
-| Adverts | 21s | 3 req/min |
-| Feedbacks | 333ms | 3 req/sec |
-| Content | 0.6s | 100 req/min |
-
-**Usage**:
-```bash
-cd examples/e2e-mock-collector
-go run main.go --days 7 --output ../e2e-snapshot.db
-```
-
-### Download Utilities (`cmd/download-*`)
-
-All downloaders use **two-level adaptive rate limiting** (see [dev_limits.md](dev_limits.md)):
-start at desired rate, auto-reduce on 429, recover to api floor, probe desired again.
-
-| Utility | Purpose | Config |
-|---------|---------|--------|
-| `download-wb-sales` | Sales + funnel metrics by period | `config.yaml` |
-| `download-wb-promotion` | Campaigns + daily stats (4-level hierarchy) | `config.yaml` |
-| `download-wb-feedbacks` | Feedbacks + questions (39 fields) | `config.yaml` |
-| `download-wb-funnel` | Analytics v3 funnel (daily per product) | `config.yaml` |
-| `download-wb-funnel-agg` | Analytics v3 aggregated funnel | `config.yaml` |
-| `download-wb-cards` | Content API cards (cursor pagination) | `config.yaml` |
-| `download-wb-prices` | Discounts-Prices API (offset pagination) | `config.yaml` |
-| `download-wb-region-sales` | Region-level sales (31-day horizon) | `config.yaml` |
-| `download-wb-stocks` | Warehouse stock snapshots | `config.yaml` |
-| `download-wb-stock-history` | Historical stock CSV reports | `config.yaml` |
-| `download-1c-data` | 1C/PIM catalog + prices (streaming JSON) | `config.yaml` |
-| `download-all-articles` | S3 article processing | — |
-
-**Example**:
-```bash
-# Download 7 days of sales data
-cd cmd/download-wb-sales
-go run main.go --days 7 --output sales.db
-
-# Download promotion data with resume
-cd cmd/download-wb-promotion
-go run main.go --begin 2025-01-01 --end 2025-01-31 --resume
-```
-
----
-
-## 1C/PIM Data Downloader (2026-04-08)
-
-Fetches product catalog and prices from 1C accounting system + PIM validation system.
-
-**Three APIs** (sequential download, streaming JSON decode):
-| API | Endpoint | Records | Size |
-|-----|----------|---------|------|
-| 1C Goods | `/feeds/ones/goods/` | 26,968 | ~30MB |
-| 1C Prices | `/feeds/ones/prices/` | 445,822 | ~55MB |
-| PIM Goods | `/feeds/pim/goods/` | 25,737 | ~228MB |
-
-**Four SQLite tables** (raw data, no computed mapping):
-- `onec_goods` — product dictionary (guid PK, article, brand, category, season, etc.)
-- `onec_goods_sku` — size variants (composite PK: sku_guid + guid; sku_guid is NOT globally unique)
-- `onec_prices` — 25 price types per product, snapshot-based (PK: good_guid + snapshot_date + type_guid)
-- `pim_goods` — 24 dedicated columns + values_json blob for remaining ~85 attributes
-
-**Streaming JSON decode**: `json.Decoder` processes one record at a time → constant memory regardless of file size. Each record is decoded and saved in batches of 500.
-
-**1C → WB price mapping** (for price control):
-```
-onec_prices(good_guid) → onec_goods(guid) → onec_goods.article → cards.vendor_code → cards.nm_id
-```
-- 1C `Розничная цена ОЭК` = WB `price` (price without discount)
-- 1C `FullRetailPriceMAX` = initial maximum retail price
-- PIM `wildberries` field = nmID (alternative direct mapping, 95.1% coverage)
-
-**Files**: `cmd/data-downloaders/download-1c-data/` (main.go, client.go, models.go, config.yaml)
-**Storage**: `pkg/storage/sqlite/onec_*.go` (schema, types, repo)
-**Config**: `pkg/config/utility.go` → `OneCConfig`
-
----
-
-## Adaptive Rate Limiting (2026-03-28)
-
-Two-level rate limiting in `pkg/wb/client.go` allows exceeding documented API limits
-while safely handling 429 responses. Full developer guide: [dev_limits.md](dev_limits.md).
-
-**Setup** (required for all downloaders):
-```go
-client.SetRateLimit("tool_id", desiredRate, desiredBurst, apiRate, apiBurst)
-client.SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff)
-```
-
-**Recovery cycle**: `desired` → 429 → `api floor` (after 5 OKs) → `probe desired` (after 10 OKs) → repeat.
-
-**Key internals**:
-- `getOrCreateLimiter()` — returns pre-set limiter, ignores inline rateLimit/burst params (fallback only)
-- `adaptiveReduce()` — computes rate from `X-Ratelimit-Retry` header, exponential backoff
-- `adaptiveRecoverOK()` — two-phase recovery with `probed` flag (one-shot probe per 429 cycle)
-- `GetStream()` — streaming decode for large payloads (avoids io.ReadAll)
-
-**Common pitfalls** (see [dev_limits.md](dev_limits.md) Pitfalls section):
-1. Forgetting `SetRateLimit()` → adaptive state created lazily with `apiFloor=0`, limiter never reduces
-2. `NewFromConfig()` ignores `WBConfig.RateLimit` — must call `SetRateLimit()` explicitly
-3. Phase 2 probe spam without `probed` flag — fixed, but check if adding new downloader
-4. Config fields exist but aren't wired → dead code (checklist in dev_limits.md)
-5. Computing rate from `X-Ratelimit-Retry` is wrong — header is backoff hint, not rate indicator
-6. **ToolID mismatch** — `SetRateLimit("tool_A")` + `Get("tool_B")` creates separate limiter with no adaptive state. Verify with: `grep -rn "SetRateLimit" cmd/ && grep -rn 'client.Get\|client.Post' cmd/`
-
-**Testing** (see `pkg/wb/client_adaptive_test.go`):
-```go
-// SetHTTPClient() — inject mock for testing wb.Client internals
-client.SetHTTPClient(mockHTTP)
-// RateLimiters() — inspect current rate per toolID for assertions
-rates := client.RateLimiters()
-```
-
----
-
-## WB API Endpoints Reference
-
-### Statistics API (`statistics-api.wildberries.ru`)
-| Endpoint | Purpose | Rate Limit |
-|----------|---------|------------|
-| `/api/v5/supplier/reportDetailByPeriod` | Sales realization report (87 fields) | 100/min |
-
-### Content API (`suppliers-api.wildberries.ru`)
-| Endpoint | Purpose | Rate Limit |
-|----------|---------|------------|
-| `/api/v3/stocks` | Product stocks | 100/min |
-| `/api/v2/parent-categories` | Category tree | 100/min |
-| `/api/v2/cards/filter` | Product list | 100/min |
-
-### Analytics API (`analytics-api.wildberries.ru`)
-| Endpoint | Purpose | Rate Limit |
-|----------|---------|------------|
-| `/api/analytics/v3/sales-funnel/products` | Product funnel | 3/min |
-| `/api/analytics/v3/sales-funnel/products/history` | Daily trends | 3/min |
-| `/api/v2/search-positions` | Search positions | 3/min |
-
-### Advertising API (`advert-api.wildberries.ru`)
-| Endpoint | Purpose | Rate Limit |
-|----------|---------|------------|
-| `/adv/v1/promotion/count` | Campaign list | 100/min |
-| `/adv/v3/fullstats` | Daily campaign stats | 20/min |
-
-### Feedbacks API (`feedbacks-api.wildberries.ru`)
-| Endpoint | Purpose | Rate Limit |
-|----------|---------|------------|
-| `/api/v1/feedbacks` | Product feedbacks | 3 req/sec, burst 6 |
-| `/api/v1/questions` | Customer questions | 3 req/sec, burst 6 |
-
-**API Keys**:
-- `WB_API_KEY` - Content, Analytics, Advertising APIs
-- `WB_API_FEEDBACK_KEY` - Feedbacks API (separate key)
-- `WB_STAT_API_KEY` - Statistics API (optional, for sales data)
+- `github.com/charmbracelet/bubbletea` — TUI framework
+- `github.com/minio/minio-go/v7` — S3 client
+- `github.com/sashabaranov/go-openai` — OpenAI API
+- `github.com/mattn/go-sqlite3` — SQLite driver (CGo)
+- `golang.org/x/time/rate` — Rate limiting
+- `gopkg.in/yaml.v3` — YAML config parsing
 
 ---
 
 ## PDF Documentation
 
-For creating PDF documents (reports, documentation, reference materials), use the **reportlab** library with DejaVu Sans font for Cyrillic support.
+Use **reportlab** with DejaVu Sans font for Cyrillic. Guide: [`dev_pdf.md`](dev_pdf.md).
 
-**Quick Start**:
 ```bash
-# Generate database tables reference PDF
-/tmp/pdf_venv/bin/python reports/database_tables_pdf.py
+/tmp/pdf_venv/bin/python reports/database_tables_pdf.py  # Generate schema reference PDF
 ```
-
-**File Structure**:
-- Scripts: `reports/*_pdf.py`
-- Generated PDFs: `reports/*.pdf` (gitignored, regenerate from scripts)
-- Guide: [`dev_pdf.md`](dev_pdf.md) — comprehensive PDF generation guide
-
-**Key Patterns**:
-- Always use `Paragraph()` objects for table cells (enables text wrapping)
-- Register DejaVu Sans font before creating styles: `pdfmetrics.registerFont(TTFont('Cyrillic', '/path/to/DejaVuSans.ttf'))`
-- Use `mm` units for measurements (more intuitive than points)
-- Set `repeatRows=1` on tables for headers on each page
-
-**Existing PDF Generator**: [`reports/database_tables_pdf.py`](reports/database_tables_pdf.py)
-- Documents all 30 database tables with API endpoints, primary keys, unique constraints
-- Maps tables to their corresponding downloader utilities
-- Landscape A4, Cyrillic font, wrapped text in all cells
 
 ---
 
-## Database Schema Reference
-
-The project uses **SQLite** with 30 tables across 9 categories for data storage from WB APIs and 1C/PIM systems.
-
-**Quick Reference**:
-```bash
-# Generate full schema reference as PDF
-/tmp/pdf_venv/bin/python reports/database_tables_pdf.py
-```
-
-**Schema Files** (`pkg/storage/sqlite/`):
-- `schema.go` — Main schemas (sales, service, funnel, promotion, feedbacks, stocks)
-- `onec_schema.go` — 1C/PIM system schemas
-- `cards_schema.go` — Content API product cards
-- `prices_schema.go` — Product prices
-- `region_sales_schema.go` — Geographic sales
-- `stock_history_schema.go` — Stock history CSV reports
-
-**Table Categories**:
-
-| Category | Tables | API Source | Utility |
-|----------|--------|------------|---------|
-| Sales & Service | 2 | Statistics API | `download-wb-sales` |
-| Funnel Analytics | 3 | Analytics API v3 | `download-wb-funnel` / `download-wb-funnel-agg` |
-| Promotion/Advertising | 6 | Advertising API | `download-wb-promotion` |
-| Feedbacks | 3 | Feedbacks API | `download-wb-feedbacks` |
-| Stocks | 4 | Analytics API | `download-wb-stocks` / `download-wb-stock-history` |
-| Content Cards | 6 | Content API | `download-wb-cards` |
-| Prices | 1 | Discounts-Prices API | `download-wb-prices` |
-| Region Sales | 1 | Seller Analytics API | `download-wb-region-sales` |
-| 1C/PIM Data | 4 | Custom 1C/PIM APIs | `download-1c-data` |
-
-**Key Design Patterns**:
-- **Composite natural keys** for UNIQUE constraints (e.g., `nm_id + date`) → safe upserts via `INSERT OR REPLACE`
-- **Surrogate keys** (`INTEGER AUTOINCREMENT`) for foreign key relationships
-- **Partial indexes** for sparse financial fields (`WHERE penalty > 0`)
-- **CASCADE DELETE** on card-related tables for automatic cleanup
-
-**Schema Initialization**: All tables created in `pkg/storage/sqlite/repository.go` via `initSchema()` method (lines 104-260).
-
----
-
-**Last Updated**: 2026-04-09
-**Version**: 13.1 (PDF documentation guide, database schema reference)
+**Last Updated**: 2026-04-17
+**Version**: 14.0 (consolidated, added missing utilities)

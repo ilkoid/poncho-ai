@@ -31,13 +31,13 @@ START=$SECONDS
 
 # Phase 4: Slow (~20-40 min) — Analytics API (3 req/min), Statistics API (1 req/min)
 echo "--- Phase 3: Slow — Analytics API (funnel, funnel-agg, sales) ---"
-(cd cmd/data-downloaders/download-wb-funnel && go run .) || exit $?
+#(cd cmd/data-downloaders/download-wb-funnel && go run .) || exit $?
 #(cd cmd/data-downloaders/download-wb-funnel-agg && go run .) || exit $?
 
 # Phase 3: Moderate (~5-10 min) — mixed rate limits
 echo "--- Phase 3: Moderate (supplies, promotion, region-sales) ---"
 (cd cmd/data-downloaders/download-wb-supplies && go run . ${DAYS:+--days=$DAYS}) || exit $?
-(cd cmd/data-downloaders/download-wb-promotion && go run . ${DAYS:+--days=$DAYS}) || exit $?
+#(cd cmd/data-downloaders/download-wb-promotion && go run . ${DAYS:+--days=$DAYS}) || exit $?
 (cd cmd/data-downloaders/download-wb-region-sales && go run . ${DAYS:+--days=$DAYS}) || exit $?
 
 

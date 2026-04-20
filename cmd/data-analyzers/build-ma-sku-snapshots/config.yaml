@@ -11,12 +11,13 @@
 
 source:
   # База с сырыми данными (WB + 1C таблицы)
-  db_path: "/mnt/d/db/wb-podsort.db"
+  #db_path: "/mnt/d/db/wb-podsort.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-podsort.db"
 
 results:
   # База аналитики для BI
-  db_path: "/mnt/d/db/sku-analytics.db"
-
+#  db_path: "/mnt/d/db/sku-analytics.db"
+  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/sku-analytics.db"
 ma:
   windows: [3, 7, 14, 28]
   min_days: 1
