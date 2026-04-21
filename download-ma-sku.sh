@@ -14,6 +14,14 @@
 
 cd "$(dirname "$0")"
 
+# Lockfile: prevent concurrent runs with run-daily-analytics.sh
+LOCKFILE="$(pwd)/.analytics.lock"
+exec 200>"${LOCKFILE}"
+if ! flock -w 300 200; then
+    echo "SKIP: another analytics process is running (lock: ${LOCKFILE})"
+    exit 1
+fi
+
 DAYS="${1:-}"
 CONFIG_DIR="cmd/.configs"
 

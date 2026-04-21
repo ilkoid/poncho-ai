@@ -133,6 +133,11 @@ type DownloadConfig struct {
 	Rewrite     bool   `yaml:"rewrite"`      // Удалить данные за период перед загрузкой
 	IntervalDays       int  `yaml:"interval_days"`        // Дней на один API запрос (default: 30)
 	SkipServiceRecords bool `yaml:"skip_service_records"` // Пропускать служебные записи (логистика, штрафы)
+
+	// Adaptive tuning (see dev_limits.md)
+	AdaptiveRecoverAfter int `yaml:"adaptive_recover_after"` // OKs to restore to api floor after 429 (default: 5)
+	AdaptiveProbeAfter   int `yaml:"adaptive_probe_after"`   // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds    int `yaml:"max_backoff_seconds"`    // Cap for exponential backoff (default: 60)
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.

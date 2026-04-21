@@ -110,6 +110,7 @@ func isRetryableError(err error) bool {
 		"timeout",
 		"temporary failure",
 		"stream error",       // HTTP/2 INTERNAL_ERROR from peer (large responses)
+		"status 429",         // Rate limited â adaptive limiter handles cooldown
 	}
 	for _, pattern := range retryablePatterns {
 		if strings.Contains(errStr, pattern) {
@@ -1190,6 +1191,29 @@ func (c *Client) ReportDetailByPeriodPage(
 	// DEBUG: логируем размер тела
 	fmt.Printf("[DEBUG ReportDetailByPeriodPage] Body size: %d bytes\n", len(body))
 
+	// Handle 429 Too Many Requests — adaptive rate limiting
+	if resp.StatusCode == http.StatusTooManyRequests {
+		serverRetrySec := 1
+		if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
+			if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
+				serverRetrySec = sec
+			}
+		}
+		waitDur := c.adaptiveReduce("report_detail_by_period", serverRetrySec)
+		fmt.Fprintf(os.Stderr, "\u26a0\ufe0f  429 for report_detail_by_period, cooling down %v (server: %ds)\n",
+			waitDur.Truncate(time.Second), serverRetrySec)
+		if len(body) > 0 {
+			fmt.Fprintf(os.Stderr, "    429 body: %s\n", string(body))
+		}
+		// Wait for cooldown before returning error (so iterator retry has a chance)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(waitDur):
+		}
+		return nil, fmt.Errorf("wb api error: status 429, body: %s", string(body))
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
 	}
@@ -1311,6 +1335,29 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 
 	// DEBUG: логируем размер тела
 	fmt.Printf("[DEBUG ReportDetailByPeriodPage] Body size: %d bytes\n", len(body))
+
+	// Handle 429 Too Many Requests â adaptive rate limiting
+	if resp.StatusCode == http.StatusTooManyRequests {
+		serverRetrySec := 1
+		if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
+			if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
+				serverRetrySec = sec
+			}
+		}
+		waitDur := c.adaptiveReduce("report_detail_by_period_with_time", serverRetrySec)
+		fmt.Fprintf(os.Stderr, "\u26a0\ufe0f  429 for report_detail_by_period_with_time, cooling down %v (server: %ds)\n",
+			waitDur.Truncate(time.Second), serverRetrySec)
+		if len(body) > 0 {
+			fmt.Fprintf(os.Stderr, "    429 body: %s\n", string(body))
+		}
+		// Wait for cooldown before returning error (so iterator retry has a chance)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(waitDur):
+		}
+		return nil, fmt.Errorf("wb api error: status 429, body: %s", string(body))
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))

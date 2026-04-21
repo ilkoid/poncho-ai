@@ -244,6 +244,18 @@ func main() {
 			log.Fatalf("❌ Failed to create WB client: %v", err)
 		}
 
+		// Pre-set adaptive rate limiter for Statistics API endpoints (see dev_limits.md)
+		wbClient.SetRateLimit("report_detail_by_period_with_time",
+			cfg.WB.RateLimit, cfg.WB.BurstLimit,
+			cfg.WB.RateLimit, cfg.WB.BurstLimit)
+		wbClient.SetRateLimit("report_detail_by_period",
+			cfg.WB.RateLimit, cfg.WB.BurstLimit,
+			cfg.WB.RateLimit, cfg.WB.BurstLimit)
+		wbClient.SetAdaptiveParams(
+			cfg.Download.AdaptiveRecoverAfter,
+			cfg.Download.AdaptiveProbeAfter,
+			cfg.Download.MaxBackoffSeconds)
+
 		// Download configuration
 		downloadCfg := DownloadConfig{
 			Client:             wbClient,
