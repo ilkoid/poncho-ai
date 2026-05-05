@@ -12,7 +12,7 @@ supply:
   db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-podsort.db"
 
   # Период загрузки (days — альтернатива begin/end)
-  days: 29
+  days: 7
   # begin: ""
   # end: ""
 

@@ -419,3 +419,315 @@ func TypeName(campaignType int) string {
 		return "Неизвестно"
 	}
 }
+
+// ============================================================================
+// V2 Promotion API Types — normquery, bid recommendations, finance, calendar
+// ============================================================================
+
+// --- Campaign Bids (extracted from AdvertDetail.NmSettings) ---
+
+// CampaignBidRow — плоская строка для таблицы campaign_bids.
+// Заполняется из AdvertDetail.NmSettings[].BidsKopecks.
+type CampaignBidRow struct {
+	AdvertID    int
+	NmID        int
+	SubjectID   int
+	SubjectName string
+	BidSearch   int // копейки
+	BidReco     int // копейки
+}
+
+// --- Normquery (batched API — up to 100 items per request) ---
+
+// NormqueryItem — пара (advert_id, nm_id) для батч-запросов normquery.
+type NormqueryItem struct {
+	AdvertID int `json:"advert_id"`
+	NmID     int `json:"nm_id"`
+}
+
+// NormqueryStatsRequest — body для POST /adv/v0/normquery/stats.
+type NormqueryStatsRequest struct {
+	From  string          `json:"from"`  // YYYY-MM-DD
+	To    string          `json:"to"`    // YYYY-MM-DD
+	Items []NormqueryItem `json:"items"` // max 100
+}
+
+// NormqueryStatsResponse — ответ от POST /adv/v0/normquery/stats.
+type NormqueryStatsResponse struct {
+	Stats []NormqueryStatsGroup `json:"stats"`
+}
+
+// NormqueryStatsGroup — статистика по одному (advert_id, nm_id).
+type NormqueryStatsGroup struct {
+	AdvertID int                  `json:"advert_id"`
+	NmID     int                  `json:"nm_id"`
+	Stats    []NormqueryStatRow   `json:"stats"`
+}
+
+// NormqueryStatRow — статистика по одному поисковому кластеру.
+type NormqueryStatRow struct {
+	NormQuery string   `json:"norm_query"`
+	Views     *int     `json:"views"`  // nil для CPC-кампаний
+	Clicks    int      `json:"clicks"`
+	Atbs      int      `json:"atbs"`
+	Orders    int      `json:"orders"`
+	CTR       *float64 `json:"ctr"`    // nil для CPC-кампаний
+	CPC       float64  `json:"cpc"`
+	CPM       *float64 `json:"cpm"`    // nil для CPC-кампаний
+	AvgPos    float64  `json:"avg_pos"`
+	SHKS      int      `json:"shks"`
+	Spend     float64  `json:"spend"`
+}
+
+// NormqueryListRequest — body для POST /adv/v0/normquery/list.
+type NormqueryListRequest struct {
+	Items []NormqueryItem `json:"items"` // max 100
+}
+
+// NormqueryListResponse — ответ от POST /adv/v0/normquery/list.
+type NormqueryListResponse struct {
+	Items []NormqueryListItem `json:"items"`
+}
+
+// NormqueryListItem — активные/исключённые кластеры для одного (advert_id, nm_id).
+type NormqueryListItem struct {
+	AdvertID    int                 `json:"advertId"`
+	NmID        int                 `json:"nmId"`
+	NormQueries NormqueryClusters   `json:"normQueries"`
+}
+
+// NormqueryClusters — активные и исключённые поисковые кластеры.
+type NormqueryClusters struct {
+	Active   []string `json:"active"`
+	Excluded []string `json:"excluded"`
+}
+
+// NormqueryBidsRequest — body для POST /adv/v0/normquery/get-bids.
+type NormqueryBidsRequest struct {
+	Items []NormqueryItem `json:"items"` // max 100
+}
+
+// NormqueryBidsResponse — ответ от POST /adv/v0/normquery/get-bids.
+type NormqueryBidsResponse struct {
+	Bids []NormqueryBidItem `json:"bids"`
+}
+
+// NormqueryBidItem — ставка для одного поискового кластера.
+type NormqueryBidItem struct {
+	AdvertID  int    `json:"advert_id"`
+	NmID      int    `json:"nm_id"`
+	Bid       int    `json:"bid"`        // копейки
+	NormQuery string `json:"norm_query"` // поисковый кластер
+}
+
+// NormqueryMinusRequest — body для POST /adv/v0/normquery/get-minus.
+type NormqueryMinusRequest struct {
+	Items []NormqueryItem `json:"items"`
+}
+
+// NormqueryMinusResponse — ответ от POST /adv/v0/normquery/get-minus.
+type NormqueryMinusResponse struct {
+	Items []NormqueryMinusItem `json:"items"`
+}
+
+// NormqueryMinusItem — минус-фразы для одного (advert_id, nm_id).
+type NormqueryMinusItem struct {
+	AdvertID    int      `json:"advert_id"`
+	NmID        int      `json:"nm_id"`
+	NormQueries []string `json:"norm_queries"`
+}
+
+// --- Bid Recommendations ---
+
+// BidRecommendationsResponse — ответ от GET /api/advert/v0/bids/recommendations.
+type BidRecommendationsResponse struct {
+	AdvertID int                      `json:"advertId"`
+	NmID     int                      `json:"nmId"`
+	Base     BidRecommendBase         `json:"base"`
+	NormQueries []BidRecommendNormQ   `json:"normQueries"`
+}
+
+// BidRecommendBase — базовые рекомендованные ставки.
+type BidRecommendBase struct {
+	CompetitiveBid BidRecommendLevel `json:"competitiveBid"`
+	LeadersBid     BidRecommendLevel `json:"leadersBid"`
+	Top2           BidRecommendLevel `json:"top2"`
+}
+
+// BidRecommendLevel — ставка в копейках.
+type BidRecommendLevel struct {
+	BidKopecks int `json:"bidKopecks"`
+}
+
+// BidRecommendNormQ — рекомендованные ставки по поисковому кластеру.
+type BidRecommendNormQ struct {
+	NormQuery   string             `json:"normQuery"`
+	ReachMax    BidRecommendReach  `json:"reachMax"`
+	ReachMedium BidRecommendReach  `json:"reachMedium"`
+	ReachMin    BidRecommendReach  `json:"reachMin"`
+}
+
+// BidRecommendReach — ставка и минимум для уровня охвата.
+type BidRecommendReach struct {
+	BidKopecks    int `json:"bidKopecks"`
+	BidKopecksMin int `json:"bidKopecksMin"`
+}
+
+// --- Finance ---
+
+// ExpensesResponse — ответ от GET /adv/v1/upd.
+type ExpensesResponse []ExpenseRow
+
+// ExpenseRow — запись о списании средств со счёта кампании.
+// Источник: GET /adv/v1/upd.
+type ExpenseRow struct {
+	UpdNum      int    `json:"updNum"`      // Номер документа
+	UpdTime     string `json:"updTime"`     // Время списания (nullable, RFC3339)
+	UpdSum      int    `json:"updSum"`      // Сумма списания, копейки
+	AdvertID    int    `json:"advertId"`    // ID кампании
+	CampName    string `json:"campName"`    // Название кампании
+	AdvertType  int    `json:"advertType"`  // Тип кампании (6,8,9,50)
+	PaymentType string `json:"paymentType"` // Источник: Баланс/Бонусы/Счёт/Кэшбэк
+	AdvertStatus int   `json:"advertStatus"` // Статус кампании на момент списания
+}
+
+// BalanceResponse — ответ от GET /adv/v1/balance.
+type BalanceResponse struct {
+	Balance   int              `json:"balance"` // ₽
+	Net       int              `json:"net"`     // ₽
+	Bonus     int              `json:"bonus"`   // ₽
+	Cashbacks []BalanceCashback `json:"cashbacks"`
+}
+
+// BalanceCashback — бонусный кэшбэк.
+type BalanceCashback struct {
+	Sum            int    `json:"sum"`
+	Percent        int    `json:"percent"`
+	ExpirationDate string `json:"expiration_date"`
+}
+
+// PaymentsResponse — ответ от GET /adv/v1/payments.
+type PaymentsResponse []PaymentRow
+
+// PaymentRow — запись о пополнении баланса.
+type PaymentRow struct {
+	ID         int    `json:"id"`
+	Date       string `json:"date"`
+	Sum        int    `json:"sum"`  // ₽
+	Type       int    `json:"type"` // 0=счёт, 1=баланс, 3=карта
+	StatusID   int    `json:"statusId"`
+	CardStatus string `json:"cardStatus"`
+}
+
+// --- Calendar ---
+
+// CalendarPromotionsResponse — ответ от GET /api/v1/calendar/promotions.
+type CalendarPromotionsResponse struct {
+	Data CalendarPromotionsData `json:"data"`
+}
+
+// CalendarPromotionsData — обёртка данных ответа.
+type CalendarPromotionsData struct {
+	Promotions []CalendarPromotion `json:"promotions"`
+}
+
+// CalendarPromotion — акция WB (Мегасейл и пр.).
+type CalendarPromotion struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Start string `json:"startDateTime"`
+	End   string `json:"endDateTime"`
+	Type  string `json:"type"`
+}
+
+// CalendarPromotionDetail — детальная информация об акции.
+// Источник: GET /api/v1/calendar/promotions/details
+type CalendarPromotionDetail struct {
+	ID                        int                        `json:"id"`
+	Name                      string                     `json:"name"`
+	Description               string                     `json:"description"`
+	Advantages                []string                   `json:"advantages"`
+	StartDateTime             string                     `json:"startDateTime"`
+	EndDateTime               string                     `json:"endDateTime"`
+	InPromoActionLeftovers    int                        `json:"inPromoActionLeftovers"`
+	InPromoActionTotal        int                        `json:"inPromoActionTotal"`
+	NotInPromoActionLeftovers int                        `json:"notInPromoActionLeftovers"`
+	NotInPromoActionTotal     int                        `json:"notInPromoActionTotal"`
+	ParticipationPercentage   int                        `json:"participationPercentage"`
+	Type                      string                     `json:"type"`
+	ExceptionProductsCount    int                        `json:"exceptionProductsCount"`
+	Ranging                   []CalendarPromotionRanging `json:"ranging"`
+}
+
+// CalendarPromotionRanging — условие буста в поиске.
+type CalendarPromotionRanging struct {
+	Condition        string `json:"condition"`         // productsInPromotion | calculateProducts | allProducts
+	ParticipationRate int   `json:"participationRate"` // 0-100%
+	Boost            int    `json:"boost"`             // % поднятия в поиске
+}
+
+// CalendarPromotionDetailsResponse — обёртка ответа /details.
+type CalendarPromotionDetailsResponse struct {
+	Data CalendarPromotionDetailsData `json:"data"`
+}
+
+// CalendarPromotionDetailsData — контейнер деталей акций.
+type CalendarPromotionDetailsData struct {
+	Promotions []CalendarPromotionDetail `json:"promotions"`
+}
+
+// CalendarPromotionNom — товар, подходящий для участия в акции.
+// Источник: GET /api/v1/calendar/promotions/nomenclatures
+type CalendarPromotionNom struct {
+	ID           int     `json:"id"`           // nm_id
+	InAction     bool    `json:"inAction"`
+	Price        float64 `json:"price"`        // текущая розничная цена
+	CurrencyCode string  `json:"currencyCode"` // ISO 4217
+	PlanPrice    float64 `json:"planPrice"`    // цена во время акции
+	Discount     int     `json:"discount"`     // текущая скидка %
+	PlanDiscount int     `json:"planDiscount"` // рекомендованная скидка %
+}
+
+// CalendarPromotionNomsResponse — обёртка ответа /nomenclatures.
+type CalendarPromotionNomsResponse struct {
+	Data CalendarPromotionNomsData `json:"data"`
+}
+
+// CalendarPromotionNomsData — контейнер товаров акции.
+type CalendarPromotionNomsData struct {
+	Nomenclatures []CalendarPromotionNom `json:"nomenclatures"`
+}
+
+// --- Campaign Budget ---
+
+// BudgetResponse — ответ от GET /adv/v1/budget.
+type BudgetResponse struct {
+	Total int `json:"total"` // Бюджет кампании, ₽
+}
+
+// --- Minimum Bids ---
+
+// MinBidsRequest — body для POST /api/advert/v1/bids/min.
+type MinBidsRequest struct {
+	AdvertID       int      `json:"advert_id"`
+	NmIDs          []int    `json:"nm_ids"`
+	PaymentType    string   `json:"payment_type"`    // cpm | cpc
+	PlacementTypes []string `json:"placement_types"` // search, recommendation, combined
+}
+
+// MinBidsResponse — ответ от POST /api/advert/v1/bids/min.
+type MinBidsResponse struct {
+	Bids []MinBidItem `json:"bids"`
+}
+
+// MinBidItem — минимальные ставки для одного товара.
+type MinBidItem struct {
+	NmID int          `json:"nm_id"`
+	Bids []MinBidEntry `json:"bids"`
+}
+
+// MinBidEntry — минимальная ставка для одного размещения.
+type MinBidEntry struct {
+	Placement string `json:"placement"` // combined, search, recommendation
+	Bid       int    `json:"bid"`       // копейки
+}

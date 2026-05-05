@@ -17,6 +17,7 @@ cmd/data-downloaders/<name>/
 Existing downloaders:
   download-wb-sales          # WB Sales/Statistics API → SQLite
   download-wb-promotion      # WB Promotion/Advertising API → SQLite
+  download-wb-promotion-v2   # WB Promotion extended (normquery, bids, finance, calendar) → SQLite
   download-wb-feedbacks      # WB Feedbacks API → SQLite
   download-wb-funnel         # WB Analytics v3 daily funnel → SQLite
   download-wb-funnel-agg     # WB Analytics v3 aggregated funnel → SQLite
@@ -63,6 +64,7 @@ if err := config.LoadYAML("config.yaml", &cfg); err != nil {
 - `FunnelAggregatedConfig` — aggregated funnel settings (with `GetDefaults()`)
 - `StocksConfig` — warehouse stock snapshot settings (with `GetDefaults()`)
 - `StockHistoryConfig` — historical stock CSV report settings (with `GetDefaults()`)
+- `PromotionV2Config` — extended promotion settings: normquery, bids, finance, calendar (with `GetDefaults()`)
 
 Each config type has a `GetDefaults()` method that fills zero values with sensible defaults.
 
@@ -128,6 +130,7 @@ repo.SaveFunnelAggregatedBatch(ctx, batch)
 - `GetQualitySchemaSQL()` — Product quality summary (LLM analysis)
 - `GetStockHistorySchemaSQL()` — Stock history CSV reports (in `stock_history_schema.go`)
 - `GetStocksWarehouseSchemaSQL()` — Warehouse stock snapshots
+- `GetPromotionV2SchemaSQL()` — Extended promotion data (normquery, bids, finance, calendar)
 
 ### pkg/progress — Progress Tracking
 
@@ -649,6 +652,9 @@ func TestSaveRegionSales(t *testing.T) {
 - [ ] `main.go` uses `sqlite.NewSQLiteSalesRepository()` for single DB open
 - [ ] API key via `getAPIKey()` helper or YAML env expansion
 - [ ] Adaptive rate limiting: `wb.New(apiKey)` + `SetRateLimit()` + `SetAdaptiveParams()`
+- [ ] All API endpoint toolIDs registered in `applyRateLimits()` — no unregistered toolIDs
+- [ ] Rate limits verified against Swagger spec — each distinct limit gets separate config fields
+- [ ] JSON tags on all API types verified against Swagger (`docs/wb_api_swagger/`) — mixed snake_case/camelCase per endpoint version
 - [ ] Ctrl+C handling with `context.WithCancel`
 - [ ] `config.yaml` with `${ENV}` expansion
 - [ ] CLI flags:
@@ -671,6 +677,9 @@ func TestSaveRegionSales(t *testing.T) {
 5. **Config not expanding `${ENV}`**: Use `config.LoadYAML()` which handles `os.ExpandEnv()`.
 6. **Shared database between utilities**: If multiple downloaders write to the same database file (e.g., `wb-sales.db`), be aware that all data is stored together. To reset a specific utility's data, you can manually delete the relevant tables or use separate database files per utility.
 7. **Ignoring 5xx errors**: The WB API may return transient 5xx errors (503, 500, 502, 504). The `wb.Client` automatically retries these with exponential backoff (5s, 10s, 15s). No manual retry logic needed in downloaders.
+8. **Unregistered toolIDs**: Every endpoint called via `client.Get(ctx, "tool_id", ...)` or `client.Post()` must have a corresponding `SetRateLimit("tool_id", ...)` in `applyRateLimits()`. Without registration, the endpoint bypasses adaptive rate limiting — no 429 backoff/recovery.
+9. **JSON tags not matching Swagger**: WB API uses mixed conventions (snake_case for `/adv/v0/*`, camelCase for `/adv/v1/*`, etc.). Always verify JSON tags against `docs/wb_api_swagger/`. Wrong tag = silent data loss (zero values, no errors).
+10. **DELETE FROM table inside batch loop**: Calling `DELETE FROM table` in a save function that's invoked per-batch wipes previous batches' data. Use per-item `DELETE WHERE key = ?` instead.
 
 8. **`Days` default in `GetDefaults()` overrides explicit `from/to`**:
 
@@ -852,6 +861,179 @@ for i, batch := range batches {
 ```
 
 **Trade-off**: Some batches lost, but download continues. Use `--resume` mode to retry failed batches later.
+
+---
+
+### 5. DELETE ALL Inside a Batch Loop (Data Loss)
+
+**❌ Wrong** — `DELETE FROM table` inside batch loop wipes previous batches:
+```go
+func SaveItems(ctx context.Context, items []Item) error {
+    tx, _ := r.db.BeginTx(ctx, nil)
+    defer tx.Rollback()
+
+    // WIPES ALL DATA — every batch call deletes previous batch!
+    tx.ExecContext(ctx, "DELETE FROM my_table")
+
+    for _, item := range items {
+        tx.ExecContext(ctx, "INSERT INTO my_table (a, b) VALUES (?, ?)", item.A, item.B)
+    }
+    return tx.Commit()
+}
+
+// In batch loop:
+for _, batch := range batches {
+    SaveItems(ctx, batch) // Batch 2 deletes Batch 1's data!
+}
+```
+
+**✅ Correct** — Per-item DELETE inside transaction:
+```go
+func SaveItems(ctx context.Context, items []Item) error {
+    tx, _ := r.db.BeginTx(ctx, nil)
+    defer tx.Rollback()
+
+    stmt, _ := tx.PrepareContext(ctx, "INSERT OR REPLACE INTO my_table (a, b, c) VALUES (?, ?, ?)")
+    defer stmt.Close()
+
+    for _, item := range items {
+        // Delete only this item's rows, then insert fresh
+        tx.ExecContext(ctx, "DELETE FROM my_table WHERE a = ? AND b = ?", item.A, item.B)
+        stmt.ExecContext(ctx, item.A, item.B, item.C)
+    }
+    return tx.Commit()
+}
+```
+
+**Error symptom**: After processing 10 batches, only the last batch's data remains in the table. Silent data loss — no errors.
+
+**Prevention**:
+- Never use `DELETE FROM table` inside a function called from a batch loop
+- Use per-item `DELETE WHERE key = ?` or `INSERT OR REPLACE` with correct UNIQUE constraint
+- If full snapshot replacement is needed, do ONE `DELETE` before the loop, not inside `SaveItems()`
+
+---
+
+### 6. Wrong JSON Tags vs Swagger (Silent Data Loss)
+
+The WB API uses **mixed naming conventions** across versions. Verifying JSON tags against the Swagger spec is mandatory.
+
+**❌ Wrong** — Guessing field names:
+```go
+type MinBidEntry struct {
+    Type  string `json:"type"`   // Swagger says "placement"
+    Value int    `json:"value"`  // Swagger says "bid"
+}
+```
+
+Result: `json.Unmarshal` silently ignores the real fields. `Type=""`, `Value=0` for every row. **All data lost with no error.**
+
+**✅ Correct** — Verify against Swagger (`docs/wb_api_swagger/`):
+```go
+type MinBidEntry struct {
+    Placement string `json:"placement"` // Matches Swagger schema
+    Bid       int    `json:"bid"`       // Matches Swagger schema
+}
+```
+
+**WB API Naming Convention Rules** (from `08-promotion.yaml`):
+
+| API Version | Style | Examples |
+|-------------|-------|---------|
+| `/adv/v0/*` | **snake_case** | `advert_id`, `nm_id`, `norm_query` |
+| `/adv/v1/*` | **camelCase** | `advertId`, `updNum`, `campName` |
+| `/api/advert/v2/*` | **camelCase** | `bidType`, `nmSettings` |
+| `/api/advert/v0/bids/*` | **camelCase** | `advertId`, `normQueries` |
+| `/api/advert/v1/bids/min` | **snake_case** | `nm_id`, `placement` |
+
+**Prevention**:
+- Swagger specs are in `docs/wb_api_swagger/08-promotion.yaml` (and others)
+- For every new type, copy-paste field names from the Swagger response schema
+- Add a simple JSON unmarshal test to verify parsing works:
+  ```go
+  func TestMinBidEntryParsing(t *testing.T) {
+      raw := `{"nm_id": 123, "bids": [{"placement": "search", "bid": 250}]}`
+      var resp MinBidsResponse
+      json.Unmarshal([]byte(raw), &resp)
+      if resp.Bids[0].Placement != "search" || resp.Bids[0].Bid != 250 {
+          t.Fatal("JSON tags don't match Swagger")
+      }
+  }
+  ```
+
+---
+
+### 7. Shared Rate Limits for Endpoints with Different Swagger Limits
+
+Endpoints within the same API family can have **drastically different** rate limits. Using one shared config for all is a bug.
+
+**❌ Wrong** — All normquery endpoints share one rate limit:
+```go
+// config.yaml — one rate for all 4 endpoints
+normquery: 300           # 5 req/sec = 300/min (correct for list/bids/minus)
+normquery_api: 300
+
+// main.go — stats uses the same 300/min rate
+SetRateLimit("normquery_stats", rl.Normquery, ..., rl.NormqueryApi, ...)
+SetRateLimit("normquery_list",  rl.Normquery, ..., rl.NormqueryApi, ...)
+```
+
+Swagger says `/adv/v0/normquery/stats` = **10 req/min** (30x stricter!). With 300/min, stats gets constant 429s.
+
+**✅ Correct** — Separate rate limit fields for each distinct Swagger limit:
+```yaml
+# config.yaml
+rate_limits:
+  normquery: 300           # list/bids/minus: 5 req/sec = 300/min
+  normquery_api: 300
+  normquery_stats: 10      # stats: 10 req/min (30x stricter!)
+  normquery_stats_api: 10
+```
+
+```go
+// main.go — stats uses its own rate
+SetRateLimit("normquery_stats", rl.NormqueryStats, ..., rl.NormqueryStatsApi, ...)
+SetRateLimit("normquery_list",  rl.Normquery, ..., rl.NormqueryApi, ...)
+```
+
+**Prevention**:
+- Check Swagger rate limits for **each endpoint individually**, not per API family
+- The comment in config.yaml should cite the exact Swagger rate for each endpoint
+- If endpoints share the same Swagger rate, reuse is fine. If they differ, separate them.
+
+---
+
+### 8. Database Grain Mismatch with API Response Granularity
+
+The table's UNIQUE constraint must match the API response's actual granularity.
+
+**❌ Wrong** — Table grain is coarser than API response:
+```go
+// API returns multiple items per (advert_id, nm_id) — one per norm_query:
+// {"advert_id": 1, "nm_id": 100, "bid": 350, "norm_query": "платье"}
+// {"advert_id": 1, "nm_id": 100, "bid": 280, "norm_query": "сарафан"}
+
+// But table only has UNIQUE(advert_id, nm_id) — no normquery column!
+CREATE TABLE normquery_bids (
+    advert_id INTEGER, nm_id INTEGER, bid INTEGER,
+    UNIQUE(advert_id, nm_id)  // ← Second insert fails!
+);
+```
+
+Result: UNIQUE constraint violation on the second item, or data overwritten (depending on INSERT vs INSERT OR REPLACE).
+
+**✅ Correct** — Match table grain to API response granularity:
+```sql
+CREATE TABLE normquery_bids (
+    advert_id INTEGER, nm_id INTEGER, normquery TEXT, bid INTEGER,
+    UNIQUE(advert_id, nm_id, normquery)  -- All distinguishing fields in grain
+);
+```
+
+**Prevention**:
+- For each API endpoint, identify all fields that vary within a single response item
+- If the API returns an array where multiple items share a partial key, all varying fields must be in the UNIQUE constraint
+- Common pattern: `(entity_id, sub_entity_id, date, dimension)` where `dimension` is the field that differentiates rows within one API call
 
 ---
 

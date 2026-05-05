@@ -159,6 +159,12 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		return err
 	}
 
+	// Create promotion v2 tables (normquery, bid recommendations, finance, calendar)
+	_, err = r.db.Exec(GetPromotionV2SchemaSQL())
+	if err != nil {
+		return err
+	}
+
 	// Migrations for new financial columns (ALTER TABLE ADD COLUMN is idempotent-safe via ignoring errors)
 	salesMigrations := []string{
 		"ALTER TABLE sales ADD COLUMN ppvz_sales_commission REAL",

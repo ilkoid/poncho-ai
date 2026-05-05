@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/wb"
@@ -568,4 +569,646 @@ func (r *SQLiteSalesRepository) CountCampaignBoosterStats(ctx context.Context) (
 		return 0, fmt.Errorf("count campaign_booster_stats: %w", err)
 	}
 	return count, nil
+}
+
+// ============================================================================
+// V2 Promotion Repository Methods (normquery, bid recommendations, finance)
+// ============================================================================
+
+// SaveCampaignBids saves campaign bid snapshots from AdvertDetail.NmSettings.
+func (r *SQLiteSalesRepository) SaveCampaignBids(ctx context.Context, rows []wb.CampaignBidRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO campaign_bids (advert_id, nm_id, subject_id, subject_name, bid_search, bid_reco, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(advert_id, nm_id) DO UPDATE SET
+			subject_id = excluded.subject_id,
+			subject_name = excluded.subject_name,
+			bid_search = excluded.bid_search,
+			bid_reco = excluded.bid_reco,
+			updated_at = CURRENT_TIMESTAMP
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range rows {
+		_, err := stmt.ExecContext(ctx, row.AdvertID, row.NmID, row.SubjectID, row.SubjectName, row.BidSearch, row.BidReco)
+		if err != nil {
+			return fmt.Errorf("insert campaign_bids advert_id=%d nm_id=%d: %w", row.AdvertID, row.NmID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveNormqueryStats saves normquery statistics for one (advert_id, nm_id, date).
+// Deletes existing rows for this key first (full replacement).
+func (r *SQLiteSalesRepository) SaveNormqueryStats(ctx context.Context, advertID, nmID int, date string, rows []wb.NormqueryStatRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, "DELETE FROM normquery_stats WHERE advert_id = ? AND nm_id = ? AND stats_date = ?", advertID, nmID, date)
+	if err != nil {
+		return fmt.Errorf("delete normquery_stats: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO normquery_stats (advert_id, nm_id, stats_date, normquery, views, clicks, ctr, cpc, cpm, avg_pos, orders, shks, atbs, spend)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range rows {
+		var views int
+		if row.Views != nil {
+			views = *row.Views
+		}
+		var ctr float64
+		if row.CTR != nil {
+			ctr = *row.CTR
+		}
+		var cpm float64
+		if row.CPM != nil {
+			cpm = *row.CPM
+		}
+		_, err := stmt.ExecContext(ctx, advertID, nmID, date, row.NormQuery, views, row.Clicks, ctr, row.CPC, cpm, row.AvgPos, row.Orders, row.SHKS, row.Atbs, row.Spend)
+		if err != nil {
+			return fmt.Errorf("insert normquery_stats: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveNormqueryBids saves current bid snapshot per (advert_id, nm_id, normquery).
+func (r *SQLiteSalesRepository) SaveNormqueryBids(ctx context.Context, items []wb.NormqueryBidItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO normquery_bids (advert_id, nm_id, normquery, bid)
+		VALUES (?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, item := range items {
+		// Delete existing rows for this (advert_id, nm_id) before inserting new ones
+		_, err := tx.ExecContext(ctx, "DELETE FROM normquery_bids WHERE advert_id = ? AND nm_id = ?", item.AdvertID, item.NmID)
+		if err != nil {
+			return fmt.Errorf("delete normquery_bids: %w", err)
+		}
+		_, err = stmt.ExecContext(ctx, item.AdvertID, item.NmID, item.NormQuery, item.Bid)
+		if err != nil {
+			return fmt.Errorf("insert normquery_bids: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveNormqueryMinus saves minus phrases per (advert_id, nm_id).
+// Deletes existing rows for each (advert_id, nm_id) pair first.
+func (r *SQLiteSalesRepository) SaveNormqueryMinus(ctx context.Context, items []wb.NormqueryMinusItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO normquery_minus (advert_id, nm_id, minus_query)
+		VALUES (?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, item := range items {
+		// Delete existing rows for this (advert_id, nm_id)
+		_, err := tx.ExecContext(ctx, "DELETE FROM normquery_minus WHERE advert_id = ? AND nm_id = ?", item.AdvertID, item.NmID)
+		if err != nil {
+			return fmt.Errorf("delete normquery_minus: %w", err)
+		}
+		for _, q := range item.NormQueries {
+			_, err := stmt.ExecContext(ctx, item.AdvertID, item.NmID, q)
+			if err != nil {
+				return fmt.Errorf("insert normquery_minus: %w", err)
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveNormqueryClusters saves active/excluded clusters per (advert_id, nm_id).
+func (r *SQLiteSalesRepository) SaveNormqueryClusters(ctx context.Context, items []wb.NormqueryListItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO normquery_clusters (advert_id, nm_id, normquery, is_excluded)
+		VALUES (?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, item := range items {
+		// Delete existing rows for this (advert_id, nm_id)
+		_, err := tx.ExecContext(ctx, "DELETE FROM normquery_clusters WHERE advert_id = ? AND nm_id = ?", item.AdvertID, item.NmID)
+		if err != nil {
+			return fmt.Errorf("delete normquery_clusters: %w", err)
+		}
+		for _, q := range item.NormQueries.Active {
+			_, err := stmt.ExecContext(ctx, item.AdvertID, item.NmID, q, 0)
+			if err != nil {
+				return fmt.Errorf("insert normquery_clusters: %w", err)
+			}
+		}
+		for _, q := range item.NormQueries.Excluded {
+			_, err := stmt.ExecContext(ctx, item.AdvertID, item.NmID, q, 1)
+			if err != nil {
+				return fmt.Errorf("insert normquery_clusters: %w", err)
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveBidRecommendations saves bid recommendations for multiple products.
+func (r *SQLiteSalesRepository) SaveBidRecommendations(ctx context.Context, recs []wb.BidRecommendationsResponse, snapshotDate string) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	baseStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO bid_recommendations (nm_id, advert_id, snapshot_date, competitive_bid, leaders_bid, top2)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(nm_id, advert_id, snapshot_date) DO UPDATE SET
+			competitive_bid = excluded.competitive_bid,
+			leaders_bid = excluded.leaders_bid,
+			top2 = excluded.top2
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare base statement: %w", err)
+	}
+	defer baseStmt.Close()
+
+	nqStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO bid_recommendations_nq (nm_id, normquery, snapshot_date, reach_min_bid, reach_medium_bid, reach_max_bid)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(nm_id, normquery, snapshot_date) DO UPDATE SET
+			reach_min_bid = excluded.reach_min_bid,
+			reach_medium_bid = excluded.reach_medium_bid,
+			reach_max_bid = excluded.reach_max_bid
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare nq statement: %w", err)
+	}
+	defer nqStmt.Close()
+
+	for _, rec := range recs {
+		_, err := baseStmt.ExecContext(ctx,
+			rec.NmID, rec.AdvertID, snapshotDate,
+			rec.Base.CompetitiveBid.BidKopecks,
+			rec.Base.LeadersBid.BidKopecks,
+			rec.Base.Top2.BidKopecks,
+		)
+		if err != nil {
+			return fmt.Errorf("insert bid_recommendations nm_id=%d: %w", rec.NmID, err)
+		}
+		for _, nq := range rec.NormQueries {
+			_, err := nqStmt.ExecContext(ctx,
+				rec.NmID, nq.NormQuery, snapshotDate,
+				nq.ReachMin.BidKopecks,
+				nq.ReachMedium.BidKopecks,
+				nq.ReachMax.BidKopecks,
+			)
+			if err != nil {
+				return fmt.Errorf("insert bid_recommendations_nq nm_id=%d: %w", rec.NmID, err)
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveExpenses saves promotion expense history.
+func (r *SQLiteSalesRepository) SaveExpenses(ctx context.Context, rows []wb.ExpenseRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO promotion_expenses (advert_id, upd_num, upd_time, upd_sum, camp_name, advert_type, payment_type, advert_status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(advert_id, upd_num) DO UPDATE SET
+			upd_time = excluded.upd_time, upd_sum = excluded.upd_sum, camp_name = excluded.camp_name,
+			advert_type = excluded.advert_type, payment_type = excluded.payment_type, advert_status = excluded.advert_status
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range rows {
+		_, err := stmt.ExecContext(ctx, row.AdvertID, row.UpdNum, row.UpdTime, row.UpdSum, row.CampName, row.AdvertType, row.PaymentType, row.AdvertStatus)
+		if err != nil {
+			return fmt.Errorf("insert promotion_expenses advert_id=%d: %w", row.AdvertID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveBalance saves account balance snapshot.
+func (r *SQLiteSalesRepository) SaveBalance(ctx context.Context, balance wb.BalanceResponse, snapshotDate string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO promotion_balance (snapshot_date, balance, net, bonus)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(snapshot_date) DO UPDATE SET balance = excluded.balance, net = excluded.net, bonus = excluded.bonus
+	`, snapshotDate, balance.Balance, balance.Net, balance.Bonus)
+	if err != nil {
+		return fmt.Errorf("insert promotion_balance: %w", err)
+	}
+
+	// Clear and replace cashbacks for this date
+	_, err = tx.ExecContext(ctx, "DELETE FROM promotion_balance_cashbacks WHERE snapshot_date = ?", snapshotDate)
+	if err != nil {
+		return fmt.Errorf("delete promotion_balance_cashbacks: %w", err)
+	}
+	cbStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO promotion_balance_cashbacks (snapshot_date, sum_val, percent_val, expiration_date)
+		VALUES (?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare cashback statement: %w", err)
+	}
+	defer cbStmt.Close()
+
+	for _, cb := range balance.Cashbacks {
+		_, err := cbStmt.ExecContext(ctx, snapshotDate, cb.Sum, cb.Percent, cb.ExpirationDate)
+		if err != nil {
+			return fmt.Errorf("insert promotion_balance_cashbacks: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// SavePayments saves payment history.
+func (r *SQLiteSalesRepository) SavePayments(ctx context.Context, rows []wb.PaymentRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO promotion_payments (payment_id, sum_val, payment_date, type_val, status_id, card_status)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(payment_id) DO UPDATE SET
+			sum_val = excluded.sum_val, payment_date = excluded.payment_date,
+			type_val = excluded.type_val, status_id = excluded.status_id, card_status = excluded.card_status
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range rows {
+		_, err := stmt.ExecContext(ctx, row.ID, row.Sum, row.Date, row.Type, row.StatusID, row.CardStatus)
+		if err != nil {
+			return fmt.Errorf("insert promotion_payments id=%d: %w", row.ID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveCalendarPromotions saves WB promotions calendar.
+func (r *SQLiteSalesRepository) SaveCalendarPromotions(ctx context.Context, promos []wb.CalendarPromotion) error {
+	if len(promos) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO wb_calendar_promotions (promotion_id, name, start_date, end_date, type)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(promotion_id) DO UPDATE SET
+			name = excluded.name, start_date = excluded.start_date, end_date = excluded.end_date, type = excluded.type
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, p := range promos {
+		_, err := stmt.ExecContext(ctx, p.ID, p.Name, p.Start, p.End, p.Type)
+		if err != nil {
+			return fmt.Errorf("insert wb_calendar_promotions id=%d: %w", p.ID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// GetCampaignProductIDs returns distinct (advert_id, nm_id) pairs for active/paused campaigns.
+// Used by V2 downloader to build normquery batch requests.
+func (r *SQLiteSalesRepository) GetCampaignProductIDs(ctx context.Context, statuses []int) ([]wb.NormqueryItem, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]interface{}, len(statuses))
+	for i, s := range statuses {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	query := fmt.Sprintf(
+		"SELECT DISTINCT advert_id, nm_id FROM campaign_products WHERE advert_id IN (SELECT advert_id FROM campaigns WHERE status IN (%s))",
+		strings.Join(placeholders, ","),
+	)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query campaign_product_ids: %w", err)
+	}
+	defer rows.Close()
+
+	var items []wb.NormqueryItem
+	for rows.Next() {
+		var item wb.NormqueryItem
+		if err := rows.Scan(&item.AdvertID, &item.NmID); err != nil {
+			return nil, fmt.Errorf("scan campaign_product_id: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// SaveCampaignBudget saves budget snapshot for one campaign.
+func (r *SQLiteSalesRepository) SaveCampaignBudget(ctx context.Context, advertID int, budget wb.BudgetResponse, snapshotDate string) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO campaign_budget (advert_id, snapshot_date, total_budget)
+		VALUES (?, ?, ?)
+		ON CONFLICT(advert_id, snapshot_date) DO UPDATE SET total_budget = excluded.total_budget
+	`, advertID, snapshotDate, budget.Total)
+	if err != nil {
+		return fmt.Errorf("insert campaign_budget advert_id=%d: %w", advertID, err)
+	}
+	return nil
+}
+
+// SaveMinBids saves minimum bid snapshots for products.
+func (r *SQLiteSalesRepository) SaveMinBids(ctx context.Context, advertID int, items []wb.MinBidItem, snapshotDate string) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO min_bids (nm_id, advert_id, placement_type, min_bid, snapshot_date)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(nm_id, advert_id, placement_type, snapshot_date) DO UPDATE SET min_bid = excluded.min_bid
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, item := range items {
+		for _, bid := range item.Bids {
+			_, err := stmt.ExecContext(ctx, item.NmID, advertID, bid.Placement, bid.Bid, snapshotDate)
+			if err != nil {
+				return fmt.Errorf("insert min_bids nm_id=%d: %w", item.NmID, err)
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveCalendarPromotionDetails saves details, advantages, and ranging for promotions.
+// Upserts wb_calendar_promotion_details, deletes+inserts advantages and ranging per promotion_id.
+func (r *SQLiteSalesRepository) SaveCalendarPromotionDetails(ctx context.Context, details []wb.CalendarPromotionDetail) error {
+	if len(details) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	detailStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO wb_calendar_promotion_details (
+			promotion_id, description, in_promo_action_leftovers, in_promo_action_total,
+			not_in_promo_action_leftovers, not_in_promo_action_total,
+			participation_percentage, exception_products_count, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(promotion_id) DO UPDATE SET
+			description = excluded.description,
+			in_promo_action_leftovers = excluded.in_promo_action_leftovers,
+			in_promo_action_total = excluded.in_promo_action_total,
+			not_in_promo_action_leftovers = excluded.not_in_promo_action_leftovers,
+			not_in_promo_action_total = excluded.not_in_promo_action_total,
+			participation_percentage = excluded.participation_percentage,
+			exception_products_count = excluded.exception_products_count,
+			updated_at = CURRENT_TIMESTAMP
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare detail statement: %w", err)
+	}
+	defer detailStmt.Close()
+
+	advStmt, err := tx.PrepareContext(ctx, `
+		INSERT OR IGNORE INTO wb_calendar_promotion_advantages (promotion_id, advantage)
+		VALUES (?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare advantage statement: %w", err)
+	}
+	defer advStmt.Close()
+
+	rangingStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO wb_calendar_promotion_ranging (promotion_id, condition, participation_rate, boost)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(promotion_id, condition) DO UPDATE SET
+			participation_rate = excluded.participation_rate, boost = excluded.boost
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare ranging statement: %w", err)
+	}
+	defer rangingStmt.Close()
+
+	for _, d := range details {
+		_, err := detailStmt.ExecContext(ctx,
+			d.ID, d.Description,
+			d.InPromoActionLeftovers, d.InPromoActionTotal,
+			d.NotInPromoActionLeftovers, d.NotInPromoActionTotal,
+			d.ParticipationPercentage, d.ExceptionProductsCount,
+		)
+		if err != nil {
+			return fmt.Errorf("insert promotion_details id=%d: %w", d.ID, err)
+		}
+
+		_, err = tx.ExecContext(ctx, "DELETE FROM wb_calendar_promotion_advantages WHERE promotion_id = ?", d.ID)
+		if err != nil {
+			return fmt.Errorf("delete advantages id=%d: %w", d.ID, err)
+		}
+		for _, a := range d.Advantages {
+			_, err := advStmt.ExecContext(ctx, d.ID, a)
+			if err != nil {
+				return fmt.Errorf("insert advantage id=%d: %w", d.ID, err)
+			}
+		}
+
+		_, err = tx.ExecContext(ctx, "DELETE FROM wb_calendar_promotion_ranging WHERE promotion_id = ?", d.ID)
+		if err != nil {
+			return fmt.Errorf("delete ranging id=%d: %w", d.ID, err)
+		}
+		for _, rng := range d.Ranging {
+			_, err := rangingStmt.ExecContext(ctx, d.ID, rng.Condition, rng.ParticipationRate, rng.Boost)
+			if err != nil {
+				return fmt.Errorf("insert ranging id=%d: %w", d.ID, err)
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveCalendarPromotionNomenclatures saves product data for a promotion snapshot.
+// Deletes existing rows for (promotion_id, snapshot_date) before inserting.
+func (r *SQLiteSalesRepository) SaveCalendarPromotionNomenclatures(ctx context.Context, promotionID int, noms []wb.CalendarPromotionNom, snapshotDate string) error {
+	if len(noms) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, "DELETE FROM wb_calendar_promotion_nomenclatures WHERE promotion_id = ? AND snapshot_date = ?", promotionID, snapshotDate)
+	if err != nil {
+		return fmt.Errorf("delete nomenclatures: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO wb_calendar_promotion_nomenclatures (
+			promotion_id, nm_id, in_action, price, plan_price, discount, plan_discount, currency_code, snapshot_date
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, n := range noms {
+		inAction := 0
+		if n.InAction {
+			inAction = 1
+		}
+		_, err := stmt.ExecContext(ctx, promotionID, n.ID, inAction, n.Price, n.PlanPrice, n.Discount, n.PlanDiscount, n.CurrencyCode, snapshotDate)
+		if err != nil {
+			return fmt.Errorf("insert nomenclature nm_id=%d: %w", n.ID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// GetCalendarPromotionIDs returns all promotion IDs from wb_calendar_promotions.
+func (r *SQLiteSalesRepository) GetCalendarPromotionIDs(ctx context.Context) ([]int, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT promotion_id FROM wb_calendar_promotions ORDER BY promotion_id")
+	if err != nil {
+		return nil, fmt.Errorf("query calendar promotion ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan promotion_id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetCalendarPromotionIDsByType returns promotion IDs excluding a specific type.
+// Used to skip "auto" promotions for /nomenclatures (API returns 422 for them).
+func (r *SQLiteSalesRepository) GetCalendarPromotionIDsByType(ctx context.Context, excludeType string) ([]int, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT promotion_id FROM wb_calendar_promotions WHERE type != ? ORDER BY promotion_id", excludeType)
+	if err != nil {
+		return nil, fmt.Errorf("query calendar promotion ids by type: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan promotion_id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

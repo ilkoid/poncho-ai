@@ -278,6 +278,149 @@ func (c *WBClientConfig) GetDefaults() WBClientConfig {
 	return result
 }
 
+// PromotionV2Config — конфигурация для download-wb-promotion-v2.
+// Расширенный сбор: normquery, bid recommendations, finance, calendar.
+type PromotionV2Config struct {
+	DbPath    string                  `yaml:"db_path"`
+	Begin     string                  `yaml:"begin"`
+	End       string                  `yaml:"end"`
+	Days      int                     `yaml:"days"`
+	Statuses  []int                   `yaml:"statuses"`
+	RateLimits PromotionV2RateLimits  `yaml:"rate_limits"`
+	AdaptiveProbeAfter int            `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int            `yaml:"max_backoff_seconds"`
+	SkipBids            bool `yaml:"skip_bids"`
+	SkipNormquery       bool `yaml:"skip_normquery"`
+	SkipRecommendations bool `yaml:"skip_recommendations"`
+	SkipFinance         bool `yaml:"skip_finance"`
+	SkipCalendar        bool `yaml:"skip_calendar"`
+}
+
+// PromotionV2RateLimits — rate limits для V2 endpoints.
+// Swagger rates: normquery_stats=10/min, normquery_list/bids/minus=5/sec,
+// bid_recommendations=5/min, finance=1/sec, calendar=10/6sec, budget=4/sec, min_bids=20/min.
+type PromotionV2RateLimits struct {
+	Normquery          int `yaml:"normquery"`
+	NormqueryBurst     int `yaml:"normquery_burst"`
+	NormqueryApi       int `yaml:"normquery_api"`
+	NormqueryApiBurst  int `yaml:"normquery_api_burst"`
+
+	NormqueryStats          int `yaml:"normquery_stats"`
+	NormqueryStatsBurst     int `yaml:"normquery_stats_burst"`
+	NormqueryStatsApi       int `yaml:"normquery_stats_api"`
+	NormqueryStatsApiBurst  int `yaml:"normquery_stats_api_burst"`
+
+	BidRec          int `yaml:"bid_rec"`
+	BidRecBurst     int `yaml:"bid_rec_burst"`
+	BidRecApi       int `yaml:"bid_rec_api"`
+	BidRecApiBurst  int `yaml:"bid_rec_api_burst"`
+
+	Finance          int `yaml:"finance"`
+	FinanceBurst     int `yaml:"finance_burst"`
+	FinanceApi       int `yaml:"finance_api"`
+	FinanceApiBurst  int `yaml:"finance_api_burst"`
+
+	Calendar          int `yaml:"calendar"`
+	CalendarBurst     int `yaml:"calendar_burst"`
+	CalendarApi       int `yaml:"calendar_api"`
+	CalendarApiBurst  int `yaml:"calendar_api_burst"`
+
+	MinBids          int `yaml:"min_bids"`
+	MinBidsBurst     int `yaml:"min_bids_burst"`
+	MinBidsApi       int `yaml:"min_bids_api"`
+	MinBidsApiBurst  int `yaml:"min_bids_api_burst"`
+}
+
+func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
+	result := *c
+	// Normquery (shared rate for list/bids/minus): swagger 5 req/sec = 300/min
+	if result.RateLimits.NormqueryApi == 0 {
+		result.RateLimits.NormqueryApi = 300
+	}
+	if result.RateLimits.Normquery == 0 {
+		result.RateLimits.Normquery = result.RateLimits.NormqueryApi
+	}
+	if result.RateLimits.NormqueryApiBurst == 0 {
+		result.RateLimits.NormqueryApiBurst = 5
+	}
+	if result.RateLimits.NormqueryBurst == 0 {
+		result.RateLimits.NormqueryBurst = result.RateLimits.NormqueryApiBurst
+	}
+		// Normquery stats: swagger 10 req/min (much stricter than list/bids/minus)
+		if result.RateLimits.NormqueryStatsApi == 0 {
+			result.RateLimits.NormqueryStatsApi = 10
+		}
+		if result.RateLimits.NormqueryStats == 0 {
+			result.RateLimits.NormqueryStats = result.RateLimits.NormqueryStatsApi
+		}
+		if result.RateLimits.NormqueryStatsApiBurst == 0 {
+			result.RateLimits.NormqueryStatsApiBurst = 1
+		}
+		if result.RateLimits.NormqueryStatsBurst == 0 {
+			result.RateLimits.NormqueryStatsBurst = result.RateLimits.NormqueryStatsApiBurst
+		}
+	// Bid recommendations: swagger 5 req/min
+	if result.RateLimits.BidRecApi == 0 {
+		result.RateLimits.BidRecApi = 5
+	}
+	if result.RateLimits.BidRec == 0 {
+		result.RateLimits.BidRec = result.RateLimits.BidRecApi
+	}
+	if result.RateLimits.BidRecApiBurst == 0 {
+		result.RateLimits.BidRecApiBurst = 1
+	}
+	if result.RateLimits.BidRecBurst == 0 {
+		result.RateLimits.BidRecBurst = result.RateLimits.BidRecApiBurst
+	}
+	// Finance (balance/payments/expenses): swagger 1 req/sec = 60/min
+	if result.RateLimits.FinanceApi == 0 {
+		result.RateLimits.FinanceApi = 60
+	}
+	if result.RateLimits.Finance == 0 {
+		result.RateLimits.Finance = result.RateLimits.FinanceApi
+	}
+	if result.RateLimits.FinanceApiBurst == 0 {
+		result.RateLimits.FinanceApiBurst = 5
+	}
+	if result.RateLimits.FinanceBurst == 0 {
+		result.RateLimits.FinanceBurst = result.RateLimits.FinanceApiBurst
+	}
+	// Calendar: swagger 10 req/6sec ≈ 100/min
+	if result.RateLimits.CalendarApi == 0 {
+		result.RateLimits.CalendarApi = 100
+	}
+	if result.RateLimits.Calendar == 0 {
+		result.RateLimits.Calendar = result.RateLimits.CalendarApi
+	}
+	if result.RateLimits.CalendarApiBurst == 0 {
+		result.RateLimits.CalendarApiBurst = 5
+	}
+	if result.RateLimits.CalendarBurst == 0 {
+		result.RateLimits.CalendarBurst = result.RateLimits.CalendarApiBurst
+	}
+		// Min bids: swagger 20 req/min
+		if result.RateLimits.MinBidsApi == 0 {
+			result.RateLimits.MinBidsApi = 20
+		}
+		if result.RateLimits.MinBids == 0 {
+			result.RateLimits.MinBids = result.RateLimits.MinBidsApi
+		}
+		if result.RateLimits.MinBidsApiBurst == 0 {
+			result.RateLimits.MinBidsApiBurst = 3
+		}
+		if result.RateLimits.MinBidsBurst == 0 {
+			result.RateLimits.MinBidsBurst = result.RateLimits.MinBidsApiBurst
+		}
+	// Adaptive tuning
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 15
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+	return result
+}
+
 // FeedbacksConfig — конфигурация для download-wb-feedbacks утилиты.
 //
 // Используется для загрузки отзывов и вопросов с WB Feedbacks API.

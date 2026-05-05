@@ -1,0 +1,66 @@
+# WB Promotion V2 Downloader Configuration
+# Extended promotion data: normquery, bid recommendations, finance, calendar
+
+# WB API Settings
+wb:
+  api_key: ""
+  analytics_api_key: ""
+  timeout: 120s
+
+# Promotion V2 Settings
+promotion_v2:
+  db_path: "/mnt/d/db/wb-promo.db"
+  days: 14
+  statuses: [7, 9, 11]  # active + paused only
+
+  skip_bids: false
+  skip_normquery: false
+  skip_recommendations: false
+  skip_finance: false
+  skip_calendar: false
+
+  rate_limits:
+    # Normquery endpoints (POST /adv/v0/normquery/*)
+    # Swagger: 5 req/sec = 300/min for list/bids/minus
+    normquery: 300
+    normquery_burst: 5
+    normquery_api: 300
+    normquery_api_burst: 5
+
+    # Normquery stats (POST /adv/v0/normquery/stats) — much stricter!
+    # Swagger: 10 req/min
+    normquery_stats: 10
+    normquery_stats_burst: 1
+    normquery_stats_api: 10
+    normquery_stats_api_burst: 1
+
+    # Bid recommendations (GET /api/advert/v0/bids/recommendations)
+    # Swagger: 5 req/min — VERY SLOW
+    bid_rec: 5
+    bid_rec_burst: 1
+    bid_rec_api: 5
+    bid_rec_api_burst: 1
+
+    # Finance (balance, payments, expenses)
+    # Swagger: 1 req/sec = 60/min
+    finance: 60
+    finance_burst: 5
+    finance_api: 60
+    finance_api_burst: 5
+
+    # Calendar (GET /api/v1/calendar/promotions)
+    # Swagger: 10 req/6sec ≈ 100/min
+    calendar: 100
+    calendar_burst: 5
+    calendar_api: 100
+    calendar_api_burst: 5
+
+    # Min bids (POST /api/advert/v1/bids/min)
+    # Swagger: 20 req/min
+    min_bids: 20
+    min_bids_burst: 3
+    min_bids_api: 20
+    min_bids_api_burst: 3
+
+  adaptive_probe_after: 15
+  max_backoff_seconds: 60

@@ -806,6 +806,274 @@ func GetCampaignFullstatsSchemaSQL() string {
 	return CampaignFullstatsSchemaSQL
 }
 
+// PromotionV2SchemaSQL defines tables for extended promotion data (V2).
+// Stores normquery stats/bids/minus, bid recommendations, finance, calendar.
+// Source: WB Promotion API v2 endpoints.
+const PromotionV2SchemaSQL = `
+-- ============================================================================
+-- PROMOTION V2 TABLES (extended promotion data)
+-- ============================================================================
+
+-- Campaign bids extracted from AdvertDetail.NmSettings (snapshot)
+-- Grain: (advert_id, nm_id)
+CREATE TABLE IF NOT EXISTS campaign_bids (
+    advert_id    INTEGER NOT NULL,
+    nm_id        INTEGER NOT NULL,
+    subject_id   INTEGER DEFAULT 0,
+    subject_name TEXT,
+    bid_search   INTEGER DEFAULT 0,
+    bid_reco     INTEGER DEFAULT 0,
+    created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, nm_id)
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_bids_nm ON campaign_bids(nm_id);
+
+-- Normquery stats per (advert_id, nm_id, date, cluster)
+-- Grain: (advert_id, nm_id, stats_date, normquery)
+CREATE TABLE IF NOT EXISTS normquery_stats (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    advert_id  INTEGER NOT NULL,
+    nm_id      INTEGER NOT NULL,
+    stats_date TEXT NOT NULL,
+    normquery  TEXT NOT NULL,
+    views INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    ctr REAL DEFAULT 0,
+    cpc REAL DEFAULT 0,
+    cpm REAL DEFAULT 0,
+    avg_pos REAL DEFAULT 0,
+    orders INTEGER DEFAULT 0,
+    shks INTEGER DEFAULT 0,
+    atbs INTEGER DEFAULT 0,
+    spend REAL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, nm_id, stats_date, normquery)
+);
+CREATE INDEX IF NOT EXISTS idx_nq_stats_campaign_date ON normquery_stats(advert_id, stats_date);
+CREATE INDEX IF NOT EXISTS idx_nq_stats_date ON normquery_stats(stats_date);
+
+-- Normquery bids per (advert_id, nm_id, normquery) — current bid snapshot
+-- Grain: (advert_id, nm_id, normquery)
+CREATE TABLE IF NOT EXISTS normquery_bids (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    advert_id INTEGER NOT NULL,
+    nm_id     INTEGER NOT NULL,
+    normquery TEXT NOT NULL,
+    bid       INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, nm_id, normquery)
+);
+
+-- Normquery minus phrases per (advert_id, nm_id)
+-- Grain: (advert_id, nm_id, minus_query)
+CREATE TABLE IF NOT EXISTS normquery_minus (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    advert_id   INTEGER NOT NULL,
+    nm_id       INTEGER NOT NULL,
+    minus_query TEXT NOT NULL,
+    created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, nm_id, minus_query)
+);
+
+-- Normquery clusters (active/excluded) per (advert_id, nm_id)
+-- Grain: (advert_id, nm_id, normquery)
+CREATE TABLE IF NOT EXISTS normquery_clusters (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    advert_id   INTEGER NOT NULL,
+    nm_id       INTEGER NOT NULL,
+    normquery   TEXT NOT NULL,
+    is_excluded INTEGER DEFAULT 0,
+    created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, nm_id, normquery)
+);
+
+-- Bid recommendations per product (3 levels + per-cluster)
+-- Grain: (nm_id, advert_id, snapshot_date)
+CREATE TABLE IF NOT EXISTS bid_recommendations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    nm_id           INTEGER NOT NULL,
+    advert_id       INTEGER DEFAULT 0,
+    snapshot_date   TEXT NOT NULL,
+    competitive_bid INTEGER DEFAULT 0,
+    leaders_bid     INTEGER DEFAULT 0,
+    top2            INTEGER DEFAULT 0,
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(nm_id, advert_id, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_bid_rec_nm ON bid_recommendations(nm_id);
+CREATE INDEX IF NOT EXISTS idx_bid_rec_date ON bid_recommendations(snapshot_date);
+
+-- Bid recommendations per normquery cluster
+-- Grain: (nm_id, normquery, snapshot_date)
+CREATE TABLE IF NOT EXISTS bid_recommendations_nq (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    nm_id         INTEGER NOT NULL,
+    normquery     TEXT NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    reach_min_bid    INTEGER DEFAULT 0,
+    reach_medium_bid INTEGER DEFAULT 0,
+    reach_max_bid    INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(nm_id, normquery, snapshot_date)
+);
+
+-- Promotion expenses (write-off history per campaign)
+-- Grain: (advert_id, upd_num)
+-- Source: GET /adv/v1/upd
+CREATE TABLE IF NOT EXISTS promotion_expenses (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    advert_id    INTEGER NOT NULL,
+    upd_num      INTEGER NOT NULL,
+    upd_time     TEXT,
+    upd_sum      INTEGER DEFAULT 0,
+    camp_name    TEXT,
+    advert_type  INTEGER DEFAULT 0,
+    payment_type TEXT,
+    advert_status INTEGER DEFAULT 0,
+    created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, upd_num)
+);
+CREATE INDEX IF NOT EXISTS idx_promo_exp_advert ON promotion_expenses(advert_id);
+
+-- Promotion balance (daily snapshot)
+-- Grain: snapshot_date
+CREATE TABLE IF NOT EXISTS promotion_balance (
+    snapshot_date  TEXT PRIMARY KEY,
+    balance INTEGER DEFAULT 0,
+    net INTEGER DEFAULT 0,
+    bonus INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Promotion balance cashbacks (per snapshot date)
+-- Grain: (snapshot_date, expiration_date)
+CREATE TABLE IF NOT EXISTS promotion_balance_cashbacks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date   TEXT NOT NULL,
+    sum_val         INTEGER DEFAULT 0,
+    percent_val     INTEGER DEFAULT 0,
+    expiration_date TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(snapshot_date, expiration_date)
+);
+
+-- Promotion payments
+-- Grain: payment_id
+CREATE TABLE IF NOT EXISTS promotion_payments (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    payment_id   INTEGER NOT NULL,
+    sum_val      INTEGER DEFAULT 0,
+    payment_date TEXT,
+    type_val     INTEGER DEFAULT 0,
+    status_id    INTEGER DEFAULT 0,
+    card_status  TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(payment_id)
+);
+
+-- WB Calendar Promotions
+-- Grain: promotion_id
+CREATE TABLE IF NOT EXISTS wb_calendar_promotions (
+    promotion_id INTEGER PRIMARY KEY,
+    name TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    type TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Calendar promotion details (enrichment of wb_calendar_promotions)
+-- Grain: promotion_id
+-- Source: GET /api/v1/calendar/promotions/details
+CREATE TABLE IF NOT EXISTS wb_calendar_promotion_details (
+    promotion_id                  INTEGER PRIMARY KEY,
+    description                   TEXT,
+    in_promo_action_leftovers     INTEGER DEFAULT 0,
+    in_promo_action_total         INTEGER DEFAULT 0,
+    not_in_promo_action_leftovers INTEGER DEFAULT 0,
+    not_in_promo_action_total     INTEGER DEFAULT 0,
+    participation_percentage      INTEGER DEFAULT 0,
+    exception_products_count      INTEGER DEFAULT 0,
+    created_at                    TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at                    TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Promotion advantages (badge, banner, top placement, etc.)
+-- Grain: (promotion_id, advantage)
+CREATE TABLE IF NOT EXISTS wb_calendar_promotion_advantages (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    promotion_id INTEGER NOT NULL,
+    advantage    TEXT NOT NULL,
+    created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(promotion_id, advantage)
+);
+
+-- Promotion search ranking boost tiers
+-- Grain: (promotion_id, condition)
+CREATE TABLE IF NOT EXISTS wb_calendar_promotion_ranging (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    promotion_id      INTEGER NOT NULL,
+    condition         TEXT NOT NULL,     -- productsInPromotion | calculateProducts | allProducts
+    participation_rate INTEGER DEFAULT 0, -- % товаров для перехода на уровень
+    boost             INTEGER DEFAULT 0,  -- % поднятия в поиске
+    created_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(promotion_id, condition)
+);
+
+-- Products eligible for promotion participation
+-- Grain: (promotion_id, nm_id, snapshot_date)
+-- Source: GET /api/v1/calendar/promotions/nomenclatures
+CREATE TABLE IF NOT EXISTS wb_calendar_promotion_nomenclatures (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    promotion_id  INTEGER NOT NULL,
+    nm_id         INTEGER NOT NULL,
+    in_action     INTEGER DEFAULT 0,      -- 0/1 boolean
+    price         REAL DEFAULT 0,         -- текущая цена
+    plan_price    REAL DEFAULT 0,         -- цена во время акции
+    discount      INTEGER DEFAULT 0,      -- текущая скидка %
+    plan_discount INTEGER DEFAULT 0,      -- рекомендованная скидка %
+    currency_code TEXT DEFAULT 'RUB',
+    snapshot_date TEXT NOT NULL,           -- дата загрузки (для историчности)
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(promotion_id, nm_id, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_cal_prom_noms_nm ON wb_calendar_promotion_nomenclatures(nm_id);
+CREATE INDEX IF NOT EXISTS idx_cal_prom_noms_promo ON wb_calendar_promotion_nomenclatures(promotion_id);
+
+-- Campaign budget (per-campaign, snapshot)
+-- Grain: (advert_id, snapshot_date)
+-- Source: GET /adv/v1/budget
+CREATE TABLE IF NOT EXISTS campaign_budget (
+    advert_id     INTEGER NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    total_budget  INTEGER DEFAULT 0,
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(advert_id, snapshot_date)
+);
+
+-- Minimum bids per product per placement (snapshot)
+-- Grain: (nm_id, advert_id, placement_type, snapshot_date)
+-- Source: POST /api/advert/v1/bids/min
+CREATE TABLE IF NOT EXISTS min_bids (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    nm_id         INTEGER NOT NULL,
+    advert_id     INTEGER NOT NULL,
+    placement_type TEXT NOT NULL,
+    min_bid       INTEGER DEFAULT 0,
+    snapshot_date TEXT NOT NULL,
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(nm_id, advert_id, placement_type, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_min_bids_nm ON min_bids(nm_id);
+CREATE INDEX IF NOT EXISTS idx_min_bids_date ON min_bids(snapshot_date);
+`
+
+// GetPromotionV2SchemaSQL returns the extended promotion tables schema.
+func GetPromotionV2SchemaSQL() string {
+	return PromotionV2SchemaSQL
+}
+
 // GetFeedbacksSchemaSQL returns the feedbacks and questions tables schema.
 func GetFeedbacksSchemaSQL() string {
 	return FeedbacksSchemaSQL
