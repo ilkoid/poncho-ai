@@ -4,6 +4,7 @@ go 1.25.1
 
 require (
 	github.com/charmbracelet/bubbles v0.21.0
+	github.com/go-echarts/go-echarts/v2 v2.7.2
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/muesli/reflow v0.3.0
@@ -18,6 +19,7 @@ require (
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.11 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/minio/crc64nvme v1.1.0 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
