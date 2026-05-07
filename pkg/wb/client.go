@@ -41,6 +41,15 @@ import (
 	"golang.org/x/time/rate"
 )
 
+
+// errNoContent is returned when the API returns 204 No Content (no data for the request).
+var errNoContent = fmt.Errorf("no content")
+
+
+// IsNoContent checks if the error is a 204 No Content response.
+func IsNoContent(err error) bool {
+	return err == errNoContent
+}
 // Константы удалены - все параметры теперь из config.yaml
 // Defaults для tools задаются в wb секции config.yaml
 
@@ -146,6 +155,7 @@ type HTTPClient interface {
 
 type Client struct {
 	apiKey        string
+	calendarKey   string // API key for calendar endpoints (dp-calendar-api.wildberries.ru)
 	httpClient    HTTPClient // Интерфейс вместо конкретного типа для testability
 	retryAttempts int        // Количество retry попыток
 
@@ -178,6 +188,21 @@ func (c *Client) IsDemoKey() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.apiKey == "demo_key"
+}
+
+// SetCalendarKey sets an alternative API key for calendar endpoints
+// (dp-calendar-api.wildberries.ru). If not set, calendar methods use the default apiKey.
+func (c *Client) SetCalendarKey(key string) *Client {
+	c.calendarKey = key
+	return c
+}
+
+// authKey returns the override auth key if provided, otherwise the default apiKey.
+func (c *Client) authKey(override string) string {
+	if override != "" {
+		return override
+	}
+	return c.apiKey
 }
 
 // New создает новый клиент для работы с Wildberries API.
@@ -331,6 +356,8 @@ type httpRequest struct {
 	body   io.Reader
 	// bodyBytes stores raw body for retry (Readers can only be read once)
 	bodyBytes []byte
+	// authKey overrides Authorization header if non-empty
+	authKey string
 }
 
 // doRequest выполняет HTTP запрос с retry логикой и rate limiting.
@@ -348,11 +375,9 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 
 	// Retry loop
 	for i := 0; i < c.retryAttempts; i++ {
-		waitStart := time.Now()
 		if err := limiter.Wait(ctx); err != nil {
 			return fmt.Errorf("rate limiter wait: %w", err)
 		}
-		waitDur := time.Since(waitStart)
 
 		// Additional delay: ensure minimum interval since last HTTP request
 		c.mu.RLock()
@@ -369,8 +394,6 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 					return ctx.Err()
 				}
 			}
-			fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: interval since last HTTP request: %v (limiter.Wait: %v)\n",
-				toolID, time.Since(lastRequestTime).Truncate(time.Millisecond), waitDur.Truncate(time.Millisecond))
 		}
 
 			// Create request body reader (recreate on retry for POST requests)
@@ -386,12 +409,10 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 			return err
 		}
 
-		httpReq.Header.Set("Authorization", c.apiKey)
+		httpReq.Header.Set("Authorization", c.authKey(req.authKey))
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
-		fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: HTTP request at %s\n",
-			toolID, time.Now().Format("15:04:05.000"))
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
@@ -454,6 +475,15 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 			}
 		}
 
+			// 204 No Content = no data for this request (not an error)
+			if resp.StatusCode == http.StatusNoContent {
+				c.adaptiveRecoverOK(toolID)
+				c.mu.Lock()
+				c.lastRequestTime[toolID] = time.Now()
+				c.mu.Unlock()
+				return errNoContent
+			}
+
 		if resp.StatusCode != http.StatusOK {
 			// Check if it's a transient 5xx error (and we have retries left)
 			isTransient5xx := resp.StatusCode >= 500 && resp.StatusCode < 600
@@ -509,7 +539,12 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 //
 // Возвращает ошибку если запрос не удался.
 func (c *Client) Get(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params url.Values, dest interface{}) error {
-	// Валидация обязательных параметров - client "тупой", ожидает что их предоставит tool
+	return c.getWithKey(ctx, toolID, baseURL, rateLimit, burst, path, params, "", dest)
+}
+
+// getWithKey is like Get but accepts an authKey override.
+// If authKey is empty, falls back to the default apiKey.
+func (c *Client) getWithKey(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params url.Values, authKey string, dest interface{}) error {
 	if baseURL == "" {
 		return fmt.Errorf("baseURL is required (tool should provide value from config)")
 	}
@@ -529,9 +564,10 @@ func (c *Client) Get(ctx context.Context, toolID string, baseURL string, rateLim
 	}
 
 	return c.doRequest(ctx, toolID, rateLimit, burst, httpRequest{
-		method: "GET",
-		url:    u.String(),
-		body:   nil,
+		method:  "GET",
+		url:     u.String(),
+		body:    nil,
+		authKey: authKey,
 	}, dest)
 }
 
@@ -568,15 +604,11 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit)) // 3/min → 20s
 
 	// Debug: show limiter state before first request
-	fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: limiter addr=%p, rate=%.1f/min, burst=%d, min_interval=%v\n",
-		toolID, limiter, limiter.Limit()*60, limiter.Burst(), minInterval.Truncate(time.Millisecond))
 
 	for i := 0; i < c.retryAttempts; i++ {
-		waitStart := time.Now()
 		if err := limiter.Wait(ctx); err != nil {
 			return fmt.Errorf("rate limiter wait: %w", err)
 		}
-		waitDur := time.Since(waitStart)
 
 		// Additional delay: ensure minimum interval since last HTTP request
 		// This is needed because limiter.Wait() measures from last limiter.Wait() call,
@@ -589,19 +621,13 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 			sinceLastReq := time.Since(lastRequestTime)
 			if sinceLastReq < minInterval {
 				additionalWait := minInterval - sinceLastReq
-				fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: additional wait %v to ensure %v interval since last HTTP (was %v)\n",
-					toolID, additionalWait.Truncate(time.Millisecond), minInterval.Truncate(time.Millisecond), sinceLastReq.Truncate(time.Millisecond))
 				select {
 				case <-time.After(additionalWait):
 				case <-ctx.Done():
 					return ctx.Err()
 				}
 			}
-			fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: interval since last HTTP request: %v (limiter.Wait: %v)\n",
-				toolID, time.Since(lastRequestTime).Truncate(time.Millisecond), waitDur.Truncate(time.Millisecond))
 		} else {
-			fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: limiter.Wait() took %v (first request)\n",
-				toolID, waitDur.Truncate(time.Millisecond))
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
@@ -612,8 +638,6 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
-		fmt.Fprintf(os.Stderr, "RATE_DEBUG %s: HTTP request at %s\n",
-			toolID, time.Now().Format("15:04:05.000"))
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
@@ -677,6 +701,15 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 			}
 		}
 
+			// 204 No Content = no data for this request (not an error)
+			if resp.StatusCode == http.StatusNoContent {
+				c.adaptiveRecoverOK(toolID)
+				c.mu.Lock()
+				c.lastRequestTime[toolID] = time.Now()
+				c.mu.Unlock()
+				return errNoContent
+			}
+
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -731,8 +764,6 @@ func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *ra
 
 	// Если limiter уже существует - возвращаем (игнорируем переданные rateLimit/burst)
 	if limiter, exists := c.limiters[toolID]; exists {
-		fmt.Fprintf(os.Stderr, "RATE_DEBUG getOrCreateLimiter(%s): reusing addr=%p, rate=%.1f/min, burst=%d\n",
-			toolID, limiter, limiter.Limit()*60, limiter.Burst())
 		return limiter
 	}
 
@@ -741,8 +772,6 @@ func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *ra
 	ratePerSec := float64(rateLimit) / 60.0
 	limiter := rate.NewLimiter(rate.Limit(ratePerSec), burst)
 	c.limiters[toolID] = limiter
-	fmt.Fprintf(os.Stderr, "RATE_DEBUG getOrCreateLimiter(%s): CREATED NEW addr=%p, rate=%d/min, burst=%d\n",
-		toolID, limiter, rateLimit, burst)
 
 	return limiter
 }

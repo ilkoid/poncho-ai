@@ -60,4 +60,6 @@ promotion_v2:
   skip_recommendations: false
   skip_finance: false
   skip_calendar: false
+  skip_budgets: false
+  skip_min_bids: false
 ```

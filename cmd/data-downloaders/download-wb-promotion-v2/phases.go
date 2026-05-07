@@ -4,11 +4,42 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// formatProgress returns a progress string with percentage and ETA.
+// Returns "done/total" when done==0 (no baseline for ETA).
+func formatProgress(done, total int, start time.Time) string {
+	if total == 0 || done == 0 {
+		return fmt.Sprintf("%d/%d", done, total)
+	}
+	pct := float64(done) * 100 / float64(total)
+	elapsed := time.Since(start)
+	avg := elapsed / time.Duration(done)
+	remaining := time.Duration(total-done) * avg
+	return fmt.Sprintf("%d/%d %.0f%% ETA %s", done, total, pct, formatDur(remaining))
+}
+
+// formatDur formats a duration as human-readable string.
+func formatDur(d time.Duration) string {
+	d = d.Truncate(time.Second)
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	switch {
+	case h > 0:
+		return fmt.Sprintf("~%dh %dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("~%dm %ds", m, s)
+	default:
+		return fmt.Sprintf("~%ds", s)
+	}
+}
 
 // V2Client is the interface for V2 Promotion API operations.
 // Defined in cmd/ per Rule 6 (consumer's interface).
@@ -22,7 +53,7 @@ type V2Client interface {
 	GetExpenses(ctx context.Context, from, to string, rateLimit, burst int) (wb.ExpensesResponse, error)
 	GetBalance(ctx context.Context, rateLimit, burst int) (*wb.BalanceResponse, error)
 	GetPayments(ctx context.Context, from, to string, rateLimit, burst int) (wb.PaymentsResponse, error)
-	GetCalendarPromotions(ctx context.Context, rateLimit, burst int) (*wb.CalendarPromotionsResponse, error)
+	GetCalendarPromotions(ctx context.Context, start, end string, allPromo bool, rateLimit, burst int) (*wb.CalendarPromotionsResponse, error)
 	GetCalendarPromotionDetails(ctx context.Context, ids []int, rateLimit, burst int) (*wb.CalendarPromotionDetailsResponse, error)
 	GetCalendarPromotionNomenclatures(ctx context.Context, promotionID int, inAction bool, limit, offset, rateLimit, burst int) (*wb.CalendarPromotionNomsResponse, error)
 	GetCampaignBudget(ctx context.Context, advertID int, rateLimit, burst int) (*wb.BudgetResponse, error)
@@ -31,7 +62,6 @@ type V2Client interface {
 
 // DownloadCampaignBids extracts bid data from AdvertDetails and saves to campaign_bids table.
 func DownloadCampaignBids(ctx context.Context, client V2Client, repo *sqlite.SQLiteSalesRepository, productIDs []wb.NormqueryItem, rateLimit, burst int) error {
-	// Collect unique advert IDs
 	seen := make(map[int]bool)
 	var advertIDs []int
 	for _, p := range productIDs {
@@ -47,11 +77,16 @@ func DownloadCampaignBids(ctx context.Context, client V2Client, repo *sqlite.SQL
 	totalBids := 0
 
 	for i := 0; i < len(advertIDs); i += batchSize {
+		if ctx.Err() != nil {
+			fmt.Printf("   Interrupted [%d/%d]\n", i/batchSize+1, totalBatches)
+			return ctx.Err()
+		}
 		endIdx := i + batchSize
 		if endIdx > len(advertIDs) {
 			endIdx = len(advertIDs)
 		}
 		batch := advertIDs[i:endIdx]
+		batchNum := i/batchSize + 1
 
 		details, err := client.GetAdvertDetails(ctx, batch)
 		if err != nil {
@@ -78,7 +113,7 @@ func DownloadCampaignBids(ctx context.Context, client V2Client, repo *sqlite.SQL
 			continue
 		}
 		totalBids += len(rows)
-		fmt.Printf("   [%d/%d] %d bids saved\n", (i/batchSize)+1, totalBatches, len(rows))
+		fmt.Printf("   [%s] %d bids saved\n", formatProgress(batchNum, totalBatches, t0), len(rows))
 	}
 
 	fmt.Printf("   Done: %d bids from %d campaigns (%s)\n", totalBids, len(advertIDs), time.Since(t0).Truncate(time.Second))
@@ -93,11 +128,16 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 	totalStats := 0
 
 	for i := 0; i < len(productIDs); i += batchSize {
+		if ctx.Err() != nil {
+			fmt.Printf("   Interrupted [%d/%d]\n", i/batchSize+1, totalBatches)
+			return ctx.Err()
+		}
 		endIdx := i + batchSize
 		if endIdx > len(productIDs) {
 			endIdx = len(productIDs)
 		}
 		batch := productIDs[i:endIdx]
+		batchNum := i/batchSize + 1
 
 		req := wb.NormqueryStatsRequest{
 			From:  beginDate,
@@ -106,7 +146,7 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 		}
 		resp, err := client.GetNormqueryStats(ctx, req, rateLimit, burst)
 		if err != nil {
-			fmt.Printf("   Error batch %d-%d: %v\n", i+1, endIdx, err)
+			fmt.Printf("   [%s] Error: %v\n", formatProgress(batchNum, totalBatches, t0), err)
 			continue
 		}
 
@@ -114,13 +154,12 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 			if len(group.Stats) == 0 {
 				continue
 			}
-			// Use beginDate as stats_date (API returns aggregated stats for the period)
 			if err := repo.SaveNormqueryStats(ctx, group.AdvertID, group.NmID, beginDate, group.Stats); err != nil {
 				fmt.Printf("   Error saving stats advert=%d nm=%d: %v\n", group.AdvertID, group.NmID, err)
 			}
 			totalStats += len(group.Stats)
 		}
-		fmt.Printf("   [%d/%d] %d clusters\n", (i/batchSize)+1, totalBatches, totalStats)
+		fmt.Printf("   [%s] %d clusters\n", formatProgress(batchNum, totalBatches, t0), totalStats)
 	}
 
 	fmt.Printf("   Done: %d stat rows from %d products (%s)\n", totalStats, len(productIDs), time.Since(t0).Truncate(time.Second))
@@ -179,14 +218,46 @@ func DownloadNormqueryMinus(ctx context.Context, client V2Client, repo *sqlite.S
 
 // DownloadBidRecommendations downloads recommended bids per product.
 // Rate limit is 5 req/min — very slow. One request per (nm_id, advert_id).
+// Pairs are sorted by advert_id to skip all remaining nms for stale campaigns
+// (where nm no longer belongs to advert) after the first 400 error.
 func DownloadBidRecommendations(ctx context.Context, client V2Client, repo *sqlite.SQLiteSalesRepository, productIDs []wb.NormqueryItem, rateLimit, burst int) error {
 	t0 := time.Now()
 	total := 0
+	staleCount := 0
 	snapshotDate := time.Now().Format("2006-01-02")
 
+	// Sort by advert_id so stale campaigns can be skipped entirely.
+	sort.Slice(productIDs, func(i, j int) bool {
+		if productIDs[i].AdvertID != productIDs[j].AdvertID {
+			return productIDs[i].AdvertID < productIDs[j].AdvertID
+		}
+		return productIDs[i].NmID < productIDs[j].NmID
+	})
+
+	staleAdverts := make(map[int]bool)
+	reportInterval := 100
+	if len(productIDs) > 10000 {
+		reportInterval = 500
+	}
+
 	for i, p := range productIDs {
+		if ctx.Err() != nil {
+			fmt.Printf("   Interrupted %s\n", formatProgress(i, len(productIDs), t0))
+			return ctx.Err()
+		}
+		if staleAdverts[p.AdvertID] {
+			staleCount++
+			continue
+		}
+
 		resp, err := client.GetBidRecommendations(ctx, p.NmID, p.AdvertID, rateLimit, burst)
 		if err != nil {
+			if strings.Contains(err.Error(), "nm_not_belong_to_advert") {
+				staleAdverts[p.AdvertID] = true
+				staleCount++
+				fmt.Printf("   Stale: nm=%d no longer in advert=%d (skipping remaining nms)\n", p.NmID, p.AdvertID)
+				continue
+			}
 			fmt.Printf("   Error nm=%d advert=%d: %v\n", p.NmID, p.AdvertID, err)
 			continue
 		}
@@ -195,13 +266,13 @@ func DownloadBidRecommendations(ctx context.Context, client V2Client, repo *sqli
 			continue
 		}
 		total++
-		if (i+1)%100 == 0 {
-			elapsed := time.Since(t0).Truncate(time.Second)
-			fmt.Printf("   [%d/%d] %d recommendations (%s)\n", i+1, len(productIDs), total, elapsed)
+		if (i+1)%reportInterval == 0 {
+			fmt.Printf("   [%s] %d ok, %d stale\n", formatProgress(i+1, len(productIDs), t0), total, staleCount)
 		}
 	}
 
-	fmt.Printf("   Done: %d recommendations (%s)\n", total, time.Since(t0).Truncate(time.Second))
+	fmt.Printf("   Done: %d recommendations, %d stale pairs (%d campaigns) (%s)\n",
+		total, staleCount, len(staleAdverts), time.Since(t0).Truncate(time.Second))
 	return nil
 }
 
@@ -241,6 +312,10 @@ func DownloadPayments(ctx context.Context, client V2Client, repo *sqlite.SQLiteS
 	if err != nil {
 		return fmt.Errorf("get payments: %w", err)
 	}
+	if payments == nil {
+		fmt.Println("   Done: no payments in period")
+		return nil
+	}
 	if err := repo.SavePayments(ctx, payments); err != nil {
 		return fmt.Errorf("save payments: %w", err)
 	}
@@ -249,9 +324,12 @@ func DownloadPayments(ctx context.Context, client V2Client, repo *sqlite.SQLiteS
 }
 
 // DownloadCalendarPromotions downloads WB promotions calendar.
-func DownloadCalendarPromotions(ctx context.Context, client V2Client, repo *sqlite.SQLiteSalesRepository, rateLimit, burst int) error {
+func DownloadCalendarPromotions(ctx context.Context, client V2Client, repo *sqlite.SQLiteSalesRepository, beginDate, endDate string, rateLimit, burst int) error {
 	t0 := time.Now()
-	promos, err := client.GetCalendarPromotions(ctx, rateLimit, burst)
+	// Calendar API requires datetime format: YYYY-MM-DDTHH:MM:SSZ
+	start := beginDate + "T00:00:00Z"
+	end := endDate + "T23:59:59Z"
+	promos, err := client.GetCalendarPromotions(ctx, start, end, true, rateLimit, burst)
 	if err != nil {
 		return fmt.Errorf("get calendar: %w", err)
 	}
@@ -275,19 +353,25 @@ func DownloadCalendarPromotionDetails(ctx context.Context, client V2Client, repo
 	}
 
 	const batchSize = 100
+	totalBatches := (len(ids) + batchSize - 1) / batchSize
 	t0 := time.Now()
 	totalDetails := 0
 
 	for i := 0; i < len(ids); i += batchSize {
+		if ctx.Err() != nil {
+			fmt.Printf("   Interrupted [%d/%d]\n", i/batchSize+1, totalBatches)
+			return ctx.Err()
+		}
 		endIdx := i + batchSize
 		if endIdx > len(ids) {
 			endIdx = len(ids)
 		}
 		batch := ids[i:endIdx]
+		batchNum := i/batchSize + 1
 
 		resp, err := client.GetCalendarPromotionDetails(ctx, batch, rateLimit, burst)
 		if err != nil {
-			fmt.Printf("   Error batch %d-%d: %v\n", i+1, endIdx, err)
+			fmt.Printf("   [%s] Error: %v\n", formatProgress(batchNum, totalBatches, t0), err)
 			continue
 		}
 
@@ -296,7 +380,7 @@ func DownloadCalendarPromotionDetails(ctx context.Context, client V2Client, repo
 			continue
 		}
 		totalDetails += len(resp.Data.Promotions)
-		fmt.Printf("   [%d/%d] %d details saved\n", (i/batchSize)+1, (len(ids)+batchSize-1)/batchSize, totalDetails)
+		fmt.Printf("   [%s] %d details saved\n", formatProgress(batchNum, totalBatches, t0), totalDetails)
 	}
 
 	fmt.Printf("   Done: %d promotion details (%s)\n", totalDetails, time.Since(t0).Truncate(time.Second))
@@ -319,8 +403,13 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 	snapshotDate := time.Now().Format("2006-01-02")
 	t0 := time.Now()
 	totalNoms := 0
+	total := len(ids)
 
-	for _, promoID := range ids {
+	for i, promoID := range ids {
+		if ctx.Err() != nil {
+			fmt.Printf("   Interrupted [%d/%d]\n", i, total)
+			return ctx.Err()
+		}
 		var allNoms []wb.CalendarPromotionNom
 		for _, inAction := range []bool{false, true} {
 			offset := 0
@@ -328,6 +417,9 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 				const limit = 1000
 				resp, err := client.GetCalendarPromotionNomenclatures(ctx, promoID, inAction, limit, offset, rateLimit, burst)
 				if err != nil {
+					if wb.IsHTTPError(err, 422) {
+						break // promotion completed or not applicable
+					}
 					fmt.Printf("   Error promo=%d inAction=%v offset=%d: %v\n", promoID, inAction, offset, err)
 					break
 				}
@@ -349,7 +441,9 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 				fmt.Printf("   Error saving noms promo=%d: %v\n", promoID, err)
 			}
 		}
-		fmt.Printf("   Promo %d: done\n", promoID)
+		if (i+1)%10 == 0 || i+1 == total {
+			fmt.Printf("   [%s] %d noms\n", formatProgress(i+1, total, t0), totalNoms)
+		}
 	}
 
 	fmt.Printf("   Done: %d nomenclatures from %d promotions (%s)\n", totalNoms, len(ids), time.Since(t0).Truncate(time.Second))
@@ -372,19 +466,24 @@ func downloadBatched(
 	total := 0
 
 	for i := 0; i < len(productIDs); i += batchSize {
+		if ctx.Err() != nil {
+			fmt.Printf("   Interrupted [%d/%d]\n", i/batchSize+1, totalBatches)
+			return ctx.Err()
+		}
 		endIdx := i + batchSize
 		if endIdx > len(productIDs) {
 			endIdx = len(productIDs)
 		}
 		batch := productIDs[i:endIdx]
+		batchNum := i/batchSize + 1
 
 		count, err := fn(ctx, batch)
 		if err != nil {
-			fmt.Printf("   Error batch %d-%d: %v\n", i+1, endIdx, err)
+			fmt.Printf("   [%s] Error: %v\n", formatProgress(batchNum, totalBatches, t0), err)
 			continue
 		}
 		total += count
-		fmt.Printf("   [%d/%d] %d %s\n", (i/batchSize)+1, totalBatches, count, label)
+		fmt.Printf("   [%s] %d %s\n", formatProgress(batchNum, totalBatches, t0), count, label)
 	}
 
 	fmt.Printf("   Done: %d %s from %d products (%s)\n", total, label, len(productIDs), time.Since(t0).Truncate(time.Second))
@@ -405,8 +504,13 @@ func DownloadCampaignBudgets(ctx context.Context, client V2Client, repo *sqlite.
 	t0 := time.Now()
 	snapshotDate := time.Now().Format("2006-01-02")
 	total := 0
+	totalAds := len(advertIDs)
 
-	for _, id := range advertIDs {
+	for i, id := range advertIDs {
+		if ctx.Err() != nil {
+			fmt.Printf("   Interrupted [%d/%d]\n", i, totalAds)
+			return ctx.Err()
+		}
 		budget, err := client.GetCampaignBudget(ctx, id, rateLimit, burst)
 		if err != nil {
 			fmt.Printf("   Error advert=%d: %v\n", id, err)
@@ -417,6 +521,9 @@ func DownloadCampaignBudgets(ctx context.Context, client V2Client, repo *sqlite.
 			continue
 		}
 		total++
+		if (i+1)%100 == 0 || i+1 == totalAds {
+			fmt.Printf("   [%s] %d budgets saved\n", formatProgress(i+1, totalAds, t0), total)
+		}
 	}
 
 	fmt.Printf("   Done: %d campaign budgets (%s)\n", total, time.Since(t0).Truncate(time.Second))
@@ -434,10 +541,24 @@ func DownloadMinBids(ctx context.Context, client V2Client, repo *sqlite.SQLiteSa
 	t0 := time.Now()
 	snapshotDate := time.Now().Format("2006-01-02")
 	totalBids := 0
+	advertList := make([]int, 0, len(byAdvert))
+	for id := range byAdvert {
+		advertList = append(advertList, id)
+	}
+	totalAds := len(advertList)
 
-	for advertID, nmIDs := range byAdvert {
+	for ai, advertID := range advertList {
+		if ctx.Err() != nil {
+			fmt.Printf("   Interrupted [%d/%d]\n", ai, totalAds)
+			return ctx.Err()
+		}
+		nmIDs := byAdvert[advertID]
 		// Batch nm_ids (max 100 per request)
 		for i := 0; i < len(nmIDs); i += 100 {
+			if ctx.Err() != nil {
+				fmt.Printf("   Interrupted [%d/%d]\n", ai, totalAds)
+				return ctx.Err()
+			}
 			endIdx := i + 100
 			if endIdx > len(nmIDs) {
 				endIdx = len(nmIDs)
@@ -452,6 +573,9 @@ func DownloadMinBids(ctx context.Context, client V2Client, repo *sqlite.SQLiteSa
 			}
 			resp, err := client.GetMinBids(ctx, req, rateLimit, burst)
 			if err != nil {
+				if wb.IsHTTPError(err, 400) {
+					continue // nm_ids no longer belong to this campaign
+				}
 				fmt.Printf("   Error advert=%d nm=%d-%d: %v\n", advertID, batch[0], batch[len(batch)-1], err)
 				continue
 			}
@@ -462,6 +586,9 @@ func DownloadMinBids(ctx context.Context, client V2Client, repo *sqlite.SQLiteSa
 			for _, item := range resp.Bids {
 				totalBids += len(item.Bids)
 			}
+		}
+		if (ai+1)%100 == 0 || ai+1 == totalAds {
+			fmt.Printf("   [%s] %d bids from %d campaigns\n", formatProgress(ai+1, totalAds, t0), totalBids, ai+1)
 		}
 	}
 

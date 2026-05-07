@@ -111,6 +111,10 @@ func main() {
 		}
 		applyRateLimits(wbClient, cfg.PromotionV2.RateLimits)
 		wbClient.SetAdaptiveParams(0, cfg.PromotionV2.AdaptiveProbeAfter, cfg.PromotionV2.MaxBackoffSeconds)
+		if calendarKey := getCalendarAPIKey(cfg); calendarKey != "" {
+			wbClient.SetCalendarKey(calendarKey)
+			fmt.Printf("Calendar Key: %s...\n", maskKey(calendarKey))
+		}
 		client = wbClient
 		fmt.Printf("API Key: %s...\n", maskKey(apiKey))
 	}
@@ -145,8 +149,12 @@ func main() {
 	if !cfg.PromotionV2.SkipCalendar {
 		totalSteps += 3 // list + details + nomenclatures
 	}
-	// Budget + MinBids always run (depend on productIDs, not skip flags)
-	totalSteps += 2
+	if !cfg.PromotionV2.SkipBudgets {
+		totalSteps++
+	}
+	if !cfg.PromotionV2.SkipMinBids {
+		totalSteps++
+	}
 	if totalSteps == 0 {
 		fmt.Println("Nothing to do (all steps skipped)")
 		return
@@ -222,37 +230,42 @@ func main() {
 
 	// Phase 10: Calendar
 	if !cfg.PromotionV2.SkipCalendar {
+		calBegin, calEnd := calculateCalendarDateRange(cfg)
 		stepNum++
-		fmt.Printf("[%d/%d] Calendar Promotions...\n", stepNum, totalSteps)
-		if err := DownloadCalendarPromotions(ctx, client, repo, rl.Calendar, rl.CalendarBurst); err != nil {
+		fmt.Printf("[%d/%d] Calendar Promotions (%s -> %s)...\n", stepNum, totalSteps, calBegin, calEnd)
+		if err := DownloadCalendarPromotions(ctx, client, repo, calBegin, calEnd, rl.Calendar, rl.CalendarBurst); err != nil {
 			log.Printf("Warning: Calendar failed: %v", err)
 		}
 
-			stepNum++
-			fmt.Printf("[%d/%d] Calendar Details...\n", stepNum, totalSteps)
-			if err := DownloadCalendarPromotionDetails(ctx, client, repo, rl.Calendar, rl.CalendarBurst); err != nil {
-				log.Printf("Warning: Calendar Details failed: %v", err)
-			}
+		stepNum++
+		fmt.Printf("[%d/%d] Calendar Details...\n", stepNum, totalSteps)
+		if err := DownloadCalendarPromotionDetails(ctx, client, repo, rl.Calendar, rl.CalendarBurst); err != nil {
+			log.Printf("Warning: Calendar Details failed: %v", err)
+		}
 
-			stepNum++
-			fmt.Printf("[%d/%d] Calendar Nomenclatures...\n", stepNum, totalSteps)
-			if err := DownloadCalendarPromotionNomenclatures(ctx, client, repo, rl.Calendar, rl.CalendarBurst); err != nil {
-				log.Printf("Warning: Calendar Nomenclatures failed: %v", err)
-			}
+		stepNum++
+		fmt.Printf("[%d/%d] Calendar Nomenclatures...\n", stepNum, totalSteps)
+		if err := DownloadCalendarPromotionNomenclatures(ctx, client, repo, rl.Calendar, rl.CalendarBurst); err != nil {
+			log.Printf("Warning: Calendar Nomenclatures failed: %v", err)
+		}
 	}
 
-	// Phase 11: Campaign Budgets
-	stepNum++
-	fmt.Printf("[%d/%d] Campaign Budgets...\n", stepNum, totalSteps)
-	if err := DownloadCampaignBudgets(ctx, client, repo, productIDs, rl.Finance, rl.FinanceBurst); err != nil {
-		log.Printf("Warning: Campaign Budgets failed: %v", err)
+	// Phase 13: Campaign Budgets
+	if !cfg.PromotionV2.SkipBudgets {
+		stepNum++
+		fmt.Printf("[%d/%d] Campaign Budgets...\n", stepNum, totalSteps)
+		if err := DownloadCampaignBudgets(ctx, client, repo, productIDs, rl.Finance, rl.FinanceBurst); err != nil {
+			log.Printf("Warning: Campaign Budgets failed: %v", err)
+		}
 	}
 
-	// Phase 12: Minimum Bids
-	stepNum++
-	fmt.Printf("[%d/%d] Minimum Bids...\n", stepNum, totalSteps)
-	if err := DownloadMinBids(ctx, client, repo, productIDs, rl.MinBids, rl.MinBidsBurst); err != nil {
-		log.Printf("Warning: Minimum Bids failed: %v", err)
+	// Phase 14: Minimum Bids
+	if !cfg.PromotionV2.SkipMinBids {
+		stepNum++
+		fmt.Printf("[%d/%d] Minimum Bids...\n", stepNum, totalSteps)
+		if err := DownloadMinBids(ctx, client, repo, productIDs, rl.MinBids, rl.MinBidsBurst); err != nil {
+			log.Printf("Warning: Minimum Bids failed: %v", err)
+		}
 	}
 
 	fmt.Println("\n" + strings.Repeat("=", 71))
@@ -291,6 +304,15 @@ func calculateDateRange(cfg *Config) (string, string) {
 	return begin, end
 }
 
+
+
+func calculateCalendarDateRange(cfg *Config) (string, string) {
+	now := time.Now()
+	begin := now.AddDate(0, 0, -cfg.PromotionV2.CalendarDaysPast).Format("2006-01-02")
+	end := now.AddDate(0, 0, cfg.PromotionV2.CalendarDaysFuture).Format("2006-01-02")
+	return begin, end
+}
+
 func parseStatuses(s string) []int {
 	if s == "" {
 		return nil
@@ -314,6 +336,13 @@ func getAPIKey(cfg *Config) string {
 		return key
 	}
 	return cfg.WB.APIKey
+}
+
+func getCalendarAPIKey(cfg *Config) string {
+	if key := os.Getenv("WB_API_MARKET_KEY"); key != "" {
+		return key
+	}
+	return cfg.WB.CalendarAPIKey
 }
 
 func maskKey(key string) string {

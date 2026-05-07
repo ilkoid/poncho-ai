@@ -322,6 +322,9 @@ func (c *Client) GetPayments(ctx context.Context, from, to string, rateLimit, bu
 	var resp PaymentsResponse
 	err := c.Get(ctx, "payments", promotionEndpoint, rateLimit, burst, path, nil, &resp)
 	if err != nil {
+		if IsNoContent(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("payments: %w", err)
 	}
 	return resp, nil
@@ -329,12 +332,18 @@ func (c *Client) GetPayments(ctx context.Context, from, to string, rateLimit, bu
 
 // GetCalendarPromotions returns WB promotions from GET /api/v1/calendar/promotions.
 // Rate limit: 10 req/6sec (swagger). Different base URL: dp-calendar-api.wildberries.ru.
-func (c *Client) GetCalendarPromotions(ctx context.Context, rateLimit, burst int) (*CalendarPromotionsResponse, error) {
+// start/end format: YYYY-MM-DDTHH:MM:SSZ (e.g. "2026-01-01T00:00:00Z").
+// allPromo: false = available for participation, true = all promotions.
+func (c *Client) GetCalendarPromotions(ctx context.Context, start, end string, allPromo bool, rateLimit, burst int) (*CalendarPromotionsResponse, error) {
 	if c.IsDemoKey() {
 		return c.getMockCalendarPromotions(), nil
 	}
+	params := url.Values{}
+	params.Set("startDateTime", start)
+	params.Set("endDateTime", end)
+	params.Set("allPromo", fmt.Sprintf("%t", allPromo))
 	var resp CalendarPromotionsResponse
-	err := c.Get(ctx, "calendar_promotions", calendarEndpoint, rateLimit, burst, "/api/v1/calendar/promotions", nil, &resp)
+	err := c.getWithKey(ctx, "calendar_promotions", calendarEndpoint, rateLimit, burst, "/api/v1/calendar/promotions", params, c.calendarKey, &resp)
 	if err != nil {
 		return nil, fmt.Errorf("calendar promotions: %w", err)
 	}
@@ -352,16 +361,14 @@ func (c *Client) GetCalendarPromotionDetails(ctx context.Context, ids []int, rat
 		return &CalendarPromotionDetailsResponse{}, nil
 	}
 
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = fmt.Sprintf("%d", id)
-	}
 	params := url.Values{}
-	params.Set("promotionIDs", strings.Join(idStrs, ","))
+	for _, id := range ids {
+		params.Add("promotionIDs", fmt.Sprintf("%d", id))
+	}
 	path := "/api/v1/calendar/promotions/details?" + params.Encode()
 
 	var resp CalendarPromotionDetailsResponse
-	err := c.Get(ctx, "calendar_promotions", calendarEndpoint, rateLimit, burst, path, nil, &resp)
+	err := c.getWithKey(ctx, "calendar_promotions", calendarEndpoint, rateLimit, burst, path, nil, c.calendarKey, &resp)
 	if err != nil {
 		return nil, fmt.Errorf("calendar promotion details: %w", err)
 	}
@@ -384,7 +391,7 @@ func (c *Client) GetCalendarPromotionNomenclatures(ctx context.Context, promotio
 	path := "/api/v1/calendar/promotions/nomenclatures?" + params.Encode()
 
 	var resp CalendarPromotionNomsResponse
-	err := c.Get(ctx, "calendar_promotions", calendarEndpoint, rateLimit, burst, path, nil, &resp)
+	err := c.getWithKey(ctx, "calendar_promotions", calendarEndpoint, rateLimit, burst, path, nil, c.calendarKey, &resp)
 	if err != nil {
 		return nil, fmt.Errorf("calendar promotion nomenclatures: %w", err)
 	}

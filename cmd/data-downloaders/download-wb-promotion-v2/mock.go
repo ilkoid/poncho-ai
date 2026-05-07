@@ -136,7 +136,7 @@ func (m *MockV2Client) GetPayments(ctx context.Context, from, to string, rateLim
 	}, nil
 }
 
-func (m *MockV2Client) GetCalendarPromotions(ctx context.Context, rateLimit, burst int) (*wb.CalendarPromotionsResponse, error) {
+func (m *MockV2Client) GetCalendarPromotions(ctx context.Context, start, end string, allPromo bool, rateLimit, burst int) (*wb.CalendarPromotionsResponse, error) {
 	return &wb.CalendarPromotionsResponse{
 		Data: wb.CalendarPromotionsData{Promotions: []wb.CalendarPromotion{
 			{ID: 1, Name: "Mock Sale", Start: "2026-05-01T00:00:00Z", End: "2026-05-03T23:59:59Z", Type: "mega"},

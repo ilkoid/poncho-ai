@@ -242,6 +242,7 @@ type FunnelFilterConfig struct {
 type WBClientConfig struct {
 	APIKey          string `yaml:"api_key"`           // API ключ (WB_STAT)
 	AnalyticsAPIKey string `yaml:"analytics_api_key"` // Analytics API ключ (опционально)
+	CalendarAPIKey  string `yaml:"calendar_api_key"`  // Calendar API ключ (dp-calendar-api, опционально)
 	BaseURL         string `yaml:"base_url"`          // Базовый URL Content API
 	RateLimit       int    `yaml:"rate_limit"`        // Запросов в минуту
 	BurstLimit      int    `yaml:"burst"`             // Burst для rate limiter
@@ -294,6 +295,10 @@ type PromotionV2Config struct {
 	SkipRecommendations bool `yaml:"skip_recommendations"`
 	SkipFinance         bool `yaml:"skip_finance"`
 	SkipCalendar        bool `yaml:"skip_calendar"`
+	SkipBudgets         bool `yaml:"skip_budgets"`
+	SkipMinBids         bool `yaml:"skip_min_bids"`
+	CalendarDaysPast    int  `yaml:"calendar_days_past"`
+	CalendarDaysFuture  int  `yaml:"calendar_days_future"`
 }
 
 // PromotionV2RateLimits — rate limits для V2 endpoints.
@@ -417,6 +422,12 @@ func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
 	}
 	if result.MaxBackoffSeconds == 0 {
 		result.MaxBackoffSeconds = 60
+	}
+	if result.CalendarDaysPast == 0 {
+		result.CalendarDaysPast = 30
+	}
+	if result.CalendarDaysFuture == 0 {
+		result.CalendarDaysFuture = 60
 	}
 	return result
 }
