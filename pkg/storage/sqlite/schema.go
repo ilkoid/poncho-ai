@@ -1079,6 +1079,96 @@ func GetFeedbacksSchemaSQL() string {
 	return FeedbacksSchemaSQL
 }
 
+// SearchVisibilitySchemaSQL defines tables for organic search visibility data.
+// Stores daily snapshots of search positions and top search queries per product.
+// Source: WB Seller Analytics API v2 search-report endpoints.
+const SearchVisibilitySchemaSQL = `
+-- ============================================================================
+-- SEARCH VISIBILITY TABLES (WB Seller Analytics API - /api/v2/search-report/*)
+-- ============================================================================
+
+-- Daily search position and visibility snapshot (aggregated per product)
+-- Source: POST /api/v2/search-report/report
+-- Grain: (nm_id, snapshot_date, period_start)
+CREATE TABLE IF NOT EXISTS search_positions_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nm_id INTEGER NOT NULL,
+    snapshot_date TEXT NOT NULL,
+
+    -- Position (from positionInfo)
+    avg_position REAL,
+    avg_position_dynamics REAL,
+    median_position REAL,
+
+    -- Visibility (from visibilityInfo)
+    visibility REAL,
+    visibility_dynamics REAL,
+    open_card INTEGER DEFAULT 0,
+    open_card_dynamics REAL,
+
+    -- Clusters (how many products in each position range)
+    cluster_first_hundred INTEGER DEFAULT 0,
+    cluster_second_hundred INTEGER DEFAULT 0,
+    cluster_below INTEGER DEFAULT 0,
+
+    -- Period metadata
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(nm_id, snapshot_date, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_spd_nm_date ON search_positions_daily(nm_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_spd_date ON search_positions_daily(snapshot_date);
+
+-- Daily top search queries per product
+-- Source: POST /api/v2/search-report/product/search-texts
+-- Grain: (nm_id, search_text, snapshot_date)
+CREATE TABLE IF NOT EXISTS search_queries_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nm_id INTEGER NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    search_text TEXT NOT NULL,
+
+    -- Query metrics (from TableSearchTextItem)
+    frequency INTEGER DEFAULT 0,
+    frequency_dynamics REAL,
+    week_frequency INTEGER DEFAULT 0,
+    avg_position REAL,
+    avg_position_dynamics REAL,
+    median_position REAL,
+    median_position_dynamics REAL,
+    visibility REAL,
+    open_card INTEGER DEFAULT 0,
+    add_to_cart INTEGER DEFAULT 0,
+    orders INTEGER DEFAULT 0,
+    open_to_cart REAL,
+    cart_to_order REAL,
+
+    -- Product info
+    vendor_code TEXT,
+    brand_name TEXT,
+    subject_name TEXT,
+
+    -- Period metadata
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(nm_id, search_text, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sqd_nm_date ON search_queries_daily(nm_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_sqd_text ON search_queries_daily(search_text);
+CREATE INDEX IF NOT EXISTS idx_sqd_nm_text ON search_queries_daily(nm_id, search_text);
+`
+
+// GetSearchVisibilitySchemaSQL returns the search visibility tables schema.
+func GetSearchVisibilitySchemaSQL() string {
+	return SearchVisibilitySchemaSQL
+}
+
 // GetQualitySchemaSQL returns the product quality summary table schema.
 func GetQualitySchemaSQL() string {
 	return QualitySchemaSQL

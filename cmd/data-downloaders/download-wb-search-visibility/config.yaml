@@ -1,0 +1,28 @@
+# WB Search Visibility Downloader Configuration
+# Downloads organic search positions and top search queries for all products.
+
+wb:
+  timeout: "120s"
+
+search_visibility:
+  db_path: "sales.db"
+  days: 7
+  limit: 30              # Max search queries per product (30 default, 100 Advanced)
+  skip_positions: false
+  skip_queries: false
+
+  rate_limits:
+    # POST /api/v2/search-report/report — 3 req/min (swagger)
+    search_report: 3
+    search_report_burst: 3
+    search_report_api: 3
+    search_report_api_burst: 3
+
+    # POST /api/v2/search-report/product/search-texts — 3 req/min (swagger)
+    search_texts: 3
+    search_texts_burst: 3
+    search_texts_api: 3
+    search_texts_api_burst: 3
+
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60

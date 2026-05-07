@@ -1094,6 +1094,97 @@ func (c *SupplyConfig) GetDefaults() SupplyConfig {
 	return result
 }
 
+// SearchVisibilityConfig — конфигурация для download-wb-search-visibility утилиты.
+//
+// Загружает органическую поисковую видимость товаров из WB Seller Analytics API.
+// Два уровня rate limiting: desired + api (swagger floor для восстановления).
+type SearchVisibilityConfig struct {
+	DbPath             string                      `yaml:"db_path"`
+	Days               int                         `yaml:"days"`
+	Begin              string                      `yaml:"begin"`
+	End                string                      `yaml:"end"`
+	Limit              int                         `yaml:"limit"`            // max queries per product (default: 30)
+	SkipPositions      bool                        `yaml:"skip_positions"`
+	SkipQueries        bool                        `yaml:"skip_queries"`
+	APIKeyEnv          string                      `yaml:"api_key_env"`
+	RateLimits         SearchVisibilityRateLimits   `yaml:"rate_limits"`
+	AdaptiveProbeAfter int                         `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int                         `yaml:"max_backoff_seconds"`
+}
+
+// SearchVisibilityRateLimits — rate limits для search-report API endpoints.
+//
+// Seller Analytics API: 3 req/min, burst 3 (swagger).
+//
+// Два уровня rate:
+//   - desired:      желаемый rate (adaptive limiter обработает 429)
+//   - api:           swagger-documented rate (recovery floor после 429)
+type SearchVisibilityRateLimits struct {
+	SearchReport         int `yaml:"search_report"`
+	SearchReportBurst    int `yaml:"search_report_burst"`
+	SearchReportApi      int `yaml:"search_report_api"`
+	SearchReportApiBurst int `yaml:"search_report_api_burst"`
+
+	SearchTexts         int `yaml:"search_texts"`
+	SearchTextsBurst    int `yaml:"search_texts_burst"`
+	SearchTextsApi      int `yaml:"search_texts_api"`
+	SearchTextsApiBurst int `yaml:"search_texts_api_burst"`
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c *SearchVisibilityConfig) GetDefaults() SearchVisibilityConfig {
+	result := *c
+	if result.DbPath == "" {
+		result.DbPath = "sales.db"
+	}
+	if result.Days == 0 {
+		result.Days = 7
+	}
+	if result.Limit == 0 {
+		result.Limit = 30
+	}
+	if result.APIKeyEnv == "" {
+		result.APIKeyEnv = "WB_API_ANALYTICS_AND_PROMO_KEY"
+	}
+
+	// Search report rate limits (3 req/min, burst 3)
+	if result.RateLimits.SearchReportApi == 0 {
+		result.RateLimits.SearchReportApi = 3
+	}
+	if result.RateLimits.SearchReport == 0 {
+		result.RateLimits.SearchReport = result.RateLimits.SearchReportApi
+	}
+	if result.RateLimits.SearchReportApiBurst == 0 {
+		result.RateLimits.SearchReportApiBurst = 3
+	}
+	if result.RateLimits.SearchReportBurst == 0 {
+		result.RateLimits.SearchReportBurst = result.RateLimits.SearchReportApiBurst
+	}
+
+	// Search texts rate limits (3 req/min, burst 3)
+	if result.RateLimits.SearchTextsApi == 0 {
+		result.RateLimits.SearchTextsApi = 3
+	}
+	if result.RateLimits.SearchTexts == 0 {
+		result.RateLimits.SearchTexts = result.RateLimits.SearchTextsApi
+	}
+	if result.RateLimits.SearchTextsApiBurst == 0 {
+		result.RateLimits.SearchTextsApiBurst = 3
+	}
+	if result.RateLimits.SearchTextsBurst == 0 {
+		result.RateLimits.SearchTextsBurst = result.RateLimits.SearchTextsApiBurst
+	}
+
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+
+	return result
+}
+
 // ============================================================================
 // Analytics (shared types for data-analyzers utilities)
 // ============================================================================

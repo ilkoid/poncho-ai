@@ -265,6 +265,11 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+		// Create search visibility tables (positions, queries)
+		_, err = r.db.Exec(GetSearchVisibilitySchemaSQL())
+		if err != nil {
+			return err
+		}
 	return nil
 }
 
