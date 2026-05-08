@@ -1,7 +1,5 @@
 # Go Best Practices & Architecture Guide
 
-Companion to [CLAUDE.md](CLAUDE.md) — expands Rule 0 (Code Reuse) and architectural principles.
-
 ---
 
 ## Rule 0: Code Reuse First

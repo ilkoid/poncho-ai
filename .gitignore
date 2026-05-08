@@ -37,12 +37,14 @@ go.work.sum
 .idea/
 .vscode/
 .claude/
-.kilocode/
 *.swp
 *.swo
 *~
 docs/
+reports/
 plans/
+examples/
+screenshots/
 
 # OS generated files
 .DS_Store
@@ -88,15 +90,6 @@ mynotes.md
 # Git cheat sheet (local reference)
 GIT_CHEATSHEET.md
 
-# Intent classification docs (draft)
-ADR-001-intent-classification.md
-IMPLEMENTATION_PLAN_INTENT_CLASSIFICATION*.md
-
-# Expert opinion and temporary analysis docs
-expert_opinion.md
-INTERRUPTION_IMPLEMENTATION_PLAN.md
-# USER_EXPERIENCE_IMPROVEMENTS.md - REMOVED: implementation complete, now tracking
-
 # Temporary test directories
 interruptible-agent
 simple-tui-test
@@ -109,17 +102,6 @@ maxiponcho
 # Cmd-specific binaries
 cmd/*/poncho
 cmd/*/interruption-test
-
-# Test artifacts in examples/feature-demos/interruption-test/
-examples/feature-demos/interruption-test/bak/
-examples/feature-demos/interruption-test/ЗАГРУЗКИ/
-examples/feature-demos/interruption-test/poncho_log_*.md
-
-# TUI audit reports (temporary)
-*_audit_report.md
-tui_audit_report.md
-TUI-REFACTORING-AUDIT.md
-TUI-CLEANUP-PLAN.md
 
 # Python virtual environments
 venv/
