@@ -141,6 +141,9 @@ func (r *SQLiteSalesRepository) SaveStockHistoryMetrics(ctx context.Context, row
 		return nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -200,6 +203,9 @@ func (r *SQLiteSalesRepository) SaveStockHistoryDaily(ctx context.Context, rows 
 	if len(rows) == 0 {
 		return nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

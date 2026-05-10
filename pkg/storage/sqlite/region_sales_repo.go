@@ -25,6 +25,9 @@ func (r *SQLiteSalesRepository) SaveRegionSales(ctx context.Context, dateFrom, d
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	total := 0
 	for i := 0; i < len(items); i += regionSalesChunkSize {
 		end := i + regionSalesChunkSize

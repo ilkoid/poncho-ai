@@ -177,6 +177,9 @@ func (r *SQLiteSalesRepository) SaveFunnelAggregatedBatch(
 	periodStart, periodEnd string,
 	currency string,
 ) (int, error) {
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)

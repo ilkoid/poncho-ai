@@ -70,6 +70,9 @@ func (r *SQLiteSalesRepository) SaveCards(ctx context.Context, cards []wb.Produc
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	total := 0
 	for i := 0; i < len(cards); i += cardsChunkSize {
 		end := i + cardsChunkSize

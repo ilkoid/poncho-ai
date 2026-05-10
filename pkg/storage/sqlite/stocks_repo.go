@@ -28,6 +28,9 @@ func (r *SQLiteSalesRepository) SaveStocks(ctx context.Context, snapshotDate str
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	total := 0
 	for i := 0; i < len(items); i += stocksChunkSize {
 		end := i + stocksChunkSize

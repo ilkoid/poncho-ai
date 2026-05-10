@@ -50,6 +50,9 @@ func (r *SQLiteSalesRepository) SaveFunnelHistory(ctx context.Context, product w
 		return nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -372,6 +375,9 @@ func (r *SQLiteSalesRepository) SaveFunnelHistoryWithWindow(
 	if len(rows) == 0 {
 		return nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	// If refreshDays is 0 or negative, use original behavior (always REPLACE)
 	if refreshDays <= 0 {

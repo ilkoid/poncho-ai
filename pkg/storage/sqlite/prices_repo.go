@@ -16,6 +16,9 @@ func (r *SQLiteSalesRepository) SavePrices(ctx context.Context, prices []wb.Prod
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	const batchSize = 500
 	totalSaved := 0
 

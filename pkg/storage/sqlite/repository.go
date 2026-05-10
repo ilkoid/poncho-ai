@@ -277,3 +277,12 @@ func (r *SQLiteSalesRepository) initSchema() error {
 func (r *SQLiteSalesRepository) Close() error {
 	return r.db.Close()
 }
+
+// Optimize updates query planner statistics via ANALYZE.
+// Call after bulk data loads for optimal query plans.
+func (r *SQLiteSalesRepository) Optimize(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, "ANALYZE"); err != nil {
+		return fmt.Errorf("analyze: %w", err)
+	}
+	return nil
+}

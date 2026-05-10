@@ -54,6 +54,9 @@ func (r *SQLiteSalesRepository) SaveSearchPositions(ctx context.Context, rows []
 		return nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -110,6 +113,9 @@ func (r *SQLiteSalesRepository) SaveSearchQueries(ctx context.Context, rows []Se
 	if len(rows) == 0 {
 		return nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

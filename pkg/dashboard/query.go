@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 )
 
 // OpenReadOnlyDB открывает SQLite в режиме только чтения.
@@ -14,13 +14,10 @@ import (
 // MaxOpenConns(2) — дашборд однопоточный, 2 соединения достаточно
 // (одно для запросов, одно для pragma).
 func OpenReadOnlyDB(dbPath string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?mode=ro&_journal_mode=WAL&_cache_size=-65536&_busy_timeout=10000", dbPath)
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sqlite.OpenReadOnly(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-
-	db.SetMaxOpenConns(2)
 
 	if err := db.Ping(); err != nil {
 		db.Close()

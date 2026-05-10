@@ -29,6 +29,9 @@ func (r *SQLiteSalesRepository) SaveWarehouses(ctx context.Context, warehouses [
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
@@ -74,6 +77,9 @@ func (r *SQLiteSalesRepository) SaveTransitTariffs(ctx context.Context, tariffs 
 	if len(tariffs) == 0 {
 		return 0, nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -139,6 +145,9 @@ func (r *SQLiteSalesRepository) SaveSupplies(ctx context.Context, supplies []Sup
 	if len(supplies) == 0 {
 		return 0, nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -220,6 +229,9 @@ func (r *SQLiteSalesRepository) SaveSupplyGoods(ctx context.Context, supplyID, p
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
@@ -279,6 +291,9 @@ func (r *SQLiteSalesRepository) SaveSupplyPackages(ctx context.Context, supplyID
 	if len(boxes) == 0 {
 		return 0, nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

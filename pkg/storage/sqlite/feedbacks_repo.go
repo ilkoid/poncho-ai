@@ -33,6 +33,9 @@ func (r *SQLiteSalesRepository) SaveFeedbacks(ctx context.Context, items []wb.Fe
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
@@ -89,6 +92,9 @@ func (r *SQLiteSalesRepository) SaveQuestions(ctx context.Context, items []wb.Qu
 	if len(items) == 0 {
 		return 0, nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

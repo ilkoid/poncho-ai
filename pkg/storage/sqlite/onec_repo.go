@@ -13,6 +13,9 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	const batchSize = 500
 	totalSaved := 0
 
@@ -65,6 +68,9 @@ func (r *SQLiteSalesRepository) SaveOneCSKUs(ctx context.Context, skus []OneCSKU
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	const batchSize = 500
 	totalSaved := 0
 
@@ -105,6 +111,9 @@ func (r *SQLiteSalesRepository) SaveOneCPrices(ctx context.Context, prices []One
 		return 0, nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	const batchSize = 500
 	totalSaved := 0
 
@@ -143,6 +152,9 @@ func (r *SQLiteSalesRepository) SavePIMGoods(ctx context.Context, items []PIMGoo
 	if len(items) == 0 {
 		return 0, nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	const batchSize = 500
 	totalSaved := 0

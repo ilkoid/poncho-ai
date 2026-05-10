@@ -114,12 +114,15 @@ func DownloadSearchQueries(
 		reqBody := map[string]interface{}{
 			"nmIds": []int{nmID},
 			"currentPeriod": map[string]string{
-				"begin": beginDate,
+				"start": beginDate,
 				"end":   endDate,
 			},
 			"topOrderBy": "orders",
-			"limit":      limit,
-			"page":       1,
+			"orderBy": map[string]string{
+				"field": "orders",
+				"mode":  "desc",
+			},
+			"limit": limit,
 		}
 
 		var response struct {

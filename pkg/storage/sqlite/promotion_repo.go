@@ -22,6 +22,9 @@ func (r *SQLiteSalesRepository) SaveCampaigns(ctx context.Context, groups []wb.P
 		return nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -70,6 +73,9 @@ func (r *SQLiteSalesRepository) SaveCampaignStats(ctx context.Context, stats []w
 	if len(stats) == 0 {
 		return nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -124,6 +130,9 @@ func (r *SQLiteSalesRepository) SaveCampaignProducts(ctx context.Context, produc
 	if len(products) == 0 {
 		return nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -329,6 +338,9 @@ func (r *SQLiteSalesRepository) SaveCampaignAppStats(ctx context.Context, rows [
 		return nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -373,6 +385,9 @@ func (r *SQLiteSalesRepository) SaveCampaignNmStats(ctx context.Context, rows []
 	if len(rows) == 0 {
 		return nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -419,6 +434,9 @@ func (r *SQLiteSalesRepository) SaveCampaignBoosterStats(ctx context.Context, ro
 		return nil
 	}
 
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -456,6 +474,9 @@ func (r *SQLiteSalesRepository) SaveCampaignDetails(ctx context.Context, details
 	if len(details) == 0 {
 		return nil
 	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -580,6 +601,9 @@ func (r *SQLiteSalesRepository) SaveCampaignBids(ctx context.Context, rows []wb.
 	if len(rows) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -616,6 +640,9 @@ func (r *SQLiteSalesRepository) SaveNormqueryStats(ctx context.Context, advertID
 	if len(rows) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -662,6 +689,9 @@ func (r *SQLiteSalesRepository) SaveNormqueryBids(ctx context.Context, items []w
 	if len(items) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -697,6 +727,9 @@ func (r *SQLiteSalesRepository) SaveNormqueryMinus(ctx context.Context, items []
 	if len(items) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -733,6 +766,9 @@ func (r *SQLiteSalesRepository) SaveNormqueryClusters(ctx context.Context, items
 	if len(items) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -775,6 +811,9 @@ func (r *SQLiteSalesRepository) SaveBidRecommendations(ctx context.Context, recs
 	if len(recs) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -837,6 +876,9 @@ func (r *SQLiteSalesRepository) SaveExpenses(ctx context.Context, rows []wb.Expe
 	if len(rows) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -866,6 +908,9 @@ func (r *SQLiteSalesRepository) SaveExpenses(ctx context.Context, rows []wb.Expe
 
 // SaveBalance saves account balance snapshot.
 func (r *SQLiteSalesRepository) SaveBalance(ctx context.Context, balance wb.BalanceResponse, snapshotDate string) error {
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -909,6 +954,9 @@ func (r *SQLiteSalesRepository) SavePayments(ctx context.Context, rows []wb.Paym
 	if len(rows) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -941,6 +989,9 @@ func (r *SQLiteSalesRepository) SaveCalendarPromotions(ctx context.Context, prom
 	if len(promos) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -1018,6 +1069,9 @@ func (r *SQLiteSalesRepository) SaveMinBids(ctx context.Context, advertID int, i
 	if len(items) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -1051,6 +1105,9 @@ func (r *SQLiteSalesRepository) SaveCalendarPromotionDetails(ctx context.Context
 	if len(details) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -1140,6 +1197,9 @@ func (r *SQLiteSalesRepository) SaveCalendarPromotionNomenclatures(ctx context.C
 	if len(noms) == 0 {
 		return nil
 	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
