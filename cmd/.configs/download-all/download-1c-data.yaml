@@ -1,0 +1,4 @@
+onec:
+  api_url: ${ONEC_API_URL}
+  pim_url: ${ONEC_PIM_URL}
+  db_path: "/var/db/wb-sales.db"

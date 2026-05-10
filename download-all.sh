@@ -1,49 +1,109 @@
 #!/bin/bash
-# WB + 1C full data refresh script
-# All utilities sequential (shared wb-sales.db)
-# Organized by speed: fast → slow → internal
+# WB Full Data Refresh — all downloaders, single database
 #
 # Usage: bash download-all.sh [days]
-#   days  - override --days for utilities that support it (default: from config.yaml)
+#   days  - override --days for downloaders that support it (default: from config.yaml)
+#
+# Phases ordered by speed: fast catalog → core sales → stock → advertising → slow analytics
+# All configs in cmd/.configs/download-all/, all data in /var/db/wb-sales.db
 
 cd "$(dirname "$0")"
 
-# Optional: override days (default from each config.yaml)
-DAYS="${1:-}"
+# Lockfile: prevent concurrent runs
+LOCKFILE="$(pwd)/.download-all.lock"
+exec 200>"${LOCKFILE}"
+if ! flock -w 300 200; then
+    echo "SKIP: another download process is running (lock: ${LOCKFILE})"
+    exit 1
+fi
 
-echo "=== WB + 1C Data Download ==="
-echo "Started: $(date '+%Y-%m-%d %H:%M:%S')"
+DAYS="${1:-}"
+CONFIG_DIR="cmd/.configs/download-all"
+
+echo "==========================================="
+echo "  WB Full Data Download"
+echo "==========================================="
+echo "Config dir: $CONFIG_DIR"
+echo "Database:   /var/db/wb-sales.db"
+echo "Started:    $(date '+%Y-%m-%d %H:%M:%S')"
+echo "==========================================="
 START=$SECONDS
 
-# Phase 1: Fast (~2-5 min) — high rate limits (100-180 req/min)
-#echo "--- Phase 1: Fast (supplies, feedbacks, cards, prices, 1C/PIM catalog) ---"
-(cd cmd/data-downloaders/download-wb-supplies && go run . ${DAYS:+--days=$DAYS}) || exit $?
-(cd cmd/data-downloaders/download-wb-feedbacks && go run . ${DAYS:+--days=$DAYS}) || exit $?
-(cd cmd/data-downloaders/download-wb-cards && go run .) || exit $?
-(cd cmd/data-downloaders/download-wb-prices && go run .) || exit $?
-(cd cmd/data-downloaders/download-1c-data && go run .) || exit $?
+# ── Phase 1: Catalog (fast, high rate limits ~100 req/min) ──────────
 
-# Phase 2: Async/Slow (~15-30 min) — stock data with async report generation
-#echo "--- Phase 2: Async/Slow (sales, stock-history, stocks) ---"
-(cd cmd/data-downloaders/download-wb-sales && go run . ${DAYS:+--days=$DAYS}) || exit $?
-(cd cmd/data-downloaders/download-wb-stock-history && go run . ${DAYS:+--days=$DAYS}) || exit $?
-(cd cmd/data-downloaders/download-wb-stocks && go run .) || exit $?
+echo ""
+echo "── Phase 1: Catalog (cards, prices, 1C/PIM) ──"
+PHASE_START=$SECONDS
 
-# Phase 4: Slow (~20-40 min) — Analytics API (3 req/min), Statistics API (1 req/min)
-echo "--- Phase 3: Slow — Analytics API (funnel, funnel-agg, sales) ---"
-#(cd cmd/data-downloaders/download-wb-funnel && go run .) || exit $?
-#(cd cmd/data-downloaders/download-wb-funnel-agg && go run .) || exit $?
+(cd cmd/data-downloaders/download-wb-cards && go run . --config ../../../$CONFIG_DIR/download-wb-cards.yaml) || exit $?
+(cd cmd/data-downloaders/download-wb-prices && go run . --config ../../../$CONFIG_DIR/download-wb-prices.yaml) || exit $?
+(cd cmd/data-downloaders/download-1c-data && go run . --config ../../../$CONFIG_DIR/download-1c-data.yaml) || exit $?
 
-# Phase 3: Moderate (~5-10 min) — mixed rate limits
-echo "--- Phase 3: Moderate (supplies, promotion, region-sales) ---"
-(cd cmd/data-downloaders/download-wb-supplies && go run . ${DAYS:+--days=$DAYS}) || exit $?
-#(cd cmd/data-downloaders/download-wb-promotion && go run . ${DAYS:+--days=$DAYS}) || exit $?
-(cd cmd/data-downloaders/download-wb-region-sales && go run . ${DAYS:+--days=$DAYS}) || exit $?
+echo "  Phase 1 done in $(( SECONDS - PHASE_START ))s"
 
+# ── Phase 2: Feedbacks (fast, separate API ~180 req/min) ────────────
 
+echo ""
+echo "── Phase 2: Feedbacks ──"
+PHASE_START=$SECONDS
 
-#(cd cmd/data-downloaders/download-wb-supplies && go run . ${DAYS:+--days=$DAYS}) || exit $?
+(cd cmd/data-downloaders/download-wb-feedbacks && go run . --config ../../../$CONFIG_DIR/download-wb-feedbacks.yaml ${DAYS:+--days=$DAYS}) || exit $?
+
+echo "  Phase 2 done in $(( SECONDS - PHASE_START ))s"
+
+# ── Phase 3: Sales & Revenue (core business data) ───────────────────
+
+echo ""
+echo "── Phase 3: Sales & Revenue ──"
+PHASE_START=$SECONDS
+
+(cd cmd/data-downloaders/download-wb-sales && go run . --no-service --config ../../../$CONFIG_DIR/download-wb-sales.yaml ${DAYS:+--days=$DAYS}) || exit $?
+(cd cmd/data-downloaders/download-wb-region-sales && go run . --config ../../../$CONFIG_DIR/download-wb-region-sales.yaml ${DAYS:+--days=$DAYS}) || exit $?
+
+echo "  Phase 3 done in $(( SECONDS - PHASE_START ))s"
+
+# ── Phase 4: Stock & Logistics ──────────────────────────────────────
+
+echo ""
+echo "── Phase 4: Stock & Logistics ──"
+PHASE_START=$SECONDS
+
+(cd cmd/data-downloaders/download-wb-stocks && go run . --config ../../../$CONFIG_DIR/download-wb-stocks.yaml --date $(date +%Y-%m-%d)) || exit $?
+(cd cmd/data-downloaders/download-wb-stock-history && go run . --config ../../../$CONFIG_DIR/download-wb-stock-history.yaml ${DAYS:+--days=$DAYS}) || exit $?
+(cd cmd/data-downloaders/download-wb-supplies && go run . --config ../../../$CONFIG_DIR/download-wb-supplies.yaml ${DAYS:+--days=$DAYS}) || exit $?
+
+echo "  Phase 4 done in $(( SECONDS - PHASE_START ))s"
+
+# ── Phase 5: Advertising (moderate rate limits) ─────────────────────
+
+echo ""
+echo "── Phase 5: Advertising ──"
+PHASE_START=$SECONDS
+
+(cd cmd/data-downloaders/download-wb-promotion && go run . --config ../../../$CONFIG_DIR/download-wb-promotion.yaml ${DAYS:+--days=$DAYS}) || exit $?
+(cd cmd/data-downloaders/download-wb-promotion-v2 && go run . --config ../../../$CONFIG_DIR/download-wb-promotion-v2.yaml ${DAYS:+--days=$DAYS}) || exit $?
+
+echo "  Phase 5 done in $(( SECONDS - PHASE_START ))s"
+
+# ── Phase 6: Analytics (slow — 3 req/min shared limit) ──────────────
+
+echo ""
+echo "── Phase 6: Analytics (funnel, funnel-agg, search-visibility) ──"
+PHASE_START=$SECONDS
+
+(cd cmd/data-downloaders/download-wb-funnel && go run . --config ../../../$CONFIG_DIR/download-wb-funnel.yaml) || exit $?
+(cd cmd/data-downloaders/download-wb-funnel-agg && go run . --config ../../../$CONFIG_DIR/download-wb-funnel-agg.yaml) || exit $?
+(cd cmd/data-downloaders/download-wb-search-visibility && go run . --config ../../../$CONFIG_DIR/download-wb-search-visibility.yaml ${DAYS:+--days=$DAYS}) || exit $?
+
+echo "  Phase 6 done in $(( SECONDS - PHASE_START ))s"
+
+# ── Summary ─────────────────────────────────────────────────────────
 
 ELAPSED=$(( SECONDS - START ))
-echo "=== All downloads completed in ${ELAPSED}s ==="
-echo "Finished: $(date '+%Y-%m-%d %H:%M:%S')"
+MINS=$(( ELAPSED / 60 ))
+SECS=$(( ELAPSED % 60 ))
+echo ""
+echo "==========================================="
+echo "  All downloads completed in ${MINS}m ${SECS}s"
+echo "  Finished: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "==========================================="
