@@ -142,6 +142,13 @@ CREATE INDEX IF NOT EXISTS idx_stock_history_daily_report_id
 
 CREATE INDEX IF NOT EXISTS idx_stock_history_daily_office
 	ON stock_history_daily(office_name);
+
+-- Index for freshness checks (MAX(created_at) was scanning 2.6M rows)
+CREATE INDEX IF NOT EXISTS idx_stock_history_daily_created_at
+	ON stock_history_daily(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_stock_history_metrics_created_at
+	ON stock_history_metrics(created_at);
 `
 )
 

@@ -389,17 +389,57 @@ SELECT DISTINCT nm_id, vendor_code
 FROM cards
 `
 
-// Incoming supply per barcode from active (non-completed) supplies.
+// Incoming supply per (barcode, warehouse_id) from active (non-completed) supplies.
 // quantity - ready_for_sale_quantity = units not yet reflected in stock.
 // status_id 5 = completed, excluded because those are already in stock.
+// Grouped by warehouse_id for regional mapping in Go code.
 const supplyIncomingSQL = `
 SELECT sg.barcode,
+       s.warehouse_id,
        SUM(sg.quantity) - SUM(sg.ready_for_sale_quantity) AS incoming
 FROM supply_goods sg
 JOIN supplies s ON s.supply_id = sg.supply_id AND s.preorder_id = sg.preorder_id
 WHERE s.status_id NOT IN (5)
-GROUP BY sg.barcode
+GROUP BY sg.barcode, s.warehouse_id
 HAVING incoming > 0
+`
+
+// Product ratings from products table (product_rating, feedback_rating).
+const productRatingsSQL = `
+SELECT nm_id, product_rating, feedback_rating
+FROM products
+WHERE nm_id IN (%s)
+`
+
+// Feedback counts from feedbacks table.
+const feedbackCountsSQL = `
+SELECT product_nm_id, COUNT(*) AS cnt
+FROM feedbacks
+GROUP BY product_nm_id
+`
+
+// Latest prices for a specific snapshot date.
+const latestPricesSQL = `
+SELECT nm_id, price, discounted_price, discount
+FROM product_prices
+WHERE snapshot_date = ?
+  AND nm_id IN (%s)
+`
+
+// Latest funnel metrics (most recent available date).
+const latestFunnelSQL = `
+SELECT nm_id, open_count, cart_count, order_count, buyout_count, conversion_buyout
+FROM funnel_metrics_daily
+WHERE metric_date = (SELECT MAX(metric_date) FROM funnel_metrics_daily)
+  AND nm_id IN (%s)
+`
+
+// Search visibility (placeholder — table may be empty).
+const searchVisibilitySQL = `
+SELECT nm_id, avg_position, visibility
+FROM search_positions_daily
+WHERE snapshot_date = ?
+  AND nm_id IN (%s)
 `
 
 // Warehouse addresses for FO mapping from wb_warehouses.
@@ -837,23 +877,209 @@ func (r *SourceRepo) Close() error {
 	return r.db.Close()
 }
 
-// QuerySupplyIncoming returns incoming stock per barcode from active supplies.
-// Returns map of barcode → incoming units (quantity - ready_for_sale_quantity).
-func (r *SourceRepo) QuerySupplyIncoming(ctx context.Context) (map[string]int64, error) {
+// QuerySupplyIncoming returns incoming stock per (barcode, warehouse_id) from active supplies.
+// Returns map of barcode → warehouse_id → incoming units.
+func (r *SourceRepo) QuerySupplyIncoming(ctx context.Context) (map[string]map[int]int64, error) {
 	rows, err := r.db.QueryContext(ctx, supplyIncomingSQL)
 	if err != nil {
 		return nil, fmt.Errorf("query supply incoming: %w", err)
 	}
 	defer rows.Close()
 
-	result := make(map[string]int64)
+	result := make(map[string]map[int]int64)
 	for rows.Next() {
 		var barcode string
+		var whID int
 		var incoming int64
-		if err := rows.Scan(&barcode, &incoming); err != nil {
+		if err := rows.Scan(&barcode, &whID, &incoming); err != nil {
 			return nil, fmt.Errorf("scan supply incoming: %w", err)
 		}
-		result[barcode] = incoming
+		if result[barcode] == nil {
+			result[barcode] = make(map[int]int64)
+		}
+		result[barcode][whID] = incoming
+	}
+	return result, rows.Err()
+}
+
+// RatingInfo holds product and feedback ratings.
+type RatingInfo struct {
+	ProductRating  *float64
+	FeedbackRating *float64
+}
+
+// QueryProductRatings returns product ratings from the products table.
+func (r *SourceRepo) QueryProductRatings(ctx context.Context, nmIDs []int) (map[int]RatingInfo, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+	ph, args := placeholders(nmIDs)
+	query := fmt.Sprintf(productRatingsSQL, ph)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query product ratings: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]RatingInfo, len(nmIDs))
+	for rows.Next() {
+		var nmID int
+		var prodRating, fbRating sql.NullFloat64
+		if err := rows.Scan(&nmID, &prodRating, &fbRating); err != nil {
+			return nil, fmt.Errorf("scan product ratings: %w", err)
+		}
+		info := RatingInfo{}
+		if prodRating.Valid {
+			info.ProductRating = &prodRating.Float64
+		}
+		if fbRating.Valid {
+			info.FeedbackRating = &fbRating.Float64
+		}
+		result[nmID] = info
+	}
+	return result, rows.Err()
+}
+
+// QueryFeedbackCounts returns feedback count per product.
+func (r *SourceRepo) QueryFeedbackCounts(ctx context.Context) (map[int]int, error) {
+	rows, err := r.db.QueryContext(ctx, feedbackCountsSQL)
+	if err != nil {
+		return nil, fmt.Errorf("query feedback counts: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]int)
+	for rows.Next() {
+		var nmID, cnt int
+		if err := rows.Scan(&nmID, &cnt); err != nil {
+			return nil, fmt.Errorf("scan feedback counts: %w", err)
+		}
+		result[nmID] = cnt
+	}
+	return result, rows.Err()
+}
+
+// PriceInfo holds price data from product_prices.
+type PriceInfo struct {
+	Price           *float64
+	DiscountedPrice *float64
+	Discount        int
+}
+
+// QueryLatestPrices returns prices for a specific snapshot date.
+func (r *SourceRepo) QueryLatestPrices(ctx context.Context, date string, nmIDs []int) (map[int]PriceInfo, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+	ph, args := placeholders(nmIDs)
+	query := fmt.Sprintf(latestPricesSQL, ph)
+
+	rows, err := r.db.QueryContext(ctx, query, append([]any{date}, args...)...)
+	if err != nil {
+		return nil, fmt.Errorf("query latest prices: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]PriceInfo, len(nmIDs))
+	for rows.Next() {
+		var nmID, discount int
+		var price, discPrice sql.NullFloat64
+		if err := rows.Scan(&nmID, &price, &discPrice, &discount); err != nil {
+			return nil, fmt.Errorf("scan latest prices: %w", err)
+		}
+		info := PriceInfo{Discount: discount}
+		if price.Valid {
+			info.Price = &price.Float64
+		}
+		if discPrice.Valid {
+			info.DiscountedPrice = &discPrice.Float64
+		}
+		result[nmID] = info
+	}
+	return result, rows.Err()
+}
+
+// FunnelInfo holds funnel metrics for one product.
+type FunnelInfo struct {
+	OpenCount       int
+	CartCount       int
+	OrderCount      int
+	BuyoutCount     int
+	ConversionBuyout *float64
+}
+
+// QueryLatestFunnel returns funnel metrics from the most recent available date.
+func (r *SourceRepo) QueryLatestFunnel(ctx context.Context, nmIDs []int) (map[int]FunnelInfo, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+	ph, args := placeholders(nmIDs)
+	query := fmt.Sprintf(latestFunnelSQL, ph)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query latest funnel: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]FunnelInfo, len(nmIDs))
+	for rows.Next() {
+		var nmID int
+		var openCount, cartCount, orderCount, buyoutCount int
+		var convBuyout sql.NullFloat64
+		if err := rows.Scan(&nmID, &openCount, &cartCount, &orderCount, &buyoutCount, &convBuyout); err != nil {
+			return nil, fmt.Errorf("scan latest funnel: %w", err)
+		}
+		info := FunnelInfo{
+			OpenCount:   openCount,
+			CartCount:   cartCount,
+			OrderCount:  orderCount,
+			BuyoutCount: buyoutCount,
+		}
+		if convBuyout.Valid {
+			info.ConversionBuyout = &convBuyout.Float64
+		}
+		result[nmID] = info
+	}
+	return result, rows.Err()
+}
+
+// VisibilityInfo holds search position and visibility data.
+type VisibilityInfo struct {
+	AvgPosition *float64
+	Visibility  *float64
+}
+
+// QuerySearchVisibility returns search visibility data for a specific date.
+func (r *SourceRepo) QuerySearchVisibility(ctx context.Context, date string, nmIDs []int) (map[int]VisibilityInfo, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+	ph, args := placeholders(nmIDs)
+	query := fmt.Sprintf(searchVisibilitySQL, ph)
+
+	rows, err := r.db.QueryContext(ctx, query, append([]any{date}, args...)...)
+	if err != nil {
+		return nil, fmt.Errorf("query search visibility: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]VisibilityInfo, len(nmIDs))
+	for rows.Next() {
+		var nmID int
+		var avgPos, vis sql.NullFloat64
+		if err := rows.Scan(&nmID, &avgPos, &vis); err != nil {
+			return nil, fmt.Errorf("scan search visibility: %w", err)
+		}
+		info := VisibilityInfo{}
+		if avgPos.Valid {
+			info.AvgPosition = &avgPos.Float64
+		}
+		if vis.Valid {
+			info.Visibility = &vis.Float64
+		}
+		result[nmID] = info
 	}
 	return result, rows.Err()
 }

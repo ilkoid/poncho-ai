@@ -527,3 +527,68 @@ func (r *SQLiteSalesRepository) GetSupplierArticlesByNmIDs(ctx context.Context, 
 
 	return result, rows.Err()
 }
+
+// GetRecentlyLoadedNmIDs returns nm_ids that have funnel data loaded within the last N hours.
+// Used for incremental loading: skip recently-loaded products to avoid redundant API calls.
+// WB updates funnel data once per hour, so reloading within that window is wasteful.
+func (r *SQLiteSalesRepository) GetRecentlyLoadedNmIDs(ctx context.Context, hours int) (map[int]bool, error) {
+	if hours <= 0 {
+		return make(map[int]bool), nil
+	}
+
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT DISTINCT nm_id FROM funnel_metrics_daily WHERE created_at >= datetime('now', ?)",
+		fmt.Sprintf("-%d hours", hours),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query recently loaded nm_ids: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]bool)
+	for rows.Next() {
+		var nmID int
+		if err := rows.Scan(&nmID); err != nil {
+			return nil, fmt.Errorf("scan nm_id: %w", err)
+		}
+		result[nmID] = true
+	}
+	return result, rows.Err()
+}
+
+// FilterActiveNmIDs filters nm_ids to only those with sales activity in the last N days.
+// Used to skip dead products (no recent sales) to reduce API call volume.
+func (r *SQLiteSalesRepository) FilterActiveNmIDs(ctx context.Context, nmIDs []int, activeDays int) ([]int, error) {
+	if activeDays <= 0 || len(nmIDs) == 0 {
+		return nmIDs, nil
+	}
+
+	placeholders := make([]string, len(nmIDs))
+	args := make([]any, 0, len(nmIDs)+1)
+	for i, id := range nmIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, fmt.Sprintf("-%d days", activeDays))
+
+	query := fmt.Sprintf(
+		"SELECT DISTINCT nm_id FROM sales WHERE nm_id IN (%s) AND sale_dt >= date('now', ?)",
+		strings.Join(placeholders, ","),
+	)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("filter active nm_ids: %w", err)
+	}
+	defer rows.Close()
+
+	var result []int
+	for rows.Next() {
+		var nmID int
+		if err := rows.Scan(&nmID); err != nil {
+			return nil, fmt.Errorf("scan nm_id: %w", err)
+		}
+		result = append(result, nmID)
+	}
+	return result, rows.Err()
+}

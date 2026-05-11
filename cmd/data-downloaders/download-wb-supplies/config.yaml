@@ -27,27 +27,27 @@ supply:
   # Reference: 6 req/min, burst 6 (warehouses, tariffs)
   rate_limits:
     # Список поставок (POST /api/v1/supplies)
-    list: 10
+    list: 20
     list_burst: 10
-    list_api: 10
+    list_api: 20
     list_api_burst: 10
 
     # Товары поставки (GET /api/v1/supplies/{ID}/goods)
-    goods: 10
+    goods: 20
     goods_burst: 10
-    goods_api: 10
+    goods_api: 20
     goods_api_burst: 10
 
     # Детали поставки (GET /api/v1/supplies/{ID}) — warehouse info
-    details: 10
+    details: 20
     details_burst: 10
-    details_api: 10
+    details_api: 20
     details_api_burst: 10
 
     # Упаковка поставки (GET /api/v1/supplies/{ID}/package)
-    package: 10
+    package: 20
     package_burst: 5
-    package_api: 10
+    package_api: 20
     package_api_burst: 5
 
     # Справочники (GET /api/v1/warehouses, /api/v1/transit-tariffs)

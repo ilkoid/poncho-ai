@@ -78,6 +78,93 @@ CREATE INDEX IF NOT EXISTS idx_msd_risk_flags ON ma_sku_daily(critical DESC, ris
 CREATE INDEX IF NOT EXISTS idx_msd_date_region ON ma_sku_daily(snapshot_date, region_name);
 `
 
+// maArticleDailyTable is the DDL for article-level aggregation (no indexes — created after bulk insert).
+const maArticleDailyTable = `
+CREATE TABLE IF NOT EXISTS ma_article_daily (
+    snapshot_date   TEXT NOT NULL,
+    nm_id           INTEGER NOT NULL,
+    region_name     TEXT NOT NULL,
+
+    -- Product identifiers
+    article         TEXT DEFAULT '',
+    identifier      TEXT DEFAULT '',
+    vendor_code     TEXT DEFAULT '',
+
+    -- Product attributes
+    name            TEXT DEFAULT '',
+    brand           TEXT DEFAULT '',
+    type            TEXT DEFAULT '',
+    category        TEXT DEFAULT '',
+    category_level1 TEXT DEFAULT '',
+    category_level2 TEXT DEFAULT '',
+    sex             TEXT DEFAULT '',
+    season          TEXT DEFAULT '',
+    color           TEXT DEFAULT '',
+    collection      TEXT DEFAULT '',
+
+    -- Ratings
+    product_rating  REAL,
+    feedback_rating REAL,
+    feedback_count  INTEGER DEFAULT 0,
+
+    -- Prices
+    price            REAL,
+    discounted_price REAL,
+    discount         INTEGER DEFAULT 0,
+
+    -- Funnel
+    open_count       INTEGER DEFAULT 0,
+    cart_count       INTEGER DEFAULT 0,
+    order_count      INTEGER DEFAULT 0,
+    buyout_count     INTEGER DEFAULT 0,
+    conversion_buyout REAL,
+
+    -- Visibility
+    avg_position    REAL,
+    visibility      REAL,
+
+    -- Stock (aggregated across sizes)
+    stock_qty       INTEGER DEFAULT 0,
+    supply_incoming INTEGER DEFAULT 0,
+    total_sizes     INTEGER DEFAULT 0,
+    sizes_in_stock  INTEGER DEFAULT 0,
+    fill_pct        REAL DEFAULT 0,
+
+    -- MA (computed from article-level sales)
+    ma_3            REAL,
+    ma_7            REAL,
+    ma_14           REAL,
+    ma_28           REAL,
+
+    -- Derived metrics
+    sdr_days        REAL,
+    trend_pct       REAL,
+
+    -- Flags
+    risk            INTEGER DEFAULT 0,
+    critical        INTEGER DEFAULT 0,
+    out_of_stock    INTEGER DEFAULT 0,
+    broken_grid     INTEGER DEFAULT 0,
+
+    computed_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (snapshot_date, nm_id, region_name)
+);
+`
+
+// maArticleDailyIndexes created AFTER bulk insert for performance.
+const maArticleDailyIndexes = `
+CREATE INDEX IF NOT EXISTS idx_mad_snapshot_date ON ma_article_daily(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_mad_nm_id ON ma_article_daily(nm_id);
+CREATE INDEX IF NOT EXISTS idx_mad_article ON ma_article_daily(article);
+CREATE INDEX IF NOT EXISTS idx_mad_vendor_code ON ma_article_daily(vendor_code);
+CREATE INDEX IF NOT EXISTS idx_mad_region ON ma_article_daily(region_name, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_mad_brand ON ma_article_daily(brand);
+CREATE INDEX IF NOT EXISTS idx_mad_category ON ma_article_daily(category);
+CREATE INDEX IF NOT EXISTS idx_mad_risk_flags ON ma_article_daily(critical DESC, risk DESC, out_of_stock DESC);
+CREATE INDEX IF NOT EXISTS idx_mad_date_region ON ma_article_daily(snapshot_date, region_name);
+`
+
 // ResultsRepo manages the bi.db — stores flat SKU MA snapshots.
 type ResultsRepo struct {
 	db *sql.DB
@@ -124,6 +211,12 @@ func NewResultsRepo(dbPath string) (*ResultsRepo, error) {
 			db.Close()
 			return nil, fmt.Errorf("migrate add ma_regional: %w", err)
 		}
+	}
+
+	// Create ma_article_daily table
+	if _, err := db.Exec(maArticleDailyTable); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create ma_article_daily table: %w", err)
 	}
 
 	return &ResultsRepo{db: db}, nil
@@ -240,6 +333,121 @@ func (r *ResultsRepo) SaveSKUSnapshots(ctx context.Context, rows []SKURow) (int,
 // Close closes the results database.
 func (r *ResultsRepo) Close() error {
 	return r.db.Close()
+}
+
+// CreateArticleIndexes builds all indexes for ma_article_daily. Call AFTER bulk insert.
+func (r *ResultsRepo) CreateArticleIndexes(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, maArticleDailyIndexes)
+	if err != nil {
+		return fmt.Errorf("create article indexes: %w", err)
+	}
+	return nil
+}
+
+// DropArticleIndexes removes all article indexes for faster bulk inserts.
+func (r *ResultsRepo) DropArticleIndexes(ctx context.Context) error {
+	drops := []string{
+		"DROP INDEX IF EXISTS idx_mad_snapshot_date",
+		"DROP INDEX IF EXISTS idx_mad_nm_id",
+		"DROP INDEX IF EXISTS idx_mad_article",
+		"DROP INDEX IF EXISTS idx_mad_vendor_code",
+		"DROP INDEX IF EXISTS idx_mad_region",
+		"DROP INDEX IF EXISTS idx_mad_brand",
+		"DROP INDEX IF EXISTS idx_mad_category",
+		"DROP INDEX IF EXISTS idx_mad_risk_flags",
+		"DROP INDEX IF EXISTS idx_mad_date_region",
+	}
+	for _, d := range drops {
+		if _, err := r.db.ExecContext(ctx, d); err != nil {
+			return fmt.Errorf("drop article index: %w", err)
+		}
+	}
+	return nil
+}
+
+// HasArticleSnapshot checks if article data exists for the given date.
+func (r *ResultsRepo) HasArticleSnapshot(ctx context.Context, date string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM ma_article_daily WHERE snapshot_date = ?)`, date,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check existing article snapshot: %w", err)
+	}
+	return exists == 1, nil
+}
+
+// DeleteArticleSnapshot removes all article rows for the given date.
+func (r *ResultsRepo) DeleteArticleSnapshot(ctx context.Context, date string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM ma_article_daily WHERE snapshot_date = ?`, date)
+	if err != nil {
+		return fmt.Errorf("delete existing article snapshot: %w", err)
+	}
+	return nil
+}
+
+const insertArticleSQL = `
+INSERT OR REPLACE INTO ma_article_daily (
+    snapshot_date, nm_id, region_name,
+    article, identifier, vendor_code,
+    name, brand, type, category, category_level1, category_level2,
+    sex, season, color, collection,
+    product_rating, feedback_rating, feedback_count,
+    price, discounted_price, discount,
+    open_count, cart_count, order_count, buyout_count, conversion_buyout,
+    avg_position, visibility,
+    stock_qty, supply_incoming, total_sizes, sizes_in_stock, fill_pct,
+    ma_3, ma_7, ma_14, ma_28,
+    sdr_days, trend_pct,
+    risk, critical, out_of_stock, broken_grid,
+    computed_at
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+
+// SaveArticleSnapshots saves article-level rows in a single transaction.
+func (r *ResultsRepo) SaveArticleSnapshots(ctx context.Context, rows []ArticleRow) (int, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, insertArticleSQL)
+	if err != nil {
+		return 0, fmt.Errorf("prepare article insert: %w", err)
+	}
+	defer stmt.Close()
+
+	now := time.Now().Format(time.RFC3339)
+
+	for i, row := range rows {
+		_, err := stmt.ExecContext(ctx,
+			row.SnapshotDate, row.NmID, row.RegionName,
+			row.Article, row.Identifier, row.VendorCode,
+			row.Name, row.Brand, row.Type, row.Category, row.CategoryLevel1, row.CategoryLevel2,
+			row.Sex, row.Season, row.Color, row.Collection,
+			row.ProductRating, row.FeedbackRating, row.FeedbackCount,
+			row.Price, row.DiscountedPrice, row.Discount,
+			row.OpenCount, row.CartCount, row.OrderCount, row.BuyoutCount, row.ConversionBuyout,
+			row.AvgPosition, row.Visibility,
+			row.StockQty, row.SupplyIncoming, row.TotalSizes, row.SizesInStock, row.FillPct,
+			row.MA3, row.MA7, row.MA14, row.MA28,
+			row.SDRDays, row.TrendPct,
+			boolToInt(row.Risk), boolToInt(row.Critical), boolToInt(row.OutOfStock), boolToInt(row.BrokenGrid),
+			now,
+		)
+		if err != nil {
+			return i, fmt.Errorf("insert article nm_id=%d region=%s: %w", row.NmID, row.RegionName, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit article: %w", err)
+	}
+	return len(rows), nil
 }
 
 // boolToInt converts bool to SQLite integer (0/1).

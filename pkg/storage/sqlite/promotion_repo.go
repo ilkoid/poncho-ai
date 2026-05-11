@@ -1020,20 +1020,26 @@ func (r *SQLiteSalesRepository) SaveCalendarPromotions(ctx context.Context, prom
 
 // GetCampaignProductIDs returns distinct (advert_id, nm_id) pairs for active/paused campaigns.
 // Used by V2 downloader to build normquery batch requests.
-func (r *SQLiteSalesRepository) GetCampaignProductIDs(ctx context.Context, statuses []int) ([]wb.NormqueryItem, error) {
+// If changedSince is non-empty, only campaigns with change_time >= changedSince are included.
+func (r *SQLiteSalesRepository) GetCampaignProductIDs(ctx context.Context, statuses []int, changedSince string) ([]wb.NormqueryItem, error) {
 	if len(statuses) == 0 {
 		return nil, nil
 	}
 	placeholders := make([]string, len(statuses))
-	args := make([]interface{}, len(statuses))
+	args := make([]interface{}, 0, len(statuses)+1)
 	for i, s := range statuses {
 		placeholders[i] = "?"
-		args[i] = s
+		args = append(args, s)
 	}
 	query := fmt.Sprintf(
-		"SELECT DISTINCT advert_id, nm_id FROM campaign_products WHERE advert_id IN (SELECT advert_id FROM campaigns WHERE status IN (%s))",
+		"SELECT DISTINCT advert_id, nm_id FROM campaign_products WHERE advert_id IN (SELECT advert_id FROM campaigns WHERE status IN (%s)",
 		strings.Join(placeholders, ","),
 	)
+	if changedSince != "" {
+		query += " AND change_time >= ?"
+		args = append(args, changedSince)
+	}
+	query += ")"
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query campaign_product_ids: %w", err)
@@ -1049,6 +1055,17 @@ func (r *SQLiteSalesRepository) GetCampaignProductIDs(ctx context.Context, statu
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// GetNormqueryLastRun returns the timestamp of the last normquery_stats download (MAX(created_at)).
+// Returns empty string if no data exists.
+func (r *SQLiteSalesRepository) GetNormqueryLastRun(ctx context.Context) (string, error) {
+	var ts sql.NullString
+	err := r.db.QueryRowContext(ctx, "SELECT MAX(created_at) FROM normquery_stats").Scan(&ts)
+	if err != nil {
+		return "", fmt.Errorf("query normquery_last_run: %w", err)
+	}
+	return ts.String, nil
 }
 
 // SaveCampaignBudget saves budget snapshot for one campaign.

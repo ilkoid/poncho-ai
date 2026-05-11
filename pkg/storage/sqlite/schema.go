@@ -189,6 +189,9 @@ CREATE INDEX IF NOT EXISTS idx_service_rrd_id ON service_records(rrd_id);
 
 -- Index for product-specific queries
 CREATE INDEX IF NOT EXISTS idx_service_nm_id ON service_records(nm_id);
+
+-- Index for freshness checks (MAX(created_at) was scanning 5.3M rows)
+CREATE INDEX IF NOT EXISTS idx_service_created_at ON service_records(created_at);
 `
 
 	// CreateViewSQL creates a view for FBW-only sales.
@@ -247,6 +250,9 @@ CREATE INDEX IF NOT EXISTS idx_products_subject_id ON products(subject_id);
 
 -- Index for brand analysis
 CREATE INDEX IF NOT EXISTS idx_products_brand_name ON products(brand_name);
+
+-- Index for freshness checks
+CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at);
 
 -- ============================================================================
 -- Daily funnel metrics (core time-series fact table)
@@ -351,6 +357,9 @@ CREATE INDEX IF NOT EXISTS idx_campaigns_type ON campaigns(campaign_type);
 -- Index for change_time (resume mode)
 CREATE INDEX IF NOT EXISTS idx_campaigns_change_time ON campaigns(change_time);
 
+-- Index for freshness checks
+CREATE INDEX IF NOT EXISTS idx_campaigns_updated_at ON campaigns(updated_at);
+
 -- ============================================================================
 -- Daily campaign statistics (core time-series fact table)
 -- Source: GET /adv/v3/fullstats
@@ -435,6 +444,10 @@ CREATE INDEX IF NOT EXISTS idx_campaign_products_nm
 -- Index for campaign-focused queries (what products in this campaign?)
 CREATE INDEX IF NOT EXISTS idx_campaign_products_campaign
     ON campaign_products(advert_id);
+
+-- Index for freshness checks
+CREATE INDEX IF NOT EXISTS idx_campaign_products_created_at
+    ON campaign_products(created_at);
 `
 
 	// FunnelAggregatedSchemaSQL defines the aggregated funnel metrics table.
@@ -767,6 +780,10 @@ CREATE TABLE IF NOT EXISTS product_quality_summary (
     analyzed_at       TEXT,
     model_used        TEXT
 );
+
+-- Index for freshness checks
+CREATE INDEX IF NOT EXISTS idx_product_quality_analyzed_at
+    ON product_quality_summary(analyzed_at);
 `
 
 )

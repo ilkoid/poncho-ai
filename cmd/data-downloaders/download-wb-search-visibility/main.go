@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -133,7 +134,64 @@ func main() {
 	if len(nmIDs) == 0 {
 		log.Fatal("No nmIDs found. Load sales data first or use --nm-ids flag.")
 	}
-	fmt.Printf("Loaded %d nmIDs\n\n", len(nmIDs))
+	fmt.Printf("Loaded %d nmIDs\n", len(nmIDs))
+
+	// Apply filters (same pattern as funnel_loader.go)
+	filter := cfg.SearchVisibility.Filter
+
+	if len(filter.ExcludeLengths) > 0 || len(filter.AllowedYears) > 0 {
+		before := len(nmIDs)
+
+		articlesMap, err := repo.GetSupplierArticlesByNmIDs(ctx, nmIDs)
+		if err != nil {
+			log.Fatalf("Failed to get supplier articles for filtering: %v", err)
+		}
+
+		contains := func(slice []int, value int) bool {
+			for _, v := range slice {
+				if v == value {
+					return true
+				}
+			}
+			return false
+		}
+
+		var filtered []int
+		for _, nmID := range nmIDs {
+			article := articlesMap[nmID]
+			if article == "" {
+				continue
+			}
+
+			if contains(filter.ExcludeLengths, len(article)) {
+				continue
+			}
+
+			if len(filter.AllowedYears) > 0 && len(article) >= 3 {
+				yearDigits := article[1:3]
+				year, err := strconv.Atoi(yearDigits)
+				if err == nil && !contains(filter.AllowedYears, year) {
+					continue
+				}
+			}
+
+			filtered = append(filtered, nmID)
+		}
+
+		nmIDs = filtered
+		fmt.Printf("  After filter: %d products (excluded %d)\n", len(nmIDs), before-len(nmIDs))
+	}
+
+	if filter.ActiveDays > 0 {
+		before := len(nmIDs)
+		nmIDs, err = repo.FilterActiveNmIDs(ctx, nmIDs, filter.ActiveDays)
+		if err != nil {
+			log.Fatalf("Failed to filter active products: %v", err)
+		}
+		fmt.Printf("  Active (%d days): %d products (excluded %d inactive)\n", filter.ActiveDays, len(nmIDs), before-len(nmIDs))
+	}
+
+	fmt.Println()
 
 	rl := cfg.SearchVisibility.RateLimits
 	totalSteps := 0

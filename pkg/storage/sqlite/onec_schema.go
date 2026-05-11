@@ -49,6 +49,9 @@ CREATE INDEX IF NOT EXISTS idx_onec_goods_article ON onec_goods(article);
 CREATE INDEX IF NOT EXISTS idx_onec_goods_brand ON onec_goods(brand);
 CREATE INDEX IF NOT EXISTS idx_onec_goods_category ON onec_goods(category);
 
+-- Index for freshness checks
+CREATE INDEX IF NOT EXISTS idx_onec_goods_downloaded_at ON onec_goods(downloaded_at);
+
 -- ============================================================================
 -- 1C GOODS SKU (barcode + size variants)
 -- Grain: one row per (sku_guid, guid) — sku_guid is NOT globally unique,
@@ -122,6 +125,9 @@ CREATE TABLE IF NOT EXISTS pim_goods (
 CREATE INDEX IF NOT EXISTS idx_pim_goods_wb_nm_id ON pim_goods(wb_nm_id);
 CREATE INDEX IF NOT EXISTS idx_pim_goods_product_type ON pim_goods(product_type);
 CREATE INDEX IF NOT EXISTS idx_pim_goods_family ON pim_goods(family);
+
+-- Index for freshness checks
+CREATE INDEX IF NOT EXISTS idx_pim_goods_downloaded_at ON pim_goods(downloaded_at);
 `
 
 // GetOneCSchemaSQL returns the SQL for 1C/PIM tables creation.

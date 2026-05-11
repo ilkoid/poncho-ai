@@ -4,7 +4,7 @@
 // Computes MA-3, MA-7, MA-14, MA-28 per size (chrt_id) from sales data in wb-sales.db,
 // joins with stock data from stocks_daily_warehouses, enriches with product attributes,
 // and calculates risk flags (SDR, trend, broken grid).
-// Results stored in flat ma_sku_daily table in bi.db for PowerBI consumption.
+// Results stored in flat ma_sku_daily + ma_article_daily tables in bi.db for PowerBI consumption.
 //
 // Usage:
 //
@@ -29,14 +29,14 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/config"
 )
 
-// CLI Config represents the YAML configuration.
+// CLIConfig represents the YAML configuration.
 type CLIConfig struct {
-	Source  SourceConfig         `yaml:"source"`
-	Results ResultsConfig        `yaml:"results"`
-	MA      MAConfig             `yaml:"ma"`
-	Alerts  config.AlertsConfig  `yaml:"alerts"`
+	Source  SourceConfig            `yaml:"source"`
+	Results ResultsConfig           `yaml:"results"`
+	MA      MAConfig                `yaml:"ma"`
+	Alerts  config.AlertsConfig     `yaml:"alerts"`
 	Filter  config.YearFilterConfig `yaml:"filter"`
-	Force   bool                 `yaml:"force"`
+	Force   bool                    `yaml:"force"`
 }
 
 type SourceConfig struct {
@@ -130,7 +130,6 @@ func main() {
 	var filteredNmIDs []int // empty = no filter
 	if len(cfg.Filter.AllowedYears) > 0 {
 		fmt.Print("Filtering by year... ")
-		// Get all vendor codes first, then filter
 		entries, err := source.QueryVendorCodes(ctx, nil)
 		if err != nil {
 			log.Fatalf("Query vendor codes: %v", err)
@@ -184,7 +183,6 @@ func main() {
 		}
 	}
 	// Fill missing regions (products with no sizes above threshold)
-	// Build nm_id → set of regions from stocks for O(N+M) lookup.
 	nmRegions := make(map[int]map[string]bool)
 	for key := range stocks {
 		if nmRegions[key.NmID] == nil {
@@ -201,14 +199,13 @@ func main() {
 		}
 	}
 
-	// Step 3: Card sizes mapping (barcode → chrt_id)
+	// Step 4: Card sizes mapping (barcode → chrt_id)
 	fmt.Print("Querying card sizes... ")
 	cardSizes, err := source.QueryCardSizes(ctx)
 	if err != nil {
 		log.Fatalf("Query card sizes: %v", err)
 	}
 
-	// Build maps: chrt_id → CardSizeEntry, barcode → chrt_id (all barcodes per entry)
 	chrtToEntry := make(map[int64]CardSizeEntry, len(cardSizes))
 	barcodeToChrt := make(map[string]int64, len(cardSizes))
 	for _, cs := range cardSizes {
@@ -242,36 +239,51 @@ func main() {
 		return
 	}
 
-	// Step 6: Enrich with tech_size from card_sizes
+	// Step 6a: Enrich with tech_size from card_sizes
 	for i := range rows {
 		if entry, ok := chrtToEntry[rows[i].ChrtID]; ok {
 			rows[i].TechSize = entry.TechSize
 		}
 	}
 
-	// Step 6b: Enrich with incoming supply data
-	fmt.Print("Querying supply incoming... ")
+	// Step 6b: Enrich with incoming supply data (REGIONAL via warehouse_id → FO)
+	fmt.Print("Querying supply incoming (regional)... ")
 	supplyIncoming, err := source.QuerySupplyIncoming(ctx)
 	if err != nil {
 		log.Fatalf("Query supply incoming: %v", err)
 	}
-	// Build chrt_id → incoming map via barcode lookup
-	chrtIncoming := make(map[int64]int64)
-	for barcode, incoming := range supplyIncoming {
-		if chrtID, ok := barcodeToChrt[barcode]; ok {
-			chrtIncoming[chrtID] += incoming
+	// Build (chrt_id, region) → incoming map via barcode + warehouse_id → FO
+	type chrtRegion struct {
+		ChrtID     int64
+		RegionName string
+	}
+	chrtRegionIncoming := make(map[chrtRegion]int64)
+	var totalBarcodes int
+	for barcode, whMap := range supplyIncoming {
+		totalBarcodes++
+		chrtID, ok := barcodeToChrt[barcode]
+		if !ok {
+			continue
+		}
+		for whID, incoming := range whMap {
+			fo, foOK := whByID[whID]
+			if !foOK {
+				continue
+			}
+			chrtRegionIncoming[chrtRegion{ChrtID: chrtID, RegionName: fo}] += incoming
 		}
 	}
 	// Apply to rows
 	var totalIncoming int64
 	for i := range rows {
-		if inc, ok := chrtIncoming[rows[i].ChrtID]; ok {
+		key := chrtRegion{ChrtID: rows[i].ChrtID, RegionName: rows[i].RegionName}
+		if inc, ok := chrtRegionIncoming[key]; ok {
 			rows[i].SupplyIncoming = inc
 			totalIncoming += inc
 		}
 	}
-	fmt.Printf("%d barcodes, %d chrt_ids, %d total incoming units\n",
-		len(supplyIncoming), len(chrtIncoming), totalIncoming)
+	fmt.Printf("%d barcodes, %d (chrt,region) groups, %d total incoming units\n",
+		totalBarcodes, len(chrtRegionIncoming), totalIncoming)
 
 	// Step 7: Enrich with product attributes
 	fmt.Print("Querying product attributes... ")
@@ -299,9 +311,118 @@ func main() {
 		}
 	}
 
+	// Step 9: Build article-level sales (collapse chrt_id from maData)
+	fmt.Print("Building article-level sales... ")
+	articleSales := make(map[int]map[string]map[string]int)
+	for nmID, chrtMap := range maData {
+		for _, regionMap := range chrtMap {
+			for region, dayMap := range regionMap {
+				if articleSales[nmID] == nil {
+					articleSales[nmID] = make(map[string]map[string]int)
+				}
+				if articleSales[nmID][region] == nil {
+					articleSales[nmID][region] = make(map[string]int)
+				}
+				for d, sold := range dayMap {
+					articleSales[nmID][region][d] += sold
+				}
+			}
+		}
+	}
+	fmt.Printf("%d products, %d region groups\n", len(articleSales), countArticleRegions(articleSales))
+
+	// Step 10: Compute article snapshots
+	fmt.Print("Computing article snapshots... ")
+	articleRows := ComputeArticleSnapshots(rows, articleSales, refDate, cfg.MA.Windows, cfg.MA.MinDays, alerts)
+	fmt.Printf("%d rows\n", len(articleRows))
+
+	// Step 11: Enrich with ratings + feedback counts
+	fmt.Print("Enriching articles with ratings... ")
+	ratings, err := source.QueryProductRatings(ctx, stockNmIDs)
+	if err != nil {
+		log.Printf("WARN: query product ratings: %v (skipping)", err)
+		ratings = nil
+	}
+	feedbackCounts, err := source.QueryFeedbackCounts(ctx)
+	if err != nil {
+		log.Printf("WARN: query feedback counts: %v (skipping)", err)
+		feedbackCounts = nil
+	}
+	var ratedCount int
+	for i := range articleRows {
+		nmID := articleRows[i].NmID
+		if r, ok := ratings[nmID]; ok {
+			articleRows[i].ProductRating = r.ProductRating
+			articleRows[i].FeedbackRating = r.FeedbackRating
+			ratedCount++
+		}
+		if cnt, ok := feedbackCounts[nmID]; ok {
+			articleRows[i].FeedbackCount = cnt
+		}
+	}
+	fmt.Printf("%d rated\n", ratedCount)
+
+	// Step 12: Enrich with prices
+	fmt.Print("Enriching articles with prices... ")
+	prices, err := source.QueryLatestPrices(ctx, refDate, stockNmIDs)
+	if err != nil {
+		log.Printf("WARN: query latest prices: %v (skipping)", err)
+		prices = nil
+	}
+	var pricedCount int
+	for i := range articleRows {
+		if p, ok := prices[articleRows[i].NmID]; ok {
+			articleRows[i].Price = p.Price
+			articleRows[i].DiscountedPrice = p.DiscountedPrice
+			articleRows[i].Discount = p.Discount
+			pricedCount++
+		}
+	}
+	fmt.Printf("%d priced\n", pricedCount)
+
+	// Step 13: Enrich with funnel metrics
+	fmt.Print("Enriching articles with funnel... ")
+	funnel, err := source.QueryLatestFunnel(ctx, stockNmIDs)
+	if err != nil {
+		log.Printf("WARN: query latest funnel: %v (skipping)", err)
+		funnel = nil
+	}
+	var funnelCount int
+	for i := range articleRows {
+		if f, ok := funnel[articleRows[i].NmID]; ok {
+			articleRows[i].OpenCount = f.OpenCount
+			articleRows[i].CartCount = f.CartCount
+			articleRows[i].OrderCount = f.OrderCount
+			articleRows[i].BuyoutCount = f.BuyoutCount
+			articleRows[i].ConversionBuyout = f.ConversionBuyout
+			funnelCount++
+		}
+	}
+	fmt.Printf("%d with funnel data\n", funnelCount)
+
+	// Step 14: Enrich with search visibility (table may be empty)
+	fmt.Print("Enriching articles with search visibility... ")
+	visibility, err := source.QuerySearchVisibility(ctx, refDate, stockNmIDs)
+	if err != nil {
+		log.Printf("WARN: query search visibility: %v (skipping)", err)
+		visibility = nil
+	}
+	var visCount int
+	for i := range articleRows {
+		if v, ok := visibility[articleRows[i].NmID]; ok {
+			articleRows[i].AvgPosition = v.AvgPosition
+			articleRows[i].Visibility = v.Visibility
+			visCount++
+		}
+	}
+	fmt.Printf("%d with visibility data\n", visCount)
+
 	// Step 8: Save or dry-run
 	if *dryRun {
-			printDryRunSummary(rows)
+		printDryRunSummary(rows)
+		fmt.Println()
+		fmt.Println("------------------------------------------------------------------------")
+		printArticleSummary(articleRows)
 		return
 	}
 
@@ -323,19 +444,25 @@ func main() {
 			return
 		}
 	} else {
-		// Delete existing data for this date
 		if err := results.DeleteSnapshot(ctx, refDate); err != nil {
 			log.Fatalf("Delete existing: %v", err)
 		}
+		if err := results.DeleteArticleSnapshot(ctx, refDate); err != nil {
+			log.Fatalf("Delete existing article: %v", err)
+		}
 	}
 
-	// Drop indexes for fast bulk insert, then recreate after
+	// Drop indexes for fast bulk insert
 	fmt.Print("Dropping indexes for fast insert... ")
 	if err := results.DropIndexes(ctx); err != nil {
 		log.Fatalf("Drop indexes: %v", err)
 	}
+	if err := results.DropArticleIndexes(ctx); err != nil {
+		log.Fatalf("Drop article indexes: %v", err)
+	}
 	fmt.Println("done")
 
+	// Save SKU snapshots
 	fmt.Print("Saving SKU snapshots... ")
 	saved, err := results.SaveSKUSnapshots(ctx, rows)
 	if err != nil {
@@ -343,15 +470,31 @@ func main() {
 	}
 	fmt.Printf("%d rows\n", saved)
 
-	fmt.Print("Creating indexes... ")
+	fmt.Print("Creating SKU indexes... ")
 	if err := results.CreateIndexes(ctx); err != nil {
 		log.Fatalf("Create indexes: %v", err)
+	}
+	fmt.Println("done")
+
+	// Step 15: Save article snapshots
+	fmt.Print("Saving article snapshots... ")
+	articleSaved, err := results.SaveArticleSnapshots(ctx, articleRows)
+	if err != nil {
+		log.Fatalf("Save article snapshots: %v", err)
+	}
+	fmt.Printf("%d rows\n", articleSaved)
+
+	fmt.Print("Creating article indexes... ")
+	if err := results.CreateArticleIndexes(ctx); err != nil {
+		log.Fatalf("Create article indexes: %v", err)
 	}
 	fmt.Println("done")
 
 	// Summary
 	fmt.Println("========================================================================")
 	printSummary(rows)
+	fmt.Println("------------------------------------------------------------------------")
+	printArticleSummary(articleRows)
 	fmt.Println("========================================================================")
 }
 
@@ -378,6 +521,15 @@ func collectNmIDs(stocks map[StockKey]StockInfo) []int {
 	return result
 }
 
+// countArticleRegions counts total region groups across all products in article sales data.
+func countArticleRegions(articleSales map[int]map[string]map[string]int) int {
+	var total int
+	for _, regions := range articleSales {
+		total += len(regions)
+	}
+	return total
+}
+
 // printDryRunSummary outputs risk-ordered summary to console without writing to DB.
 func printDryRunSummary(rows []SKURow) {
 	// Sort: critical first, then out_of_stock, then risk, then broken_grid, then by SDR asc
@@ -386,7 +538,6 @@ func printDryRunSummary(rows []SKURow) {
 		if ri != rj {
 			return ri < rj
 		}
-		// Within same priority, sort by SDR ascending
 		sdrI, sdrJ := safeSDR(rows[i].SDRDays), safeSDR(rows[j].SDRDays)
 		return sdrI < sdrJ
 	})
@@ -401,7 +552,7 @@ func printDryRunSummary(rows []SKURow) {
 	for _, r := range rows {
 		status := rowStatus(r)
 		if status == "" {
-			continue // skip non-risky rows
+			continue
 		}
 
 		sdr := "-"
@@ -513,14 +664,14 @@ func printSummary(rows []SKURow) {
 		}
 	}
 
-	fmt.Printf("Total rows:     %d\n", len(rows))
-	fmt.Printf("Total stock:    %d\n", totalStock)
-	fmt.Printf("Supply incoming:%d\n", totalIncoming)
-	fmt.Printf("With MA-7:      %d\n", withMA7)
-	fmt.Printf("Critical:       %d\n", critical)
-	fmt.Printf("Out of stock:   %d\n", outOfStock)
-	fmt.Printf("Risk:           %d\n", risk)
-	fmt.Printf("Broken grid:    %d\n", brokenGrid)
+	fmt.Printf("[SKU] Total rows:     %d\n", len(rows))
+	fmt.Printf("[SKU] Total stock:    %d\n", totalStock)
+	fmt.Printf("[SKU] Supply incoming:%d\n", totalIncoming)
+	fmt.Printf("[SKU] With MA-7:      %d\n", withMA7)
+	fmt.Printf("[SKU] Critical:       %d\n", critical)
+	fmt.Printf("[SKU] Out of stock:   %d\n", outOfStock)
+	fmt.Printf("[SKU] Risk:           %d\n", risk)
+	fmt.Printf("[SKU] Broken grid:    %d\n", brokenGrid)
 
 	// Top 5 critical items by SDR
 	criticalRows := make([]SKURow, 0)
@@ -535,7 +686,7 @@ func printSummary(rows []SKURow) {
 		})
 
 		fmt.Println()
-		fmt.Println("Top critical items (lowest SDR):")
+		fmt.Println("Top critical SKU items (lowest SDR):")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(w, "  nm_id\tarticle\tbrand\tsize\tregion\tstock\tMA-7\tSDR\n")
 		for i, r := range criticalRows {
@@ -544,6 +695,68 @@ func printSummary(rows []SKURow) {
 			}
 			fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%d\t%.1f\t%.1f\n",
 				r.NmID, r.Article, r.Brand, r.TechSize,
+				truncate(r.RegionName, 20), r.StockQty, *r.MA7, *r.SDRDays)
+		}
+		w.Flush()
+	}
+}
+
+// printArticleSummary outputs article-level aggregation statistics.
+func printArticleSummary(rows []ArticleRow) {
+	var withMA7, critical, risk, outOfStock, brokenGrid int
+	var totalStock, totalIncoming int64
+
+	for _, r := range rows {
+		totalStock += r.StockQty
+		totalIncoming += r.SupplyIncoming
+		if r.MA7 != nil {
+			withMA7++
+		}
+		if r.Critical {
+			critical++
+		}
+		if r.Risk {
+			risk++
+		}
+		if r.OutOfStock {
+			outOfStock++
+		}
+		if r.BrokenGrid {
+			brokenGrid++
+		}
+	}
+
+	fmt.Printf("[Article] Total rows:     %d\n", len(rows))
+	fmt.Printf("[Article] Total stock:    %d\n", totalStock)
+	fmt.Printf("[Article] Supply incoming:%d\n", totalIncoming)
+	fmt.Printf("[Article] With MA-7:      %d\n", withMA7)
+	fmt.Printf("[Article] Critical:       %d\n", critical)
+	fmt.Printf("[Article] Out of stock:   %d\n", outOfStock)
+	fmt.Printf("[Article] Risk:           %d\n", risk)
+	fmt.Printf("[Article] Broken grid:    %d\n", brokenGrid)
+
+	// Top 5 critical articles by SDR
+	criticalRows := make([]ArticleRow, 0)
+	for _, r := range rows {
+		if r.Critical && r.SDRDays != nil {
+			criticalRows = append(criticalRows, r)
+		}
+	}
+	if len(criticalRows) > 0 {
+		sort.Slice(criticalRows, func(i, j int) bool {
+			return *criticalRows[i].SDRDays < *criticalRows[j].SDRDays
+		})
+
+		fmt.Println()
+		fmt.Println("Top critical articles (lowest SDR):")
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(w, "  nm_id\tarticle\tbrand\tregion\tstock\tMA-7\tSDR\n")
+		for i, r := range criticalRows {
+			if i >= 5 {
+				break
+			}
+			fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%d\t%.1f\t%.1f\n",
+				r.NmID, r.Article, r.Brand,
 				truncate(r.RegionName, 20), r.StockQty, *r.MA7, *r.SDRDays)
 		}
 		w.Flush()

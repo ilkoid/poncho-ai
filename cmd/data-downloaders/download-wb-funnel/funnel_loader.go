@@ -24,17 +24,18 @@ type FunnelLoadResult struct {
 
 // FunnelLoaderConfig holds configuration for funnel loading.
 type FunnelLoaderConfig struct {
-	Client        *wb.Client
-	Repo          *sqlite.SQLiteSalesRepository
-	Days          int    // Days of history to load (1-365) — fallback if From/To not set
-	BatchSize     int    // Products per API request (max 20 for Analytics API v3)
-	RateLimit     int    // Fallback rate limit (req/min) — pre-set limiter from SetRateLimit takes priority
-	BurstLimit    int    // Fallback burst — pre-set limiter from SetRateLimit takes priority
-	RefreshWindow int    // Refresh window in days (0 = always replace, 7 = update last 7 days)
-	From          string // Start date YYYY-MM-DD (optional, takes precedence over Days)
-	To            string // End date YYYY-MM-DD (optional, takes precedence over Days)
-	MaxBatches    int                        // Max batches to load (0 = all, useful for testing)
-	Filter        config.FunnelFilterConfig   // Product filtering by supplier_article
+	Client           *wb.Client
+	Repo             *sqlite.SQLiteSalesRepository
+	Days             int    // Days of history to load (1-365) — fallback if From/To not set
+	BatchSize        int    // Products per API request (max 20 for Analytics API v3)
+	RateLimit        int    // Fallback rate limit (req/min) — pre-set limiter from SetRateLimit takes priority
+	BurstLimit       int    // Fallback burst — pre-set limiter from SetRateLimit takes priority
+	RefreshWindow    int    // Refresh window in days (0 = always replace, 7 = update last 7 days)
+	From             string // Start date YYYY-MM-DD (optional, takes precedence over Days)
+	To               string // End date YYYY-MM-DD (optional, takes precedence over Days)
+	MaxBatches       int                       // Max batches to load (0 = all, useful for testing)
+	Filter           config.FunnelFilterConfig // Product filtering by supplier_article
+	IncrementalHours int                       // Skip products loaded in last N hours (0 = load all)
 }
 
 // LoadFunnelHistory loads funnel analytics history for all products in sales table.
@@ -114,6 +115,41 @@ func LoadFunnelHistory(ctx context.Context, cfg FunnelLoaderConfig) (*FunnelLoad
 		nmIDs = filtered
 		fmt.Printf("🔍 После фильтрации: %d товаров (исключено %d)\n",
 			len(nmIDs), before-len(nmIDs))
+	}
+
+	// Filter by sales activity (skip dead products)
+	if cfg.Filter.ActiveDays > 0 {
+		activeBefore := len(nmIDs)
+		nmIDs, err = cfg.Repo.FilterActiveNmIDs(ctx, nmIDs, cfg.Filter.ActiveDays)
+		if err != nil {
+			return result, fmt.Errorf("filter active products: %w", err)
+		}
+		fmt.Printf("🔍 Активные товары (%d дней): %d (исключено %d неактивных)\n",
+			cfg.Filter.ActiveDays, len(nmIDs), activeBefore-len(nmIDs))
+	}
+
+	// Incremental: skip products loaded recently
+	if cfg.IncrementalHours > 0 {
+		recent, err := cfg.Repo.GetRecentlyLoadedNmIDs(ctx, cfg.IncrementalHours)
+		if err != nil {
+			fmt.Printf("⚠️  Не получить список недавно загруженных: %v\n", err)
+		} else if len(recent) > 0 {
+			incBefore := len(nmIDs)
+			var remaining []int
+			for _, id := range nmIDs {
+				if !recent[id] {
+					remaining = append(remaining, id)
+				}
+			}
+			nmIDs = remaining
+			fmt.Printf("🔄 Инкремент: %d товаров пропущено (загружены за %d часов), осталось %d\n",
+				len(recent), cfg.IncrementalHours, incBefore-len(nmIDs))
+		}
+	}
+
+	if len(nmIDs) == 0 {
+		fmt.Println("✅ Все товары уже загружены (инкрементальный режим)")
+		return result, nil
 	}
 
 	// Show period info

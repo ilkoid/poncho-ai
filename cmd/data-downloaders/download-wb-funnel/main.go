@@ -147,7 +147,8 @@ func main() {
 		From:          funnelDefaults.From,
 		To:            funnelDefaults.To,
 		MaxBatches:    funnelDefaults.MaxBatches,
-		Filter:        cfg.Filter,
+		Filter:           cfg.Filter,
+		IncrementalHours: funnelDefaults.IncrementalHours,
 	}
 	funnelResult, err := LoadFunnelHistory(ctx, funnelCfg)
 	if err != nil {

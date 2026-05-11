@@ -121,7 +121,24 @@ func main() {
 
 	// Load (advert_id, nm_id) pairs from V1 tables
 	rl := cfg.PromotionV2.RateLimits
-	productIDs, err := repo.GetCampaignProductIDs(ctx, cfg.PromotionV2.Statuses)
+
+	cutoff := ""
+	if cfg.PromotionV2.ChangedDays > 0 {
+		cutoff = time.Now().AddDate(0, 0, -cfg.PromotionV2.ChangedDays).Format("2006-01-02T15:04:05")
+	} else {
+		lastRun, _ := repo.GetNormqueryLastRun(ctx)
+		if lastRun != "" {
+			cutoff = lastRun
+		}
+	}
+
+	if cutoff != "" {
+		fmt.Printf("Incremental mode: campaigns changed since %s\n", cutoff)
+	} else {
+		fmt.Println("Full scan mode: all matching campaigns")
+	}
+
+	productIDs, err := repo.GetCampaignProductIDs(ctx, cfg.PromotionV2.Statuses, cutoff)
 	if err != nil {
 		log.Fatalf("Failed to load campaign product IDs: %v", err)
 	}

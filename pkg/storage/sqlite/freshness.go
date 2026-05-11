@@ -40,7 +40,7 @@ type FreshnessResult struct {
 	AgeDays    int        // Возраст данных в днях
 	Status     FreshnessStatus
 	Error      error // Ошибка если status = ERROR
-	RecordCount int    // Количество записей (опционально)
+	RecordCount int    // Заполнен только для N/A таблиц; 0 для таблиц с датой
 }
 
 // IsCritical возвращает true, если статус критический.
@@ -145,28 +145,27 @@ type FreshnessChecker struct {
 
 // NewFreshnessChecker создаёт новый проверщик свежести данных.
 //
-// Открывает SQLite соединение с оптимизационными PRAGMAs.
+// Открывает SQLite в read-only режиме с пулом из 4 соединений
+// для параллельного выполнения запросов к 31 таблице.
 func NewFreshnessChecker(dbPath string) (*FreshnessChecker, error) {
-	// DSN parameters persist across reconnects (see repository.go for details)
-	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_cache_size=-65536&_busy_timeout=10000&_foreign_keys=1", dbPath)
+	dsn := fmt.Sprintf("file:%s?mode=ro&_journal_mode=WAL&_cache_size=-65536&_busy_timeout=10000", dbPath)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	// Проверка соединения
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	// Single connection for consistency
-	db.SetMaxOpenConns(1)
+	// 4 параллельных соединения: 31 горутина → ~4 батча
+	db.SetMaxOpenConns(4)
 
-	// PRAGMAs not supported in DSN
 	pragmas := []string{
 		"PRAGMA mmap_size = 268435456",
 		"PRAGMA temp_store = MEMORY",
+		"PRAGMA query_only = ON",
 	}
 	for _, p := range pragmas {
 		if _, err := db.Exec(p); err != nil {
@@ -208,25 +207,19 @@ func (fc *FreshnessChecker) CheckTable(ctx context.Context, spec TableSpec, warn
 		return result
 	}
 
-	// SQL запрос для получения максимальной даты
-	query := fmt.Sprintf("SELECT MAX(%s), COUNT(*) FROM %s", spec.DateColumn, spec.Table)
+	// MAX(date) — index-only lookup, без COUNT(*) сканирующего всю таблицу
+	query := fmt.Sprintf("SELECT MAX(%s) FROM %s", spec.DateColumn, spec.Table)
 
 	var maxDateStr sql.NullString
-	var count int
-
-	// Выполняем запрос с учётом контекста
-	err := fc.db.QueryRowContext(ctx, query).Scan(&maxDateStr, &count)
+	err := fc.db.QueryRowContext(ctx, query).Scan(&maxDateStr)
 	if err != nil {
 		result.Error = fmt.Errorf("query table: %w", err)
 		return result
 	}
 
-	result.RecordCount = count
-
-	// Если таблица пуста
-	if !maxDateStr.Valid || count == 0 {
+	if !maxDateStr.Valid {
 		result.Status = StatusEmpty
-		result.AgeDays = -1 // Специальное значение для пустой таблицы
+		result.AgeDays = -1
 		return result
 	}
 
@@ -249,6 +242,56 @@ func (fc *FreshnessChecker) CheckTable(ctx context.Context, spec TableSpec, warn
 	case ageDays >= critAge:
 		result.Status = StatusCritical
 	case ageDays >= warnAge:
+		result.Status = StatusStale
+	default:
+		result.Status = StatusFresh
+	}
+
+	return result
+}
+
+// CheckTableWithCount — вариант CheckTable, сохраняющий RecordCount для таблиц с датой.
+// Медленнее на больших таблицах из-за COUNT(*), но возвращает полную информацию.
+func (fc *FreshnessChecker) CheckTableWithCount(ctx context.Context, spec TableSpec, warnAge, critAge int) FreshnessResult {
+	result := FreshnessResult{
+		TableSpec: spec,
+		Status:    StatusError,
+	}
+
+	if spec.DateColumn == "N/A" {
+		return fc.CheckTable(ctx, spec, warnAge, critAge)
+	}
+
+	query := fmt.Sprintf("SELECT MAX(%s), COUNT(*) FROM %s", spec.DateColumn, spec.Table)
+	var maxDateStr sql.NullString
+	var count int
+	err := fc.db.QueryRowContext(ctx, query).Scan(&maxDateStr, &count)
+	if err != nil {
+		result.Error = fmt.Errorf("query table: %w", err)
+		return result
+	}
+
+	result.RecordCount = count
+
+	if !maxDateStr.Valid {
+		result.Status = StatusEmpty
+		result.AgeDays = -1
+		return result
+	}
+
+	latestDate, err := parseSQLiteDate(maxDateStr.String)
+	if err != nil {
+		result.Error = fmt.Errorf("parse date: %w", err)
+		return result
+	}
+
+	result.LatestDate = &latestDate
+	result.AgeDays = int(time.Since(latestDate).Hours() / 24)
+
+	switch {
+	case result.AgeDays >= critAge:
+		result.Status = StatusCritical
+	case result.AgeDays >= warnAge:
 		result.Status = StatusStale
 	default:
 		result.Status = StatusFresh

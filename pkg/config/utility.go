@@ -172,6 +172,10 @@ type FunnelConfig struct {
 	FunnelRateLimitApi      int `yaml:"funnel_rate_limit_api"`       // swagger rate (default: 3)
 	FunnelRateLimitApiBurst int `yaml:"funnel_rate_limit_api_burst"` // swagger burst (default: 3)
 
+
+	// Incremental loading
+	IncrementalHours int `yaml:"incremental_hours"` // Skip products loaded in last N hours (0 = load all)
+
 	// Adaptive tuning (see dev_limits.md)
 	AdaptiveRecoverAfter int `yaml:"adaptive_recover_after"` // OKs to restore to api floor after 429 (default: 5)
 	AdaptiveProbeAfter   int `yaml:"adaptive_probe_after"`   // OKs at api floor before probing desired (default: 10)
@@ -233,6 +237,9 @@ type FunnelFilterConfig struct {
 
 	// Фильтрация по году производства (из 2-3 цифры артикула)
 	AllowedYears []int `yaml:"allowed_years"` // Например: [24, 25, 26] — только 2024-2026
+
+	// Фильтрация по активности продаж
+	ActiveDays int `yaml:"active_days"` // Только товары с продажами за последние N дней (0 = без фильтра)
 }
 
 // WBClientConfig — расширенная конфигурация WB клиента для утилит.
@@ -299,6 +306,7 @@ type PromotionV2Config struct {
 	SkipMinBids         bool `yaml:"skip_min_bids"`
 	CalendarDaysPast    int  `yaml:"calendar_days_past"`
 	CalendarDaysFuture  int  `yaml:"calendar_days_future"`
+	ChangedDays         int  `yaml:"changed_days"`
 }
 
 // PromotionV2RateLimits — rate limits для V2 endpoints.
@@ -1110,6 +1118,7 @@ type SearchVisibilityConfig struct {
 	RateLimits         SearchVisibilityRateLimits   `yaml:"rate_limits"`
 	AdaptiveProbeAfter int                         `yaml:"adaptive_probe_after"`
 	MaxBackoffSeconds  int                         `yaml:"max_backoff_seconds"`
+	Filter             FunnelFilterConfig          `yaml:"filter"`
 }
 
 // SearchVisibilityRateLimits — rate limits для search-report API endpoints.
