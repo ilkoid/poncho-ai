@@ -144,20 +144,20 @@ func main() {
 	}
 	fmt.Printf("Loaded %d (advert_id, nm_id) pairs from V1 tables\n\n", len(productIDs))
 
-	if len(productIDs) == 0 {
-		fmt.Println("No campaign products found. Run V1 downloader first.")
-		return
+	hasV1Data := len(productIDs) > 0
+	if !hasV1Data {
+		fmt.Println("No V1 campaign products — skipping V1-dependent phases, running calendar only.")
 	}
 
 	// Execute phases
 	totalSteps := 0
-	if !cfg.PromotionV2.SkipBids {
+	if hasV1Data && !cfg.PromotionV2.SkipBids {
 		totalSteps++
 	}
-	if !cfg.PromotionV2.SkipNormquery {
+	if hasV1Data && !cfg.PromotionV2.SkipNormquery {
 		totalSteps += 4
 	}
-	if !cfg.PromotionV2.SkipRecommendations {
+	if hasV1Data && !cfg.PromotionV2.SkipRecommendations {
 		totalSteps++
 	}
 	if !cfg.PromotionV2.SkipFinance {
@@ -166,10 +166,10 @@ func main() {
 	if !cfg.PromotionV2.SkipCalendar {
 		totalSteps += 3 // list + details + nomenclatures
 	}
-	if !cfg.PromotionV2.SkipBudgets {
+	if hasV1Data && !cfg.PromotionV2.SkipBudgets {
 		totalSteps++
 	}
-	if !cfg.PromotionV2.SkipMinBids {
+	if hasV1Data && !cfg.PromotionV2.SkipMinBids {
 		totalSteps++
 	}
 	if totalSteps == 0 {
@@ -180,7 +180,7 @@ func main() {
 	stepNum := 0
 
 	// Phase 1: Campaign Bids (from AdvertDetails)
-	if !cfg.PromotionV2.SkipBids {
+	if hasV1Data && !cfg.PromotionV2.SkipBids {
 		stepNum++
 		fmt.Printf("[%d/%d] Campaign Bids...\n", stepNum, totalSteps)
 		if err := DownloadCampaignBids(ctx, client, repo, productIDs, rl.Normquery, rl.NormqueryBurst); err != nil {
@@ -189,7 +189,7 @@ func main() {
 	}
 
 	// Phase 2-5: Normquery
-	if !cfg.PromotionV2.SkipNormquery {
+	if hasV1Data && !cfg.PromotionV2.SkipNormquery {
 		stepNum++
 		fmt.Printf("[%d/%d] Normquery Stats...\n", stepNum, totalSteps)
 		if err := DownloadNormqueryStats(ctx, client, repo, productIDs, beginDate, endDate, rl.NormqueryStats, rl.NormqueryStatsBurst); err != nil {
@@ -216,7 +216,7 @@ func main() {
 	}
 
 	// Phase 6: Bid Recommendations
-	if !cfg.PromotionV2.SkipRecommendations {
+	if hasV1Data && !cfg.PromotionV2.SkipRecommendations {
 		stepNum++
 		fmt.Printf("[%d/%d] Bid Recommendations...\n", stepNum, totalSteps)
 		if err := DownloadBidRecommendations(ctx, client, repo, productIDs, rl.BidRec, rl.BidRecBurst); err != nil {
@@ -268,7 +268,7 @@ func main() {
 	}
 
 	// Phase 13: Campaign Budgets
-	if !cfg.PromotionV2.SkipBudgets {
+	if hasV1Data && !cfg.PromotionV2.SkipBudgets {
 		stepNum++
 		fmt.Printf("[%d/%d] Campaign Budgets...\n", stepNum, totalSteps)
 		if err := DownloadCampaignBudgets(ctx, client, repo, productIDs, rl.Finance, rl.FinanceBurst); err != nil {
@@ -277,7 +277,7 @@ func main() {
 	}
 
 	// Phase 14: Minimum Bids
-	if !cfg.PromotionV2.SkipMinBids {
+	if hasV1Data && !cfg.PromotionV2.SkipMinBids {
 		stepNum++
 		fmt.Printf("[%d/%d] Minimum Bids...\n", stepNum, totalSteps)
 		if err := DownloadMinBids(ctx, client, repo, productIDs, rl.MinBids, rl.MinBidsBurst); err != nil {

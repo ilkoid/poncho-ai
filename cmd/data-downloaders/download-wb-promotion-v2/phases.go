@@ -404,6 +404,7 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 	t0 := time.Now()
 	totalNoms := 0
 	total := len(ids)
+	var errCount, emptyCount, done422 int
 
 	for i, promoID := range ids {
 		if ctx.Err() != nil {
@@ -418,12 +419,15 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 				resp, err := client.GetCalendarPromotionNomenclatures(ctx, promoID, inAction, limit, offset, rateLimit, burst)
 				if err != nil {
 					if wb.IsHTTPError(err, 422) {
+						done422++
 						break // promotion completed or not applicable
 					}
+					errCount++
 					fmt.Printf("   Error promo=%d inAction=%v offset=%d: %v\n", promoID, inAction, offset, err)
 					break
 				}
 				if len(resp.Data.Nomenclatures) == 0 {
+					emptyCount++
 					break
 				}
 
@@ -446,7 +450,12 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 		}
 	}
 
-	fmt.Printf("   Done: %d nomenclatures from %d promotions (%s)\n", totalNoms, len(ids), time.Since(t0).Truncate(time.Second))
+	fmt.Printf("   Done: %d noms from %d promos (422=%d, empty=%d, errors=%d) (%s)\n",
+		totalNoms, len(ids), done422, emptyCount, errCount, time.Since(t0).Truncate(time.Second))
+
+	if totalNoms == 0 && (errCount > 0 || len(ids) > 0) {
+		return fmt.Errorf("calendar nomenclatures: 0 results from %d promotions (errors=%d, empty=%d, 422=%d) — check API key and calendar endpoint access", len(ids), errCount, emptyCount, done422)
+	}
 	return nil
 }
 

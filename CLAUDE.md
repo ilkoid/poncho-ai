@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Coverage: `go test ./... -coverprofile=coverage.out`
 - Main TUI: `go run cmd/poncho/main.go`
 - Simple agent: `go run cmd/simple-agent/main.go "show categories"`
+- Full data refresh: `bash download-all.sh [days]` (6 phases, single DB `/var/db/wb-sales.db`)
 - PDF generation: `/tmp/pdf_venv/bin/python reports/database_tables_pdf.py`
 
 ## Architecture
@@ -42,28 +43,37 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 - `pkg/agent/` — Facade: `client.Run(ctx, query)`
 - `pkg/app/` — DI container: `Initialize()` creates all components, wires dependencies
 - `pkg/app/tool_setup.go` — Config-driven tool registration (YAML + switch case)
-- `pkg/wb/` — WB API SDK: pagination, rate limiting, response unwrapping (not just HTTP client)
-- `pkg/storage/sqlite/` — Repository pattern, ~55 tables across 7 `*_schema.go` files
+- `pkg/wb/` — WB API SDK: pagination, rate limiting, response unwrapping, service layer (Sales, Advertising, Feedbacks, Attribution)
+- `pkg/storage/sqlite/` — Repository pattern, ~55 tables across 7 `*_schema.go` files (schema, cards, supply, region_sales, prices, onec, stock_history)
 - `pkg/events/` + `pkg/tui/` — Port & Adapter decoupling (tui implements events interfaces)
 - `pkg/chain/bundle_resolver.go` — Token optimization: 100 tools → 10 bundles (~98% savings)
 - `pkg/prompts/` — Source pattern with fallback: File → Default → API → Database
 - `pkg/analytics/` — HTTP analytics server (KPIs, tables, queries)
-- `pkg/dashboard/` — Dashboard rendering (KPI snippets, tables)
+- `pkg/dashboard/` — Dashboard rendering (KPI snippets, tables, templates)
 - `pkg/progress/` — Progress tracking with ETA
 - `pkg/testing/` — Test utilities (wbmock for WB client mocking)
 
 ### cmd/ Entry Points
 - `cmd/poncho/` — Main TUI agent
 - `cmd/simple-agent/` — Headless agent CLI
-- `cmd/data-downloaders/` — 15 WB API data collectors (sales, funnel, promotion-v2, search-visibility, cards, stocks, etc.)
-- `cmd/data-analyzers/` — 6 analysis utilities (feedbacks, SKU snapshots, price comparison, DB freshness)
+- `cmd/data-downloaders/` — 15 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, cards, prices, stocks, stock-history, region-sales, search-visibility, supplies, 1c-data, all-articles)
+- `cmd/data-analyzers/` — 6 analysis utilities (feedbacks, SKU snapshots, snapshots, price comparison, DB freshness, 1C mapping)
 - `cmd/data-dashboards/` — Web dashboards (sku-analytics)
 - `cmd/test-utils/` — API testing utilities (test-wb-raw, test-wb-search, etc.)
 - `cmd/fix-utilities/` — One-off migration/repair tools
 
+### download-all.sh Phases
+All configs in `cmd/.configs/download-all/`, all data in single DB `/var/db/wb-sales.db`:
+1. **Catalog** — cards, prices, 1C/PIM
+2. **Feedbacks** — feedbacks & questions
+3. **Sales & Revenue** — sales, region-sales
+4. **Stock & Logistics** — stocks, stock-history, supplies
+5. **Advertising** — promotion, promotion-v2
+6. **Analytics** — funnel, funnel-agg, search-visibility (3 req/min shared limit)
+
 ### Extending the Framework
 - New platform (e.g., Ozon): add to `config.yaml` + switch case in `registerTool()`
-- New downloader: copy structure from `cmd/data-downloaders/`, reuse `pkg/config/utility.go` types
+- New downloader: copy structure from `cmd/data-downloaders/`, reuse `pkg/config/utility.go` types, add config to `cmd/.configs/download-all/`
 - New tool: implement `Tool` interface, register in `registerTool()`
 
 ## WB API Swagger Docs
@@ -104,6 +114,7 @@ Recovery cycle: `desired` → 429 triggers backoff → `api floor` (after 5 OKs)
 - API keys are separate: `WB_API_KEY` (content/analytics/ad), `WB_API_FEEDBACK_KEY` (feedbacks), `WB_STAT_API_KEY` (statistics)
 - Seller Analytics v2 (`seller-analytics-api.wildberries.ru`): search-report endpoints, 3 req/min
 - Promotion V2 normquery stats: **10 req/min** (stricter than list/bids/minus at 5/sec)
+- Date columns in `sales` table use `_dt` suffix: `order_dt`, `sale_dt`, `rr_dt` (not `sale_date`)
 
 ## Testing
 - Unit: `mockHTTPClient` for wb.Client internals, `MockClient`/`MockPromotionClient` for downloader logic

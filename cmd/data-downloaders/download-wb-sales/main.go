@@ -25,10 +25,11 @@ import (
 // Config represents the YAML configuration structure.
 // REFACTORED 2026-02-21: Uses pkg/config types instead of local duplicates.
 type Config struct {
-	WB       config.WBClientConfig  `yaml:"wb"`
-	Download config.DownloadConfig  `yaml:"download"`
-	Funnel   config.FunnelConfig    `yaml:"funnel"`
-	Storage  config.StorageConfig   `yaml:"storage"`
+	WB       config.WBClientConfig    `yaml:"wb"`
+	Download config.DownloadConfig    `yaml:"download"`
+	Funnel   config.FunnelConfig      `yaml:"funnel"`
+	Storage  config.StorageConfig     `yaml:"storage"`
+	Filter   config.FunnelFilterConfig `yaml:"filter"`
 }
 
 func main() {
@@ -263,6 +264,7 @@ func main() {
 			RateLimit:          cfg.WB.RateLimit,
 			Burst:              cfg.WB.BurstLimit,
 			SkipServiceRecords: skipService,
+			Filter:             cfg.Filter,
 		}
 
 		// Rewrite: CLI flag overrides config

@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -42,6 +44,7 @@ type DownloadConfig struct {
 	RateLimit          int
 	Burst              int
 	SkipServiceRecords bool
+	Filter             config.FunnelFilterConfig
 }
 
 // DownloadResult holds statistics after download completion.
@@ -196,7 +199,7 @@ func downloadPeriod(ctx context.Context, cfg DownloadConfig, dr DateRange, perio
 			dr.FromRFC3339(),
 			dr.ToRFC3339(),
 			func(rows []wb.RealizationReportRow) error {
-				return saveRows(ctx, cfg.Repo, rows, resume, cfg.SkipServiceRecords, result)
+				return saveRows(ctx, cfg.Repo, rows, resume, cfg.SkipServiceRecords, result, cfg.Filter)
 			},
 		)
 		if err != nil {
@@ -213,7 +216,7 @@ func downloadPeriod(ctx context.Context, cfg DownloadConfig, dr DateRange, perio
 			dr.FromInt(),
 			dr.ToInt(),
 			func(rows []wb.RealizationReportRow) error {
-				return saveRows(ctx, cfg.Repo, rows, resume, cfg.SkipServiceRecords, result)
+				return saveRows(ctx, cfg.Repo, rows, resume, cfg.SkipServiceRecords, result, cfg.Filter)
 			},
 		)
 		if err != nil {
@@ -240,11 +243,26 @@ func downloadPeriod(ctx context.Context, cfg DownloadConfig, dr DateRange, perio
 // Splits records into two tables:
 //   - sales: real sales/returns (nm_id > 0 AND doc_type_name not empty)
 //   - service_records: logistics, deductions, etc. (nm_id = 0 OR empty doc_type_name)
-func saveRows(ctx context.Context, repo *sqlite.SQLiteSalesRepository, rows []wb.RealizationReportRow, resume bool, skipService bool, result *periodResult) error {
+func saveRows(ctx context.Context, repo *sqlite.SQLiteSalesRepository, rows []wb.RealizationReportRow, resume bool, skipService bool, result *periodResult, filter config.FunnelFilterConfig) error {
 	processingStart := time.Now()
 
 	if len(rows) == 0 {
 		return nil
+	}
+
+	// Apply article filter before splitting into sales/service
+	hasFilter := len(filter.ExcludeLengths) > 0 || len(filter.AllowedYears) > 0
+	var filteredCount int
+	if hasFilter {
+		var filtered []wb.RealizationReportRow
+		for _, row := range rows {
+			if shouldFilterArticle(row.SupplierArticle, filter.ExcludeLengths, filter.AllowedYears) {
+				filteredCount++
+				continue
+			}
+			filtered = append(filtered, row)
+		}
+		rows = filtered
 	}
 
 	// Split rows into sales and service records
@@ -271,6 +289,10 @@ func saveRows(ctx context.Context, repo *sqlite.SQLiteSalesRepository, rows []wb
 	} else if len(serviceRows) > 0 {
 		fmt.Printf("  🔧 Разделение: %d строк → %d продаж + %d служебных (из них %d логистика по товарам)\n",
 			len(rows), len(salesRows), len(serviceRows), logisticsWithProduct)
+	}
+
+	if filteredCount > 0 {
+		fmt.Printf("  🔍 Фильтр артикулов: %d пропущено\n", filteredCount)
 	}
 
 	processingDuration := time.Since(processingStart)
@@ -440,4 +462,33 @@ func PrintSummary(result *DownloadResult, repo *sqlite.SQLiteSalesRepository, sk
 	fmt.Println("  - gi_box_type_name = '(пусто)' → возможно FBS")
 	fmt.Println(repeat("=", 71))
 	fmt.Println("🎉 Утилита завершена успешно!")
+}
+
+// shouldFilterArticle returns true if the article should be excluded based on filter criteria.
+// Uses same logic as funnel loader: exclude by length, filter by year digits (chars 2-3).
+func shouldFilterArticle(article string, excludeLengths []int, allowedYears []int) bool {
+	if article == "" {
+		return false
+	}
+
+	for _, l := range excludeLengths {
+		if len(article) == l {
+			return true
+		}
+	}
+
+	if len(allowedYears) > 0 && len(article) >= 3 {
+		yearDigits := article[1:3]
+		year, err := strconv.Atoi(yearDigits)
+		if err == nil {
+			for _, allowed := range allowedYears {
+				if year == allowed {
+					return false
+				}
+			}
+			return true
+		}
+	}
+
+	return false
 }
