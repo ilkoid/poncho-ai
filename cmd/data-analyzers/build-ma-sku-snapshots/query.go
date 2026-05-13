@@ -399,7 +399,7 @@ SELECT sg.barcode,
        SUM(sg.quantity) - SUM(sg.ready_for_sale_quantity) AS incoming
 FROM supply_goods sg
 JOIN supplies s ON s.supply_id = sg.supply_id AND s.preorder_id = sg.preorder_id
-WHERE s.status_id NOT IN (5)
+WHERE s.status_id NOT IN (5) AND s.warehouse_id IS NOT NULL
 GROUP BY sg.barcode, s.warehouse_id
 HAVING incoming > 0
 `
