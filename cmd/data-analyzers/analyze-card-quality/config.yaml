@@ -1,0 +1,7 @@
+# Card Quality Analyzer Configuration
+
+source:
+  db_path: "/var/db/wb-sales.db"
+
+filter:
+  allowed_years: [26]  # год производства из 2-3 цифры артикула. Пусто = все

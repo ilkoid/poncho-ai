@@ -37,7 +37,9 @@ type Characteristic struct {
 	UnitName    string `json:"unitName"`
 	MaxCount    int    `json:"maxCount"`
 	Popular     bool   `json:"popular"`
-	CharcType   int    `json:"charcType"` // 1: string, 4: number? Нужно уточнять в доке, но int безопасен
+	CharcType   int    `json:"charcType"`  // 1: string, 4: number
+	HasFilter   bool   `json:"hasFilter"`  // используется в фильтрах маркетплейса
+	IsVariable  bool   `json:"isVariable"` // вариативная характеристика
 }
 
 type Color struct {
