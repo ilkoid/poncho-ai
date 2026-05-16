@@ -71,22 +71,35 @@ func (m *MockSearchVisibilityClient) mockSearchTexts(body interface{}, result in
 		"платье с рукавами",
 	}
 
-	items := make([]map[string]interface{}, 0, len(mockQueries))
-	for i, q := range mockQueries {
-		items = append(items, map[string]interface{}{
-			"text":         q,
-			"nmId":         211131895 + i,
-			"vendorCode":   fmt.Sprintf("mock%d", i),
-			"brandName":    "MockBrand",
-			"subjectName":  "Платья",
-			"frequency":    map[string]interface{}{"current": 50 + i*10, "dynamics": float64(rand.Intn(30) - 15)},
-			"weekFrequency": 100 + i*20,
-			"avgPosition":  map[string]interface{}{"current": float64(i*5 + 1), "dynamics": float64(rand.Intn(10) - 5)},
-			"medianPosition": map[string]interface{}{"current": float64(i*4 + 1), "dynamics": float64(rand.Intn(10) - 5)},
-			"openCard":     map[string]interface{}{"current": 10 + i*5, "dynamics": float64(rand.Intn(20) - 10), "percentile": 50},
-			"addToCart":    map[string]interface{}{"current": 5 + i*3, "dynamics": float64(rand.Intn(15) - 7), "percentile": 40},
-			"orders":       map[string]interface{}{"current": 2 + i*2, "dynamics": float64(rand.Intn(10) - 5), "percentile": 30},
-		})
+	// Extract nmIDs from request body for realistic batch simulation.
+	var nmIDs []int
+	if bodyMap, ok := body.(map[string]interface{}); ok {
+		if ids, ok := bodyMap["nmIds"].([]int); ok {
+			nmIDs = ids
+		}
+	}
+	if len(nmIDs) == 0 {
+		nmIDs = []int{211131895}
+	}
+
+	items := make([]map[string]interface{}, 0, len(nmIDs)*len(mockQueries))
+	for _, nmID := range nmIDs {
+		for i, q := range mockQueries {
+			items = append(items, map[string]interface{}{
+				"text":          q,
+				"nmId":          nmID,
+				"vendorCode":    fmt.Sprintf("mock%d", nmID%100),
+				"brandName":     "MockBrand",
+				"subjectName":   "Платья",
+				"frequency":     map[string]interface{}{"current": 50 + i*10, "dynamics": float64(rand.Intn(30) - 15)},
+				"weekFrequency": 100 + i*20,
+				"avgPosition":   map[string]interface{}{"current": float64(i*5 + 1), "dynamics": float64(rand.Intn(10) - 5)},
+				"medianPosition": map[string]interface{}{"current": float64(i*4 + 1), "dynamics": float64(rand.Intn(10) - 5)},
+				"openCard":      map[string]interface{}{"current": 10 + i*5, "dynamics": float64(rand.Intn(20) - 10), "percentile": 50},
+				"addToCart":     map[string]interface{}{"current": 5 + i*3, "dynamics": float64(rand.Intn(15) - 7), "percentile": 40},
+				"orders":        map[string]interface{}{"current": 2 + i*2, "dynamics": float64(rand.Intn(10) - 5), "percentile": 30},
+			})
+		}
 	}
 
 	resp := map[string]interface{}{

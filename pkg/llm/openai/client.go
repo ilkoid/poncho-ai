@@ -538,6 +538,30 @@ func mapToOpenAI(m llm.Message) openaisdk.ChatCompletionMessage {
 		Role: string(m.Role),
 	}
 
+	// Tool response: должен содержать ToolCallID
+	if m.Role == llm.RoleTool {
+		msg.Content = m.Content
+		msg.ToolCallID = m.ToolCallID
+		return msg
+	}
+
+	// Assistant с tool calls
+	if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
+		msg.Content = m.Content
+		msg.ToolCalls = make([]openaisdk.ToolCall, len(m.ToolCalls))
+		for i, tc := range m.ToolCalls {
+			msg.ToolCalls[i] = openaisdk.ToolCall{
+				ID:   tc.ID,
+				Type: "function",
+				Function: openaisdk.FunctionCall{
+					Name:      tc.Name,
+					Arguments: tc.Args,
+				},
+			}
+		}
+		return msg
+	}
+
 	// Если картинок нет, отправляем просто текст
 	if len(m.Images) == 0 {
 		msg.Content = m.Content
@@ -556,7 +580,7 @@ func mapToOpenAI(m llm.Message) openaisdk.ChatCompletionMessage {
 		parts = append(parts, openaisdk.ChatMessagePart{
 			Type: openaisdk.ChatMessagePartTypeImageURL,
 			ImageURL: &openaisdk.ChatMessageImageURL{
-				URL:    imgURL, // Ожидается base64 data-uri или http ссылка
+				URL:    imgURL,
 				Detail: openaisdk.ImageURLDetailAuto,
 			},
 		})

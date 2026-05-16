@@ -141,3 +141,8 @@ Mapping: `onec_prices(good_guid) → onec_goods(guid) → article → cards.vend
 
 ## Compact Instructions
 When compacting, preserve: goal, changed files, failing command, current hypothesis, test results, next exact command.
+
+## SQLite database placement
+production bases, **read-only**: /var/db
+- wwb-sales.db - major data-lake based on wb api data
+- sku-analytics - major analytics database with calculations and data insights

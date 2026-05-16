@@ -5,7 +5,7 @@ wb:
   timeout: "120s"
 
 search_visibility:
-  db_path: "sales.db"
+  db_path: "/var/db/wb-sales.db"
   days: 7
   limit: 30              # Max search queries per product (30 default, 100 Advanced)
   skip_positions: false

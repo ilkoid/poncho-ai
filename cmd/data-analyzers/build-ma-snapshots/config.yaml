@@ -11,12 +11,12 @@
 
 source:
   # Source database with all raw data (WB + 1C tables)
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/wb-sales.db"
+  db_path: "/var/db/wb-sales.db"
 
 results:
   # BI knowledge database
 #  db_path: "/mnt/d/db/bi2.db"
-  db_path: "/home/ilkoid/go-workspace/src/poncho-ai/db/bi2.db"
+  db_path: "/mnt/d/db/bi2.db"
 
 ma:
   windows: [3, 7, 14, 28]

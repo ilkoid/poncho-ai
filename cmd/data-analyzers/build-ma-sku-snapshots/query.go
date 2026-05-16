@@ -434,12 +434,15 @@ WHERE metric_date = (SELECT MAX(metric_date) FROM funnel_metrics_daily)
   AND nm_id IN (%s)
 `
 
-// Search visibility (placeholder — table may be empty).
+// Search visibility (aggregated from per-query data in search_queries_daily).
 const searchVisibilitySQL = `
-SELECT nm_id, avg_position, visibility
-FROM search_positions_daily
+SELECT nm_id,
+       AVG(avg_position) as avg_position,
+       AVG(visibility)   as visibility
+FROM search_queries_daily
 WHERE snapshot_date = ?
   AND nm_id IN (%s)
+GROUP BY nm_id
 `
 
 // Warehouse addresses for FO mapping from wb_warehouses.

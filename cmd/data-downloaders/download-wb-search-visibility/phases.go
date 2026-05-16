@@ -12,6 +12,8 @@ import (
 
 const batchSize = 100
 
+const queryBatchSize = 50 // maxItems for /search-texts nmIds (swagger)
+
 // SearchVisibilityClient is the interface for search visibility API operations.
 type SearchVisibilityClient interface {
 	Post(ctx context.Context, toolID, endpoint string, rateLimit, burst int,
@@ -103,16 +105,24 @@ func DownloadSearchQueries(
 ) error {
 	var allRows []sqlite.SearchQueryRow
 	startTime := time.Now()
+	totalBatches := (len(nmIDs) + queryBatchSize - 1) / queryBatchSize
 
-	for i, nmID := range nmIDs {
+	for i := 0; i < len(nmIDs); i += queryBatchSize {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		prog := formatProgress(i, len(nmIDs), 1, startTime)
+		end := i + queryBatchSize
+		if end > len(nmIDs) {
+			end = len(nmIDs)
+		}
+		batch := nmIDs[i:end]
+
+		batchNum := i/queryBatchSize + 1
+		prog := formatProgress(batchNum-1, totalBatches, 1, startTime)
 
 		reqBody := map[string]interface{}{
-			"nmIds": []int{nmID},
+			"nmIds": batch,
 			"currentPeriod": map[string]string{
 				"start": beginDate,
 				"end":   endDate,
@@ -134,7 +144,7 @@ func DownloadSearchQueries(
 		err := client.Post(ctx, "search_texts", "https://seller-analytics-api.wildberries.ru",
 			rateLimit, burst, "/api/v2/search-report/product/search-texts", reqBody, &response)
 		if err != nil {
-			log.Printf("Warning: search-texts nm_id=%d failed: %v", nmID, err)
+			log.Printf("Warning: search-texts batch %d-%d failed: %v", i, end, err)
 			continue
 		}
 
@@ -164,9 +174,7 @@ func DownloadSearchQueries(
 			})
 		}
 
-		if i%50 == 0 {
-			fmt.Printf("  Queries: %s — %d total rows\n", prog, len(allRows))
-		}
+		fmt.Printf("  Queries: %s — %d total rows\n", prog, len(allRows))
 	}
 
 	if len(allRows) > 0 {

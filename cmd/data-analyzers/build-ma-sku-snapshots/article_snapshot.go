@@ -48,7 +48,7 @@ type ArticleRow struct {
 	BuyoutCount     int
 	ConversionBuyout *float64
 
-	// Visibility (from search_positions_daily — empty for now)
+	// Visibility (aggregated from search_queries_daily)
 	AvgPosition *float64
 	Visibility  *float64
 
