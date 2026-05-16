@@ -32,6 +32,10 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 	// Логируем статистику фильтрации
 	filterDesc := describeFilter(cfg.Filter, totalInDB, len(cards))
 	log.Printf("  Filter: %s", filterDesc)
+	if cfg.Filter.InStock {
+		sd := source.LoadLatestStockDate(ctx)
+		log.Printf("  In-stock: snapshot date %s", sd)
+	}
 
 	afterLimit := len(cards)
 	if cfg.Analysis.Limit > 0 && len(cards) > cfg.Analysis.Limit {
@@ -112,7 +116,7 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 
 			start := time.Now()
 			chars := charsMap[c.NmID]
-			hasDisc, summary, err := analyzeCardText(ctx, provider, c, chars, cfg.Text)
+			hasDisc, summary, err := analyzeCardText(ctx, provider, c, chars, cfg.Text, cfg.Prompts)
 			dur := time.Since(start)
 
 			if err != nil {
@@ -172,10 +176,10 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 }
 
 // analyzeCardText отправляет карточку в LLM и парсит результат.
-func analyzeCardText(ctx context.Context, provider llm.Provider, card CardData, chars []CardChar, modelCfg ModelConfig) (bool, string, error) {
-	messages := buildTextAnalysisMessages(card.Title, card.Description, chars)
+func analyzeCardText(ctx context.Context, provider llm.Provider, card CardData, chars []CardChar, modelCfg ModelConfig, prompts PromptConfig) (bool, string, error) {
+	messages := buildTextAnalysisMessages(card.Title, card.Description, chars, prompts)
 
-	resp, err := provider.Generate(ctx, messages,
+	resp, err := generateWithRetry(ctx, provider, messages,
 		llm.WithModel(modelCfg.Model),
 		llm.WithTemperature(modelCfg.Temperature),
 		llm.WithMaxTokens(modelCfg.MaxTokens),
@@ -257,6 +261,16 @@ func createVisionProvider(cfg CLIConfig) (llm.Provider, error) {
 		return nil, fmt.Errorf("failed to create Vision provider (check base_url in config)")
 	}
 	return client, nil
+}
+
+func generateWithRetry(ctx context.Context, provider llm.Provider, messages []llm.Message, opts ...any) (llm.Message, error) {
+	var resp llm.Message
+	err := retryWithBackoff(ctx, 3, func() error {
+		var err error
+		resp, err = provider.Generate(ctx, messages, opts...)
+		return err
+	})
+	return resp, err
 }
 
 func retryWithBackoff(ctx context.Context, maxRetries int, fn func() error) error {

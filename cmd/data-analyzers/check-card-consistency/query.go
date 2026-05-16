@@ -96,9 +96,13 @@ func (r *SourceRepo) LoadCardsForAnalysis(ctx context.Context, filter FilterConf
 		args = append(args, filter.Subject)
 	}
 
-	if filter.SubjectID > 0 {
-		where = append(where, "c.subject_id = ?")
-		args = append(args, filter.SubjectID)
+	if len(filter.SubjectIDs) > 0 {
+		ph := make([]string, len(filter.SubjectIDs))
+		for i, id := range filter.SubjectIDs {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		where = append(where, "c.subject_id IN ("+strings.Join(ph, ",")+")")
 	}
 
 	// Исключаем vendor_code указанных длин (5=мусор, 6=устаревшие)
@@ -106,6 +110,17 @@ func (r *SourceRepo) LoadCardsForAnalysis(ctx context.Context, filter FilterConf
 		for _, l := range filter.ExcludeLengths {
 			where = append(where, fmt.Sprintf("LENGTH(c.vendor_code) != %d", l))
 		}
+	}
+
+	// Фильтр по остаткам: только товары в наличии
+	if filter.InStock {
+		where = append(where, `c.nm_id IN (
+			SELECT nm_id
+			FROM stocks_daily_warehouses
+			WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM stocks_daily_warehouses)
+			GROUP BY nm_id
+			HAVING SUM(quantity) > 0
+		)`)
 	}
 
 	whereClause := ""
@@ -234,6 +249,13 @@ func (r *SourceRepo) loadYearEntries(ctx context.Context) []config.YearEntry {
 		entries = append(entries, e)
 	}
 	return entries
+}
+
+// LoadLatestStockDate возвращает последнюю дату снапшота остатков.
+func (r *SourceRepo) LoadLatestStockDate(ctx context.Context) string {
+	var date string
+	r.db.QueryRowContext(ctx, "SELECT MAX(snapshot_date) FROM stocks_daily_warehouses").Scan(&date)
+	return date
 }
 
 // LoadAllSubjects загружает все уникальные предметы WB из source DB.

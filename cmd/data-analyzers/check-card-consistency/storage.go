@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/xuri/excelize/v2"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -454,4 +456,150 @@ func (r *ResultsRepo) Stats(ctx context.Context) (total, textChecked, textDiscre
 		       SUM(CASE WHEN wb_updated = 1 THEN 1 ELSE 0 END)
 		FROM card_analysis`).Scan(&total, &textChecked, &textDiscrepancy, &visionChecked, &visionDiscrepancy, &generated, &wbUpdated)
 	return
+}
+
+// charcEntry — элемент JSON из new_characteristics.
+type charcEntry struct {
+	CharcID int    `json:"charc_id"`
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+}
+
+// formatCharacteristicsJSON превращает JSON характеристик в читаемую строку.
+func formatCharacteristicsJSON(jsonStr string) string {
+	if jsonStr == "" {
+		return ""
+	}
+	var chars []charcEntry
+	if err := json.Unmarshal([]byte(jsonStr), &chars); err != nil {
+		return jsonStr
+	}
+	var parts []string
+	for _, c := range chars {
+		parts = append(parts, c.Name+": "+c.Value)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// ExportXLSX выгружает card_analysis в XLSX файл.
+func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string) (int, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT nm_id, vendor_code, title, subject_name,
+		       text_done, text_has_discrepancy, text_summary,
+		       vision_done, vision_product_type, vision_has_discrepancy, vision_summary,
+		       generate_done, new_title, new_description, new_characteristics,
+		       wb_updated
+		FROM card_analysis
+		ORDER BY nm_id`)
+	if err != nil {
+		return 0, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	f := excelize.NewFile()
+	sheet := "Card Analysis"
+	f.SetSheetName("Sheet1", sheet)
+
+	headers := []string{
+		"nm_id", "vendor_code", "subject",
+		"title (было)", "title (новое)",
+		"description (новое)",
+		"характеристики (новые)",
+		"text: расхождение", "text: описание",
+		"vision: тип изделия", "vision: расхождение", "vision: описание",
+		"text done", "vision done", "generate done", "wb updated",
+	}
+
+	headerStyle, _ := f.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Bold: true},
+		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"#E0E0E0"}},
+		Alignment: &excelize.Alignment{Horizontal: "center", WrapText: true},
+	})
+
+	discStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Color: "#CC0000", Bold: true},
+		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"#FFE0E0"}},
+	})
+
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheet, cell, h)
+		f.SetCellStyle(sheet, cell, cell, headerStyle)
+	}
+
+	rowNum := 2
+	for rows.Next() {
+		var (
+			nmID                            int
+			vendorCode, title, subjectName  string
+			textDone                        int
+			textDiscNull                    sql.NullInt64
+			textSummary                     string
+			visionDone                      int
+			visionProductType               string
+			visionDiscNull                  sql.NullInt64
+			visionSummary                   string
+			generateDone                    int
+			newTitle, newDesc, newChars     string
+			wbUpdated                       int
+		)
+		if err := rows.Scan(&nmID, &vendorCode, &title, &subjectName,
+			&textDone, &textDiscNull, &textSummary,
+			&visionDone, &visionProductType, &visionDiscNull, &visionSummary,
+			&generateDone, &newTitle, &newDesc, &newChars,
+			&wbUpdated); err != nil {
+			return rowNum - 2, fmt.Errorf("scan row: %w", err)
+		}
+
+		textDisc := 0
+		if textDiscNull.Valid {
+			textDisc = int(textDiscNull.Int64)
+		}
+		visionDisc := 0
+		if visionDiscNull.Valid {
+			visionDisc = int(visionDiscNull.Int64)
+		}
+		textDiscStr := boolStr(textDisc)
+		visionDiscStr := boolStr(visionDisc)
+
+		vals := []interface{}{
+			nmID, vendorCode, subjectName,
+			title, newTitle,
+			newDesc,
+			formatCharacteristicsJSON(newChars),
+			textDiscStr, textSummary,
+			visionProductType, visionDiscStr, visionSummary,
+			textDone, visionDone, generateDone, wbUpdated,
+		}
+
+		for i, v := range vals {
+			cell, _ := excelize.CoordinatesToCellName(i+1, rowNum)
+			f.SetCellValue(sheet, cell, v)
+			if (i == 7 && textDiscStr == "Да") || (i == 10 && visionDiscStr == "Да") {
+				f.SetCellStyle(sheet, cell, cell, discStyle)
+			}
+		}
+		rowNum++
+	}
+
+	for i := range headers {
+		col, _ := excelize.ColumnNumberToName(i + 1)
+		f.SetColWidth(sheet, col, col, 18)
+	}
+	for _, i := range []int{3, 4, 5, 6, 8, 11} {
+		col, _ := excelize.ColumnNumberToName(i + 1)
+		f.SetColWidth(sheet, col, col, 40)
+	}
+
+	if err := f.SaveAs(path); err != nil {
+		return 0, fmt.Errorf("save xlsx: %w", err)
+	}
+	return rowNum - 2, nil
+}
+
+func boolStr(v int) string {
+	if v == 1 {
+		return "Да"
+	}
+	return "Нет"
 }

@@ -25,6 +25,26 @@ type CLIConfig struct {
 	CharDict CharDictConfig `yaml:"char_dict"`
 	Filter   FilterConfig   `yaml:"filter"`
 	Analysis AnalysisConfig `yaml:"analysis"`
+	Prompts  PromptConfig   `yaml:"prompts"`
+}
+
+// AudienceRule — правила генерации title/description для конкретной аудитории.
+type AudienceRule struct {
+	TitleRules string `yaml:"title_rules"`
+	DescRules  string `yaml:"desc_rules"`
+	SEOContext  string `yaml:"seo_context"`
+}
+
+type PromptConfig struct {
+	Stage1System     string                   `yaml:"stage1_system"`
+	Stage1User       string                   `yaml:"stage1_user"`
+	Stage3System     string                   `yaml:"stage3_system"`
+	Stage3User       string                   `yaml:"stage3_user"`
+	Stage4SelectSys  string                   `yaml:"stage4_select_system"`
+	Stage4SelectUser string                   `yaml:"stage4_select_user"`
+	Stage4FillSys    string                   `yaml:"stage4_fill_system"`
+	Stage4FillUser   string                   `yaml:"stage4_fill_user"`
+	AudienceRules    map[string]AudienceRule  `yaml:"audience_rules"`
 }
 
 type LLMConfig struct {
@@ -58,10 +78,11 @@ type CharDictConfig struct {
 }
 
 type FilterConfig struct {
+	InStock        bool     `yaml:"in_stock"`          // только товары в наличии
 	AllowedYears   []int    `yaml:"allowed_years"`
 	Season         string   `yaml:"season"`
 	Subject        string   `yaml:"subject"`
-	SubjectID      int      `yaml:"subject_id"`
+	SubjectIDs     []int    `yaml:"subject_ids"`
 	VendorCodes    []string `yaml:"vendor_codes"`    // артикулы продавца (8 симв, напр. "12623034")
 	NmIDs          []int    `yaml:"nm_ids"`           // артикулы WB (число, напр. 739959074)
 	ExcludeLengths []int    `yaml:"exclude_lengths"`
@@ -106,6 +127,7 @@ func main() {
 	mock := flag.Bool("mock", false, "Stage 5: mock mode (no real WB API call)")
 	yes := flag.Bool("yes", false, "Stage 5: confirm real WB update")
 	listSubjects := flag.String("list-subjects", "", "List WB subjects (empty=all, or search query)")
+	exportPath := flag.String("export", "", "Export card_analysis to XLSX file and exit")
 	flag.Parse()
 
 	// Load config
@@ -149,6 +171,22 @@ func main() {
 	// --list-subjects: вывести предметы WB и выйти
 	if *listSubjects != "" {
 		printSubjects(ctx, source, *listSubjects)
+		return
+	}
+
+	// --export: выгрузить card_analysis в XLSX и выйти
+	if *exportPath != "" {
+		results, err := NewResultsRepo(cfg.Results.DBPath)
+		if err != nil {
+			log.Fatalf("Open results: %v", err)
+		}
+		defer results.Close()
+
+		n, err := results.ExportXLSX(ctx, *exportPath)
+		if err != nil {
+			log.Fatalf("Export: %v", err)
+		}
+		log.Printf("Exported %d rows to %s", n, *exportPath)
 		return
 	}
 

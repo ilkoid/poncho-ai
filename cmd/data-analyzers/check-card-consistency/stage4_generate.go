@@ -147,7 +147,7 @@ func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 
 			start := time.Now()
 			newTitle, newDesc, newChars, subjectName, subjectID, err := generateNewParams(
-				ctx, provider, charDict, allSubjects, subjectSet, r, chars, card, cfg.Text, brand)
+				ctx, provider, charDict, allSubjects, subjectSet, r, chars, card, cfg, brand)
 			dur := time.Since(start)
 
 			if err != nil {
@@ -205,11 +205,11 @@ func generateNewParams(
 	row VisionAnalysisRow,
 	chars []CardChar,
 	card CardData,
-	modelCfg ModelConfig,
+	cfg CLIConfig,
 	brand string,
 ) (string, string, []any, string, int, error) {
 	// Шаг 2: LLM выбирает предмет из списка всех предметов WB
-	subjectID, subjectName, err := selectSubject(ctx, provider, allSubjects, row, card, modelCfg)
+	subjectID, subjectName, err := selectSubject(ctx, provider, allSubjects, row, card, cfg.Text, cfg.Prompts)
 	if err != nil {
 		return "", "", nil, "", 0, fmt.Errorf("select subject: %w", err)
 	}
@@ -236,7 +236,7 @@ func generateNewParams(
 	}
 
 	// Шаг 4: LLM заполняет параметры на основе Vision + загруженных характеристик
-	return fillCardParams(ctx, provider, row, chars, subjectID, subjectName, charEntries, modelCfg, brand)
+	return fillCardParams(ctx, provider, row, chars, subjectID, subjectName, charEntries, cfg.Text, brand, cfg.Prompts)
 }
 
 // selectSubject — шаг 2: LLM выбирает подходящий предмет из списка.
@@ -247,34 +247,13 @@ func selectSubject(
 	row VisionAnalysisRow,
 	card CardData,
 	modelCfg ModelConfig,
+	prompts PromptConfig,
 ) (int, string, error) {
 	subjectsJSON, _ := json.Marshal(allSubjects)
 
-	system := `Ты — специалист по классификации товаров Wildberries.
-	На основе Vision анализа (фото) определи подходящий предмет WB из списка.
-	Ответь ТОЛЬКО JSON, без markdown, без пояснений:
-	{"subject_id": <число>, "subject_name": "<название>"}
+	system, user := buildStage4SelectMessages(card, row, string(subjectsJSON), prompts)
 
-	Правила:
-	1. Выбери предмет который лучше всего описывает ТИП ИЗДЕЛИЯ с фото (Vision тип изделия).
-	2. Игнорируй текущий предмет карточки — опирайся только на Vision.
-	3. Выбери ТОЧНО предмет из списка — не придумывай новые.
-	4. Ответь ТОЛЬКО на русском языке. Никакого английского или китайского.`
-
-	user := fmt.Sprintf(`Текущий предмет карточки: %s (subject_id=%d) — МОЖЕТ БЫТЬ НЕВЕРНЫМ
-
-	VISION АНАЛИЗ (ФОТО — истина):
-	Тип изделия: %s
-	Атрибуты: %s
-	Замечания: %s
-
-	СПИСОК ВСЕХ ПРЕДМЕТОВ WB:
-	%s`,
-		card.SubjectName, card.SubjectID,
-		row.VisionProductType, row.VisionAttributes, row.VisionSummary,
-		string(subjectsJSON))
-
-	resp, err := provider.Generate(ctx,
+	resp, err := generateWithRetry(ctx, provider,
 		[]llm.Message{
 			{Role: llm.RoleSystem, Content: system},
 			{Role: llm.RoleUser, Content: user},
@@ -311,6 +290,7 @@ func fillCardParams(
 	charEntries []CharEntry,
 	modelCfg ModelConfig,
 	brand string,
+	prompts PromptConfig,
 ) (string, string, []any, string, int, error) {
 	// Формируем список доступных характеристик с charcID
 	type charDef struct {
@@ -328,64 +308,14 @@ func fillCardParams(
 	// Парсим аудиторию и пол из Vision attributes
 	audience, gender := parseAudienceFromVision(row.NmID, row.VisionAttributes)
 
-	titleRules, descRules, seoContext := audiencePromptRules(audience, gender, brand)
+	titleRules, descRules, seoContext := audiencePromptRules(audience, gender, brand, prompts)
 
-	system := fmt.Sprintf(`Ты — контент-менеджер бренда %s на Wildberries. Заполни параметры карточки на основе Vision анализа (фото — истина).
+	system, user := buildStage4FillMessages(
+		row, chars, subjectID, subjectName, string(defsJSON),
+		brand, audience, titleRules, descRules, seoContext, prompts,
+	)
 
-	Предмет WB: %s (subject_id=%d)
-	Целевая аудитория: %s
-
-	ПРАВИЛА ДЛЯ НАЗВАНИЯ (title, максимум 80 символов):
-	Краткое и точное описание товара — 3-4 ключевых слова максимум.
-	Структура: [тип изделия] [ключевое свойство] %s [назначение].
-	%s
-	- Тип изделия: "платье", "костюм", "брюки", "футболка" и т.д.
-	- Одно ключевое свойство: цвет, принт или ткань
-	- Назначение если уместно: "для школы", "нарядное"
-	- Бренд %s
-	НЕ перечисляй все свойства — выбери главное.
-
-	ПРАВИЛА ДЛЯ ОПИСАНИЯ (description, максимум 500 символов):
-	Тон — уверенный, лаконичный, про качество и стиль. Без восклицательных знаков.
-	Без "вау", "must-have", "идеальный", "невероятный", "тот самый". Без marketing-клише.
-	%s
-	Длина 3-5 предложений, максимум 500 символов.
-
-	ОБЩИЕ ПРАВИЛА:
-	1. Используй ТОЛЬКО charcID из списка ниже. Не придумывай ID.
-	2. Заполни обязательные и релевантные необязательные характеристики.
-	3. НЕ заполняй: Описание, SKU, Бренд, Артикул, Рос. размер, Размер, Вес товара, упаковка, Код упаковки, ИКПУ, Артикул OZON, NTIN, Код ТРУ, Рост модели, Размер на модели, Параметры модели, ТНВЭД, Утеплитель.
-	4. Цвет кратко: "зелёный/синий/оранжевый".
-	5. ВСЕ тексты — ТОЛЬКО на русском. Никакого английского или китайского.
-	6. Ответь ТОЛЬКО JSON, без markdown.
-	7. Сезон бери ТОЛЬКО из Vision атрибутов — не придумывай.
-	8. ОБЯЗАТЕЛЬНО сохрани из текущих характеристик: авторов принтов, названия серий, лицензионных персонажей (поле "Любимые герои", "Рисунок") — это точные данные, которые Vision не может определить по фото. Если указан автор (например Кандинский), обязательно перенеси его.
-
-	Формат: {"title": "...", "description": "...", "characteristics": [{"charc_id": <число>, "value": "..."}]}`,
-		brand, subjectName, subjectID, audience, brand, titleRules, brand, descRules)
-
-	charText := formatCharacteristics(chars)
-
-	user := fmt.Sprintf(`Артикул: %s (nm_id=%d)
-
-	ТЕКУЩИЕ ХАРАКТЕРИСТИКИ (справочно, МОГУТ СОДЕРЖАТЬ ОШИБКИ — не копируй вслепую, используй только как подсказку для сертификатов, состава, коллекции):
-	%s
-
-	VISION АНАЛИЗ (ФОТО — единственный источник истины):
-	Тип изделия: %s
-	Атрибуты: %s
-	Замечания: %s
-	Аудитория: %s
-
-	ДОПУСТИМЫЕ ХАРАКТЕРИСТИКИ ПРЕДМЕТА "%s" (subject_id=%d):
-	%s`,
-		row.VendorCode, row.NmID,
-		charText,
-		row.VisionProductType, row.VisionAttributes, row.VisionSummary,
-		seoContext,
-		subjectName, subjectID, string(defsJSON))
-
-	resp, err := provider.Generate(ctx,
+	resp, err := generateWithRetry(ctx, provider,
 		[]llm.Message{
 			{Role: llm.RoleSystem, Content: system},
 			{Role: llm.RoleUser, Content: user},
@@ -471,91 +401,37 @@ func parseAudienceFromVision(nmID int, attrsJSON string) (audience, gender strin
 }
 
 // audiencePromptRules возвращает правила для title/description в зависимости от аудитории.
-func audiencePromptRules(audience, gender, brand string) (titleRules, descRules, seoContext string) {
-	a := strings.ToLower(audience)
+// Сначала ищет в конфиге (prompts.AudienceRules), затем fallback на дефолты.
+func audiencePromptRules(audience, gender, brand string, prompts PromptConfig) (titleRules, descRules, seoContext string) {
+	rules := resolveAudienceRules(prompts.AudienceRules)
 
+	// Определяем ключ для поиска правил на основе fuzzy matching
+	a := strings.ToLower(audience)
+	var key string
 	switch {
 	case strings.Contains(a, "взрослая женщина") || strings.Contains(a, "женщин"):
-		titleRules = fmt.Sprintf(`- Сезон из Vision (летнее, демисезонное, зимнее). НЕ придумывай "круглогодичное".
-		- "для женщин", "женская"
-		Пример: "Летние сабо женские %s — эко-замша"`, brand)
-		descRules = fmt.Sprintf(`- Пиши лаконично и стильно — женщина выбирает сама.
-		- Первое предложение — про стиль и назначение вещи.
-		- Упомяни бренд %s.
-		- Опиши сценарий: куда носить, с чем сочетать. Женщина ценит универсальность.
-		- Упомяни уход: стирка, не мнётся, принт не выцветает.
-		- НЕ перечисляй отсутствие чего-либо — только позитивные свойства.
-		- Включи 2-3 SEO-фразы (женская, базовая, летняя, повседневная).`, brand)
-		seoContext = "женская одежда, аудитория — взрослая женщина"
-		return
-
+		key = "взрослая женщина"
 	case strings.Contains(a, "взрослый мужч") || strings.Contains(a, "мужчин"):
-		titleRules = fmt.Sprintf(`- Сезон из Vision (летнее, демисезонное, зимнее). НЕ придумывай "круглогодичное".
-		- "мужская", "для мужчин"
-		Пример: "Летняя мужская футболка %s — хлопок, свободный крой"`, brand)
-		descRules = fmt.Sprintf(`- Пиши прямо и по делу — мужчина ценит комфорт и функциональность.
-		- Первое предложение — про комфорт: "лёгкая, удобная".
-		- Упомяни бренд %s.
-		- Опиши сценарий: "для тренировки", "на дачу", "каждый день".
-		- Упомяни уход: стирка, не мнётся, не садится.
-		- Включи 2-3 SEO-фразы (мужская, спортивная, базовая).`, brand)
-		seoContext = "мужская одежда, аудитория — взрослый мужчина"
-		return
-
+		key = "взрослый мужчина"
 	case strings.Contains(a, "подросток") && (strings.Contains(a, "девочк") || gender == "женский"):
-		titleRules = fmt.Sprintf(`- Сезон из Vision (летнее, демисезонное, зимнее). НЕ придумывай "круглогодичное".
-		- "подростковая", "для девочки-подростка"
-		Пример: "Подростковая футболка для девочки %s — оверсайз, с принтом"`, brand)
-		descRules = fmt.Sprintf(`- Пиши для мамы, но с оглядкой на подростка — она покупает, но дочь решает.
-		- Первое предложение — стиль и тренд.
-		- Упомяни бренд %s.
-		- Опиши сценарий: "в школу", "на встречу с друзьями". Подросток ценит самовыражение.
-		- Упомяни уход: стирка, не мнётся, принт не выцветает.
-		- Включи 2-3 SEO-фразы (подростковая, для девочки, школьная).`, brand)
-		seoContext = "подростковая одежда для девочки 11-16 лет"
-		return
-
+		key = "девочка-подросток (11-16)"
 	case strings.Contains(a, "подросток") && strings.Contains(a, "мальчик"):
-		titleRules = fmt.Sprintf(`- Сезон из Vision (летнее, демисезонное, зимнее). НЕ придумывай "круглогодичное".
-		- "подростковая", "для мальчика-подростка"
-		Пример: "Подростковый костюм для мальчика %s — толстовка и джоггеры"`, brand)
-		descRules = fmt.Sprintf(`- Пиши для мамы, но с оглядкой на подростка — она покупает, но сын решает.
-		- Первое предложение — комфорт и стиль.
-		- Упомяни бренд %s.
-		- Опиши сценарий: "в школу", "на тренировку". Подросток-мальчик ценит, когда вещь не "детская".
-		- Упомяни уход: стирка, не мнётся, принт не выцветает.
-		- Включи 2-3 SEO-фразы (подростковая, для мальчика, спортивная).`, brand)
-		seoContext = "подростковая одежда для мальчика 11-16 лет"
-		return
-
+		key = "мальчик-подросток (11-16)"
 	case strings.Contains(a, "малыш"):
-		titleRules = fmt.Sprintf(`- Сезон из Vision (летнее, демисезонное, зимнее). НЕ придумывай "круглогодичное".
-		- "для малышки", "малышковая"
-		Пример: "Малышковое платье для девочки %s — хлопок, с принтом"`, brand)
-		descRules = fmt.Sprintf(`- Пиши для мамы — ей важны мягкость и комфорт.
-		- Первое предложение — про комфорт и материал.
-		- Упомяни бренд %s.
-		- Опиши сценарий: "для прогулки", "в садик".
-		- Упомяни уход: стирка, гипоаллергенно, не линяет.
-		- Включи 2-3 SEO-фразы (малышковая, для малышки, детская).`, brand)
-		seoContext = "малышковая одежда (2-5 лет)"
-		return
-
+		key = "малыш"
 	default:
-		// Девочка/мальчик 6-10 — default
-		titleRules = fmt.Sprintf(`- Сезон из Vision (летнее, демисезонное, зимнее). НЕ придумывай "круглогодичное".
-		- Кому: "для девочки", "для мальчика"
-		Пример: "Летнее платье для девочки %s — джерси с принтом"`, brand)
-		descRules = fmt.Sprintf(`- Пиши для мамы — лаконично, про качество и стиль.
-		- Первое предложение — про назначение и материал.
-		- Упомяни бренд %s.
-		- Опиши сценарий: "в школу", "на прогулку", "на праздник".
-		- Упомяни уход: стирка, не мнётся, принт не выцветает.
-		- НЕ перечисляй отсутствие чего-либо — только позитивные свойства.
-		- Включи 2-3 SEO-фразы (детское, нарядное, школьное).`, brand)
-		seoContext = "детская одежда (6-10 лет)"
-		return
+		key = "по умолчанию"
 	}
+
+	rule, ok := rules[key]
+	if !ok {
+		rule = rules["по умолчанию"]
+	}
+
+	titleRules = applyTemplate(rule.TitleRules, "{brand}", brand)
+	descRules = applyTemplate(rule.DescRules, "{brand}", brand)
+	seoContext = rule.SEOContext
+	return
 }
 
 // loadCardsMap загружает map nm_id → CardData для получения subject_id.

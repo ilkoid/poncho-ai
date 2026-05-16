@@ -98,7 +98,7 @@ func runStage3(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 			photoURLs := photosMap[nmID]
 
 			start := time.Now()
-			productType, attrs, summary, hasDisc, err := analyzeCardVision(ctx, provider, card, chars, photoURLs, cfg.Vision.ModelConfig)
+			productType, attrs, summary, hasDisc, err := analyzeCardVision(ctx, provider, card, chars, photoURLs, cfg.Vision.ModelConfig, cfg.Prompts)
 			dur := time.Since(start)
 
 			if err != nil {
@@ -160,10 +160,10 @@ func runStage3(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 }
 
 // analyzeCardVision отправляет карточку с фото в Vision модель.
-func analyzeCardVision(ctx context.Context, provider llm.Provider, card CardData, chars []CardChar, photoURLs []string, modelCfg ModelConfig) (string, map[string]string, string, bool, error) {
-	messages := buildVisionMessages(card.Title, card.Description, chars, photoURLs)
+func analyzeCardVision(ctx context.Context, provider llm.Provider, card CardData, chars []CardChar, photoURLs []string, modelCfg ModelConfig, prompts PromptConfig) (string, map[string]string, string, bool, error) {
+	messages := buildVisionMessages(card.Title, card.Description, chars, photoURLs, prompts)
 
-	resp, err := provider.Generate(ctx, messages,
+	resp, err := generateWithRetry(ctx, provider, messages,
 		llm.WithModel(modelCfg.Model),
 		llm.WithTemperature(modelCfg.Temperature),
 		llm.WithMaxTokens(modelCfg.MaxTokens),
