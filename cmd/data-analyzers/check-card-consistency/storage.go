@@ -624,6 +624,7 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 					AutoFit:             true,
 					AutoFitIgnoreAspect: true,
 					Hyperlink:           fmt.Sprintf("https://www.wildberries.ru/catalog/%d/detail.aspx", d.NmID),
+					HyperlinkType:       "External",
 				},
 			}); err != nil {
 				fmt.Printf("WARN: embed photo nm_id=%d: %v\n", d.NmID, err)
