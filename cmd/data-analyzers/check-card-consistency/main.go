@@ -1,15 +1,23 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
 )
@@ -182,7 +190,16 @@ func main() {
 		}
 		defer results.Close()
 
-		n, err := results.ExportXLSX(ctx, *exportPath)
+		photoLoader := func(ctx context.Context, nmIDs []int) map[int][]byte {
+			urlMap, err := source.LoadThumbnailURLs(ctx, nmIDs)
+			if err != nil {
+				log.Printf("WARN: load thumbnails: %v", err)
+				return nil
+			}
+			return downloadThumbnails(ctx, urlMap)
+		}
+
+		n, err := results.ExportXLSX(ctx, *exportPath, photoLoader)
 		if err != nil {
 			log.Fatalf("Export: %v", err)
 		}
@@ -304,4 +321,58 @@ func printSubjects(ctx context.Context, source *SourceRepo, query string) {
 		fmt.Printf("%-8d  %s\n", s.SubjectID, s.SubjectName)
 	}
 	fmt.Printf("\nTotal: %d subjects\n", len(subjects))
+}
+
+// downloadThumbnails скачивает миниатюры по URL-мапе, конвертирует WebP → JPEG,
+// растягивает до targetW×targetH без сохранения пропорций.
+func downloadThumbnails(ctx context.Context, urlMap map[int]string) map[int][]byte {
+	// 14 excel units ≈ 98px, 55 points ≈ 73px
+	const targetW, targetH = 100, 75
+
+	result := make(map[int][]byte, len(urlMap))
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	for nmID, url := range urlMap {
+		if url == "" {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			log.Printf("WARN: create request nm_id=%d: %v", nmID, err)
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("WARN: download photo nm_id=%d: %v", nmID, err)
+			continue
+		}
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			log.Printf("WARN: photo nm_id=%d returned status %d", nmID, resp.StatusCode)
+			continue
+		}
+		data, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			log.Printf("WARN: read photo nm_id=%d: %v", nmID, err)
+			continue
+		}
+
+		img, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil {
+			log.Printf("WARN: decode image nm_id=%d: %v", nmID, err)
+			continue
+		}
+
+		dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+		draw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
+
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 85}); err != nil {
+			log.Printf("WARN: encode jpeg nm_id=%d: %v", nmID, err)
+			continue
+		}
+		result[nmID] = buf.Bytes()
+	}
+	return result
 }

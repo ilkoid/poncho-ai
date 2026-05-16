@@ -481,8 +481,28 @@ func formatCharacteristicsJSON(jsonStr string) string {
 	return strings.Join(parts, "; ")
 }
 
-// ExportXLSX выгружает card_analysis в XLSX файл.
-func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string) (int, error) {
+// xlsxRow хранит данные одной строки анализа для двухпроходного экспорта.
+type xlsxRow struct {
+	NmID              int
+	VendorCode        string
+	Title             string
+	SubjectName       string
+	TextDone          int
+	TextDisc          int
+	TextSummary       string
+	VisionDone        int
+	VisionProductType string
+	VisionDisc        int
+	VisionSummary     string
+	GenerateDone      int
+	NewTitle          string
+	NewDesc           string
+	NewChars          string
+	WbUpdated         int
+}
+
+// ExportXLSX выгружает card_analysis в XLSX файл с превью фото в первом столбце.
+func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos func(ctx context.Context, nmIDs []int) map[int][]byte) (int, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT nm_id, vendor_code, title, subject_name,
 		       text_done, text_has_discrepancy, text_summary,
@@ -496,11 +516,67 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string) (int, error) 
 	}
 	defer rows.Close()
 
+	// Pass 1: scan all rows into memory, collect nmIDs.
+	var data []xlsxRow
+	for rows.Next() {
+		var (
+			nmID                            int
+			vendorCode, title, subjectName  string
+			textDone                        int
+			textDiscNull                    sql.NullInt64
+			textSummary                     string
+			visionDone                      int
+			visionProductType               string
+			visionDiscNull                  sql.NullInt64
+			visionSummary                   string
+			generateDone                    int
+			newTitle, newDesc, newChars     string
+			wbUpdated                       int
+		)
+		if err := rows.Scan(&nmID, &vendorCode, &title, &subjectName,
+			&textDone, &textDiscNull, &textSummary,
+			&visionDone, &visionProductType, &visionDiscNull, &visionSummary,
+			&generateDone, &newTitle, &newDesc, &newChars,
+			&wbUpdated); err != nil {
+			return 0, fmt.Errorf("scan row: %w", err)
+		}
+
+		textDisc := 0
+		if textDiscNull.Valid {
+			textDisc = int(textDiscNull.Int64)
+		}
+		visionDisc := 0
+		if visionDiscNull.Valid {
+			visionDisc = int(visionDiscNull.Int64)
+		}
+
+		data = append(data, xlsxRow{
+			NmID: nmID, VendorCode: vendorCode, Title: title, SubjectName: subjectName,
+			TextDone: textDone, TextDisc: textDisc, TextSummary: textSummary,
+			VisionDone: visionDone, VisionProductType: visionProductType,
+			VisionDisc: visionDisc, VisionSummary: visionSummary,
+			GenerateDone: generateDone, NewTitle: newTitle, NewDesc: newDesc,
+			NewChars: newChars, WbUpdated: wbUpdated,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("rows: %w", err)
+	}
+
+	// Load photos.
+	nmIDs := make([]int, len(data))
+	for i, d := range data {
+		nmIDs[i] = d.NmID
+	}
+	photos := getPhotos(ctx, nmIDs)
+
+	// Pass 2: write XLSX.
 	f := excelize.NewFile()
 	sheet := "Card Analysis"
 	f.SetSheetName("Sheet1", sheet)
 
 	headers := []string{
+		"photo",
 		"nm_id", "vendor_code", "subject",
 		"title (было)", "title (новое)",
 		"description (новое)",
@@ -527,66 +603,60 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string) (int, error) 
 		f.SetCellStyle(sheet, cell, cell, headerStyle)
 	}
 
-	rowNum := 2
-	for rows.Next() {
-		var (
-			nmID                            int
-			vendorCode, title, subjectName  string
-			textDone                        int
-			textDiscNull                    sql.NullInt64
-			textSummary                     string
-			visionDone                      int
-			visionProductType               string
-			visionDiscNull                  sql.NullInt64
-			visionSummary                   string
-			generateDone                    int
-			newTitle, newDesc, newChars     string
-			wbUpdated                       int
-		)
-		if err := rows.Scan(&nmID, &vendorCode, &title, &subjectName,
-			&textDone, &textDiscNull, &textSummary,
-			&visionDone, &visionProductType, &visionDiscNull, &visionSummary,
-			&generateDone, &newTitle, &newDesc, &newChars,
-			&wbUpdated); err != nil {
-			return rowNum - 2, fmt.Errorf("scan row: %w", err)
-		}
+	// Photo column width + default row height.
+	f.SetColWidth(sheet, "A", "A", 14.3)
 
-		textDisc := 0
-		if textDiscNull.Valid {
-			textDisc = int(textDiscNull.Int64)
-		}
-		visionDisc := 0
-		if visionDiscNull.Valid {
-			visionDisc = int(visionDiscNull.Int64)
-		}
-		textDiscStr := boolStr(textDisc)
-		visionDiscStr := boolStr(visionDisc)
+	for rowNum := 0; rowNum < len(data); rowNum++ {
+		d := data[rowNum]
+		row := rowNum + 2
 
+		textDiscStr := boolStr(d.TextDisc)
+		visionDiscStr := boolStr(d.VisionDisc)
+
+		// Embed photo in column A.
+		if photoBytes, ok := photos[d.NmID]; ok && len(photoBytes) > 0 {
+			cell, _ := excelize.CoordinatesToCellName(1, row)
+			if err := f.AddPictureFromBytes(sheet, cell, &excelize.Picture{
+				Extension: ".jpg",
+				File:      photoBytes,
+				Format: &excelize.GraphicOptions{
+					AltText:             fmt.Sprintf("nm_%d", d.NmID),
+					AutoFit:             true,
+					AutoFitIgnoreAspect: true,
+					Hyperlink:           fmt.Sprintf("https://www.wildberries.ru/catalog/%d/detail.aspx", d.NmID),
+				},
+			}); err != nil {
+				fmt.Printf("WARN: embed photo nm_id=%d: %v\n", d.NmID, err)
+			}
+		}
+		f.SetRowHeight(sheet, row, 56.4)
+
+		// Data columns start at column 2 (B).
 		vals := []interface{}{
-			nmID, vendorCode, subjectName,
-			title, newTitle,
-			newDesc,
-			formatCharacteristicsJSON(newChars),
-			textDiscStr, textSummary,
-			visionProductType, visionDiscStr, visionSummary,
-			textDone, visionDone, generateDone, wbUpdated,
+			d.NmID, d.VendorCode, d.SubjectName,
+			d.Title, d.NewTitle,
+			d.NewDesc,
+			formatCharacteristicsJSON(d.NewChars),
+			textDiscStr, d.TextSummary,
+			d.VisionProductType, visionDiscStr, d.VisionSummary,
+			d.TextDone, d.VisionDone, d.GenerateDone, d.WbUpdated,
 		}
 
 		for i, v := range vals {
-			cell, _ := excelize.CoordinatesToCellName(i+1, rowNum)
+			cell, _ := excelize.CoordinatesToCellName(i+2, row) // +2: col A = photo
 			f.SetCellValue(sheet, cell, v)
-			if (i == 7 && textDiscStr == "Да") || (i == 10 && visionDiscStr == "Да") {
+			if (i == 8 && textDiscStr == "Да") || (i == 11 && visionDiscStr == "Да") {
 				f.SetCellStyle(sheet, cell, cell, discStyle)
 			}
 		}
-		rowNum++
 	}
 
-	for i := range headers {
+	// Column widths (data columns start at B = index 2).
+	for i := 1; i < len(headers); i++ {
 		col, _ := excelize.ColumnNumberToName(i + 1)
 		f.SetColWidth(sheet, col, col, 18)
 	}
-	for _, i := range []int{3, 4, 5, 6, 8, 11} {
+	for _, i := range []int{4, 5, 6, 7, 9, 12} {
 		col, _ := excelize.ColumnNumberToName(i + 1)
 		f.SetColWidth(sheet, col, col, 40)
 	}
@@ -594,7 +664,7 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string) (int, error) 
 	if err := f.SaveAs(path); err != nil {
 		return 0, fmt.Errorf("save xlsx: %w", err)
 	}
-	return rowNum - 2, nil
+	return len(data), nil
 }
 
 func boolStr(v int) string {

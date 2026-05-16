@@ -233,6 +233,47 @@ func (r *SourceRepo) LoadPhotos(ctx context.Context, nmIDs []int, limitPerCard i
 	return result, rows.Err()
 }
 
+// LoadThumbnailURLs возвращает URL первой tm-миниатюры для каждого nm_id.
+func (r *SourceRepo) LoadThumbnailURLs(ctx context.Context, nmIDs []int) (map[int]string, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT p.nm_id, p.tm
+		FROM card_photos p
+		WHERE p.id IN (
+			SELECT MIN(id) FROM card_photos WHERE nm_id IN (%s) GROUP BY nm_id
+		)
+	`, strings.Join(ph, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query thumbnails: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]string, len(nmIDs))
+	for rows.Next() {
+		var nmID int
+		var tmURL string
+		if err := rows.Scan(&nmID, &tmURL); err != nil {
+			return nil, fmt.Errorf("scan thumbnail: %w", err)
+		}
+		if tmURL != "" {
+			result[nmID] = tmURL
+		}
+	}
+	return result, rows.Err()
+}
+
 func (r *SourceRepo) loadYearEntries(ctx context.Context) []config.YearEntry {
 	rows, err := r.db.QueryContext(ctx, "SELECT nm_id, vendor_code FROM cards")
 	if err != nil {
