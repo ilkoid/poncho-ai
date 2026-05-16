@@ -1,0 +1,55 @@
+# Card Consistency Pipeline Configuration
+#
+# Анализ расхождений: фото vs описание vs характеристики карточек WB.
+# Pipeline: текстовый фильтр → Vision → генерация новых параметров → обновление WB API.
+#
+# USAGE:
+#   go run . --stage 1                    # текстовый аудит
+#   go run . --stage 1 --limit 10         # только 10 карточек (тест)
+#   go run . --stage 3                    # Vision анализ рискованных
+#   go run . --stage 4                    # генерация новых параметров
+#   go run . --stage 5 --mock             # моковый прогон (без записи в WB)
+#   go run . --stage 5 --yes             # реальное обновление WB
+
+# LLM провайдер — общий для текста и vision
+llm:
+  provider: "openrouter"
+  api_key: "${OPENROUTER_API_KEY}"
+  base_url: "https://openrouter.ai/api/v1"
+
+# Текстовая модель (этапы 1, 4)
+text:
+  model: "openai/gpt-5.4-nano"
+  temperature: 0.2
+  max_tokens: 2000
+  timeout: 120s
+
+# Vision модель (этап 3)
+vision:
+  model: "openai/gpt-5.4-nano"
+  temperature: 0.2
+  max_tokens: 2000
+  timeout: 120s
+  photos_per_card: 5       # сколько фото анализировать (1-5)
+
+# Источник — сырые данные карточек (read-only)
+source:
+  db_path: "/var/db/wb-sales.db"
+
+# Результат — куда пишем анализ и новые параметры
+results:
+  db_path: "/var/db/card-analysis.db"
+
+# Фильтрация карточек
+filter:
+  allowed_years: []            # пусто — фильтр через nm_ids
+  season: "весна-лето"     # фильтр по сезону (пусто = все)
+  subject: ""              # фильтр по предмету WB (пусто = все)
+  vendor_codes: []         # артикулы продавца — 8 симв (напр. "12623034"). Пусто = все
+  nm_ids: [740178129, 39800098, 278954929, 739818198, 211878550, 362402736]
+  exclude_lengths: [5, 6]  # исключить мусор (5 симв) и устаревшие (6 симв)
+
+# Параметры анализа
+analysis:
+  concurrency: 2           # параллельных LLM запросов
+  limit: 0                    # все из nm_ids
