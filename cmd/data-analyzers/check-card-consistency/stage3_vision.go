@@ -7,9 +7,10 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/llm"
+	"github.com/ilkoid/poncho-ai/pkg/progress"
 )
 
 // runStage3 выполняет Vision анализ рискованных карточек (этап 3).
@@ -24,14 +25,17 @@ func runStage3(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		return nil
 	}
 
+	log.Printf("Stage 3: %d cards with text discrepancies", len(nmIDs))
+
 	if cfg.Analysis.Limit > 0 && len(nmIDs) > cfg.Analysis.Limit {
 		nmIDs = nmIDs[:cfg.Analysis.Limit]
+		log.Printf("  Limit: %d cards", len(nmIDs))
 	}
 
 	log.Printf("Stage 3: Vision analysis for %d cards with %s", len(nmIDs), cfg.Vision.Model)
 
-	// Загружаем карточки для получения title/description
-	cards, err := source.LoadCardsForAnalysis(ctx, FilterConfig{}) // no filter — we have nmIDs
+	// Загружаем карточки для получения title/description (только нужные nm_id)
+	cards, err := source.LoadCardsForAnalysis(ctx, FilterConfig{NmIDs: nmIDs})
 	if err != nil {
 		return fmt.Errorf("load cards: %w", err)
 	}
@@ -52,12 +56,17 @@ func runStage3(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		return fmt.Errorf("load photos: %w", err)
 	}
 
+	tracker := progress.NewCLITrackerWithConfig(progress.CLITrackerConfig{
+		Total:  len(nmIDs),
+		Prefix: "Stage 3",
+	})
+
 	var (
-		wg          sync.WaitGroup
-		semaphore   = make(chan struct{}, cfg.Analysis.Concurrency)
-		total       atomic.Int64
-		discrepant  atomic.Int64
-		errors      atomic.Int64
+		wg         sync.WaitGroup
+		semaphore  = make(chan struct{}, cfg.Analysis.Concurrency)
+		discrepant int
+		errors     int
+		mu         sync.Mutex
 	)
 
 	for _, nmID := range nmIDs {
@@ -88,10 +97,15 @@ func runStage3(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 			chars := charsMap[nmID]
 			photoURLs := photosMap[nmID]
 
+			start := time.Now()
 			productType, attrs, summary, hasDisc, err := analyzeCardVision(ctx, provider, card, chars, photoURLs, cfg.Vision.ModelConfig)
+			dur := time.Since(start)
+
 			if err != nil {
+				mu.Lock()
+				errors++
+				mu.Unlock()
 				log.Printf("  ERROR nm_id=%d: %v", nmID, err)
-				errors.Add(1)
 				return
 			}
 
@@ -99,28 +113,48 @@ func runStage3(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 			photosJSON, _ := json.Marshal(photoURLs)
 
 			if err := results.SaveVisionAnalysis(ctx, nmID, productType, string(attrsJSON), string(photosJSON), summary, hasDisc); err != nil {
+				mu.Lock()
+				errors++
+				mu.Unlock()
 				log.Printf("  ERROR save nm_id=%d: %v", nmID, err)
-				errors.Add(1)
+				return
+			}
+			if err := results.MarkVisionDone(ctx, nmID); err != nil {
+				mu.Lock()
+				errors++
+				mu.Unlock()
+				log.Printf("  ERROR mark vision done nm_id=%d: %v", nmID, err)
 				return
 			}
 
-			n := total.Add(1)
+			tracker.Update(1)
+
+			mu.Lock()
+			n := tracker.Current()
 			if hasDisc {
-				discrepant.Add(1)
+				discrepant++
 			}
-			if n%10 == 0 || n == int64(len(nmIDs)) {
-				log.Printf("  Progress: %d/%d (discrepancies: %d, errors: %d)",
-					n, len(nmIDs), discrepant.Load(), errors.Load())
+			discStr := "ok"
+			if hasDisc {
+				discStr = "DISCREPANCY"
 			}
+			log.Printf("  [%d/%d] %s | %.1fs | %s | ETA %s",
+				n, tracker.Total(),
+				time.Now().Format("15:04:05"),
+				dur.Seconds(),
+				discStr,
+				tracker.ETA())
+			mu.Unlock()
 		}(nmID, card)
 	}
 
 	wg.Wait()
+	tracker.Done()
 
 	log.Printf("Stage 3 complete: %d checked, %d confirmed discrepancies (%.0f%%), %d errors",
-		total.Load(), discrepant.Load(),
-		percent(discrepant.Load(), total.Load()),
-		errors.Load())
+		tracker.Current(), discrepant,
+		percent(int64(discrepant), int64(tracker.Current())),
+		errors)
 
 	return nil
 }

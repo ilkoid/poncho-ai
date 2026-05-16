@@ -78,45 +78,6 @@ func buildVisionMessages(title, description string, chars []CardChar, photoURLs 
 	}
 }
 
-// buildGenerateParamsMessages строит сообщения для генерации новых параметров (этап 4).
-func buildGenerateParamsMessages(title, description string, chars []CardChar, visionProductType, visionAttrs, visionSummary string, subjectChars []string) []llm.Message {
-	charText := formatCharacteristics(chars)
-
-	system := `Ты — специалист по заполнению карточек товаров Wildberries. На основе Vision анализа (фото) сгенерируй корректные параметры карточки.
-
-Используй ТОЛЬКО допустимые значения характеристик из предоставленного справочника.
-Название должно точно описывать товар по фото. Описание — подробное и truthful.
-
-Ответь СТРОГО JSON:
-{
-  "title": "новое название",
-  "description": "новое описание",
-  "characteristics": [{"id": 123, "value": "значение"}],
-  "subject_name": "название предмета WB"
-}`
-
-	user := fmt.Sprintf(`ТЕКУЩЕЕ НАЗВАНИЕ: %s
-
-ТЕКУЩЕЕ ОПИСАНИЕ:
-%s
-
-ТЕКУЩИЕ ХАРАКТЕРИСТИКИ:
-%s
-
-VISION АНАЛИЗ (ФОТО):
-Тип изделия: %s
-Атрибуты: %s
-Замечания: %s
-
-ДОПУСТИМЫЕ ХАРАКТЕРИСТИКИ ПРЕДМЕТА:
-%s`, title, description, charText, visionProductType, visionAttrs, visionSummary, strings.Join(subjectChars, "\n"))
-
-	return []llm.Message{
-		{Role: llm.RoleSystem, Content: system},
-		{Role: llm.RoleUser, Content: user},
-	}
-}
-
 // formatCharacteristics форматирует характеристики для промпта.
 func formatCharacteristics(chars []CardChar) string {
 	if len(chars) == 0 {
@@ -151,15 +112,4 @@ type visionAnalysisResult struct {
 	Attributes  map[string]string `json:"attributes"`
 	Discrepancy bool              `json:"discrepancy"`
 	Summary     string            `json:"summary"`
-}
-
-// generateParamsResult — результат генерации новых параметров.
-type generateParamsResult struct {
-	Title          string                `json:"title"`
-	Description    string                `json:"description"`
-	Characteristics []struct {
-		ID    int    `json:"id"`
-		Value string `json:"value"`
-	} `json:"characteristics"`
-	SubjectName string `json:"subject_name"`
 }

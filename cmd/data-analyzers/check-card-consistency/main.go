@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,12 +16,14 @@ import (
 
 // CLIConfig — конфигурация утилиты из config.yaml.
 type CLIConfig struct {
-	LLM     LLMConfig     `yaml:"llm"`
-	Text    ModelConfig   `yaml:"text"`
-	Vision  VisionConfig  `yaml:"vision"`
-	Source  SourceConfig  `yaml:"source"`
-	Results ResultsConfig `yaml:"results"`
-	Filter  FilterConfig  `yaml:"filter"`
+	Brand    string         `yaml:"brand"`
+	LLM      LLMConfig      `yaml:"llm"`
+	Text     ModelConfig    `yaml:"text"`
+	Vision   VisionConfig   `yaml:"vision"`
+	Source   SourceConfig   `yaml:"source"`
+	Results  ResultsConfig  `yaml:"results"`
+	CharDict CharDictConfig `yaml:"char_dict"`
+	Filter   FilterConfig   `yaml:"filter"`
 	Analysis AnalysisConfig `yaml:"analysis"`
 }
 
@@ -50,13 +53,18 @@ type ResultsConfig struct {
 	DBPath string `yaml:"db_path"`
 }
 
+type CharDictConfig struct {
+	DBPath string `yaml:"db_path"`
+}
+
 type FilterConfig struct {
-	AllowedYears  []int    `yaml:"allowed_years"`
-	Season        string   `yaml:"season"`
-	Subject       string   `yaml:"subject"`
-	VendorCodes   []string `yaml:"vendor_codes"`   // артикулы продавца (8 симв, напр. "12623034")
-	NmIDs         []int    `yaml:"nm_ids"`         // артикулы WB (число, напр. 739959074)
-	ExcludeLengths []int   `yaml:"exclude_lengths"`
+	AllowedYears   []int    `yaml:"allowed_years"`
+	Season         string   `yaml:"season"`
+	Subject        string   `yaml:"subject"`
+	SubjectID      int      `yaml:"subject_id"`
+	VendorCodes    []string `yaml:"vendor_codes"`    // артикулы продавца (8 симв, напр. "12623034")
+	NmIDs          []int    `yaml:"nm_ids"`           // артикулы WB (число, напр. 739959074)
+	ExcludeLengths []int    `yaml:"exclude_lengths"`
 }
 
 type AnalysisConfig struct {
@@ -97,6 +105,7 @@ func main() {
 	limit := flag.Int("limit", 0, "Limit number of cards (0=all)")
 	mock := flag.Bool("mock", false, "Stage 5: mock mode (no real WB API call)")
 	yes := flag.Bool("yes", false, "Stage 5: confirm real WB update")
+	listSubjects := flag.String("list-subjects", "", "List WB subjects (empty=all, or search query)")
 	flag.Parse()
 
 	// Load config
@@ -137,6 +146,12 @@ func main() {
 	}
 	defer source.Close()
 
+	// --list-subjects: вывести предметы WB и выйти
+	if *listSubjects != "" {
+		printSubjects(ctx, source, *listSubjects)
+		return
+	}
+
 	// Open results DB (read-write)
 	results, err := NewResultsRepo(cfg.Results.DBPath)
 	if err != nil {
@@ -150,6 +165,7 @@ func main() {
 	}
 
 	// Route to stage
+	stageStart := time.Now()
 	switch *stage {
 	case 1:
 		provider, err := createProvider(cfg)
@@ -189,21 +205,65 @@ func main() {
 	default:
 		log.Fatalf("Unknown stage: %d (use 1, 3, 4, or 5)", *stage)
 	}
+	stageDuration := time.Since(stageStart)
 
 	// Print stats
-	printStats(ctx, results)
+	printStats(ctx, results, *stage, stageDuration)
 }
 
-func printStats(ctx context.Context, results *ResultsRepo) {
-	total, textChecked, textDisc, visionChecked, visionDisc, newParams, wbUpdated, err := results.Stats(ctx)
+func printStats(ctx context.Context, results *ResultsRepo, stage int, duration time.Duration) {
+	total, textChecked, textDisc, visionChecked, visionDisc, generated, wbUpdated, err := results.Stats(ctx)
 	if err != nil {
 		log.Printf("WARN: stats: %v", err)
 		return
 	}
-	fmt.Printf("\n=== Card Analysis Stats ===\n")
-	fmt.Printf("Total cards:          %d\n", total)
-	fmt.Printf("Text checked:         %d (discrepancies: %d)\n", textChecked, textDisc)
-	fmt.Printf("Vision checked:       %d (discrepancies: %d)\n", visionChecked, visionDisc)
-	fmt.Printf("New params generated:  %d\n", newParams)
+
+	fmt.Printf("\n")
+	fmt.Printf("=== Stage %d Summary ===\n", stage)
+	fmt.Printf("Duration:             %s\n", duration.Round(time.Second))
+	fmt.Printf("Total cards in DB:    %d\n", total)
+	fmt.Printf("Text checked:         %d (discrepancies: %d, %.0f%%)\n", textChecked, textDisc, pct(textDisc, textChecked))
+	fmt.Printf("Vision checked:       %d (discrepancies: %d, %.0f%%)\n", visionChecked, visionDisc, pct(visionDisc, visionChecked))
+	fmt.Printf("Params generated:     %d\n", generated)
 	fmt.Printf("WB updated:           %d\n", wbUpdated)
+}
+
+func pct(part, total int) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(part) * 100 / float64(total)
+}
+
+// printSubjects выводит предметы WB с их ID для использования в subject_id фильтре.
+// Если query="all" — выводит все, иначе ищет по подстроке (регистронезависимо).
+func printSubjects(ctx context.Context, source *SourceRepo, query string) {
+	all, err := source.LoadAllSubjects(ctx)
+	if err != nil {
+		log.Fatalf("Load subjects: %v", err)
+	}
+
+	var subjects []SubjectEntry
+	if query == "all" {
+		subjects = all
+	} else {
+		q := strings.ToLower(query)
+		for _, s := range all {
+			if strings.Contains(strings.ToLower(s.SubjectName), q) {
+				subjects = append(subjects, s)
+			}
+		}
+	}
+
+	if len(subjects) == 0 {
+		fmt.Printf("No subjects matching %q\n", query)
+		return
+	}
+
+	fmt.Printf("%-8s  %s\n", "ID", "Subject Name")
+	fmt.Printf("%-8s  %s\n", "--------", "------------")
+	for _, s := range subjects {
+		fmt.Printf("%-8d  %s\n", s.SubjectID, s.SubjectName)
+	}
+	fmt.Printf("\nTotal: %d subjects\n", len(subjects))
 }

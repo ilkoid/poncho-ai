@@ -84,6 +84,7 @@ func (r *ResultsRepo) InitSchema(ctx context.Context) error {
 	migrations := []string{
 		"ALTER TABLE card_analysis ADD COLUMN text_done INTEGER DEFAULT 0",
 		"ALTER TABLE card_analysis ADD COLUMN vision_done INTEGER DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN generate_done INTEGER DEFAULT 0",
 	}
 	for _, m := range migrations {
 		r.db.ExecContext(ctx, m) // ignore error — column already exists
@@ -185,6 +186,43 @@ func (r *ResultsRepo) MarkVisionDone(ctx context.Context, nmID int) error {
 		return fmt.Errorf("mark vision done nm_id=%d: %w", nmID, err)
 	}
 	return nil
+}
+
+// MarkGenerateDone отмечает карточку как полностью обработанную Stage 4.
+func (r *ResultsRepo) MarkGenerateDone(ctx context.Context, nmID int) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE card_analysis SET generate_done = 1 WHERE nm_id = ?", nmID)
+	if err != nil {
+		return fmt.Errorf("mark generate done nm_id=%d: %w", nmID, err)
+	}
+	return nil
+}
+
+// LoadPendingGenerateCards возвращает nm_id карточек, ещё не обработанных Stage 4 (generate_done = 0).
+func (r *ResultsRepo) LoadPendingGenerateCards(ctx context.Context, nmIDs []int) ([]int, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf("SELECT nm_id FROM card_analysis WHERE generate_done = 0 AND nm_id IN (%s)", strings.Join(ph, ","))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query pending generate: %w", err)
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // LoadTextDiscrepancies возвращает nm_id карточек с text_has_discrepancy = 1, не обработанных Vision.
@@ -335,10 +373,10 @@ func (r *ResultsRepo) LoadAnalysisForUpdate(ctx context.Context) ([]AnalysisRow,
 	return result, rows.Err()
 }
 
-// LoadVisionDiscrepancies возвращает nm_id карточек с vision_has_discrepancy = 1.
+// LoadVisionDiscrepancies возвращает nm_id карточек с vision_has_discrepancy = 1, не обработанных Stage 4.
 func (r *ResultsRepo) LoadVisionDiscrepancies(ctx context.Context) ([]int, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT nm_id FROM card_analysis WHERE vision_has_discrepancy = 1")
+		"SELECT nm_id FROM card_analysis WHERE vision_has_discrepancy = 1 AND generate_done = 0")
 	if err != nil {
 		return nil, fmt.Errorf("query vision discrepancies: %w", err)
 	}
@@ -405,15 +443,15 @@ func (r *ResultsRepo) LoadAnalysisForVision(ctx context.Context, nmIDs []int) ([
 }
 
 // Stats возвращает сводку по таблице card_analysis.
-func (r *ResultsRepo) Stats(ctx context.Context) (total, textChecked, textDiscrepancy, visionChecked, visionDiscrepancy, hasNewParams, wbUpdated int, err error) {
+func (r *ResultsRepo) Stats(ctx context.Context) (total, textChecked, textDiscrepancy, visionChecked, visionDiscrepancy, generated, wbUpdated int, err error) {
 	err = r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
 		       SUM(CASE WHEN text_checked_at IS NOT NULL THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN text_has_discrepancy = 1 THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN vision_checked_at IS NOT NULL THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN vision_has_discrepancy = 1 THEN 1 ELSE 0 END),
-		       SUM(CASE WHEN new_title != '' OR new_description != '' THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN generate_done = 1 THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN wb_updated = 1 THEN 1 ELSE 0 END)
-		FROM card_analysis`).Scan(&total, &textChecked, &textDiscrepancy, &visionChecked, &visionDiscrepancy, &hasNewParams, &wbUpdated)
+		FROM card_analysis`).Scan(&total, &textChecked, &textDiscrepancy, &visionChecked, &visionDiscrepancy, &generated, &wbUpdated)
 	return
 }

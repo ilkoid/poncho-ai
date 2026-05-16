@@ -7,15 +7,18 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/llm"
 	"github.com/ilkoid/poncho-ai/pkg/llm/openai"
+	"github.com/ilkoid/poncho-ai/pkg/progress"
 )
 
 // runStage1 выполняет текстовый анализ карточек: description vs characteristics (этап 1).
 func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, provider llm.Provider, cfg CLIConfig) error {
+	// Статистика фильтрации: total в базе
+	totalInDB, _ := source.CountCards(ctx)
+
 	// Загружаем карточки с фильтрацией
 	cards, err := source.LoadCardsForAnalysis(ctx, cfg.Filter)
 	if err != nil {
@@ -26,8 +29,14 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		return nil
 	}
 
+	// Логируем статистику фильтрации
+	filterDesc := describeFilter(cfg.Filter, totalInDB, len(cards))
+	log.Printf("  Filter: %s", filterDesc)
+
+	afterLimit := len(cards)
 	if cfg.Analysis.Limit > 0 && len(cards) > cfg.Analysis.Limit {
 		cards = cards[:cfg.Analysis.Limit]
+		log.Printf("  Limit: %d → %d", afterLimit, len(cards))
 	}
 
 	log.Printf("Stage 1: analyzing %d cards with %s", len(cards), cfg.Text.Model)
@@ -50,7 +59,6 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		return fmt.Errorf("ensure rows: %w", err)
 	}
 	log.Printf("  Created %d new rows in card_analysis", inserted)
-
 
 	// Resume: пропускаем карточки, уже обработанные Stage 1
 	pending, err := results.LoadPendingTextCards(ctx, nmIDs)
@@ -75,13 +83,18 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		return nil
 	}
 
-	// Параллельный анализ с semaphore
+	// Прогресс с ETA
+	tracker := progress.NewCLITrackerWithConfig(progress.CLITrackerConfig{
+		Total:   len(cards),
+		Prefix:  "Stage 1",
+	})
+
 	var (
 		wg         sync.WaitGroup
 		semaphore  = make(chan struct{}, cfg.Analysis.Concurrency)
-		total      atomic.Int64
-		discrepant atomic.Int64
-		errors     atomic.Int64
+		discrepant int
+		errors     int
+		mu         sync.Mutex
 	)
 
 	for _, card := range cards {
@@ -97,43 +110,63 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 
+			start := time.Now()
 			chars := charsMap[c.NmID]
 			hasDisc, summary, err := analyzeCardText(ctx, provider, c, chars, cfg.Text)
+			dur := time.Since(start)
+
 			if err != nil {
+				mu.Lock()
+				errors++
+				mu.Unlock()
 				log.Printf("  ERROR nm_id=%d vendor_code=%s: %v", c.NmID, c.VendorCode, err)
-				errors.Add(1)
 				return
 			}
 
 			if err := results.SaveTextAnalysis(ctx, c.NmID, hasDisc, summary); err != nil {
+				mu.Lock()
+				errors++
+				mu.Unlock()
 				log.Printf("  ERROR save nm_id=%d: %v", c.NmID, err)
-				errors.Add(1)
 				return
 			}
 
 			if err := results.MarkTextDone(ctx, c.NmID); err != nil {
+				mu.Lock()
+				errors++
+				mu.Unlock()
 				log.Printf("  ERROR mark done nm_id=%d: %v", c.NmID, err)
-				errors.Add(1)
 				return
 			}
 
-			n := total.Add(1)
+			tracker.Update(1)
+
+			mu.Lock()
+			n := tracker.Current()
 			if hasDisc {
-				discrepant.Add(1)
+				discrepant++
 			}
-			if n%50 == 0 || n == int64(len(cards)) {
-				log.Printf("  Progress: %d/%d (discrepancies: %d, errors: %d)",
-					n, len(cards), discrepant.Load(), errors.Load())
+			discStr := "ok"
+			if hasDisc {
+				discStr = "DISCREPANCY"
 			}
+			log.Printf("  [%d/%d] %s | %.1fs | %s | ETA %s",
+				n, tracker.Total(),
+				time.Now().Format("15:04:05"),
+				dur.Seconds(),
+				discStr,
+				tracker.ETA())
+			mu.Unlock()
 		}(card)
 	}
 
 	wg.Wait()
+	tracker.Done()
 
 	log.Printf("Stage 1 complete: %d checked, %d discrepancies (%.0f%%), %d errors",
-		total.Load(), discrepant.Load(),
-		percent(discrepant.Load(), total.Load()),
-		errors.Load())
+		tracker.Current(), discrepant,
+		percent(int64(discrepant), int64(tracker.Current())),
+		errors)
 
 	return nil
 }
@@ -158,7 +191,6 @@ func analyzeCardText(ctx context.Context, provider llm.Provider, card CardData, 
 
 	var result textAnalysisResult
 	if err := json.Unmarshal([]byte(extractJSON(content)), &result); err != nil {
-		// Если JSON не парсится — считаем что LLM не нашла расхождений
 		return false, truncate(content, 200), nil
 	}
 
@@ -167,7 +199,6 @@ func analyzeCardText(ctx context.Context, provider llm.Provider, card CardData, 
 
 // extractJSON извлекает JSON объект из ответа LLM (может быть обёрнут в markdown).
 func extractJSON(s string) string {
-	// Попробуем найти JSON в markdown code block
 	if idx := strings.Index(s, "```json"); idx != -1 {
 		s = s[idx+7:]
 		if end := strings.Index(s, "```"); end != -1 {
@@ -180,13 +211,20 @@ func extractJSON(s string) string {
 		}
 	}
 
-	// Найдём первый { и последний }
 	start := strings.Index(s, "{")
 	end := strings.LastIndex(s, "}")
 	if start != -1 && end > start {
 		return s[start : end+1]
 	}
 	return s
+}
+
+// describeFilter формирует строку описания фильтрации для лога.
+func describeFilter(f FilterConfig, totalInDB, filtered int) string {
+	if totalInDB > 0 {
+		return fmt.Sprintf("%d total → %d filtered", totalInDB, filtered)
+	}
+	return fmt.Sprintf("%d filtered", filtered)
 }
 
 func percent(part, total int64) float64 {
@@ -203,8 +241,6 @@ func truncate(s string, max int) string {
 	return s[:max] + "..."
 }
 
-// createProvider создаёт LLM провайдер из конфигурации.
-// Переиспользует pkg/llm/openai.NewClient — никакого дублирования.
 func createProvider(cfg CLIConfig) (llm.Provider, error) {
 	modelDef := cfg.toModelDef()
 	client := openai.NewClient(modelDef)
@@ -214,7 +250,6 @@ func createProvider(cfg CLIConfig) (llm.Provider, error) {
 	return client, nil
 }
 
-// createVisionProvider создаёт Vision-провайдер из конфигурации.
 func createVisionProvider(cfg CLIConfig) (llm.Provider, error) {
 	modelDef := cfg.toVisionModelDef()
 	client := openai.NewClient(modelDef)
@@ -224,7 +259,6 @@ func createVisionProvider(cfg CLIConfig) (llm.Provider, error) {
 	return client, nil
 }
 
-// retryWithBackoff выполняет функцию с retry и exponential backoff.
 func retryWithBackoff(ctx context.Context, maxRetries int, fn func() error) error {
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {

@@ -26,6 +26,13 @@ func NewSourceRepo(dbPath string) (*SourceRepo, error) {
 
 func (r *SourceRepo) Close() error { return r.db.Close() }
 
+// CountCards возвращает общее количество карточек в source DB (без фильтров).
+func (r *SourceRepo) CountCards(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM cards").Scan(&count)
+	return count, err
+}
+
 // CardData — данные карточки для текстового анализа (этап 1).
 type CardData struct {
 	NmID            int
@@ -85,8 +92,13 @@ func (r *SourceRepo) LoadCardsForAnalysis(ctx context.Context, filter FilterConf
 	}
 
 	if filter.Subject != "" {
-		where = append(where, "c.subject_name = ?")
+		where = append(where, "LOWER(c.subject_name) = LOWER(?)")
 		args = append(args, filter.Subject)
+	}
+
+	if filter.SubjectID > 0 {
+		where = append(where, "c.subject_id = ?")
+		args = append(args, filter.SubjectID)
 	}
 
 	// Исключаем vendor_code указанных длин (5=мусор, 6=устаревшие)

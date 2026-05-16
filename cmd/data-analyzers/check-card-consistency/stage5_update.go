@@ -81,11 +81,6 @@ func stage5Mock(ctx context.Context, results *ResultsRepo, row AnalysisRow) erro
 		log.Printf("    characteristics: updated")
 	}
 
-	// Отмечаем как mock-updated
-	if err := results.SaveWBUpdate(ctx, row.NmID, "MOCK: not sent to WB API"); err != nil {
-		return err
-	}
-
 	return nil
 }
 
