@@ -37,6 +37,35 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		log.Printf("  In-stock: snapshot date %s", sd)
 	}
 
+	// Фильтрация по порогам рейтингов/видимости (только худшие)
+	if cfg.Filter.hasThresholds() {
+		nmIDs := make([]int, len(cards))
+		for i, c := range cards {
+			nmIDs[i] = c.NmID
+		}
+		filtered, err := results.FilterByThresholds(ctx, nmIDs, cfg.Filter)
+		if err != nil {
+			return fmt.Errorf("filter thresholds: %w", err)
+		}
+		filterSet := make(map[int]bool, len(filtered))
+		for _, id := range filtered {
+			filterSet[id] = true
+		}
+		before := len(cards)
+		var kept []CardData
+		for _, c := range cards {
+			if filterSet[c.NmID] {
+				kept = append(kept, c)
+			}
+		}
+		cards = kept
+		log.Printf("  Thresholds: %d → %d cards", before, len(cards))
+		if len(cards) == 0 {
+			log.Println("No cards pass threshold filter")
+			return nil
+		}
+	}
+
 	afterLimit := len(cards)
 	if cfg.Analysis.Limit > 0 && len(cards) > cfg.Analysis.Limit {
 		cards = cards[:cfg.Analysis.Limit]

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -86,14 +87,21 @@ type CharDictConfig struct {
 }
 
 type FilterConfig struct {
-	InStock        bool     `yaml:"in_stock"`          // только товары в наличии
-	AllowedYears   []int    `yaml:"allowed_years"`
-	Season         string   `yaml:"season"`
-	Subject        string   `yaml:"subject"`
-	SubjectIDs     []int    `yaml:"subject_ids"`
-	VendorCodes    []string `yaml:"vendor_codes"`    // артикулы продавца (8 симв, напр. "12623034")
-	NmIDs          []int    `yaml:"nm_ids"`           // артикулы WB (число, напр. 739959074)
-	ExcludeLengths []int    `yaml:"exclude_lengths"`
+	InStock           bool     `yaml:"in_stock"`
+	AllowedYears      []int    `yaml:"allowed_years"`
+	Season            string   `yaml:"season"`
+	Subject           string   `yaml:"subject"`
+	SubjectIDs        []int    `yaml:"subject_ids"`
+	VendorCodes       []string `yaml:"vendor_codes"`
+	NmIDs             []int    `yaml:"nm_ids"`
+	ExcludeLengths    []int    `yaml:"exclude_lengths"`
+	MaxProductRating  float64  `yaml:"max_product_rating"`  // 0=все, иначе product_rating < порога
+	MaxFeedbackRating float64  `yaml:"max_feedback_rating"` // 0=все, иначе feedback_rating < порога
+	MaxVisibility     float64  `yaml:"max_visibility"`      // 0=все, иначе max_visibility < порога
+}
+
+func (f FilterConfig) hasThresholds() bool {
+	return f.MaxProductRating > 0 || f.MaxFeedbackRating > 0 || f.MaxVisibility > 0
 }
 
 type AnalysisConfig struct {
@@ -190,6 +198,15 @@ func main() {
 		}
 		defer results.Close()
 
+		if err := results.InitSchema(ctx); err != nil {
+			log.Fatalf("Init schema: %v", err)
+		}
+		if n, err := results.BackfillMetrics(ctx, cfg.Source.DBPath); err != nil {
+			log.Printf("WARN: backfill metrics: %v", err)
+		} else if n > 0 {
+			log.Printf("Backfilled metrics: %d updates", n)
+		}
+
 		photoLoader := func(ctx context.Context, nmIDs []int) map[int][]byte {
 			urlMap, err := source.LoadThumbnailURLs(ctx, nmIDs)
 			if err != nil {
@@ -217,6 +234,13 @@ func main() {
 	// Init schema
 	if err := results.InitSchema(ctx); err != nil {
 		log.Fatalf("Init schema: %v", err)
+	}
+
+	// Backfill metrics from wb-sales.db (ratings, visibility, search queries, priority score)
+	if n, err := results.BackfillMetrics(ctx, cfg.Source.DBPath); err != nil {
+		log.Printf("WARN: backfill metrics: %v (continuing without metrics)", err)
+	} else if n > 0 {
+		log.Printf("Backfilled metrics: %d updates", n)
 	}
 
 	// Route to stage
@@ -325,54 +349,81 @@ func printSubjects(ctx context.Context, source *SourceRepo, query string) {
 
 // downloadThumbnails скачивает миниатюры по URL-мапе, конвертирует WebP → JPEG,
 // растягивает до targetW×targetH без сохранения пропорций.
+// Загрузка выполняется параллельно (maxWorkers горутин).
 func downloadThumbnails(ctx context.Context, urlMap map[int]string) map[int][]byte {
-	// 14 excel units ≈ 98px, 55 points ≈ 73px
 	const targetW, targetH = 100, 75
+	const maxWorkers = 20
+	const jpegQuality = 60
+
+	type photoResult struct {
+		nmID int
+		data []byte
+	}
 
 	result := make(map[int][]byte, len(urlMap))
 	client := &http.Client{Timeout: 10 * time.Second}
+
+	sem := make(chan struct{}, maxWorkers)
+	ch := make(chan photoResult, len(urlMap))
+	var wg sync.WaitGroup
 
 	for nmID, url := range urlMap {
 		if url == "" {
 			continue
 		}
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			log.Printf("WARN: create request nm_id=%d: %v", nmID, err)
-			continue
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			log.Printf("WARN: download photo nm_id=%d: %v", nmID, err)
-			continue
-		}
-		if resp.StatusCode != 200 {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(nmID int, url string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+			if err != nil {
+				log.Printf("WARN: create request nm_id=%d: %v", nmID, err)
+				return
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				log.Printf("WARN: download photo nm_id=%d: %v", nmID, err)
+				return
+			}
+			if resp.StatusCode != 200 {
+				resp.Body.Close()
+				log.Printf("WARN: photo nm_id=%d returned status %d", nmID, resp.StatusCode)
+				return
+			}
+			data, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			log.Printf("WARN: photo nm_id=%d returned status %d", nmID, resp.StatusCode)
-			continue
-		}
-		data, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			log.Printf("WARN: read photo nm_id=%d: %v", nmID, err)
-			continue
-		}
+			if err != nil {
+				log.Printf("WARN: read photo nm_id=%d: %v", nmID, err)
+				return
+			}
 
-		img, _, err := image.Decode(bytes.NewReader(data))
-		if err != nil {
-			log.Printf("WARN: decode image nm_id=%d: %v", nmID, err)
-			continue
-		}
+			img, _, err := image.Decode(bytes.NewReader(data))
+			if err != nil {
+				log.Printf("WARN: decode image nm_id=%d: %v", nmID, err)
+				return
+			}
 
-		dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
-		draw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
+			dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+			draw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
 
-		var buf bytes.Buffer
-		if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 85}); err != nil {
-			log.Printf("WARN: encode jpeg nm_id=%d: %v", nmID, err)
-			continue
-		}
-		result[nmID] = buf.Bytes()
+			var buf bytes.Buffer
+			if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: jpegQuality}); err != nil {
+				log.Printf("WARN: encode jpeg nm_id=%d: %v", nmID, err)
+				return
+			}
+			ch <- photoResult{nmID: nmID, data: buf.Bytes()}
+		}(nmID, url)
+	}
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	for pr := range ch {
+		result[pr.nmID] = pr.data
 	}
 	return result
 }

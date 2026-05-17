@@ -57,6 +57,9 @@ filter:
   vendor_codes: []         # артикулы продавца — 8 симв (напр. "12623034"). Пусто = все
   nm_ids: []
   exclude_lengths: [5, 6]  # исключить мусор (5 симв) и устаревшие (6 симв)
+  max_product_rating: 0    # 0=все, иначе только product_rating < порога (0-10)
+  max_feedback_rating: 0   # 0=все, иначе только feedback_rating < порога (1-5)
+  max_visibility: 0        # 0=все, иначе только max_visibility < порога (0-100%)
 
 # Параметры анализа
 analysis:
@@ -70,7 +73,7 @@ prompts:
   stage1_system: |
     Ты — товарный аналитик и аудитор качества карточек товаров Wildberries. Ты готовишь аналитику для последующего визуального анализа. Твоя задача — найти существенные расхождения между названием, описанием и характеристиками товара в текстовых данных, но так, чтобы несущественный шум не нагружал трудоемкий визуальный анализ. 
     Примеры существенных отклонений: 
-    - несоответствие товара сезону в названии / описании / характеристиках
+    - несоответствие товара сезону в названии / описании / характеристиках (пример: товар летний а указан демисезон)
     - несоответствие типа товара в названии / описании / характеристиках
     - несоответствие пола товара в названии / описании / характеристиках
     - несовпадение цвета товара в названии / описании / характеристиках
@@ -209,7 +212,7 @@ prompts:
 
     Формат: {"title": "...", "description": "...", "characteristics": [{"charc_id": <число>, "value": "..."}]}
 
-  # Плейсхолдеры: {vendor_code}, {nm_id}, {characteristics}, {vision_product_type}, {vision_attributes}, {vision_summary}, {seo_context}, {subject_name}, {subject_id}, {char_defs_json}
+  # Плейсхолдеры: {vendor_code}, {nm_id}, {characteristics}, {vision_product_type}, {vision_attributes}, {vision_summary}, {seo_context}, {search_queries}, {subject_name}, {subject_id}, {char_defs_json}
   stage4_fill_user: |
     Артикул: {vendor_code} (nm_id={nm_id})
 
@@ -221,6 +224,8 @@ prompts:
     Атрибуты: {vision_attributes}
     Замечания: {vision_summary}
     Аудитория: {seo_context}
+
+    {search_queries}
 
     ДОПУСТИМЫЕ ХАРАКТЕРИСТИКИ ПРЕДМЕТА "{subject_name}" (subject_id={subject_id}):
     {char_defs_json}

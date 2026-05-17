@@ -87,6 +87,15 @@ func (r *ResultsRepo) InitSchema(ctx context.Context) error {
 		"ALTER TABLE card_analysis ADD COLUMN text_done INTEGER DEFAULT 0",
 		"ALTER TABLE card_analysis ADD COLUMN vision_done INTEGER DEFAULT 0",
 		"ALTER TABLE card_analysis ADD COLUMN generate_done INTEGER DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN max_visibility REAL DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN top_query TEXT DEFAULT ''",
+		"ALTER TABLE card_analysis ADD COLUMN product_rating REAL DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN feedback_rating REAL DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN priority_score REAL DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN avg_position REAL DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN open_card_30d INTEGER DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN orders_30d INTEGER DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN top_queries TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		r.db.ExecContext(ctx, m) // ignore error — column already exists
@@ -118,6 +127,102 @@ func (r *ResultsRepo) EnsureRows(ctx context.Context, cards []CardData) (int, er
 		}
 	}
 	return inserted, nil
+}
+
+// BackfillMetrics заполняет метрики в card_analysis из wb-sales.db.
+// ATTACH-ит source DB и обновляет: рейтинги, видимость, позицию, поисковые запросы, priority_score.
+// Идемпотентно — можно вызывать повторно для обновления метрик.
+func (r *ResultsRepo) BackfillMetrics(ctx context.Context, sourceDBPath string) (updated int, err error) {
+	if _, err := r.db.ExecContext(ctx, fmt.Sprintf("ATTACH DATABASE '%s' AS src", sourceDBPath)); err != nil {
+		return 0, fmt.Errorf("attach source db: %w", err)
+	}
+	defer r.db.ExecContext(ctx, "DETACH DATABASE src")
+
+	type updateStep struct {
+		name string
+		sql  string
+	}
+
+	steps := []updateStep{
+		{"ratings", `
+			UPDATE card_analysis
+			SET product_rating = COALESCE(
+				    (SELECT COALESCE(product_rating, 0) FROM src.products WHERE src.products.nm_id = card_analysis.nm_id), 0),
+			    feedback_rating = COALESCE(
+				    (SELECT COALESCE(feedback_rating, 0) FROM src.products WHERE src.products.nm_id = card_analysis.nm_id), 0)`},
+		{"max_visibility", `
+			UPDATE card_analysis
+			SET max_visibility = COALESCE((
+				SELECT MAX(visibility) FROM src.search_positions_daily
+				WHERE src.search_positions_daily.nm_id = card_analysis.nm_id
+				  AND snapshot_date >= DATE('now', '-14 day')
+			), 0)`},
+		{"avg_position", `
+			UPDATE card_analysis
+			SET avg_position = COALESCE((
+				SELECT AVG(avg_position) FROM src.search_positions_daily
+				WHERE src.search_positions_daily.nm_id = card_analysis.nm_id
+				  AND snapshot_date >= DATE('now', '-14 day')
+			), 0)`},
+		{"top_query", `
+			UPDATE card_analysis
+			SET top_query = COALESCE((
+				SELECT search_text FROM (
+					SELECT search_text, SUM(COALESCE(open_card, 0)) AS total_opens
+					FROM src.search_queries_daily
+					WHERE src.search_queries_daily.nm_id = card_analysis.nm_id
+					  AND snapshot_date >= DATE('now', '-30 day')
+					GROUP BY search_text
+					ORDER BY total_opens DESC
+					LIMIT 1
+				)
+			), '')`},
+		{"top_queries", `
+			UPDATE card_analysis
+			SET top_queries = COALESCE((
+				SELECT GROUP_CONCAT(sub.search_text, ', ') FROM (
+					SELECT search_text, SUM(COALESCE(open_card, 0)) AS total_opens
+					FROM src.search_queries_daily
+					WHERE src.search_queries_daily.nm_id = card_analysis.nm_id
+					  AND snapshot_date >= DATE('now', '-30 day')
+					GROUP BY search_text
+					ORDER BY total_opens DESC
+					LIMIT 3
+				) sub
+			), '')`},
+		{"open_card_30d", `
+			UPDATE card_analysis
+			SET open_card_30d = COALESCE((
+				SELECT SUM(COALESCE(open_card, 0)) FROM src.search_queries_daily
+				WHERE src.search_queries_daily.nm_id = card_analysis.nm_id
+				  AND snapshot_date >= DATE('now', '-30 day')
+			), 0)`},
+		{"orders_30d", `
+			UPDATE card_analysis
+			SET orders_30d = COALESCE((
+				SELECT SUM(COALESCE(orders, 0)) FROM src.search_queries_daily
+				WHERE src.search_queries_daily.nm_id = card_analysis.nm_id
+				  AND snapshot_date >= DATE('now', '-30 day')
+			), 0)`},
+		{"priority_score", `
+			UPDATE card_analysis
+			SET priority_score =
+				(1.0 - COALESCE(max_visibility, 0) / 100.0) * 0.5 +
+				(1.0 - COALESCE(product_rating, 0) / 10.0) * 0.3 +
+				MIN(COALESCE(open_card_30d, 0) / 100.0, 1.0) * 0.2`},
+	}
+
+	for _, step := range steps {
+		res, err := r.db.ExecContext(ctx, step.sql)
+		if err != nil {
+			return 0, fmt.Errorf("backfill %s: %w", step.name, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			updated += int(n)
+		}
+	}
+
+	return updated, nil
 }
 
 // SaveTextAnalysis сохраняет результаты текстового анализа (этап 1).
@@ -485,6 +590,15 @@ func formatCharacteristicsJSON(jsonStr string) string {
 type xlsxRow struct {
 	NmID              int
 	VendorCode        string
+	ProductRating     float64
+	FeedbackRating    float64
+	MaxVisibility     float64
+	PriorityScore     float64
+	AvgPosition       float64
+	OpenCard30d       int
+	Orders30d         int
+	TopQuery          string
+	TopQueries        string
 	Title             string
 	SubjectName       string
 	TextDone          int
@@ -501,6 +615,7 @@ type xlsxRow struct {
 	WbUpdated         int
 }
 
+
 // ExportXLSX выгружает card_analysis в XLSX файл с превью фото в первом столбце.
 func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos func(ctx context.Context, nmIDs []int) map[int][]byte) (int, error) {
 	rows, err := r.db.QueryContext(ctx, `
@@ -508,9 +623,13 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		       text_done, text_has_discrepancy, text_summary,
 		       vision_done, vision_product_type, vision_has_discrepancy, vision_summary,
 		       generate_done, new_title, new_description, new_characteristics,
-		       wb_updated
+		       wb_updated,
+		       COALESCE(product_rating, 0), COALESCE(feedback_rating, 0),
+		       COALESCE(max_visibility, 0), COALESCE(priority_score, 0),
+		       COALESCE(avg_position, 0), COALESCE(open_card_30d, 0), COALESCE(orders_30d, 0),
+		       COALESCE(top_query, ''), COALESCE(top_queries, '')
 		FROM card_analysis
-		ORDER BY nm_id`)
+		ORDER BY COALESCE(priority_score, 0) DESC, nm_id`)
 	if err != nil {
 		return 0, fmt.Errorf("query: %w", err)
 	}
@@ -520,24 +639,33 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 	var data []xlsxRow
 	for rows.Next() {
 		var (
-			nmID                            int
-			vendorCode, title, subjectName  string
-			textDone                        int
-			textDiscNull                    sql.NullInt64
-			textSummary                     string
-			visionDone                      int
-			visionProductType               string
-			visionDiscNull                  sql.NullInt64
-			visionSummary                   string
-			generateDone                    int
-			newTitle, newDesc, newChars     string
-			wbUpdated                       int
+			nmID                           int
+			vendorCode, title, subjectName string
+			textDone                       int
+			textDiscNull                   sql.NullInt64
+			textSummary                    string
+			visionDone                     int
+			visionProductType              string
+			visionDiscNull                 sql.NullInt64
+			visionSummary                  string
+			generateDone                   int
+			newTitle, newDesc, newChars    string
+			wbUpdated                      int
+			productRating, feedbackRating  float64
+			maxVisibility, priorityScore   float64
+			avgPosition                    float64
+			openCard30d, orders30d         int
+			topQuery, topQueries           string
 		)
 		if err := rows.Scan(&nmID, &vendorCode, &title, &subjectName,
 			&textDone, &textDiscNull, &textSummary,
 			&visionDone, &visionProductType, &visionDiscNull, &visionSummary,
 			&generateDone, &newTitle, &newDesc, &newChars,
-			&wbUpdated); err != nil {
+			&wbUpdated,
+			&productRating, &feedbackRating,
+			&maxVisibility, &priorityScore,
+			&avgPosition, &openCard30d, &orders30d,
+			&topQuery, &topQueries); err != nil {
 			return 0, fmt.Errorf("scan row: %w", err)
 		}
 
@@ -551,7 +679,12 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		}
 
 		data = append(data, xlsxRow{
-			NmID: nmID, VendorCode: vendorCode, Title: title, SubjectName: subjectName,
+			NmID: nmID, VendorCode: vendorCode,
+			ProductRating: productRating, FeedbackRating: feedbackRating,
+			MaxVisibility: maxVisibility, PriorityScore: priorityScore,
+			AvgPosition: avgPosition, OpenCard30d: openCard30d, Orders30d: orders30d,
+			TopQuery: topQuery, TopQueries: topQueries,
+			Title: title, SubjectName: subjectName,
 			TextDone: textDone, TextDisc: textDisc, TextSummary: textSummary,
 			VisionDone: visionDone, VisionProductType: visionProductType,
 			VisionDisc: visionDisc, VisionSummary: visionSummary,
@@ -575,9 +708,16 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 	sheet := "Card Analysis"
 	f.SetSheetName("Sheet1", sheet)
 
+	// Column order:
+	//   photo | nm_id | vendor_code | рейтинг WB | рейтинг отзывов | видимость | priority | ср.позиция | открытия | заказы | топ запрос | топ запросы | subject | ...
 	headers := []string{
 		"photo",
-		"nm_id", "vendor_code", "subject",
+		"nm_id", "vendor_code",
+		"рейтинг WB", "рейтинг отзывов",
+		"видимость (%)", "priority", "ср. позиция",
+		"открытия (30д)", "заказы (30д)",
+		"топ запрос", "топ запросы",
+		"subject",
 		"title (было)", "title (новое)",
 		"description (новое)",
 		"характеристики (новые)",
@@ -597,14 +737,33 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"#FFE0E0"}},
 	})
 
+	priorityStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Color: "#006600", Bold: true},
+		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"#E0FFE0"}},
+	})
+
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheet, cell, h)
 		f.SetCellStyle(sheet, cell, cell, headerStyle)
 	}
 
-	// Photo column width + default row height.
+	// Photo column width.
 	f.SetColWidth(sheet, "A", "A", 14.3)
+
+	// Pre-compute data column names and cell references.
+	dataColNames := make([]string, len(headers)-1)
+	for i := range dataColNames {
+		dataColNames[i], _ = excelize.ColumnNumberToName(i + 2)
+	}
+	maxRow := len(data) + 1
+	colCells := make([][]string, len(dataColNames))
+	for ci, colName := range dataColNames {
+		colCells[ci] = make([]string, maxRow)
+		for ri := 0; ri < maxRow; ri++ {
+			colCells[ci][ri] = colName + fmt.Sprintf("%d", ri+2)
+		}
+	}
 
 	for rowNum := 0; rowNum < len(data); rowNum++ {
 		d := data[rowNum]
@@ -613,10 +772,9 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		textDiscStr := boolStr(d.TextDisc)
 		visionDiscStr := boolStr(d.VisionDisc)
 
-		// Embed photo in column A.
+		// Embed photo in column A — NOT CHANGED.
 		if photoBytes, ok := photos[d.NmID]; ok && len(photoBytes) > 0 {
-			cell, _ := excelize.CoordinatesToCellName(1, row)
-			if err := f.AddPictureFromBytes(sheet, cell, &excelize.Picture{
+			if err := f.AddPictureFromBytes(sheet, fmt.Sprintf("A%d", row), &excelize.Picture{
 				Extension: ".jpg",
 				File:      photoBytes,
 				Format: &excelize.GraphicOptions{
@@ -633,8 +791,13 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		f.SetRowHeight(sheet, row, 56.4)
 
 		// Data columns start at column 2 (B).
-		vals := []interface{}{
-			d.NmID, d.VendorCode, d.SubjectName,
+		vals := []any{
+			d.NmID, d.VendorCode,
+			d.ProductRating, d.FeedbackRating,
+			d.MaxVisibility, d.PriorityScore, d.AvgPosition,
+			d.OpenCard30d, d.Orders30d,
+			d.TopQuery, d.TopQueries,
+			d.SubjectName,
 			d.Title, d.NewTitle,
 			d.NewDesc,
 			formatCharacteristicsJSON(d.NewChars),
@@ -643,22 +806,51 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 			d.TextDone, d.VisionDone, d.GenerateDone, d.WbUpdated,
 		}
 
+		ri := rowNum
 		for i, v := range vals {
-			cell, _ := excelize.CoordinatesToCellName(i+2, row) // +2: col A = photo
-			f.SetCellValue(sheet, cell, v)
-			if (i == 8 && textDiscStr == "Да") || (i == 11 && visionDiscStr == "Да") {
-				f.SetCellStyle(sheet, cell, cell, discStyle)
+			f.SetCellValue(sheet, colCells[i][ri], v)
+			// text discrepancy = col index 16 (0-based)
+			if i == 16 && textDiscStr == "Да" {
+				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
+			}
+			// vision discrepancy = col index 19
+			if i == 19 && visionDiscStr == "Да" {
+				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
+			}
+			// product rating < 5 = col index 2
+			if i == 2 && d.ProductRating > 0 && d.ProductRating < 5.0 {
+				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
+			}
+			// feedback rating < 4 = col index 3
+			if i == 3 && d.FeedbackRating > 0 && d.FeedbackRating < 4.0 {
+				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
+			}
+			// priority score > 1.0 = col index 5 → green
+			if i == 5 && d.PriorityScore > 1.0 {
+				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], priorityStyle)
 			}
 		}
 	}
 
-	// Column widths (data columns start at B = index 2).
+	// Column widths.
+	// Default 18 for all data columns.
 	for i := 1; i < len(headers); i++ {
 		col, _ := excelize.ColumnNumberToName(i + 1)
 		f.SetColWidth(sheet, col, col, 18)
 	}
-	for _, i := range []int{4, 5, 6, 7, 9, 12} {
-		col, _ := excelize.ColumnNumberToName(i + 1)
+	// Narrow numeric columns: C(nm_id) D(vendor) E(рейтинг WB) F(рейтинг отзывов) G(видимость) H(priority) I(ср.позиция)
+	for _, idx := range []int{2, 3, 4, 5, 6, 7, 8} {
+		col, _ := excelize.ColumnNumberToName(idx + 1)
+		f.SetColWidth(sheet, col, col, 12)
+	}
+	// Wider: J(открытия) K(заказы) — 14
+	for _, idx := range []int{9, 10} {
+		col, _ := excelize.ColumnNumberToName(idx + 1)
+		f.SetColWidth(sheet, col, col, 14)
+	}
+	// Wide text columns: L(топ запрос) M(топ запросы) N(subject) O(title было) P(title новое) Q(description) R(характеристики) T(text описание) W(vision описание)
+	for _, idx := range []int{11, 12, 13, 14, 15, 16, 17, 19, 22} {
+		col, _ := excelize.ColumnNumberToName(idx + 1)
 		f.SetColWidth(sheet, col, col, 40)
 	}
 
@@ -673,4 +865,63 @@ func boolStr(v int) string {
 		return "Да"
 	}
 	return "Нет"
+}
+
+// FilterByThresholds возвращает nm_id карточек, подходящих под пороговые фильтры.
+// Порог = 0 → условие не применяется.
+// Артикулы без строки в card_analysis пропускаются (включаются в результат).
+func (r *ResultsRepo) FilterByThresholds(ctx context.Context, nmIDs []int, f FilterConfig) ([]int, error) {
+	if !f.hasThresholds() || len(nmIDs) == 0 {
+		return nmIDs, nil
+	}
+
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+
+	var conds []string
+	if f.MaxProductRating > 0 {
+		conds = append(conds, "(product_rating < ? OR product_rating = 0)")
+		args = append(args, f.MaxProductRating)
+	}
+	if f.MaxFeedbackRating > 0 {
+		conds = append(conds, "(feedback_rating < ? OR feedback_rating = 0)")
+		args = append(args, f.MaxFeedbackRating)
+	}
+	if f.MaxVisibility > 0 {
+		conds = append(conds, "(max_visibility < ? OR max_visibility = 0)")
+		args = append(args, f.MaxVisibility)
+	}
+
+	query := fmt.Sprintf(
+		"SELECT nm_id FROM card_analysis WHERE nm_id IN (%s) AND %s",
+		strings.Join(ph, ","),
+		strings.Join(conds, " AND "),
+	)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query thresholds: %w", err)
+	}
+	defer rows.Close()
+
+	passing := make(map[int]bool)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		passing[id] = true
+	}
+
+	var result []int
+	for _, id := range nmIDs {
+		if passing[id] {
+			result = append(result, id)
+		}
+	}
+	return result, rows.Err()
 }

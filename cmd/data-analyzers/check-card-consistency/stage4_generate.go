@@ -107,6 +107,12 @@ func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		return fmt.Errorf("load characteristics: %w", err)
 	}
 
+	searchQueriesMap, err := source.LoadTopSearchQueries(ctx, nmIDs, 5)
+	if err != nil {
+		log.Printf("  WARN: load search queries: %v (continuing without queries)", err)
+		searchQueriesMap = nil
+	}
+
 	cardsMap, err := loadCardsMap(ctx, source, nmIDs)
 	if err != nil {
 		return fmt.Errorf("load cards map: %w", err)
@@ -147,7 +153,7 @@ func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 
 			start := time.Now()
 			newTitle, newDesc, newChars, subjectName, subjectID, err := generateNewParams(
-				ctx, provider, charDict, allSubjects, subjectSet, r, chars, card, cfg, brand)
+				ctx, provider, charDict, allSubjects, subjectSet, r, chars, card, cfg, brand, searchQueriesMap)
 			dur := time.Since(start)
 
 			if err != nil {
@@ -207,6 +213,7 @@ func generateNewParams(
 	card CardData,
 	cfg CLIConfig,
 	brand string,
+	searchQueriesMap map[int][]SearchQuery,
 ) (string, string, []any, string, int, error) {
 	// Шаг 2: LLM выбирает предмет из списка всех предметов WB
 	subjectID, subjectName, err := selectSubject(ctx, provider, allSubjects, row, card, cfg.Text, cfg.Prompts)
@@ -236,7 +243,8 @@ func generateNewParams(
 	}
 
 	// Шаг 4: LLM заполняет параметры на основе Vision + загруженных характеристик
-	return fillCardParams(ctx, provider, row, chars, subjectID, subjectName, charEntries, cfg.Text, brand, cfg.Prompts)
+	searchQueries := searchQueriesMap[row.NmID]
+	return fillCardParams(ctx, provider, row, chars, subjectID, subjectName, charEntries, cfg.Text, brand, cfg.Prompts, searchQueries)
 }
 
 // selectSubject — шаг 2: LLM выбирает подходящий предмет из списка.
@@ -291,6 +299,7 @@ func fillCardParams(
 	modelCfg ModelConfig,
 	brand string,
 	prompts PromptConfig,
+	searchQueries []SearchQuery,
 ) (string, string, []any, string, int, error) {
 	// Формируем список доступных характеристик с charcID
 	type charDef struct {
@@ -312,7 +321,8 @@ func fillCardParams(
 
 	system, user := buildStage4FillMessages(
 		row, chars, subjectID, subjectName, string(defsJSON),
-		brand, audience, titleRules, descRules, seoContext, prompts,
+		brand, audience, titleRules, descRules, seoContext,
+		formatSearchQueries(searchQueries), prompts,
 	)
 
 	resp, err := generateWithRetry(ctx, provider,

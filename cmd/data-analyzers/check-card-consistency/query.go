@@ -21,6 +21,7 @@ func NewSourceRepo(dbPath string) (*SourceRepo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open source db: %w", err)
 	}
+	db.Exec("PRAGMA journal_mode=WAL")
 	return &SourceRepo{db: db}, nil
 }
 
@@ -49,6 +50,50 @@ type CardChar struct {
 	CharID int
 	Name   string
 	Value  string
+}
+
+// RatingInfo — рейтинги товара из таблицы products (wb-sales.db).
+type RatingInfo struct {
+	ProductRating  float64 // 0-10, внутренний рейтинг качества WB
+	FeedbackRating float64 // 1-5, звёздочный рейтинг покупателей
+}
+
+// LoadRatings загружает рейтинги из products по списку nm_id.
+// Если nm_id нет в таблице — возвращает нулевые значения.
+func (r *SourceRepo) LoadRatings(ctx context.Context, nmIDs []int) (map[int]RatingInfo, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT nm_id, COALESCE(product_rating, 0), COALESCE(feedback_rating, 0)
+		FROM products
+		WHERE nm_id IN (%s)
+	`, strings.Join(ph, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query ratings: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]RatingInfo, len(nmIDs))
+	for rows.Next() {
+		var nmID int
+		var ri RatingInfo
+		if err := rows.Scan(&nmID, &ri.ProductRating, &ri.FeedbackRating); err != nil {
+			return nil, fmt.Errorf("scan rating: %w", err)
+		}
+		result[nmID] = ri
+	}
+	return result, rows.Err()
 }
 
 // PhotoData — URL фото карточки.
@@ -239,6 +284,8 @@ func (r *SourceRepo) LoadThumbnailURLs(ctx context.Context, nmIDs []int) (map[in
 		return nil, nil
 	}
 
+	r.db.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_card_photos_nm_id_rowid ON card_photos(nm_id, id)")
+
 	ph := make([]string, len(nmIDs))
 	args := make([]any, len(nmIDs))
 	for i, id := range nmIDs {
@@ -297,6 +344,63 @@ func (r *SourceRepo) LoadLatestStockDate(ctx context.Context) string {
 	var date string
 	r.db.QueryRowContext(ctx, "SELECT MAX(snapshot_date) FROM stocks_daily_warehouses").Scan(&date)
 	return date
+}
+
+// SearchQuery — поисковый запрос из search_queries_daily.
+type SearchQuery struct {
+	Text      string
+	Frequency int
+	OpenCard  int
+	Orders    int
+}
+
+// LoadTopSearchQueries загружает топ поисковых запросов по nm_id за 30 дней.
+// Возвращает map[nm_id][]SearchQuery, отсортированных по open_card DESC, orders DESC.
+func (r *SourceRepo) LoadTopSearchQueries(ctx context.Context, nmIDs []int, limit int) (map[int][]SearchQuery, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT nm_id, search_text,
+		       SUM(COALESCE(frequency, 0)) AS total_freq,
+		       SUM(COALESCE(open_card, 0)) AS total_opens,
+		       SUM(COALESCE(orders, 0)) AS total_orders
+		FROM search_queries_daily
+		WHERE nm_id IN (%s)
+		  AND snapshot_date >= DATE('now', '-30 day')
+		GROUP BY nm_id, search_text
+		ORDER BY total_opens DESC, total_orders DESC
+	`, strings.Join(ph, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query search queries: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int][]SearchQuery)
+	for rows.Next() {
+		var nmID int
+		var sq SearchQuery
+		if err := rows.Scan(&nmID, &sq.Text, &sq.Frequency, &sq.OpenCard, &sq.Orders); err != nil {
+			return nil, fmt.Errorf("scan search query: %w", err)
+		}
+		if len(result[nmID]) < limit {
+			result[nmID] = append(result[nmID], sq)
+		}
+	}
+	return result, rows.Err()
 }
 
 // LoadAllSubjects загружает все уникальные предметы WB из source DB.

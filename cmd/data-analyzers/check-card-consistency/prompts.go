@@ -142,6 +142,8 @@ VISION АНАЛИЗ (ФОТО — единственный источник ис
 Замечания: {vision_summary}
 Аудитория: {seo_context}
 
+{search_queries}
+
 ДОПУСТИМЫЕ ХАРАКТЕРИСТИКИ ПРЕДМЕТА "{subject_name}" (subject_id={subject_id}):
 {char_defs_json}`
 
@@ -317,6 +319,7 @@ func buildStage4FillMessages(
 	titleRules string,
 	descRules string,
 	seoContext string,
+	searchQueriesText string,
 	prompts PromptConfig,
 ) (system, user string) {
 	sysTmpl := resolvePrompt(prompts.Stage4FillSys, defaultStage4FillSystem)
@@ -340,11 +343,27 @@ func buildStage4FillMessages(
 		"{vision_attributes}", row.VisionAttributes,
 		"{vision_summary}", row.VisionSummary,
 		"{seo_context}", seoContext,
+		"{search_queries}", searchQueriesText,
 		"{subject_name}", subjectName,
 		"{subject_id}", fmt.Sprintf("%d", subjectID),
 		"{char_defs_json}", defsJSON,
 	)
 	return
+}
+
+// formatSearchQueries форматирует поисковые запросы для промпта Stage 4.
+func formatSearchQueries(queries []SearchQuery) string {
+	if len(queries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("ТОП-ПОИСКОВЫЕ ЗАПРОСЫ (реальные данные WB за 30 дней):")
+	for i, q := range queries {
+		fmt.Fprintf(&b, "\n%d. \"%s\" (открытий: %d, заказов: %d, частотность: %d)",
+			i+1, q.Text, q.OpenCard, q.Orders, q.Frequency)
+	}
+	b.WriteString("\n\nИспользуй 1-2 самые релевантные фразы естественно в title и description.\nНЕ вставляй запрос, если он противоречит тому, что видно на фото.")
+	return b.String()
 }
 
 // formatCharacteristics форматирует характеристики для промпта.
