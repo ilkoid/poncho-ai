@@ -14,10 +14,24 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/progress"
 )
 
-// runStage1 выполняет текстовый анализ карточек: description vs characteristics (этап 1).
-func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, provider llm.Provider, cfg CLIConfig) error {
+// runStage1Audit выполняет единый анализ карточек: текст + фото (этап 1).
+func runStage1Audit(ctx context.Context, source *SourceRepo, results *ResultsRepo, provider llm.Provider, cfg CLIConfig) error {
 	// Статистика фильтрации: total в базе
 	totalInDB, _ := source.CountCards(ctx)
+
+	// Загружаем nm_id проблемных карточек, если включен фильтр Problems
+	if cfg.Filter.Problems.AnyDiscrepancy || cfg.Filter.Problems.HasParseErrors || cfg.Filter.Problems.PendingWBUpdate {
+		problemIDs, err := results.LoadProblemNmIDs(ctx, cfg.Filter.Problems)
+		if err != nil {
+			return fmt.Errorf("load problem nm_ids: %w", err)
+		}
+		if len(problemIDs) == 0 {
+			log.Println("No problem cards found matching the criteria")
+			return nil
+		}
+		// Переопределяем фильтр NmIDs, чтобы загрузить только проблемные карточки
+		cfg.Filter.NmIDs = problemIDs
+	}
 
 	// Загружаем карточки с фильтрацией
 	cards, err := source.LoadCardsForAnalysis(ctx, cfg.Filter)
@@ -29,12 +43,17 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		return nil
 	}
 
-	// Логируем статистику фильтрации
-	filterDesc := describeFilter(cfg.Filter, totalInDB, len(cards))
-	log.Printf("  Filter: %s", filterDesc)
-	if cfg.Filter.InStock {
-		sd := source.LoadLatestStockDate(ctx)
-		log.Printf("  In-stock: snapshot date %s", sd)
+	// ЛОГИЧЕСКИЙ ФИКС: Сначала создаем строки в БД и подтягиваем метрики!
+	inserted, err := results.EnsureRows(ctx, cards)
+	if err != nil {
+		return fmt.Errorf("ensure rows: %w", err)
+	}
+	log.Printf("  Created %d new rows in card_analysis", inserted)
+
+	if n, err := results.BackfillMetrics(ctx, cfg.Source.DBPath); err != nil {
+		log.Printf("  WARN: backfill metrics: %v", err)
+	} else if n > 0 {
+		log.Printf("  Backfilled metrics: %d updates", n)
 	}
 
 	// Фильтрация по порогам рейтингов/видимости (только худшие)
@@ -80,23 +99,30 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		nmIDs[i] = c.NmID
 	}
 
+	// Логируем статистику фильтрации
+	filterDesc := describeFilter(cfg.Filter, totalInDB, len(cards))
+	log.Printf("  Filter: %s", filterDesc)
+	if cfg.Filter.InStock {
+		sd := source.LoadLatestStockDate(ctx)
+		log.Printf("  In-stock: snapshot date %s", sd)
+	}
+
 	// Загружаем характеристики
 	charsMap, err := source.LoadCharacteristics(ctx, nmIDs)
 	if err != nil {
 		return fmt.Errorf("load characteristics: %w", err)
 	}
 
-	// Создаём строки в results DB
-	inserted, err := results.EnsureRows(ctx, cards)
+	// Загружаем фото для Vision анализа
+	photosMap, err := source.LoadPhotos(ctx, nmIDs, cfg.Vision.PhotosPerCard)
 	if err != nil {
-		return fmt.Errorf("ensure rows: %w", err)
+		return fmt.Errorf("load photos: %w", err)
 	}
-	log.Printf("  Created %d new rows in card_analysis", inserted)
 
-	// Resume: пропускаем карточки, уже обработанные Stage 1
-	pending, err := results.LoadPendingTextCards(ctx, nmIDs)
+	// Resume: пропускаем карточки, уже обработанные Stage 1 Audit
+	pending, err := results.LoadPendingAuditCards(ctx, nmIDs)
 	if err != nil {
-		return fmt.Errorf("load pending text cards: %w", err)
+		return fmt.Errorf("load pending audit cards: %w", err)
 	}
 	pendingSet := make(map[int]bool, len(pending))
 	for _, id := range pending {
@@ -145,7 +171,18 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 
 			start := time.Now()
 			chars := charsMap[c.NmID]
-			hasDisc, summary, err := analyzeCardText(ctx, provider, c, chars, cfg.Text, cfg.Prompts)
+			photos := photosMap[c.NmID]
+
+			if len(photos) == 0 {
+				mu.Lock()
+				errors++
+				mu.Unlock()
+				log.Printf("  WARN nm_id=%d: no photos found, skipping", c.NmID)
+				// We don't mark it done, or maybe we should? Let's just return to skip
+				return
+			}
+
+			hasDisc, productType, attributes, summary, parseErr, err := analyzeCardUnified(ctx, provider, c, chars, photos, cfg.Vision, cfg.Prompts)
 			dur := time.Since(start)
 
 			if err != nil {
@@ -156,7 +193,19 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 				return
 			}
 
-			if err := results.SaveTextAnalysis(ctx, c.NmID, hasDisc, summary); err != nil {
+			if parseErr != nil {
+				summary = fmt.Sprintf("PARSE ERROR: %v | Raw: %s", parseErr, summary)
+				// Увеличиваем счетчик ошибок для защиты от бесконечных циклов
+				if incErr := results.IncrementErrorCount(ctx, c.NmID); incErr != nil {
+					log.Printf("  ERROR increment error count nm_id=%d: %v", c.NmID, incErr)
+				}
+			}
+
+			attrsJSON, _ := json.Marshal(attributes)
+			photosJSON, _ := json.Marshal(photos)
+
+			// Сохраняем результаты в колонки vision_* (так как они теперь используются для единого аудита)
+			if err := results.SaveVisionAnalysis(ctx, c.NmID, productType, string(attrsJSON), string(photosJSON), summary, hasDisc); err != nil {
 				mu.Lock()
 				errors++
 				mu.Unlock()
@@ -164,12 +213,15 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 				return
 			}
 
-			if err := results.MarkTextDone(ctx, c.NmID); err != nil {
-				mu.Lock()
-				errors++
-				mu.Unlock()
-				log.Printf("  ERROR mark done nm_id=%d: %v", c.NmID, err)
-				return
+			// Если была ошибка парсинга, не помечаем как done, чтобы карточка ушла на ретрай (пока error_count < 3)
+			if parseErr == nil {
+				if err := results.MarkAuditDone(ctx, c.NmID); err != nil {
+					mu.Lock()
+					errors++
+					mu.Unlock()
+					log.Printf("  ERROR mark done nm_id=%d: %v", c.NmID, err)
+					return
+				}
 			}
 
 			tracker.Update(1)
@@ -204,9 +256,17 @@ func runStage1(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 	return nil
 }
 
-// analyzeCardText отправляет карточку в LLM и парсит результат.
-func analyzeCardText(ctx context.Context, provider llm.Provider, card CardData, chars []CardChar, modelCfg ModelConfig, prompts PromptConfig) (bool, string, error) {
-	messages := buildTextAnalysisMessages(card.Title, card.Description, chars, prompts)
+// analyzeCardUnified отправляет карточку (текст + фото) в LLM и парсит результат.
+func analyzeCardUnified(ctx context.Context, provider llm.Provider, card CardData, chars []CardChar, photos []string, modelCfg VisionConfig, prompts PromptConfig) (bool, string, map[string]string, string, error, error) {
+	// Очищаем характеристики от мусора для экономии токенов
+	var cleanChars []CardChar
+	for _, c := range chars {
+		if !skipCharcIDs[c.CharID] {
+			cleanChars = append(cleanChars, c)
+		}
+	}
+
+	messages := buildAuditMessages(card.Title, card.Description, cleanChars, photos, prompts)
 
 	resp, err := generateWithRetry(ctx, provider, messages,
 		llm.WithModel(modelCfg.Model),
@@ -214,20 +274,20 @@ func analyzeCardText(ctx context.Context, provider llm.Provider, card CardData, 
 		llm.WithMaxTokens(modelCfg.MaxTokens),
 	)
 	if err != nil {
-		return false, "", fmt.Errorf("LLM call: %w", err)
+		return false, "", nil, "", nil, fmt.Errorf("LLM call: %w", err)
 	}
 
 	content := strings.TrimSpace(resp.Content)
 	if content == "" {
-		return false, "", fmt.Errorf("empty LLM response")
+		return false, "", nil, "", nil, fmt.Errorf("empty LLM response")
 	}
 
-	var result textAnalysisResult
+	var result visionAnalysisResult
 	if err := json.Unmarshal([]byte(extractJSON(content)), &result); err != nil {
-		return false, truncate(content, 200), nil
+		return false, "", nil, truncate(content, 200), err, nil
 	}
 
-	return result.Discrepancy, result.Summary, nil
+	return result.Discrepancy, result.ProductType, result.Attributes, result.Summary, nil, nil
 }
 
 // extractJSON извлекает JSON объект из ответа LLM (может быть обёрнут в markdown).

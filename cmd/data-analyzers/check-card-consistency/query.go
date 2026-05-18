@@ -102,8 +102,9 @@ type PhotoData struct {
 	URL  string // big (900x1200)
 }
 
-// LoadCardsForAnalysis загружает карточки с фильтрацией по году, сезону, предмету и vendor_codes.
-func (r *SourceRepo) LoadCardsForAnalysis(ctx context.Context, filter FilterConfig) ([]CardData, error) {
+// buildFilterClause строит WHERE-условия для карточек по FilterConfig.
+// Возвращает (where-фрагменты, args). Если вернулся nil where — нет условий.
+func (r *SourceRepo) buildFilterClause(ctx context.Context, filter FilterConfig) ([]string, []any) {
 	var where []string
 	var args []any
 
@@ -136,6 +137,21 @@ func (r *SourceRepo) LoadCardsForAnalysis(ctx context.Context, filter FilterConf
 		where = append(where, "c.nm_id IN ("+strings.Join(ph, ",")+")")
 	}
 
+	if len(filter.Seasons) > 0 {
+		// Сезон хранится в card_characteristics как JSON-массив: ["демисезон"]
+		// Значения могут быть в разном регистре — сравниваем через LOWER().
+		ph := make([]string, len(filter.Seasons))
+		for i, s := range filter.Seasons {
+			ph[i] = "LOWER(je.value) = LOWER(?)"
+			args = append(args, s)
+		}
+		where = append(where, `c.nm_id IN (
+			SELECT cc.nm_id
+			FROM card_characteristics cc, json_each(cc.json_value) je
+			WHERE cc.name = 'Сезон' AND (`+strings.Join(ph, " OR ")+`)
+		)`)
+	}
+
 	if filter.Subject != "" {
 		where = append(where, "LOWER(c.subject_name) = LOWER(?)")
 		args = append(args, filter.Subject)
@@ -150,14 +166,12 @@ func (r *SourceRepo) LoadCardsForAnalysis(ctx context.Context, filter FilterConf
 		where = append(where, "c.subject_id IN ("+strings.Join(ph, ",")+")")
 	}
 
-	// Исключаем vendor_code указанных длин (5=мусор, 6=устаревшие)
 	if len(filter.ExcludeLengths) > 0 {
 		for _, l := range filter.ExcludeLengths {
 			where = append(where, fmt.Sprintf("LENGTH(c.vendor_code) != %d", l))
 		}
 	}
 
-	// Фильтр по остаткам: только товары в наличии
 	if filter.InStock {
 		where = append(where, `c.nm_id IN (
 			SELECT nm_id
@@ -166,6 +180,35 @@ func (r *SourceRepo) LoadCardsForAnalysis(ctx context.Context, filter FilterConf
 			GROUP BY nm_id
 			HAVING SUM(quantity) > 0
 		)`)
+	}
+
+	return where, args
+}
+
+// CountCardsFiltered возвращает количество карточек по FilterConfig (без загрузки данных).
+func (r *SourceRepo) CountCardsFiltered(ctx context.Context, filter FilterConfig) (int, error) {
+	where, args := r.buildFilterClause(ctx, filter)
+	if where == nil {
+		return 0, nil
+	}
+
+	query := "SELECT COUNT(*) FROM cards c"
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+
+	var count int
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count cards: %w", err)
+	}
+	return count, nil
+}
+
+// LoadCardsForAnalysis загружает карточки с фильтрацией по году, сезону, предмету и vendor_codes.
+func (r *SourceRepo) LoadCardsForAnalysis(ctx context.Context, filter FilterConfig) ([]CardData, error) {
+	where, args := r.buildFilterClause(ctx, filter)
+	if where == nil {
+		return nil, nil
 	}
 
 	whereClause := ""
@@ -532,4 +575,90 @@ func (r *CharDictRepo) LoadAllSubjectIDs(ctx context.Context) ([]int, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// SearchMetric — агрегированные поисковые метрики за 30 дней.
+type SearchMetric struct {
+	OpenCard30d int
+	Orders30d   int
+}
+
+// LoadVisibility загружает максимальную видимость за 14 дней по списку nm_id.
+func (r *SourceRepo) LoadVisibility(ctx context.Context, nmIDs []int) (map[int]float64, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT nm_id, MAX(visibility)
+		FROM search_queries_daily
+		WHERE nm_id IN (%s)
+		  AND snapshot_date >= DATE('now', '-14 day')
+		GROUP BY nm_id
+	`, strings.Join(ph, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query visibility: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]float64, len(nmIDs))
+	for rows.Next() {
+		var nmID int
+		var vis float64
+		if err := rows.Scan(&nmID, &vis); err != nil {
+			return nil, fmt.Errorf("scan visibility: %w", err)
+		}
+		result[nmID] = vis
+	}
+	return result, rows.Err()
+}
+
+// LoadSearchMetrics загружает агрегированные поисковые метрики (open_card, orders) за 30 дней.
+func (r *SourceRepo) LoadSearchMetrics(ctx context.Context, nmIDs []int) (map[int]SearchMetric, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT nm_id,
+		       SUM(COALESCE(open_card, 0)),
+		       SUM(COALESCE(orders, 0))
+		FROM search_queries_daily
+		WHERE nm_id IN (%s)
+		  AND snapshot_date >= DATE('now', '-30 day')
+		GROUP BY nm_id
+	`, strings.Join(ph, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query search metrics: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]SearchMetric, len(nmIDs))
+	for rows.Next() {
+		var nmID int
+		var sm SearchMetric
+		if err := rows.Scan(&nmID, &sm.OpenCard30d, &sm.Orders30d); err != nil {
+			return nil, fmt.Errorf("scan search metric: %w", err)
+		}
+		result[nmID] = sm
+	}
+	return result, rows.Err()
 }

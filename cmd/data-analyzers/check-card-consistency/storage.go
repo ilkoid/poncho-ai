@@ -87,21 +87,31 @@ func (r *ResultsRepo) InitSchema(ctx context.Context) error {
 		"ALTER TABLE card_analysis ADD COLUMN text_done INTEGER DEFAULT 0",
 		"ALTER TABLE card_analysis ADD COLUMN vision_done INTEGER DEFAULT 0",
 		"ALTER TABLE card_analysis ADD COLUMN generate_done INTEGER DEFAULT 0",
-		"ALTER TABLE card_analysis ADD COLUMN max_visibility REAL DEFAULT 0",
-		"ALTER TABLE card_analysis ADD COLUMN top_query TEXT DEFAULT ''",
 		"ALTER TABLE card_analysis ADD COLUMN product_rating REAL DEFAULT 0",
 		"ALTER TABLE card_analysis ADD COLUMN feedback_rating REAL DEFAULT 0",
-		"ALTER TABLE card_analysis ADD COLUMN priority_score REAL DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN max_visibility REAL DEFAULT 0",
 		"ALTER TABLE card_analysis ADD COLUMN avg_position REAL DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN top_query TEXT DEFAULT ''",
+		"ALTER TABLE card_analysis ADD COLUMN top_queries TEXT DEFAULT ''",
 		"ALTER TABLE card_analysis ADD COLUMN open_card_30d INTEGER DEFAULT 0",
 		"ALTER TABLE card_analysis ADD COLUMN orders_30d INTEGER DEFAULT 0",
-		"ALTER TABLE card_analysis ADD COLUMN top_queries TEXT DEFAULT ''",
+		"ALTER TABLE card_analysis ADD COLUMN priority_score REAL DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN error_count INTEGER DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN audit_done INTEGER DEFAULT 0",
+		"ALTER TABLE card_analysis ADD COLUMN extracted_attributes TEXT DEFAULT ''",
+		"ALTER TABLE card_analysis ADD COLUMN season TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		r.db.ExecContext(ctx, m) // ignore error — column already exists
 	}
 
 	return nil
+}
+
+// IncrementErrorCount увеличивает счетчик ошибок (защита от бесконечных циклов).
+func (r *ResultsRepo) IncrementErrorCount(ctx context.Context, nmID int) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE card_analysis SET error_count = error_count + 1, updated_at = CURRENT_TIMESTAMP WHERE nm_id = ?", nmID)
+	return err
 }
 
 // EnsureRows создаёт строки в card_analysis для указанных nm_id, если их ещё нет.
@@ -144,6 +154,13 @@ func (r *ResultsRepo) BackfillMetrics(ctx context.Context, sourceDBPath string) 
 	}
 
 	steps := []updateStep{
+		{"season", `
+			UPDATE card_analysis
+			SET season = COALESCE((
+				SELECT GROUP_CONCAT(je.value, ', ')
+				FROM src.card_characteristics cc, json_each(cc.json_value) je
+				WHERE cc.nm_id = card_analysis.nm_id AND cc.name = 'Сезон'
+			), '')`},
 		{"ratings", `
 			UPDATE card_analysis
 			SET product_rating = COALESCE(
@@ -153,8 +170,8 @@ func (r *ResultsRepo) BackfillMetrics(ctx context.Context, sourceDBPath string) 
 		{"max_visibility", `
 			UPDATE card_analysis
 			SET max_visibility = COALESCE((
-				SELECT MAX(visibility) FROM src.search_positions_daily
-				WHERE src.search_positions_daily.nm_id = card_analysis.nm_id
+				SELECT MAX(visibility) FROM src.search_queries_daily
+				WHERE src.search_queries_daily.nm_id = card_analysis.nm_id
 				  AND snapshot_date >= DATE('now', '-14 day')
 			), 0)`},
 		{"avg_position", `
@@ -319,6 +336,43 @@ func (r *ResultsRepo) LoadPendingGenerateCards(ctx context.Context, nmIDs []int)
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query pending generate: %w", err)
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// MarkAuditDone отмечает карточку как полностью прошедшую единый аудит.
+func (r *ResultsRepo) MarkAuditDone(ctx context.Context, nmID int) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE card_analysis SET audit_done = 1 WHERE nm_id = ?", nmID)
+	if err != nil {
+		return fmt.Errorf("mark audit done nm_id=%d: %w", nmID, err)
+	}
+	return nil
+}
+
+// LoadPendingAuditCards возвращает nm_id карточек, ещё не прошедших единый аудит (с учетом лимита ошибок).
+func (r *ResultsRepo) LoadPendingAuditCards(ctx context.Context, nmIDs []int) ([]int, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf("SELECT nm_id FROM card_analysis WHERE audit_done = 0 AND error_count < 3 AND nm_id IN (%s)", strings.Join(ph, ","))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query pending audit: %w", err)
 	}
 	defer rows.Close()
 	var ids []int
@@ -508,6 +562,7 @@ type VisionAnalysisRow struct {
 	VisionProductType string
 	VisionAttributes  string
 	VisionSummary     string
+	TopQuery          string
 }
 
 // LoadAnalysisForVision загружает данные Vision анализа для этапа 4.
@@ -527,7 +582,8 @@ func (r *ResultsRepo) LoadAnalysisForVision(ctx context.Context, nmIDs []int) ([
 		SELECT nm_id, vendor_code, title,
 		       COALESCE(vision_product_type, ''),
 		       COALESCE(vision_attributes, ''),
-		       COALESCE(vision_summary, '')
+		       COALESCE(vision_summary, ''),
+		       COALESCE(top_query, '')
 		FROM card_analysis
 		WHERE nm_id IN (%s)`, strings.Join(ph, ","))
 
@@ -541,7 +597,7 @@ func (r *ResultsRepo) LoadAnalysisForVision(ctx context.Context, nmIDs []int) ([
 	for rows.Next() {
 		var r VisionAnalysisRow
 		if err := rows.Scan(&r.NmID, &r.VendorCode, &r.Title,
-			&r.VisionProductType, &r.VisionAttributes, &r.VisionSummary); err != nil {
+			&r.VisionProductType, &r.VisionAttributes, &r.VisionSummary, &r.TopQuery); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		result = append(result, r)
@@ -590,6 +646,9 @@ func formatCharacteristicsJSON(jsonStr string) string {
 type xlsxRow struct {
 	NmID              int
 	VendorCode        string
+	Title             string
+	SubjectName       string
+	Season            string
 	ProductRating     float64
 	FeedbackRating    float64
 	MaxVisibility     float64
@@ -599,8 +658,6 @@ type xlsxRow struct {
 	Orders30d         int
 	TopQuery          string
 	TopQueries        string
-	Title             string
-	SubjectName       string
 	TextDone          int
 	TextDisc          int
 	TextSummary       string
@@ -620,6 +677,7 @@ type xlsxRow struct {
 func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos func(ctx context.Context, nmIDs []int) map[int][]byte) (int, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT nm_id, vendor_code, title, subject_name,
+		       COALESCE(season, ''),
 		       text_done, text_has_discrepancy, text_summary,
 		       vision_done, vision_product_type, vision_has_discrepancy, vision_summary,
 		       generate_done, new_title, new_description, new_characteristics,
@@ -641,6 +699,7 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		var (
 			nmID                           int
 			vendorCode, title, subjectName string
+			season                         string
 			textDone                       int
 			textDiscNull                   sql.NullInt64
 			textSummary                    string
@@ -658,6 +717,7 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 			topQuery, topQueries           string
 		)
 		if err := rows.Scan(&nmID, &vendorCode, &title, &subjectName,
+			&season,
 			&textDone, &textDiscNull, &textSummary,
 			&visionDone, &visionProductType, &visionDiscNull, &visionSummary,
 			&generateDone, &newTitle, &newDesc, &newChars,
@@ -680,11 +740,11 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 
 		data = append(data, xlsxRow{
 			NmID: nmID, VendorCode: vendorCode,
+			Title: title, SubjectName: subjectName, Season: season,
 			ProductRating: productRating, FeedbackRating: feedbackRating,
 			MaxVisibility: maxVisibility, PriorityScore: priorityScore,
 			AvgPosition: avgPosition, OpenCard30d: openCard30d, Orders30d: orders30d,
 			TopQuery: topQuery, TopQueries: topQueries,
-			Title: title, SubjectName: subjectName,
 			TextDone: textDone, TextDisc: textDisc, TextSummary: textSummary,
 			VisionDone: visionDone, VisionProductType: visionProductType,
 			VisionDisc: visionDisc, VisionSummary: visionSummary,
@@ -709,16 +769,16 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 	f.SetSheetName("Sheet1", sheet)
 
 	// Column order:
-	//   photo | nm_id | vendor_code | рейтинг WB | рейтинг отзывов | видимость | priority | ср.позиция | открытия | заказы | топ запрос | топ запросы | subject | ...
+	//   photo | nm_id | vendor_code | title | subject | сезон | рейтинг WB | рейтинг отзывов | видимость | priority | ...
 	headers := []string{
-		"photo",
-		"nm_id", "vendor_code",
+		"photo", "ссылка WB",
+		"nm_id", "vendor_code", "title",
+		"subject", "сезон WB",
 		"рейтинг WB", "рейтинг отзывов",
 		"видимость (%)", "priority", "ср. позиция",
 		"открытия (30д)", "заказы (30д)",
 		"топ запрос", "топ запросы",
-		"subject",
-		"title (было)", "title (новое)",
+		"title (новое)",
 		"description (новое)",
 		"характеристики (новые)",
 		"text: расхождение", "text: описание",
@@ -742,19 +802,25 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"#E0FFE0"}},
 	})
 
+	linkStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Color: "#0563C1", Underline: "single"},
+	})
+
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheet, cell, h)
 		f.SetCellStyle(sheet, cell, cell, headerStyle)
 	}
 
-	// Photo column width.
+	// Column widths: photo (A) and WB link (B).
 	f.SetColWidth(sheet, "A", "A", 14.3)
+	f.SetColWidth(sheet, "B", "B", 10)
 
 	// Pre-compute data column names and cell references.
-	dataColNames := make([]string, len(headers)-1)
+	// Columns A=photo, B=WB link (handled in loop), data starts at C (3).
+	dataColNames := make([]string, len(headers)-2)
 	for i := range dataColNames {
-		dataColNames[i], _ = excelize.ColumnNumberToName(i + 2)
+		dataColNames[i], _ = excelize.ColumnNumberToName(i + 3)
 	}
 	maxRow := len(data) + 1
 	colCells := make([][]string, len(dataColNames))
@@ -790,15 +856,22 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		}
 		f.SetRowHeight(sheet, row, 56.4)
 
-		// Data columns start at column 2 (B).
+		// Column B: clickable WB link (sorts with data unlike photos).
+		wbURL := fmt.Sprintf("https://www.wildberries.ru/catalog/%d/detail.aspx", d.NmID)
+		linkCell, _ := excelize.CoordinatesToCellName(2, row)
+		f.SetCellValue(sheet, linkCell, "открыть")
+		f.SetCellHyperLink(sheet, linkCell, wbURL, "External")
+		f.SetCellStyle(sheet, linkCell, linkCell, linkStyle)
+
+		// Data columns start at column 3 (C).
 		vals := []any{
-			d.NmID, d.VendorCode,
+			d.NmID, d.VendorCode, d.Title,
+			d.SubjectName, d.Season,
 			d.ProductRating, d.FeedbackRating,
 			d.MaxVisibility, d.PriorityScore, d.AvgPosition,
 			d.OpenCard30d, d.Orders30d,
 			d.TopQuery, d.TopQueries,
-			d.SubjectName,
-			d.Title, d.NewTitle,
+			d.NewTitle,
 			d.NewDesc,
 			formatCharacteristicsJSON(d.NewChars),
 			textDiscStr, d.TextSummary,
@@ -809,47 +882,47 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		ri := rowNum
 		for i, v := range vals {
 			f.SetCellValue(sheet, colCells[i][ri], v)
-			// text discrepancy = col index 16 (0-based)
-			if i == 16 && textDiscStr == "Да" {
+			// text discrepancy = col index 17 (0-based)
+			if i == 17 && textDiscStr == "Да" {
 				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
 			}
-			// vision discrepancy = col index 19
-			if i == 19 && visionDiscStr == "Да" {
+			// vision discrepancy = col index 20
+			if i == 20 && visionDiscStr == "Да" {
 				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
 			}
-			// product rating < 5 = col index 2
-			if i == 2 && d.ProductRating > 0 && d.ProductRating < 5.0 {
+			// product rating < 5 = col index 5
+			if i == 5 && d.ProductRating > 0 && d.ProductRating < 5.0 {
 				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
 			}
-			// feedback rating < 4 = col index 3
-			if i == 3 && d.FeedbackRating > 0 && d.FeedbackRating < 4.0 {
+			// feedback rating < 4 = col index 6
+			if i == 6 && d.FeedbackRating > 0 && d.FeedbackRating < 4.0 {
 				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
 			}
-			// priority score > 1.0 = col index 5 → green
-			if i == 5 && d.PriorityScore > 1.0 {
+			// priority score > 1.0 = col index 8 → green
+			if i == 8 && d.PriorityScore > 1.0 {
 				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], priorityStyle)
 			}
 		}
 	}
 
-	// Column widths.
+	// Column widths (data columns C onwards, headers[2:]).
 	// Default 18 for all data columns.
-	for i := 1; i < len(headers); i++ {
+	for i := 2; i < len(headers); i++ {
 		col, _ := excelize.ColumnNumberToName(i + 1)
 		f.SetColWidth(sheet, col, col, 18)
 	}
-	// Narrow numeric columns: C(nm_id) D(vendor) E(рейтинг WB) F(рейтинг отзывов) G(видимость) H(priority) I(ср.позиция)
-	for _, idx := range []int{2, 3, 4, 5, 6, 7, 8} {
+	// Narrow: C(nm_id) D(vendor) E(title) F(subject) G(сезон) H(рейтинг WB) I(рейтинг отзывов) J(видимость) K(priority) L(ср.позиция)
+	for _, idx := range []int{3, 4, 5, 6, 7, 8, 9, 10, 11} {
 		col, _ := excelize.ColumnNumberToName(idx + 1)
 		f.SetColWidth(sheet, col, col, 12)
 	}
-	// Wider: J(открытия) K(заказы) — 14
-	for _, idx := range []int{9, 10} {
+	// Medium: M(открытия) N(заказы)
+	for _, idx := range []int{12, 13} {
 		col, _ := excelize.ColumnNumberToName(idx + 1)
 		f.SetColWidth(sheet, col, col, 14)
 	}
-	// Wide text columns: L(топ запрос) M(топ запросы) N(subject) O(title было) P(title новое) Q(description) R(характеристики) T(text описание) W(vision описание)
-	for _, idx := range []int{11, 12, 13, 14, 15, 16, 17, 19, 22} {
+	// Wide: P-Q(топ запросы), R(title), S(description), T(характеристики), V(text описание), Y(vision описание)
+	for _, idx := range []int{14, 15, 16, 17, 18, 20, 23} {
 		col, _ := excelize.ColumnNumberToName(idx + 1)
 		f.SetColWidth(sheet, col, col, 40)
 	}
@@ -869,7 +942,7 @@ func boolStr(v int) string {
 
 // FilterByThresholds возвращает nm_id карточек, подходящих под пороговые фильтры.
 // Порог = 0 → условие не применяется.
-// Артикулы без строки в card_analysis пропускаются (включаются в результат).
+// ВАЖНО: проверяются только карточки, которые уже существуют в аналитической базе.
 func (r *ResultsRepo) FilterByThresholds(ctx context.Context, nmIDs []int, f FilterConfig) ([]int, error) {
 	if !f.hasThresholds() || len(nmIDs) == 0 {
 		return nmIDs, nil
@@ -924,4 +997,39 @@ func (r *ResultsRepo) FilterByThresholds(ctx context.Context, nmIDs []int, f Fil
 		}
 	}
 	return result, rows.Err()
+}
+
+// LoadProblemNmIDs загружает nm_id карточек, которые соответствуют фильтрам проблем.
+func (r *ResultsRepo) LoadProblemNmIDs(ctx context.Context, p ProblemFilterConfig) ([]int, error) {
+	var conds []string
+	if p.AnyDiscrepancy {
+		conds = append(conds, "vision_has_discrepancy = 1")
+	}
+	if p.HasParseErrors {
+		conds = append(conds, "error_count > 0")
+	}
+	if p.PendingWBUpdate {
+		conds = append(conds, "(generate_done = 1 AND wb_updated = 0)")
+	}
+
+	if len(conds) == 0 {
+		return nil, nil // Если фильтры не заданы, возвращаем nil (не фильтруем)
+	}
+
+	query := "SELECT nm_id FROM card_analysis WHERE " + strings.Join(conds, " OR ")
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query problem nm_ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan problem nm_id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

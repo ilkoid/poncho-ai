@@ -15,61 +15,40 @@ func applyTemplate(tmpl string, pairs ...string) string {
 
 // ─── Hardcoded defaults (fallback если не указано в config.yaml) ───
 
-const defaultStage1System = `Ты — аудитор карточек товаров Wildberries. Твоя задача — найти расхождения между названием, описанием и характеристиками товара.
+const defaultStage1System = `Ты — эксперт товарный аналитик по анализу одежды и аксессуаров Wildberries. Твоя задача — найти расхождения между фотографиями товара (истина) и его текстовым описанием/характеристиками.
 
-Проанализируй данные карточки и найди ЛОГИЧЕСКИЕ ПРОТИВОРЕЧИЯ:
-- Название говорит одно, а характеристики — другое (например: "платье макси" но длина "мини")
-- Описание описывает один тип изделия, а характеристики — другой
-- Характеристика "Комплектация" заполнена шаблонными данными (например "Футболка + брюки" для платья)
-- Цвет в описании не совпадает с характеристикой цвета
-- Сезон в описании не совпадает с характеристикой сезона
-
-НЕ отмечай как расхождение:
-- Мелкие стилистические различия
-- Отсутствие необязательных полей
-- Синонимы (например "футболка" vs "топ")
-
-Ответь СТРОГО JSON:
-{"discrepancy": true/false, "summary": "краткое описание расхождений на русском, пустая строка если всё ок"}`
-
-const defaultStage1User = `НАЗВАНИЕ: {title}
-
-ОПИСАНИЕ:
-{description}
-
-ХАРАКТЕРИСТИКИ:
-{characteristics}`
-
-const defaultStage3System = `Ты — эксперт по анализу фотографий одежды и аксессуаров Wildberries. Фото — истина.
-
-Проанализируй ВСЕ фотографии товара (обычно 5) и сравни с данными карточки. Определи:
+Проанализируй фотографии товара и сравни с данными карточки. Определи:
 1. Тип изделия по фото (платье, брюки, шорты, футболка, костюм, комплект и т.д.)
 2. Видимые атрибуты: цвет, длина изделия, рукав, покрой, декор
 3. Комплектность: сколько отдельных изделий входит в товар. Внимательно посмотри на фото размерной сетки / эскиза (обычно одно из последних фото) — там указано количество изделий. Если на размерной сетке указано 2 изделия — это комплект, если 1 — единое изделие.
 4. Целевая аудитория: для кого товар — посмотри на модель на фото, диапазон размеров на эскизе, стиль изделия
-5. Есть ли расхождения между фото и описанием/характеристиками
+5. Есть ли СУЩЕСТВЕННЫЕ логические противоречия между фото и описанием/характеристиками
 
 КРИТИЧЕСКИ ВАЖНО — комплектность:
 - Если на фото видно несколько предметов одежды (платье + лонгслив, топ + брюки, футболка + шорты) — это КОМПЛЕКТ.
-- Фото размерной сетки / эскиза обычно одно из последних — на ней написано количество изделий (1 шт, 2 шт и т.д.).
 - Если на размерной сетке "2 шт" или видны два отдельных предмета — product_type должен содержать слово "комплект".
 - Если это одно изделие (платье, футболка, брюки) — не называй комплектом.
 
 КРИТИЧЕСКИ ВАЖНО — целевая аудитория:
 - Посмотри на модель: это взрослый человек, подросток или ребёнок? Возраст модели определяет аудиторию.
 - Посмотри на размерную сетку: размеры 80-92 = малыши, 98-140 = дети, 134-170 = подростки, XS-XL/40-46 = взрослые.
-- Определи пол модели: мужская или женская одежда.
 - audience должна быть ТОЧНО одним из: "взрослая женщина", "взрослый мужчина", "девочка-подросток (11-16)", "мальчик-подросток (11-16)", "девочка (6-10)", "мальчик (6-10)", "малышка (2-5)", "малыш (2-5)".
+
+НЕ отмечай как расхождение:
+- Мелкие стилистические различия
+- Несущественные различия цветовой гаммы
+- Отсутствие необязательных полей
+- Синонимы
 
 Ответь СТРОГО JSON:
 {
   "product_type": "тип изделия по фото (обязательно укажи 'комплект' если это набор из нескольких изделий)",
   "attributes": {"цвет": "...", "длина": "...", "рукав": "...", "покрой": "...", "комплектность": "комплект из X изделий / единое изделие", "состав комплекта": "перечисли что входит", "аудитория": "взрослая женщина / взрослый мужчина / девочка-подросток / мальчик-подросток / девочка / мальчик / малышка / малыш", "пол": "женский / мужской"},
   "discrepancy": true/false,
-  "summary": "что именно не совпадает между фото и описанием, пустая строка если всё ок"
+  "summary": "краткое описание расхождений на русском (что не совпадает), пустая строка если всё ок"
 }`
 
-const defaultStage3User = `НАЗВАНИЕ: {title}
+const defaultStage1User = `НАЗВАНИЕ: {title}
 
 ОПИСАНИЕ:
 {description}
@@ -132,6 +111,7 @@ const defaultStage4FillSystem = `Ты — контент-менеджер бре
 Формат: {"title": "...", "description": "...", "characteristics": [{"charc_id": <число>, "value": "..."}]}`
 
 const defaultStage4FillUser = `Артикул: {vendor_code} (nm_id={nm_id})
+ТОП-ЗАПРОС ИЗ ПОИСКА: {top_query}
 
 ТЕКУЩИЕ ХАРАКТЕРИСТИКИ (справочно, МОГУТ СОДЕРЖАТЬ ОШИБКИ — не копируй вслепую, используй только как подсказку для сертификатов, состава, коллекции):
 {characteristics}
@@ -141,8 +121,6 @@ VISION АНАЛИЗ (ФОТО — единственный источник ис
 Атрибуты: {vision_attributes}
 Замечания: {vision_summary}
 Аудитория: {seo_context}
-
-{search_queries}
 
 ДОПУСТИМЫЕ ХАРАКТЕРИСТИКИ ПРЕДМЕТА "{subject_name}" (subject_id={subject_id}):
 {char_defs_json}`
@@ -248,30 +226,12 @@ func resolveAudienceRules(configured map[string]AudienceRule) map[string]Audienc
 
 // ─── Builder functions ───
 
-// buildTextAnalysisMessages строит сообщения для текстового анализа (этап 1).
-func buildTextAnalysisMessages(title, description string, chars []CardChar, prompts PromptConfig) []llm.Message {
+// buildAuditMessages строит сообщения для единого аудита (этап 1).
+func buildAuditMessages(title, description string, chars []CardChar, photoURLs []string, prompts PromptConfig) []llm.Message {
 	charText := formatCharacteristics(chars)
 
 	system := resolvePrompt(prompts.Stage1System, defaultStage1System)
 	userTmpl := resolvePrompt(prompts.Stage1User, defaultStage1User)
-	user := applyTemplate(userTmpl,
-		"{title}", title,
-		"{description}", description,
-		"{characteristics}", charText,
-	)
-
-	return []llm.Message{
-		{Role: llm.RoleSystem, Content: system},
-		{Role: llm.RoleUser, Content: user},
-	}
-}
-
-// buildVisionMessages строит сообщения для Vision анализа (этап 3).
-func buildVisionMessages(title, description string, chars []CardChar, photoURLs []string, prompts PromptConfig) []llm.Message {
-	charText := formatCharacteristics(chars)
-
-	system := resolvePrompt(prompts.Stage3System, defaultStage3System)
-	userTmpl := resolvePrompt(prompts.Stage3User, defaultStage3User)
 	user := applyTemplate(userTmpl,
 		"{title}", title,
 		"{description}", description,
@@ -319,7 +279,7 @@ func buildStage4FillMessages(
 	titleRules string,
 	descRules string,
 	seoContext string,
-	searchQueriesText string,
+	searchQueries string,
 	prompts PromptConfig,
 ) (system, user string) {
 	sysTmpl := resolvePrompt(prompts.Stage4FillSys, defaultStage4FillSystem)
@@ -342,8 +302,9 @@ func buildStage4FillMessages(
 		"{vision_product_type}", row.VisionProductType,
 		"{vision_attributes}", row.VisionAttributes,
 		"{vision_summary}", row.VisionSummary,
+		"{top_query}", row.TopQuery,
+		"{top_queries}", searchQueries,
 		"{seo_context}", seoContext,
-		"{search_queries}", searchQueriesText,
 		"{subject_name}", subjectName,
 		"{subject_id}", fmt.Sprintf("%d", subjectID),
 		"{char_defs_json}", defsJSON,

@@ -26,3 +26,8 @@ search_visibility:
 
   adaptive_probe_after: 10
   max_backoff_seconds: 60
+
+  filter:
+    exclude_lengths: [5, 6]
+    allowed_years: [25, 26]
+    active_days: 14

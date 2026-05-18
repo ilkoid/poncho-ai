@@ -6,10 +6,10 @@
 ## Логика работы
 
 ```
-Этап 1: ~2500 карточек ──текст LLM──► ~30-50% рискованных     (~$0.30)
-Этап 3:   рискованные  ──Vision 2-3 фото──► подтверждённые     (~$1-2)
-Этап 4:   подтверждённые ──LLM──► новые параметры              (~$0.20)
-Этап 5:   исправленные ──WB API──► обновление карточек         (API calls)
+Этап 0: карточки ──фильтрация + rule-based──► превью без LLM и БД   (бесплатно)
+Этап 1: ~2500 карточек ──Vision+текст LLM──► ~30-50% с расхождениями (~$0.30)
+Этап 4:   с расхождениями ──LLM──► новые параметры                   (~$0.20)
+Этап 5:   исправленные ──WB API──► обновление карточек               (API calls)
 ```
 
 Каждый этап — отдельный запуск. Между этапами — ревью через SQL. Этапы идемпотентны: повторный пропуск уже обработанных карточек.
@@ -28,19 +28,20 @@ cd cmd/data-analyzers/check-card-consistency
 go run . --list-subjects="сабо"
 go run . --list-subjects="all"
 
-# Этап 1: текстовый аудит
+# Этап 0: превью — сколько карточек пройдёт фильтры, какие проблемы видны (без LLM, без записи в БД)
+go run . --stage 0
+go run . --stage 0 --limit 50
+
+# Этап 1: единый аудит (текст + Vision)
 go run . --stage 1
 go run . --stage 1 --limit 10         # только 10 карточек
 
 # Посмотреть что нашлось
 sqlite3 /var/db/card-analysis.db \
-  "SELECT vendor_code, substr(title,1,40), text_summary
-   FROM card_analysis WHERE text_has_discrepancy = 1 LIMIT 20"
+  "SELECT vendor_code, substr(title,1,40), vision_summary
+   FROM card_analysis WHERE vision_has_discrepancy = 1 LIMIT 20"
 
-# Этап 3: Vision анализ рискованных
-go run . --stage 3
-
-# Посмотреть подтверждённые
+# Этап 4: генерация новых параметров
 sqlite3 /var/db/card-analysis.db \
   "SELECT vendor_code, vision_product_type, vision_summary
    FROM card_analysis WHERE vision_has_discrepancy = 1"
@@ -64,7 +65,7 @@ go run . --stage 5 --yes
 
 | Флаг | Описание | По умолчанию |
 |------|----------|-------------|
-| `--stage` | Этап: 1, 3, 4, 5 | 1 |
+| `--stage` | Этап: 0 (превью), 1 (аудит), 4 (генерация), 5 (обновление) | 1 |
 | `--limit` | Ограничить кол-во карточек (0=все) | 0 |
 | `--mock` | Этап 5: мок, без отправки в WB | false |
 | `--yes` | Этап 5: подтвердить реальное обновление | false |
@@ -209,8 +210,8 @@ WHERE wb_update_response = 'MOCK: not sent to WB API';
 
 | Этап | Модель | ~2500 карточек |
 |------|--------|---------------|
-| 1 (text) | gpt-5.4-nano | ~$0.30 |
-| 3 (vision) | gpt-5.4-nano | ~$1-2 (только рискованные) |
-| 4 (generate) | gpt-5.4-nano | ~$0.20 (только подтверждённые) |
-| 5 (update) | WB API | бесплатно |
-| **Итого** | | **~$1.50-2.50** |
+| 0 (превью) | — | бесплатно (нет LLM, нет записи в БД) |
+| 1 (аудит) | gemini-flash-latest | ~$0.30 |
+| 4 (генерация) | gemini-flash-latest | ~$0.20 (только с расхождениями) |
+| 5 (обновление) | WB API | бесплатно |
+| **Итого** | | **~$0.50** |

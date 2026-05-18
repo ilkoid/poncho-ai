@@ -89,7 +89,7 @@ type CharDictConfig struct {
 type FilterConfig struct {
 	InStock           bool     `yaml:"in_stock"`
 	AllowedYears      []int    `yaml:"allowed_years"`
-	Season            string   `yaml:"season"`
+	Seasons           []string `yaml:"seasons"`
 	Subject           string   `yaml:"subject"`
 	SubjectIDs        []int    `yaml:"subject_ids"`
 	VendorCodes       []string `yaml:"vendor_codes"`
@@ -97,7 +97,15 @@ type FilterConfig struct {
 	ExcludeLengths    []int    `yaml:"exclude_lengths"`
 	MaxProductRating  float64  `yaml:"max_product_rating"`  // 0=все, иначе product_rating < порога
 	MaxFeedbackRating float64  `yaml:"max_feedback_rating"` // 0=все, иначе feedback_rating < порога
-	MaxVisibility     float64  `yaml:"max_visibility"`      // 0=все, иначе max_visibility < порога
+	MaxVisibility     float64             `yaml:"max_visibility"`      // 0=все, иначе max_visibility < порога
+	Problems          ProblemFilterConfig `yaml:"problems"`
+}
+
+// ProblemFilterConfig позволяет запускать скрипт только по проблемным карточкам
+type ProblemFilterConfig struct {
+	AnyDiscrepancy  bool `yaml:"any_discrepancy"`
+	HasParseErrors  bool `yaml:"has_parse_errors"`
+	PendingWBUpdate bool `yaml:"pending_wb_update"`
 }
 
 func (f FilterConfig) hasThresholds() bool {
@@ -138,7 +146,7 @@ func (c CLIConfig) toVisionModelDef() config.ModelDef {
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config file")
-	stage := flag.Int("stage", 1, "Pipeline stage: 1=text, 3=vision, 4=generate, 5=update")
+	stage := flag.Int("stage", 1, "Pipeline stage: 0=preview, 1=audit, 2=metrics, 4=generate, 5=update")
 	limit := flag.Int("limit", 0, "Limit number of cards (0=all)")
 	mock := flag.Bool("mock", false, "Stage 5: mock mode (no real WB API call)")
 	yes := flag.Bool("yes", false, "Stage 5: confirm real WB update")
@@ -224,44 +232,44 @@ func main() {
 		return
 	}
 
-	// Open results DB (read-write)
-	results, err := NewResultsRepo(cfg.Results.DBPath)
-	if err != nil {
-		log.Fatalf("Open results: %v", err)
-	}
-	defer results.Close()
+	// Open results DB (read-write) — skip for Stage 0 (read-only preview)
+	var results *ResultsRepo
+	if *stage != 0 {
+		results, err = NewResultsRepo(cfg.Results.DBPath)
+		if err != nil {
+			log.Fatalf("Open results: %v", err)
+		}
+		defer results.Close()
 
-	// Init schema
-	if err := results.InitSchema(ctx); err != nil {
-		log.Fatalf("Init schema: %v", err)
+		if err := results.InitSchema(ctx); err != nil {
+			log.Fatalf("Init schema: %v", err)
+		}
 	}
 
-	// Backfill metrics from wb-sales.db (ratings, visibility, search queries, priority score)
-	if n, err := results.BackfillMetrics(ctx, cfg.Source.DBPath); err != nil {
-		log.Printf("WARN: backfill metrics: %v (continuing without metrics)", err)
-	} else if n > 0 {
-		log.Printf("Backfilled metrics: %d updates", n)
-	}
+	// Backfill metrics вызывается теперь внутри стадий (stage1/audit), чтобы не обновлять вхолостую
+	// до того как EnsureRows добавит новые карточки.
 
 	// Route to stage
 	stageStart := time.Now()
 	switch *stage {
-	case 1:
-		provider, err := createProvider(cfg)
-		if err != nil {
-			log.Fatalf("Create LLM provider: %v", err)
-		}
-		if err := runStage1(ctx, source, results, provider, cfg); err != nil {
-			log.Fatalf("Stage 1: %v", err)
+	case 0:
+		charDictPath := expandHome(cfg.CharDict.DBPath)
+		if err := runStage0Preview(ctx, source, cfg, charDictPath); err != nil {
+			log.Fatalf("Stage 0: %v", err)
 		}
 
-	case 3:
-		provider, err := createVisionProvider(cfg)
+	case 1:
+		provider, err := createVisionProvider(cfg) // Единый аудит использует Vision модель
 		if err != nil {
-			log.Fatalf("Create Vision provider: %v", err)
+			log.Fatalf("Create Vision provider for Audit: %v", err)
 		}
-		if err := runStage3(ctx, source, results, provider, cfg); err != nil {
-			log.Fatalf("Stage 3: %v", err)
+		if err := runStage1Audit(ctx, source, results, provider, cfg); err != nil {
+			log.Fatalf("Stage 1 Audit: %v", err)
+		}
+
+	case 2:
+		if err := runStage2Metrics(ctx, source, results, cfg); err != nil {
+			log.Fatalf("Stage 2 Metrics: %v", err)
 		}
 
 	case 4:
@@ -277,17 +285,19 @@ func main() {
 		if !*mock && !*yes {
 			log.Fatal("Stage 5 requires --mock (dry run) or --yes (real update)")
 		}
-		if err := runStage5(ctx, results, cfg, *mock); err != nil {
+		if err := runStage5(ctx, source, results, cfg, *mock); err != nil {
 			log.Fatalf("Stage 5: %v", err)
 		}
 
 	default:
-		log.Fatalf("Unknown stage: %d (use 1, 3, 4, or 5)", *stage)
+		log.Fatalf("Unknown stage: %d (use 0, 1, 2, 4, or 5)", *stage)
 	}
 	stageDuration := time.Since(stageStart)
 
-	// Print stats
-	printStats(ctx, results, *stage, stageDuration)
+	// Print stats (skip for Stage 0 — no results DB)
+	if results != nil {
+		printStats(ctx, results, *stage, stageDuration)
+	}
 }
 
 func printStats(ctx context.Context, results *ResultsRepo, stage int, duration time.Duration) {

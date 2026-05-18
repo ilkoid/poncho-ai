@@ -105,6 +105,9 @@ func main() {
 
 	var client SearchVisibilityClient
 	if *mock {
+		if strings.Contains(cfg.SearchVisibility.DbPath, "/var/db/") {
+			log.Fatalf("FATAL: --mock mode with production database (%s). Use --db test.db or run from a directory with a local config.", cfg.SearchVisibility.DbPath)
+		}
 		client = NewMockSearchVisibilityClient()
 		fmt.Println("Mock mode - using simulated data")
 	} else {
