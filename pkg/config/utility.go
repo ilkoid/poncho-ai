@@ -58,7 +58,7 @@ type PromotionRateLimits struct {
 func (c *PromotionConfig) GetDefaults() PromotionConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "promotion.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.Days == 0 {
 		result.Days = 7
@@ -144,7 +144,7 @@ type DownloadConfig struct {
 func (c *DownloadConfig) GetDefaults() DownloadConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "sales.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.IntervalDays == 0 {
 		result.IntervalDays = 30
@@ -482,7 +482,7 @@ type FeedbacksRateLimits struct {
 func (c *FeedbacksConfig) GetDefaults() FeedbacksConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "feedbacks.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.Days == 0 {
 		result.Days = 7
@@ -671,7 +671,7 @@ type StocksRateLimits struct {
 func (c *StocksConfig) GetDefaults() StocksConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "sales.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.APIKeyEnv == "" {
 		result.APIKeyEnv = "WB_API_ANALYTICS_AND_PROMO_KEY" // default env var
@@ -737,7 +737,7 @@ type StockHistoryRateLimits struct {
 
 func (c *StockHistoryConfig) GetDefaults() StockHistoryConfig {
 	result := *c
-	if result.DbPath == "" { result.DbPath = "stock_history.db" }
+	if result.DbPath == "" { result.DbPath = "/var/db/wb-sales.db" }
 	if result.Days == 0 { result.Days = 30 }
 	if result.ReportType == "" { result.ReportType = "daily" }
 	if result.StockType == "" { result.StockType = "" }
@@ -791,7 +791,7 @@ type RegionSalesRateLimits struct {
 func (c *RegionSalesConfig) GetDefaults() RegionSalesConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "sales.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.APIKeyEnv == "" {
 		result.APIKeyEnv = "WB_API_ANALYTICS_AND_PROMO_KEY"
@@ -864,7 +864,7 @@ type CardsRateLimits struct {
 func (c *CardsConfig) GetDefaults() CardsConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "cards.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.APIKeyEnv == "" {
 		result.APIKeyEnv = "WB_API_KEY"
@@ -937,7 +937,7 @@ type PricesRateLimits struct {
 func (c *PricesConfig) GetDefaults() PricesConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "sales.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.APIKeyEnv == "" {
 		result.APIKeyEnv = "WB_API_KEY"
@@ -987,7 +987,7 @@ type OneCConfig struct {
 func (c OneCConfig) GetDefaults() OneCConfig {
 	result := c
 	if result.DbPath == "" {
-		result.DbPath = "db/wb-cards.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	return result
 }
@@ -1059,7 +1059,7 @@ type SupplyRateLimits struct {
 func (c *SupplyConfig) GetDefaults() SupplyConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "sales.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.DateFilterType == "" {
 		result.DateFilterType = "updatedDate"
@@ -1144,7 +1144,7 @@ type SearchVisibilityRateLimits struct {
 func (c *SearchVisibilityConfig) GetDefaults() SearchVisibilityConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "sales.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.Days == 0 {
 		result.Days = 7
@@ -1289,7 +1289,7 @@ type FreshnessConfig struct {
 func (c *FreshnessConfig) GetDefaults() FreshnessConfig {
 	result := *c
 	if result.DbPath == "" {
-		result.DbPath = "db/wb-sales.db"
+		result.DbPath = "/var/db/wb-sales.db"
 	}
 	if result.WarnAgeDays == 0 {
 		result.WarnAgeDays = 7
