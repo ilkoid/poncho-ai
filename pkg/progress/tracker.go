@@ -56,7 +56,7 @@ type CLITracker struct {
 type CLITrackerConfig struct {
 	Total         int           // Total number of items to process
 	Prefix        string        // Optional prefix for output (e.g., "Downloading:")
-	Width         int           // Progress bar width (0 for default 30)
+	Width         int           // Progress bar width (0 = no bar, -1 or unset = default 30)
 	PrintInterval time.Duration // Minimum time between prints (0 for default 500ms)
 }
 
@@ -70,7 +70,7 @@ func NewCLITracker(total int) *CLITracker {
 // NewCLITrackerWithConfig creates a new CLI progress tracker with custom configuration.
 func NewCLITrackerWithConfig(cfg CLITrackerConfig) *CLITracker {
 	width := cfg.Width
-	if width <= 0 {
+	if width == 0 {
 		width = 30
 	}
 
@@ -213,7 +213,6 @@ func (t *CLITracker) formatProgress(current, total int) string {
 		return fmt.Sprintf("%s%s", t.prefix, "???")
 	}
 
-	bar := utils.ProgressBar(current, total, t.width)
 	percent := float64(current) / float64(total) * 100
 	elapsed := time.Since(t.start).Truncate(time.Second)
 
@@ -229,6 +228,14 @@ func (t *CLITracker) formatProgress(current, total int) string {
 		prefix += " "
 	}
 
+	if t.width <= 0 {
+		if eta != "" {
+			return fmt.Sprintf("%s%d/%d (%.0f%%) ETA: %s", prefix, current, total, percent, eta)
+		}
+		return fmt.Sprintf("%s%d/%d (%.0f%%)", prefix, current, total, percent)
+	}
+
+	bar := utils.ProgressBar(current, total, t.width)
 	if eta != "" {
 		return fmt.Sprintf("%s[%s] %d/%d (%.1f%%) ETA: %s", prefix, bar, current, total, percent, eta)
 	}

@@ -15,38 +15,33 @@ func applyTemplate(tmpl string, pairs ...string) string {
 
 // ─── Hardcoded defaults (fallback если не указано в config.yaml) ───
 
-const defaultStage1System = `Ты — эксперт товарный аналитик по анализу одежды и аксессуаров Wildberries. Твоя задача — найти расхождения между фотографиями товара (истина) и его текстовым описанием/характеристиками.
+const defaultStage1System = `Ты — эксперт по анализу карточек Wildberries (одежда, аксессуары). Сравни фотографии (истина) с текстом карточки и найди расхождения.
 
-Проанализируй фотографии товара и сравни с данными карточки. Определи:
-1. Тип изделия по фото (платье, брюки, шорты, футболка, костюм, комплект и т.д.)
-2. Видимые атрибуты: цвет, длина изделия, рукав, покрой, декор
-3. Комплектность: сколько отдельных изделий входит в товар. Внимательно посмотри на фото размерной сетки / эскиза (обычно одно из последних фото) — там указано количество изделий. Если на размерной сетке указано 2 изделия — это комплект, если 1 — единое изделие.
-4. Целевая аудитория: для кого товар — посмотри на модель на фото, диапазон размеров на эскизе, стиль изделия
-5. Есть ли СУЩЕСТВЕННЫЕ логические противоречия между фото и описанием/характеристиками
+Определи по фото:
+- Тип изделия и комплектность (посмотри размерную сетку — кол-во изделий)
+- Цвет (доминирующий первый), длину, рукав, покрой, декор, свойства ткани, назначение
+- Целевую аудиторию по модели и размерам на эскизе
 
-КРИТИЧЕСКИ ВАЖНО — комплектность:
-- Если на фото видно несколько предметов одежды (платье + лонгслив, топ + брюки, футболка + шорты) — это КОМПЛЕКТ.
-- Если на размерной сетке "2 шт" или видны два отдельных предмета — product_type должен содержать слово "комплект".
-- Если это одно изделие (платье, футболка, брюки) — не называй комплектом.
+Характеристики переданы как JSON-массив: [{"id": 12345, "name": "Цвет", "value": "красный"}, ...].
+Используй поле "id" как charc_id в каждом issue.
 
-КРИТИЧЕСКИ ВАЖНО — целевая аудитория:
-- Посмотри на модель: это взрослый человек, подросток или ребёнок? Возраст модели определяет аудиторию.
-- Посмотри на размерную сетку: размеры 80-92 = малыши, 98-140 = дети, 134-170 = подростки, XS-XL/40-46 = взрослые.
-- audience должна быть ТОЧНО одним из: "взрослая женщина", "взрослый мужчина", "девочка-подросток (11-16)", "мальчик-подросток (11-16)", "девочка (6-10)", "мальчик (6-10)", "малышка (2-5)", "малыш (2-5)".
+Проверь КАЖДУЮ характеристику из карточки:
+- Цвет: доминирующий — первый. Принт = рисунок НА ткани, не декор на лентах/кантовке
+- Пустые характеристики, которые видны по фото — ошибка заполнения (card_value="(пусто)")
+- Назначение: летнее платье = минимум "повседневная" + "летняя"
 
-НЕ отмечай как расхождение:
-- Мелкие стилистические различия
-- Несущественные различия цветовой гаммы
-- Отсутствие необязательных полей
-- Синонимы
+НЕ отмечай: синонимы, пустые поля которые невозможно определить по фото (состав %, страна, ТНВЭД).
 
-Ответь СТРОГО JSON:
+Ответь JSON:
 {
-  "product_type": "тип изделия по фото (обязательно укажи 'комплект' если это набор из нескольких изделий)",
-  "attributes": {"цвет": "...", "длина": "...", "рукав": "...", "покрой": "...", "комплектность": "комплект из X изделий / единое изделие", "состав комплекта": "перечисли что входит", "аудитория": "взрослая женщина / взрослый мужчина / девочка-подросток / мальчик-подросток / девочка / мальчик / малышка / малыш", "пол": "женский / мужской"},
+  "product_type": "тип по фото (укажи 'комплект' если набор из нескольких изделий)",
+  "attributes": {"цвет": "...", "длина": "...", "рукав": "...", "покрой": "...", "комплектность": "комплект из X изделий / единое изделие", "состав комплекта": "...", "аудитория": "одно из: взрослая женщина | взрослый мужчина | девочка-подросток (11-16) | мальчик-подросток (11-16) | девочка (6-10) | мальчик (6-10) | малышка (2-5) | малыш (2-5)", "пол": "женский / мужской"},
   "discrepancy": true/false,
-  "summary": "краткое описание расхождений на русском (что не совпадает), пустая строка если всё ок"
-}`
+  "issues": [{"charc_id": 12345, "field": "название характеристики", "card_value": "значение в карточке или (пусто)", "correct_value": "что видно на фото", "reason": "почему это ошибка"}],
+  "summary": "описание расхождений на русском, пустая строка если всё ок"
+}
+
+charc_id — числовой ID из списка характеристик. Если поле не в списке — null.`
 
 const defaultStage1User = `НАЗВАНИЕ: {title}
 
@@ -121,6 +116,41 @@ VISION АНАЛИЗ (ФОТО — единственный источник ис
 Атрибуты: {vision_attributes}
 Замечания: {vision_summary}
 Аудитория: {seo_context}
+
+ДОПУСТИМЫЕ ХАРАКТЕРИСТИКИ ПРЕДМЕТА "{subject_name}" (subject_id={subject_id}):
+{char_defs_json}`
+
+// ─── Stage 4: Characteristics-only (issues-driven) ───
+
+const defaultStage4CharsSystem = `Ты — контент-менеджер на Wildberries. Твоя задача — исправить характеристики карточки товара по результатам фото-аудита.
+
+Предмет WB: {subject_name} (subject_id={subject_id})
+
+ПРАВИЛА:
+1. Исправь ТОЛЬКО характеристики из списка ISSUES ниже. НЕ генерируй title или description.
+2. Для каждого issue: возьми suggested как основу и отформатируй значение корректно для WB API.
+3. Используй ТОЛЬКО charc_id из списка допустимых характеристик. Не придумывай ID.
+4. Если issue помечен "is_empty": true — характеристика отсутствует, её нужно добавить.
+5. Если issue помечен "is_empty": false — характеристика заполнена неверно, замени значение.
+6. ВСЕ тексты — ТОЛЬКО на русском. Никакого английского или китайского.
+7. Ответь ТОЛЬКО JSON, без markdown.
+
+Формат: {"characteristics": [{"charc_id": <число>, "value": "<строка>"}]}`
+
+const defaultStage4CharsUser = `Артикул: {vendor_code} (nm_id={nm_id})
+
+VISION АНАЛИЗ (ФОТО — истина):
+Тип изделия: {vision_product_type}
+Атрибуты: {vision_attributes}
+
+ОПИСАНИЕ ТОВАРА (текстовые особенности для обогащения характеристик):
+{description}
+
+ISSUES (структурированные расхождения из фото-аудита):
+{issues_structured}
+
+ТЕКУЩИЕ ЗНАЧЕНИЯ ПРОБЛЕМНЫХ ХАРАКТЕРИСТИК (справочно):
+{characteristics}
 
 ДОПУСТИМЫЕ ХАРАКТЕРИСТИКИ ПРЕДМЕТА "{subject_name}" (subject_id={subject_id}):
 {char_defs_json}`
@@ -212,18 +242,6 @@ func resolvePrompt(configured, defaultTmpl string) string {
 	return defaultTmpl
 }
 
-// resolveAudienceRules объединяет конфиг и дефолты: конфиг перекрывает дефолты.
-func resolveAudienceRules(configured map[string]AudienceRule) map[string]AudienceRule {
-	result := make(map[string]AudienceRule, len(defaultAudienceRules))
-	for k, v := range defaultAudienceRules {
-		result[k] = v
-	}
-	for k, v := range configured {
-		result[k] = v
-	}
-	return result
-}
-
 // ─── Builder functions ───
 
 // buildAuditMessages строит сообщения для единого аудита (этап 1).
@@ -267,44 +285,36 @@ func buildStage4SelectMessages(
 	return
 }
 
-// buildStage4FillMessages строит сообщения для заполнения параметров карточки (этап 4).
-func buildStage4FillMessages(
+// buildStage4CharsMessages строит сообщения для issues-driven генерации характеристик (этап 4).
+// Передаёт структурированные issues и только релевантные char definitions.
+func buildStage4CharsMessages(
 	row VisionAnalysisRow,
 	chars []CardChar,
 	subjectID int,
 	subjectName string,
 	defsJSON string,
-	brand string,
-	audience string,
-	titleRules string,
-	descRules string,
-	seoContext string,
-	searchQueries string,
+	issuesStructured string,
 	prompts PromptConfig,
 ) (system, user string) {
-	sysTmpl := resolvePrompt(prompts.Stage4FillSys, defaultStage4FillSystem)
-	userTmpl := resolvePrompt(prompts.Stage4FillUser, defaultStage4FillUser)
+	sysTmpl := resolvePrompt(prompts.Stage4CharsSys, defaultStage4CharsSystem)
+	userTmpl := resolvePrompt(prompts.Stage4CharsUser, defaultStage4CharsUser)
 
 	system = applyTemplate(sysTmpl,
-		"{brand}", brand,
 		"{subject_name}", subjectName,
 		"{subject_id}", fmt.Sprintf("%d", subjectID),
-		"{audience}", audience,
-		"{title_rules}", titleRules,
-		"{desc_rules}", descRules,
 	)
 
+	// Фильтруем характеристики: только проблемные (чьи имена есть в matched issues)
 	charText := formatCharacteristics(chars)
+
 	user = applyTemplate(userTmpl,
 		"{vendor_code}", row.VendorCode,
 		"{nm_id}", fmt.Sprintf("%d", row.NmID),
-		"{characteristics}", charText,
 		"{vision_product_type}", row.VisionProductType,
 		"{vision_attributes}", row.VisionAttributes,
-		"{vision_summary}", row.VisionSummary,
-		"{top_query}", row.TopQuery,
-		"{top_queries}", searchQueries,
-		"{seo_context}", seoContext,
+		"{description}", row.Description,
+		"{issues_structured}", issuesStructured,
+		"{characteristics}", charText,
 		"{subject_name}", subjectName,
 		"{subject_id}", fmt.Sprintf("%d", subjectID),
 		"{char_defs_json}", defsJSON,
@@ -312,41 +322,36 @@ func buildStage4FillMessages(
 	return
 }
 
-// formatSearchQueries форматирует поисковые запросы для промпта Stage 4.
-func formatSearchQueries(queries []SearchQuery) string {
-	if len(queries) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("ТОП-ПОИСКОВЫЕ ЗАПРОСЫ (реальные данные WB за 30 дней):")
-	for i, q := range queries {
-		fmt.Fprintf(&b, "\n%d. \"%s\" (открытий: %d, заказов: %d, частотность: %d)",
-			i+1, q.Text, q.OpenCard, q.Orders, q.Frequency)
-	}
-	b.WriteString("\n\nИспользуй 1-2 самые релевантные фразы естественно в title и description.\nНЕ вставляй запрос, если он противоречит тому, что видно на фото.")
-	return b.String()
+// charcForPrompt — элемент списка характеристик для промпта Stage 1.
+type charcForPrompt struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
-// formatCharacteristics форматирует характеристики для промпта.
+// formatCharacteristics форматирует характеристики как JSON-массив с charc_id.
 func formatCharacteristics(chars []CardChar) string {
 	if len(chars) == 0 {
 		return "(нет характеристик)"
 	}
-	var b strings.Builder
+	items := make([]charcForPrompt, 0, len(chars))
 	for _, c := range chars {
-		var values []string
-		if err := json.Unmarshal([]byte(c.Value), &values); err == nil {
-			fmt.Fprintf(&b, "- %s: %s\n", c.Name, strings.Join(values, ", "))
+		var value string
+		var arr []string
+		if json.Unmarshal([]byte(c.Value), &arr) == nil {
+			value = strings.Join(arr, ", ")
 		} else {
-			var single string
-			if err := json.Unmarshal([]byte(c.Value), &single); err == nil {
-				fmt.Fprintf(&b, "- %s: %s\n", c.Name, single)
+			var s string
+			if json.Unmarshal([]byte(c.Value), &s) == nil {
+				value = s
 			} else {
-				fmt.Fprintf(&b, "- %s: %s\n", c.Name, c.Value)
+				value = c.Value
 			}
 		}
+		items = append(items, charcForPrompt{ID: c.CharID, Name: c.Name, Value: value})
 	}
-	return b.String()
+	b, _ := json.Marshal(items)
+	return string(b)
 }
 
 // textAnalysisResult — результат парсинга JSON от LLM.
@@ -355,10 +360,62 @@ type textAnalysisResult struct {
 	Summary     string `json:"summary"`
 }
 
+// flexibleMap is a map[string]string that accepts both string and []string values
+// from LLM JSON output, flattening arrays to comma-joined strings.
+type flexibleMap map[string]string
+
+func (f *flexibleMap) UnmarshalJSON(data []byte) error {
+	raw := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	result := make(map[string]string, len(raw))
+	for k, v := range raw {
+		result[k] = flattenJSONString(v)
+	}
+	*f = result
+	return nil
+}
+
+// flattenJSONString converts a JSON string or array of strings to a single string.
+func flattenJSONString(raw json.RawMessage) string {
+	raw = []byte(strings.TrimSpace(string(raw)))
+
+	// Try string first
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+
+	// Try array of strings
+	var arr []string
+	if json.Unmarshal(raw, &arr) == nil {
+		return strings.Join(arr, ", ")
+	}
+
+	// Fallback: return raw without quotes
+	return strings.Trim(string(raw), `"`)
+}
+
+// flexibleString is a string that accepts both string and []string from LLM JSON output.
+type flexibleString string
+
+func (f *flexibleString) UnmarshalJSON(data []byte) error {
+	*f = flexibleString(flattenJSONString(data))
+	return nil
+}
+
 // visionAnalysisResult — результат парсинга JSON от Vision LLM.
 type visionAnalysisResult struct {
-	ProductType string            `json:"product_type"`
-	Attributes  map[string]string `json:"attributes"`
-	Discrepancy bool              `json:"discrepancy"`
-	Summary     string             `json:"summary"`
+	ProductType string      `json:"product_type"`
+	Attributes  flexibleMap `json:"attributes"`
+	Discrepancy bool        `json:"discrepancy"`
+	Issues      []struct {
+		CharcID      *int   `json:"charc_id"`
+		Field        string `json:"field"`
+		CardValue    string `json:"card_value"`
+		CorrectValue string `json:"correct_value"`
+		Reason       string `json:"reason"`
+	} `json:"issues"`
+	Summary string `json:"summary"`
 }

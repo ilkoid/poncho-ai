@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+
+	"github.com/ilkoid/poncho-ai/pkg/wb"
 	"strings"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
@@ -276,6 +279,62 @@ func (r *SourceRepo) LoadCharacteristics(ctx context.Context, nmIDs []int) (map[
 			CharID: charID,
 			Name:   name,
 			Value:  jsonValue,
+		})
+	}
+
+	return result, rows.Err()
+}
+
+// LoadTitleDescription возвращает текущие title и description карточки из source DB.
+func (r *SourceRepo) LoadTitleDescription(ctx context.Context, nmID int) (string, string, error) {
+	var title, desc string
+	err := r.db.QueryRowContext(ctx,
+		"SELECT COALESCE(title,''), COALESCE(description,'') FROM cards WHERE nm_id = ?", nmID,
+	).Scan(&title, &desc)
+	return title, desc, err
+}
+
+	// LoadSizes загружает размеры для указанных nm_id из card_sizes.
+func (r *SourceRepo) LoadSizes(ctx context.Context, nmIDs []int) (map[int][]wb.CardSize, error) {
+	if len(nmIDs) == 0 {
+		return nil, nil
+	}
+
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT nm_id, chrt_id, tech_size, wb_size, skus_json
+		FROM card_sizes
+		WHERE nm_id IN (%s)
+	`, strings.Join(ph, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query sizes: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int][]wb.CardSize)
+	for rows.Next() {
+		var nmID, chrtID int
+		var techSize, wbSize, skusJSON string
+		if err := rows.Scan(&nmID, &chrtID, &techSize, &wbSize, &skusJSON); err != nil {
+			return nil, fmt.Errorf("scan size: %w", err)
+		}
+		var skus []string
+		if err := json.Unmarshal([]byte(skusJSON), &skus); err != nil {
+			skus = []string{}
+		}
+		result[nmID] = append(result[nmID], wb.CardSize{
+			ChrtID:   chrtID,
+			TechSize: techSize,
+			WBSize:   wbSize,
+			Skus:     skus,
 		})
 	}
 	return result, rows.Err()

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,7 +14,7 @@ import (
 )
 
 // runStage1Audit выполняет единый анализ карточек: текст + фото (этап 1).
-func runStage1Audit(ctx context.Context, source *SourceRepo, results *ResultsRepo, provider llm.Provider, cfg CLIConfig) error {
+func runStage1Audit(ctx context.Context, source *SourceRepo, results *ResultsRepo, provider llm.Provider, cfg CLIConfig, force bool) error {
 	// Статистика фильтрации: total в базе
 	totalInDB, _ := source.CountCards(ctx)
 
@@ -120,22 +119,26 @@ func runStage1Audit(ctx context.Context, source *SourceRepo, results *ResultsRep
 	}
 
 	// Resume: пропускаем карточки, уже обработанные Stage 1 Audit
-	pending, err := results.LoadPendingAuditCards(ctx, nmIDs)
-	if err != nil {
-		return fmt.Errorf("load pending audit cards: %w", err)
-	}
-	pendingSet := make(map[int]bool, len(pending))
-	for _, id := range pending {
-		pendingSet[id] = true
-	}
-	var filtered []CardData
-	for _, c := range cards {
-		if pendingSet[c.NmID] {
-			filtered = append(filtered, c)
+	if !force {
+		pending, err := results.LoadPendingAuditCards(ctx, nmIDs)
+		if err != nil {
+			return fmt.Errorf("load pending audit cards: %w", err)
 		}
+		pendingSet := make(map[int]bool, len(pending))
+		for _, id := range pending {
+			pendingSet[id] = true
+		}
+		var filtered []CardData
+		for _, c := range cards {
+			if pendingSet[c.NmID] {
+				filtered = append(filtered, c)
+			}
+		}
+		log.Printf("  Resume: %d already done, %d pending", len(cards)-len(filtered), len(filtered))
+		cards = filtered
+	} else {
+		log.Printf("  Force: re-processing all %d cards", len(cards))
 	}
-	log.Printf("  Resume: %d already done, %d pending", len(cards)-len(filtered), len(filtered))
-	cards = filtered
 
 	if len(cards) == 0 {
 		log.Println("  All cards already processed")
@@ -146,6 +149,7 @@ func runStage1Audit(ctx context.Context, source *SourceRepo, results *ResultsRep
 	tracker := progress.NewCLITrackerWithConfig(progress.CLITrackerConfig{
 		Total:   len(cards),
 		Prefix:  "Stage 1",
+		Width:   -1,
 	})
 
 	var (
@@ -215,7 +219,7 @@ func runStage1Audit(ctx context.Context, source *SourceRepo, results *ResultsRep
 
 			// Если была ошибка парсинга, не помечаем как done, чтобы карточка ушла на ретрай (пока error_count < 3)
 			if parseErr == nil {
-				if err := results.MarkAuditDone(ctx, c.NmID); err != nil {
+				if err := results.MarkAuditDone(ctx, c.NmID, force); err != nil {
 					mu.Lock()
 					errors++
 					mu.Unlock()
@@ -235,9 +239,10 @@ func runStage1Audit(ctx context.Context, source *SourceRepo, results *ResultsRep
 			if hasDisc {
 				discStr = "DISCREPANCY"
 			}
-			log.Printf("  [%d/%d] %s | %.1fs | %s | ETA %s",
+			log.Printf("  [%d/%d] %s | nm_id=%d | %.1fs | %s | ETA %s",
 				n, tracker.Total(),
 				time.Now().Format("15:04:05"),
+				c.NmID,
 				dur.Seconds(),
 				discStr,
 				tracker.ETA())
@@ -258,7 +263,6 @@ func runStage1Audit(ctx context.Context, source *SourceRepo, results *ResultsRep
 
 // analyzeCardUnified отправляет карточку (текст + фото) в LLM и парсит результат.
 func analyzeCardUnified(ctx context.Context, provider llm.Provider, card CardData, chars []CardChar, photos []string, modelCfg VisionConfig, prompts PromptConfig) (bool, string, map[string]string, string, error, error) {
-	// Очищаем характеристики от мусора для экономии токенов
 	var cleanChars []CardChar
 	for _, c := range chars {
 		if !skipCharcIDs[c.CharID] {
@@ -268,48 +272,21 @@ func analyzeCardUnified(ctx context.Context, provider llm.Provider, card CardDat
 
 	messages := buildAuditMessages(card.Title, card.Description, cleanChars, photos, prompts)
 
-	resp, err := generateWithRetry(ctx, provider, messages,
+	var result visionAnalysisResult
+	if err := llm.GenerateJSON(ctx, provider, messages, &result,
 		llm.WithModel(modelCfg.Model),
 		llm.WithTemperature(modelCfg.Temperature),
 		llm.WithMaxTokens(modelCfg.MaxTokens),
-	)
-	if err != nil {
-		return false, "", nil, "", nil, fmt.Errorf("LLM call: %w", err)
+	); err != nil {
+		return false, "", nil, truncate(err.Error(), 300), err, nil
 	}
 
-	content := strings.TrimSpace(resp.Content)
-	if content == "" {
-		return false, "", nil, "", nil, fmt.Errorf("empty LLM response")
-	}
-
-	var result visionAnalysisResult
-	if err := json.Unmarshal([]byte(extractJSON(content)), &result); err != nil {
-		return false, "", nil, truncate(content, 200), err, nil
+	if len(result.Issues) > 0 {
+		issuesJSON, _ := json.Marshal(result.Issues)
+		result.Summary = result.Summary + "\n[ISSUES] " + string(issuesJSON)
 	}
 
 	return result.Discrepancy, result.ProductType, result.Attributes, result.Summary, nil, nil
-}
-
-// extractJSON извлекает JSON объект из ответа LLM (может быть обёрнут в markdown).
-func extractJSON(s string) string {
-	if idx := strings.Index(s, "```json"); idx != -1 {
-		s = s[idx+7:]
-		if end := strings.Index(s, "```"); end != -1 {
-			s = s[:end]
-		}
-	} else if idx := strings.Index(s, "```"); idx != -1 {
-		s = s[idx+3:]
-		if end := strings.Index(s, "```"); end != -1 {
-			s = s[:end]
-		}
-	}
-
-	start := strings.Index(s, "{")
-	end := strings.LastIndex(s, "}")
-	if start != -1 && end > start {
-		return s[start : end+1]
-	}
-	return s
 }
 
 // describeFilter формирует строку описания фильтрации для лога.
@@ -350,39 +327,4 @@ func createVisionProvider(cfg CLIConfig) (llm.Provider, error) {
 		return nil, fmt.Errorf("failed to create Vision provider (check base_url in config)")
 	}
 	return client, nil
-}
-
-func generateWithRetry(ctx context.Context, provider llm.Provider, messages []llm.Message, opts ...any) (llm.Message, error) {
-	var resp llm.Message
-	err := retryWithBackoff(ctx, 3, func() error {
-		var err error
-		resp, err = provider.Generate(ctx, messages, opts...)
-		return err
-	})
-	return resp, err
-}
-
-func retryWithBackoff(ctx context.Context, maxRetries int, fn func() error) error {
-	var lastErr error
-	for i := 0; i < maxRetries; i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if err := fn(); err != nil {
-			lastErr = err
-			backoff := time.Duration(i+1) * 2 * time.Second
-			log.Printf("    Retry %d/%d after %v: %v", i+1, maxRetries, backoff, err)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
-			}
-			continue
-		}
-		return nil
-	}
-	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }

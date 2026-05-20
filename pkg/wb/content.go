@@ -27,6 +27,7 @@ package wb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -502,3 +503,68 @@ func (c *Client) GetCardsList(
 }
 
 const cardsBaseURL = "https://content-api.wildberries.ru"
+
+// CardsBaseURL — экспортируемый базовый URL WB Content API (продакшн).
+const CardsBaseURL = cardsBaseURL
+
+// CardsSandboxURL — базовый URL sandbox-контура WB Content API.
+const CardsSandboxURL = "https://content-api-sandbox.wildberries.ru"
+
+// UpdateCards обновляет карточки через POST /content/v2/cards/update.
+// baseURL: cardsBaseURL (прод) или CardsSandboxURL (песочница).
+// Возвращает тело ответа WB, errorText (пустая строка при успехе) и error.
+func (c *Client) UpdateCards(ctx context.Context, baseURL string, rateLimit, burst int, cards []CardUpdateItem) (string, string, error) {
+	if len(cards) == 0 {
+		return "", "", fmt.Errorf("cards array is empty")
+	}
+
+	var resp APIResponse[json.RawMessage]
+	err := c.Post(ctx, "cards_content", baseURL, rateLimit, burst,
+		"/content/v2/cards/update", cards, &resp)
+	if err != nil {
+		return "", "", fmt.Errorf("update cards: %w", err)
+	}
+
+	body := string(resp.Data)
+	if resp.Error {
+		return body, resp.ErrorText, fmt.Errorf("update cards API error: %s", resp.ErrorText)
+	}
+	return body, "", nil
+}
+
+// CreateCards создаёт карточки через POST /content/v2/cards/upload.
+// baseURL: cardsBaseURL (прод) или CardsSandboxURL (песочница).
+// Rate: 10 req/min, 6 sec interval per WB docs.
+func (c *Client) CreateCards(ctx context.Context, baseURL string, rateLimit, burst int, cards []CardCreateGroup) (string, error) {
+	if len(cards) == 0 {
+		return "", fmt.Errorf("cards array is empty")
+	}
+
+	var resp APIResponse[json.RawMessage]
+	err := c.Post(ctx, "cards_content", baseURL, rateLimit, burst,
+		"/content/v2/cards/upload", cards, &resp)
+	if err != nil {
+		return "", fmt.Errorf("create cards: %w", err)
+	}
+
+	if resp.Error {
+		return resp.ErrorText, fmt.Errorf("create cards API error: %s", resp.ErrorText)
+	}
+	return "", nil
+}
+
+// GetCardErrorsList получает список ошибок валидации карточек.
+// POST /content/v2/cards/error/list — асинхронные ошибки после /cards/update.
+// Rate: 10 req/min, burst 5 (аналогично /cards/update).
+func (c *Client) GetCardErrorsList(ctx context.Context, baseURL string, rateLimit, burst int, req CardErrorsListRequest) ([]CardErrorItem, error) {
+	var resp APIResponse[CardErrorsListData]
+	err := c.Post(ctx, "cards_content", baseURL, rateLimit, burst,
+		"/content/v2/cards/error/list", req, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("get card errors: %w", err)
+	}
+	if resp.Error {
+		return nil, fmt.Errorf("get card errors API error: %s", resp.ErrorText)
+	}
+	return resp.Data.Items, nil
+}

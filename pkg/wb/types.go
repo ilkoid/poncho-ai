@@ -362,6 +362,86 @@ type CardTag struct {
 	Color string `json:"color"`
 }
 
+// CardUpdateItem — карточка в теле запроса POST /content/v2/cards/update.
+type CardUpdateItem struct {
+	NmID            int                `json:"nmID"`
+	VendorCode      string             `json:"vendorCode,omitempty"`
+	Title           string             `json:"title,omitempty"`
+	Description     string             `json:"description,omitempty"`
+	Characteristics []CardUpdateCharc  `json:"characteristics,omitempty"`
+	Sizes           []CardSize         `json:"sizes,omitempty"`
+}
+
+// CardUpdateCharc — характеристика в запросе обновления.
+type CardUpdateCharc struct {
+	ID    int         `json:"id"`
+	Value interface{} `json:"value"`
+}
+
+// CardCreateGroup — группа карточек для POST /content/v2/cards/upload.
+type CardCreateGroup struct {
+	SubjectID int                 `json:"subjectID"`
+	Variants  []CardCreateVariant `json:"variants"`
+}
+
+// CardCreateVariant — вариант товара внутри группы создания.
+type CardCreateVariant struct {
+	VendorCode      string            `json:"vendorCode"`
+	Title           string            `json:"title,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	Characteristics []CardUpdateCharc `json:"characteristics,omitempty"`
+}
+
+// ============================================================================
+// Card Error List Types (POST /content/v2/cards/error/list)
+// ============================================================================
+
+// CardErrorsListRequest — запрос списка ошибок валидации карточек.
+type CardErrorsListRequest struct {
+	Cursor *CardErrorsCursor `json:"cursor,omitempty"`
+	Order  *CardErrorsOrder  `json:"order,omitempty"`
+}
+
+// CardErrorsCursor — параметры пагинации для error list.
+type CardErrorsCursor struct {
+	Limit     int    `json:"limit"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+	BatchUUID string `json:"batchUUID,omitempty"`
+}
+
+// CardErrorsOrder — сортировка error list.
+type CardErrorsOrder struct {
+	Ascending bool `json:"ascending"`
+}
+
+// CardErrorSubject — предмет или бренд в ответе error list.
+type CardErrorSubject struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// CardErrorItem — батч ошибок от WB API (группировка по batchUUID).
+type CardErrorItem struct {
+	BatchUUID   string                      `json:"batchUUID"`
+	Subjects    map[string]CardErrorSubject `json:"subjects"`
+	Brands      map[string]CardErrorSubject `json:"brands"`
+	VendorCodes []string                    `json:"vendorCodes"`
+	Errors      map[string][]string         `json:"errors"`
+}
+
+// CardErrorsResponseCursor — курсор пагинации ответа error list.
+type CardErrorsResponseCursor struct {
+	Next      bool   `json:"next"`
+	UpdatedAt string `json:"updatedAt"`
+	BatchUUID string `json:"batchUUID"`
+}
+
+// CardErrorsListData — data-часть ответа error list.
+type CardErrorsListData struct {
+	Items  []CardErrorItem          `json:"items"`
+	Cursor CardErrorsResponseCursor `json:"cursor"`
+}
+
 // ============================================================================
 // Financial API Types (for reportDetailByPeriod)
 // ============================================================================

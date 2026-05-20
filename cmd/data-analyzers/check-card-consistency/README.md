@@ -1,22 +1,23 @@
 # Card Consistency Pipeline
 
-Проверка карточек WB на расхождения: **фото vs описание vs характеристики**.
-Фото — истина. Pipeline фильтрует дешёвым текстовым анализом, затем подтверждает через Vision.
+Проверка карточек WB на расхождения: **фото + описание vs характеристики**.
+Фото — основной источник истины, описание — дополнительный. Характеристикам не верим — их проверяем и корректируем.
 
 ## Логика работы
 
 ```
 Этап 0: карточки ──фильтрация + rule-based──► превью без LLM и БД   (бесплатно)
-Этап 1: ~2500 карточек ──Vision+текст LLM──► ~30-50% с расхождениями (~$0.30)
-Этап 4:   с расхождениями ──LLM──► новые параметры                   (~$0.20)
-Этап 5:   исправленные ──WB API──► обновление карточек               (API calls)
+Этап 1: карточки ──Vision+текст LLM──► расхождения + issues          (~$0.30/2500 шт)
+Этап 2: карточки ──подтягивание метрик──► рейтинги, видимость        (бесплатно)
+Этап 4: с расхождениями ──LLM──► новые параметры                     (~$0.20)
+Этап 5: исправленные ──WB API──► обновление карточек                 (API calls)
 ```
 
 Каждый этап — отдельный запуск. Между этапами — ревью через SQL. Этапы идемпотентны: повторный пропуск уже обработанных карточек.
 
 **Базы данных:**
 - `/var/db/wb-sales.db` — источник (read-only): карточки, фото, характеристики
-- `/var/db/card-analysis.db` — результат: анализ + новые параметры + лог изменений
+- `card-analysis.db` — результат: анализ + новые параметры + лог изменений (путь в config.yaml)
 - `~/.cache/poncho/char-dict-cache.db` — справочник характеристик WB (read-only)
 
 ## Быстрый старт
@@ -24,11 +25,16 @@
 ```bash
 cd cmd/data-analyzers/check-card-consistency
 
+Ключ --keep-subject уже существует — он описан в main.go:175:
+
 # Посмотреть предметы WB (для фильтра subject_id)
 go run . --list-subjects="сабо"
 go run . --list-subjects="all"
 
-# Этап 0: превью — сколько карточек пройдёт фильтры, какие проблемы видны (без LLM, без записи в БД)
+# Посмотреть характеристики предмета WB (для понимания charc_id и типов)
+go run . --list-charcs=105
+
+# Этап 0: превью — сколько карточек пройдёт фильтры (без LLM, без записи в БД)
 go run . --stage 0
 go run . --stage 0 --limit 50
 
@@ -36,21 +42,19 @@ go run . --stage 0 --limit 50
 go run . --stage 1
 go run . --stage 1 --limit 10         # только 10 карточек
 
-# Посмотреть что нашлось
-sqlite3 /var/db/card-analysis.db \
+# Посмотреть что нашлось (summary + структурированные issues)
+sqlite3 /mnt/d/db/card-analysis.db \
   "SELECT vendor_code, substr(title,1,40), vision_summary
    FROM card_analysis WHERE vision_has_discrepancy = 1 LIMIT 20"
 
-# Этап 4: генерация новых параметров
-sqlite3 /var/db/card-analysis.db \
-  "SELECT vendor_code, vision_product_type, vision_summary
-   FROM card_analysis WHERE vision_has_discrepancy = 1"
+# Этап 2: подтянуть метрики без LLM
+go run . --stage 2
 
 # Этап 4: генерация новых параметров
 go run . --stage 4
 
-# Посмотреть что будет изменено (характеристики с именами полей)
-sqlite3 /var/db/card-analysis.db \
+# Посмотреть что будет изменено
+sqlite3 /mnt/d/db/card-analysis.db \
   "SELECT vendor_code, new_title, length(new_description), new_characteristics
    FROM card_analysis WHERE new_description != ''"
 
@@ -59,24 +63,37 @@ go run . --stage 5 --mock
 
 # Этап 5: реальное обновление (ТРЕБУЕТ --yes)
 go run . --stage 5 --yes
+
+# Этап 5: повторное обновление карточек, уже отправленных ранее
+go run . --stage 5 --yes --force
+
+# Этап 5: проверить ошибки валидации WB (без обновления)
+go run . --stage 5 --check
 ```
 
 ## Флаги
 
 | Флаг | Описание | По умолчанию |
 |------|----------|-------------|
-| `--stage` | Этап: 0 (превью), 1 (аудит), 4 (генерация), 5 (обновление) | 1 |
+| `--stage` | Этап: 0 (превью), 1 (аудит), 2 (метрики), 4 (генерация), 5 (обновление) | 1 |
 | `--limit` | Ограничить кол-во карточек (0=все) | 0 |
-| `--mock` | Этап 5: мок, без отправки в WB | false |
+| `--mock` | Этап 5: мок, без отправки в WB (песочница) | false |
 | `--yes` | Этап 5: подтвердить реальное обновление | false |
+| `--force` | Повторная обработка уже завершённых карточек (этапы 1, 4, 5) | false |
+| `--check` | Этап 5: проверить ошибки валидации WB (без обновления) | false |
 | `--list-subjects` | Вывести предметы WB: `"all"` или поисковый запрос | "" |
+| `--list-charcs` | Вывести характеристики предмета WB по subject_id | 0 |
+| `--diff` | Этап 4: показать diff вместо генерации | false |
+| `--full` | Этап 4 --diff: показать ВСЕ характеристики (заполненные + пустые) | false |
+| `--keep-subject` | Этап 4: игнорировать смену предмета от LLM | false |
 | `--config` | Путь к config.yaml | config.yaml |
+| `--export` | Экспорт card_analysis в XLSX | "" |
 
 ## Конфигурация (config.yaml)
 
 ```yaml
-# Бренд — используется в промптах
-brand: "PlayToday"
+# Бренд — используется в промптах для генерации
+#brand: "PlayToday"
 
 # LLM провайдер
 llm:
@@ -84,59 +101,106 @@ llm:
   api_key: "${OPENROUTER_API_KEY}"
   base_url: "https://openrouter.ai/api/v1"
 
+# Текстовая модель (этапы 1, 4)
 text:
-  model: "openai/gpt-5.4-nano"
-  temperature: 0.2
-  max_tokens: 2000
+  model: "~google/gemini-flash-latest"
+  temperature: 0.4
+  max_tokens: 1000
   timeout: 120s
 
+# Vision модель (этап 1)
 vision:
-  model: "openai/gpt-5.4-nano"
-  photos_per_card: 3       # сколько фото анализировать
+  model: "~google/gemini-flash-latest"
+  temperature: 0.3
+  max_tokens: 2000
+  timeout: 120s
+  photos_per_card: 5       # сколько фото анализировать (1-5)
 
+# Источник — сырые данные карточек (read-only)
 source:
-  db_path: "/var/db/wb-sales.db"     # read-only
+  db_path: "/var/db/wb-sales.db"
 
+# Результат — куда пишем анализ и новые параметры
 results:
-  db_path: "/var/db/card-analysis.db"
+  db_path: "/mnt/d/db/card-analysis.db"
 
+# Справочник характеристик WB (read-only)
 char_dict:
   db_path: "~/.cache/poncho/char-dict-cache.db"
 
+# Фильтрация карточек
 filter:
-  nm_ids: [740178129, 39800098]       # артикулы WB (приоритетный фильтр)
-  vendor_codes: []                     # артикулы продавца (8 симв)
-  allowed_years: [26]                  # год из vendor_code
-  subject: ""                          # по названию (регистронезависимо)
-  subject_id: 0                        # по ID предмета WB (0 = все)
-  season: ""                           # по сезону
-  exclude_lengths: [5, 6]             # исключить мусор/устаревшие
+  in_stock: true           # только товары в наличии
+  nm_ids: [740178129]      # артикулы WB (приоритетный фильтр)
+  vendor_codes: []          # артикулы продавца (8 симв)
+  allowed_years: [26]       # год из vendor_code
+  subject: ""               # по названию предмета (регистронезависимо)
+  subject_ids: []           # по ID предметов WB
+  seasons: []               # по сезону из характеристик
+  exclude_lengths: [5, 6]   # исключить мусор/устаревшие
+  max_visibility: 70.0      # порог видимости (худшие)
+  problems:                 # фильтрация по статусам пайплайна
+    any_discrepancy: false
+    has_parse_errors: false
+    pending_wb_update: false
 
+# Параметры анализа
 analysis:
-  concurrency: 5            # параллельных LLM запросов
+  concurrency: 2            # параллельных LLM запросов
   limit: 0                  # 0 = все карточки
+
+# Промпты (пустое поле = hardcoded default)
+# Шаблоны используют {placeholder} для подстановки.
+prompts:
+  stage1_system: |          # Системный промпт Stage 1 (можно переопределить)
+    ...
+  stage1_user: |            # User промпт Stage 1
+    ...
+
+# Правила генерации по аудиториям (для Stage 4)
+audience_rules:
+  "взрослая женщина":
+    title_rules: |
+      ...
+    desc_rules: |
+      ...
+    seo_context: "женская одежда, аудитория — взрослая женщина"
 ```
 
-**Приоритет фильтров:** `nm_ids` > `vendor_codes` > `allowed_years`. Остальные фильтры (`subject`, `subject_id`, `exclude_lengths`) применяются дополнительно.
+**Приоритет фильтров:** `nm_ids` > `vendor_codes` > `allowed_years`. Остальные фильтры (`subject`, `subject_ids`, `seasons`, `in_stock`, `exclude_lengths`) применяются дополнительно.
+
+## Что проверяет Stage 1
+
+LLM анализирует фото + описание и сверяет с характеристиками карточки:
+
+- **Тип изделия** — соответствует ли фото заявленному типу
+- **Цвет** — порядок важен (доминирующий первый)
+- **Декоративный элемент** — принт vs декоративные ленты/кант/тейпы
+- **Свойства ткани** — соответствуют ли реальности (поплин не тянется → "эластичный" ошибочно)
+- **Рисунок/узор** — на всём изделии, а не на отдельных элементах
+- **Назначение** — полнота заполнения (летнее платье = "повседневная" + "летняя" + "пляжная")
+- **Пустые характеристики** — если значение можно определить по фото/описанию, пропуск = ошибка
+- **Комплектность** — комплект vs единое изделие
+- **Целевая аудитория** — по модели и размерной сетке
+
+Результат: JSON с массивом `issues` — каждое расхождение с полями `field`, `card_value`, `correct_value`, `reason`.
 
 ## Прогресс и статистика
 
-При запуске выводится:
-
 ```
   Filter: 32435 total → 2569 filtered
-  Limit: 2569 → 3
-Stage 1: analyzing 3 cards with openai/gpt-5.4-nano
+  Created 3 new rows in card_analysis
+  Backfilled metrics: 3 updates
+Stage 1: analyzing 3 cards with ~google/gemini-flash-latest
   Resume: 0 already done, 3 pending
   [1/3] 11:24:00 | 1.9s | DISCREPANCY | ETA ~3s
   [2/3] 11:24:01 | 2.4s | ok          | ETA ~2s
   [3/3] 11:24:02 | 2.3s | DISCREPANCY | ETA ~0s
+Stage 1 complete: 3 checked, 2 discrepancies (67%), 0 errors
 
-=== Stage 1 Summary ===
-Duration:             4s
-Total cards in DB:    3
-Text checked:         3 (discrepancies: 3, 100%)
-Vision checked:       0 (discrepancies: 0, 0%)
+=== Summary ===
+Total in DB:          3
+Audit done:           3 (discrepancies: 2, 67%)
 Params generated:     0
 WB updated:           0
 ```
@@ -151,19 +215,23 @@ Per-card строка: `[N/Total] время | длительность | рез
 
 | Поле | Этап | Описание |
 |------|------|----------|
-| nm_id, vendor_code, title | 0 | Идентификация карточки |
-| text_done | 1 | Флаг завершения текстового анализа |
-| text_has_discrepancy | 1 | Расхождение текст/характеристики (0/1) |
-| text_summary | 1 | Кратко: в чём косяк |
-| vision_done | 3 | Флаг завершения Vision анализа |
-| vision_product_type | 3 | Тип изделия по фото |
-| vision_attributes | 3 | JSON: цвет, длина, рукав, аудитория и т.д. |
-| vision_has_discrepancy | 3 | Подтверждённое расхождение (0/1) |
-| vision_summary | 3 | Что именно не совпадает |
+| nm_id, vendor_code, title, subject_name | 0 | Идентификация карточки |
+| audit_done | 1 | Флаг завершения аудита |
+| vision_product_type | 1 | Тип изделия по фото |
+| vision_attributes | 1 | JSON: цвет, длина, рукав, аудитория и т.д. |
+| vision_has_discrepancy | 1 | Найдены расхождения (0/1) |
+| vision_summary | 1 | Описание расхождений + `[ISSUES]` JSON массив |
+| vision_photo_urls | 1 | URL фото, которые анализировались |
+| product_rating, feedback_rating | 2 | Рейтинги WB |
+| max_visibility, avg_position | 2 | Метрики поисковой видимости |
+| open_card_30d, orders_30d | 2 | Метрики воронки |
+| priority_score | 2 | Приоритет (0-2+) |
 | generate_done | 4 | Флаг завершения генерации |
 | new_title, new_description | 4 | Новые параметры от LLM |
-| new_characteristics | 4 | JSON: `[{charc_id, name, value}]` |
+| new_characteristics | 4 | JSON: `[{charc_id, value}]` |
+| new_subject_id, new_subject_name | 4 | Новый предмет WB |
 | wb_updated | 5 | Обновлено через API (0/1) |
+| error_count | — | Счётчик ошибок парсинга (макс 3) |
 
 ### card_change_log
 
@@ -180,10 +248,8 @@ FROM card_change_log ORDER BY changed_at DESC;
 -- Сколько карточек на каждом этапе
 SELECT
   COUNT(*) as total,
-  SUM(CASE WHEN text_done = 1 THEN 1 END) as text_done,
-  SUM(CASE WHEN text_has_discrepancy = 1 THEN 1 END) as text_disc,
-  SUM(CASE WHEN vision_done = 1 THEN 1 END) as vision_done,
-  SUM(CASE WHEN vision_has_discrepancy = 1 THEN 1 END) as vision_disc,
+  SUM(CASE WHEN audit_done = 1 THEN 1 END) as audit_done,
+  SUM(CASE WHEN vision_has_discrepancy = 1 THEN 1 END) as has_discrepancy,
   SUM(CASE WHEN generate_done = 1 THEN 1 END) as generated,
   SUM(CASE WHEN wb_updated = 1 THEN 1 END) as updated
 FROM card_analysis;
@@ -191,19 +257,25 @@ FROM card_analysis;
 -- Самые проблемные типы товаров
 SELECT subject_name, COUNT(*) as cnt
 FROM card_analysis
-WHERE text_has_discrepancy = 1
+WHERE vision_has_discrepancy = 1
 GROUP BY subject_name ORDER BY cnt DESC LIMIT 20;
+
+-- Карточки с конкретными issues
+SELECT nm_id, vendor_code, vision_summary
+FROM card_analysis
+WHERE vision_summary LIKE '%[ISSUES]%'
+LIMIT 20;
 
 -- Очистить и начать заново
 DELETE FROM card_analysis;
 DELETE FROM card_change_log;
 
--- Сбросить только Stage 4 (перегенерация)
-UPDATE card_analysis SET generate_done = 0, new_title = '', new_description = '', new_characteristics = '';
+-- Сбросить Stage 1 для конкретной карточки (перепроверить)
+UPDATE card_analysis SET audit_done = 0, vision_summary = '', vision_has_discrepancy = NULL
+WHERE nm_id = 740106115;
 
--- Сбросить mock-обновления
-UPDATE card_analysis SET wb_updated = 0, wb_update_response = '', wb_updated_at = NULL
-WHERE wb_update_response = 'MOCK: not sent to WB API';
+-- Сбросить Stage 4 (перегенерация)
+UPDATE card_analysis SET generate_done = 0, new_title = '', new_description = '', new_characteristics = '';
 ```
 
 ## Стоимость (ориентировочно)
@@ -211,6 +283,7 @@ WHERE wb_update_response = 'MOCK: not sent to WB API';
 | Этап | Модель | ~2500 карточек |
 |------|--------|---------------|
 | 0 (превью) | — | бесплатно (нет LLM, нет записи в БД) |
+| 2 (метрики) | — | бесплатно (нет LLM) |
 | 1 (аудит) | gemini-flash-latest | ~$0.30 |
 | 4 (генерация) | gemini-flash-latest | ~$0.20 (только с расхождениями) |
 | 5 (обновление) | WB API | бесплатно |

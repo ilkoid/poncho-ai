@@ -312,9 +312,17 @@ func (r *ResultsRepo) MarkVisionDone(ctx context.Context, nmID int) error {
 	return nil
 }
 
-// MarkGenerateDone отмечает карточку как полностью обработанную Stage 4.
-func (r *ResultsRepo) MarkGenerateDone(ctx context.Context, nmID int) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE card_analysis SET generate_done = 1 WHERE nm_id = ?", nmID)
+// MarkGenerateDone отмечает карточку как обработанную Stage 4.
+// При force=true сбрасывает wb_updated, чтобы Stage 5 выполнился заново.
+func (r *ResultsRepo) MarkGenerateDone(ctx context.Context, nmID int, force bool) error {
+	var err error
+	if force {
+		_, err = r.db.ExecContext(ctx,
+			"UPDATE card_analysis SET generate_done = 1, wb_updated = 0 WHERE nm_id = ?", nmID)
+	} else {
+		_, err = r.db.ExecContext(ctx,
+			"UPDATE card_analysis SET generate_done = 1 WHERE nm_id = ?", nmID)
+	}
 	if err != nil {
 		return fmt.Errorf("mark generate done nm_id=%d: %w", nmID, err)
 	}
@@ -350,8 +358,17 @@ func (r *ResultsRepo) LoadPendingGenerateCards(ctx context.Context, nmIDs []int)
 }
 
 // MarkAuditDone отмечает карточку как полностью прошедшую единый аудит.
-func (r *ResultsRepo) MarkAuditDone(ctx context.Context, nmID int) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE card_analysis SET audit_done = 1 WHERE nm_id = ?", nmID)
+// При force=true сбрасывает downstream флаги (generate_done, wb_updated),
+// чтобы карточка прошла pipeline заново.
+func (r *ResultsRepo) MarkAuditDone(ctx context.Context, nmID int, force bool) error {
+	var err error
+	if force {
+		_, err = r.db.ExecContext(ctx,
+			"UPDATE card_analysis SET audit_done = 1, generate_done = 0, wb_updated = 0 WHERE nm_id = ?", nmID)
+	} else {
+		_, err = r.db.ExecContext(ctx,
+			"UPDATE card_analysis SET audit_done = 1 WHERE nm_id = ?", nmID)
+	}
 	if err != nil {
 		return fmt.Errorf("mark audit done nm_id=%d: %w", nmID, err)
 	}
@@ -467,6 +484,35 @@ func (r *ResultsRepo) SaveWBUpdate(ctx context.Context, nmID int, response strin
 	return nil
 }
 
+// SaveWBUpdateBatch отмечает несколько карточек как обновлённые (batch-версия).
+func (r *ResultsRepo) SaveWBUpdateBatch(ctx context.Context, nmIDs []int, response string) error {
+	if len(nmIDs) == 0 {
+		return nil
+	}
+	ph := make([]string, len(nmIDs))
+	args := make([]any, 0, len(nmIDs)+3)
+	now := time.Now().Format(time.DateTime)
+	// SET parameters first (they appear before WHERE in the SQL)
+	args = append(args, response, now, now)
+	// IN parameters second
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args = append(args, id)
+	}
+	query := fmt.Sprintf(`
+		UPDATE card_analysis
+		SET wb_updated = 1, wb_update_response = ?, wb_updated_at = ?, updated_at = ?
+		WHERE nm_id IN (%s)`, strings.Join(ph, ","))
+	res, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); int(n) != len(nmIDs) {
+		return fmt.Errorf("SaveWBUpdateBatch: expected %d rows affected, got %d", len(nmIDs), n)
+	}
+	return nil
+}
+
 // LogChange записывает изменение в card_change_log.
 func (r *ResultsRepo) LogChange(ctx context.Context, nmID int, vendorCode, field, oldValue, newValue string) error {
 	const sql_ = `
@@ -485,6 +531,7 @@ type AnalysisRow struct {
 	NmID              int
 	VendorCode        string
 	Title             string
+	SubjectID         int
 	SubjectName       string
 	TextHasDiscrepancy *int
 	TextSummary       string
@@ -499,14 +546,46 @@ type AnalysisRow struct {
 }
 
 // LoadAnalysisForUpdate загружает строки с новыми параметрами для обновления WB (этап 5).
-func (r *ResultsRepo) LoadAnalysisForUpdate(ctx context.Context) ([]AnalysisRow, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT nm_id, vendor_code, title, subject_name,
+// Если includeUpdated=true, снимает фильтр wb_updated (нужно для --diff --force).
+func (r *ResultsRepo) LoadAnalysisForUpdate(ctx context.Context, filter FilterConfig, includeUpdated bool) ([]AnalysisRow, error) {
+	query := `
+		SELECT nm_id, vendor_code, title, subject_name, subject_id,
 		       new_title, new_description, new_characteristics,
 		       new_subject_id, new_subject_name
 		FROM card_analysis
-		WHERE wb_updated = 0
-		  AND (new_title != '' OR new_description != '' OR new_characteristics != '')`)
+		WHERE 1=1`
+	if !includeUpdated {
+		query += "\n		  AND wb_updated = 0"
+	}
+	query += "\n		  AND (new_title != '' OR new_description != '' OR new_characteristics != '')"
+	var args []interface{}
+
+	if len(filter.NmIDs) > 0 {
+		ph := make([]string, len(filter.NmIDs))
+		for i, id := range filter.NmIDs {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND nm_id IN (" + strings.Join(ph, ",") + ")"
+	}
+	if len(filter.VendorCodes) > 0 {
+		ph := make([]string, len(filter.VendorCodes))
+		for i, code := range filter.VendorCodes {
+			ph[i] = "?"
+			args = append(args, code)
+		}
+		query += " AND vendor_code IN (" + strings.Join(ph, ",") + ")"
+	}
+	if len(filter.SubjectIDs) > 0 {
+		ph := make([]string, len(filter.SubjectIDs))
+		for i, id := range filter.SubjectIDs {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND subject_id IN (" + strings.Join(ph, ",") + ")"
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query for update: %w", err)
 	}
@@ -517,7 +596,7 @@ func (r *ResultsRepo) LoadAnalysisForUpdate(ctx context.Context) ([]AnalysisRow,
 		var r AnalysisRow
 		var newSubjectID sql.NullInt64
 		var newSubjectName sql.NullString
-		if err := rows.Scan(&r.NmID, &r.VendorCode, &r.Title, &r.SubjectName,
+		if err := rows.Scan(&r.NmID, &r.VendorCode, &r.Title, &r.SubjectName, &r.SubjectID,
 			&r.NewTitle, &r.NewDescription, &r.NewCharacteristics,
 			&newSubjectID, &newSubjectName); err != nil {
 			return nil, fmt.Errorf("scan analysis row: %w", err)
@@ -534,10 +613,14 @@ func (r *ResultsRepo) LoadAnalysisForUpdate(ctx context.Context) ([]AnalysisRow,
 	return result, rows.Err()
 }
 
-// LoadVisionDiscrepancies возвращает nm_id карточек с vision_has_discrepancy = 1, не обработанных Stage 4.
-func (r *ResultsRepo) LoadVisionDiscrepancies(ctx context.Context) ([]int, error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT nm_id FROM card_analysis WHERE vision_has_discrepancy = 1 AND generate_done = 0")
+// LoadVisionDiscrepancies возвращает nm_id карточек с vision_has_discrepancy = 1.
+// При force=true включает уже обработанные Stage 4 карточки.
+func (r *ResultsRepo) LoadVisionDiscrepancies(ctx context.Context, force bool) ([]int, error) {
+	query := "SELECT nm_id FROM card_analysis WHERE vision_has_discrepancy = 1"
+	if !force {
+		query += " AND generate_done = 0"
+	}
+	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query vision discrepancies: %w", err)
 	}
@@ -563,6 +646,7 @@ type VisionAnalysisRow struct {
 	VisionAttributes  string
 	VisionSummary     string
 	TopQuery          string
+	Description       string
 }
 
 // LoadAnalysisForVision загружает данные Vision анализа для этапа 4.
@@ -769,11 +853,12 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 	f.SetSheetName("Sheet1", sheet)
 
 	// Column order:
-	//   photo | nm_id | vendor_code | title | subject | сезон | рейтинг WB | рейтинг отзывов | видимость | priority | ...
+	//   photo | nm_id | vendor_code | title | subject | сезон | vision: тип | vision: расх | vision: описание | рейтинг WB | ...
 	headers := []string{
 		"photo", "ссылка WB",
 		"nm_id", "vendor_code", "title",
 		"subject", "сезон WB",
+		"vision: тип изделия", "vision: расхождение", "vision: описание",
 		"рейтинг WB", "рейтинг отзывов",
 		"видимость (%)", "priority", "ср. позиция",
 		"открытия (30д)", "заказы (30д)",
@@ -782,7 +867,6 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		"description (новое)",
 		"характеристики (новые)",
 		"text: расхождение", "text: описание",
-		"vision: тип изделия", "vision: расхождение", "vision: описание",
 		"text done", "vision done", "generate done", "wb updated",
 	}
 
@@ -867,6 +951,7 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		vals := []any{
 			d.NmID, d.VendorCode, d.Title,
 			d.SubjectName, d.Season,
+			d.VisionProductType, visionDiscStr, d.VisionSummary,
 			d.ProductRating, d.FeedbackRating,
 			d.MaxVisibility, d.PriorityScore, d.AvgPosition,
 			d.OpenCard30d, d.Orders30d,
@@ -875,32 +960,31 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 			d.NewDesc,
 			formatCharacteristicsJSON(d.NewChars),
 			textDiscStr, d.TextSummary,
-			d.VisionProductType, visionDiscStr, d.VisionSummary,
 			d.TextDone, d.VisionDone, d.GenerateDone, d.WbUpdated,
 		}
 
 		ri := rowNum
 		for i, v := range vals {
 			f.SetCellValue(sheet, colCells[i][ri], v)
-			// text discrepancy = col index 17 (0-based)
-			if i == 17 && textDiscStr == "Да" {
+			// vision discrepancy = col index 6 (0-based)
+			if i == 6 && visionDiscStr == "Да" {
 				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
 			}
-			// vision discrepancy = col index 20
-			if i == 20 && visionDiscStr == "Да" {
+			// product rating < 5 = col index 8
+			if i == 8 && d.ProductRating > 0 && d.ProductRating < 5.0 {
 				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
 			}
-			// product rating < 5 = col index 5
-			if i == 5 && d.ProductRating > 0 && d.ProductRating < 5.0 {
+			// feedback rating < 4 = col index 9
+			if i == 9 && d.FeedbackRating > 0 && d.FeedbackRating < 4.0 {
 				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
 			}
-			// feedback rating < 4 = col index 6
-			if i == 6 && d.FeedbackRating > 0 && d.FeedbackRating < 4.0 {
-				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
-			}
-			// priority score > 1.0 = col index 8 → green
-			if i == 8 && d.PriorityScore > 1.0 {
+			// priority score > 1.0 = col index 11 → green
+			if i == 11 && d.PriorityScore > 1.0 {
 				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], priorityStyle)
+			}
+			// text discrepancy = col index 20
+			if i == 20 && textDiscStr == "Да" {
+				f.SetCellStyle(sheet, colCells[i][ri], colCells[i][ri], discStyle)
 			}
 		}
 	}
@@ -911,18 +995,22 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		col, _ := excelize.ColumnNumberToName(i + 1)
 		f.SetColWidth(sheet, col, col, 18)
 	}
-	// Narrow: C(nm_id) D(vendor) E(title) F(subject) G(сезон) H(рейтинг WB) I(рейтинг отзывов) J(видимость) K(priority) L(ср.позиция)
-	for _, idx := range []int{3, 4, 5, 6, 7, 8, 9, 10, 11} {
+	// Narrow: D(vendor) E(title) F(subject) G(сезон) H-I(vision тип/расх) K-L(рейтинги) M(видимость) N(priority) O(ср.позиция)
+	for _, idx := range []int{3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14} {
 		col, _ := excelize.ColumnNumberToName(idx + 1)
 		f.SetColWidth(sheet, col, col, 12)
 	}
-	// Medium: M(открытия) N(заказы)
-	for _, idx := range []int{12, 13} {
+	// Medium: P(открытия) Q(заказы)
+	for _, idx := range []int{15, 16} {
 		col, _ := excelize.ColumnNumberToName(idx + 1)
 		f.SetColWidth(sheet, col, col, 14)
 	}
-	// Wide: P-Q(топ запросы), R(title), S(description), T(характеристики), V(text описание), Y(vision описание)
-	for _, idx := range []int{14, 15, 16, 17, 18, 20, 23} {
+	// Fixed: J(vision описание) — 115px
+	col, _ := excelize.ColumnNumberToName(9 + 1)
+	f.SetColWidth(sheet, col, col, 115)
+
+	// Wide: R-S(топ запросы), T(title), U(description), V(характеристики), X(text описание)
+	for _, idx := range []int{17, 18, 19, 20, 21, 23} {
 		col, _ := excelize.ColumnNumberToName(idx + 1)
 		f.SetColWidth(sheet, col, col, 40)
 	}
@@ -986,6 +1074,82 @@ func (r *ResultsRepo) FilterByThresholds(ctx context.Context, nmIDs []int, f Fil
 		var id int
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
+		}
+		passing[id] = true
+	}
+
+	var result []int
+	for _, id := range nmIDs {
+		if passing[id] {
+			result = append(result, id)
+		}
+	}
+	return result, rows.Err()
+}
+
+// FilterByConfig фильтрует nmIDs по конфигу (nm_ids, subject_ids, vendor_codes).
+// Используется Stage 4 и --diff для применения фильтров из config.yaml.
+func (r *ResultsRepo) FilterByConfig(ctx context.Context, nmIDs []int, f FilterConfig) ([]int, error) {
+	if len(nmIDs) == 0 {
+		return nmIDs, nil
+	}
+	if len(f.NmIDs) == 0 && len(f.SubjectIDs) == 0 && len(f.VendorCodes) == 0 {
+		return nmIDs, nil
+	}
+
+	ph := make([]string, len(nmIDs))
+	args := make([]any, 0, len(nmIDs)+10)
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args = append(args, id)
+	}
+
+	var conds []string
+
+	if len(f.NmIDs) > 0 {
+		inner := make([]string, len(f.NmIDs))
+		for i, id := range f.NmIDs {
+			inner[i] = "?"
+			args = append(args, id)
+		}
+		conds = append(conds, fmt.Sprintf("nm_id IN (%s)", strings.Join(inner, ",")))
+	}
+
+	if len(f.SubjectIDs) > 0 {
+		inner := make([]string, len(f.SubjectIDs))
+		for i, id := range f.SubjectIDs {
+			inner[i] = "?"
+			args = append(args, id)
+		}
+		conds = append(conds, fmt.Sprintf("subject_id IN (%s)", strings.Join(inner, ",")))
+	}
+
+	if len(f.VendorCodes) > 0 {
+		inner := make([]string, len(f.VendorCodes))
+		for i, code := range f.VendorCodes {
+			inner[i] = "?"
+			args = append(args, code)
+		}
+		conds = append(conds, fmt.Sprintf("vendor_code IN (%s)", strings.Join(inner, ",")))
+	}
+
+	query := fmt.Sprintf(
+		"SELECT nm_id FROM card_analysis WHERE nm_id IN (%s) AND %s",
+		strings.Join(ph, ","),
+		strings.Join(conds, " AND "),
+	)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("filter by config: %w", err)
+	}
+	defer rows.Close()
+
+	passing := make(map[int]bool)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
 		passing[id] = true
 	}

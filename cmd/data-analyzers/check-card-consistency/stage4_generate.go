@@ -42,20 +42,136 @@ var skipCharcIDs = map[int]bool{
 	1010:     true, // Утеплитель
 }
 
-// runStage4 генерирует новые параметры карточки через линейный pipeline (этап 4).
+// preserveCharNames — имена характеристик, которые нельзя менять даже если Stage 1 их пометил.
+// Это данные, которые невозможно определить по фото и которые заполняются вручную/из сертификатов.
+var preserveCharNames = map[string]bool{
+	"тнвэд":                true,
+	"сертификат":           true, // покрывает "Сертификат", "Сертификат соответствия" и т.д.
+	"ндс":                  true,
+	"маркированный товар":  true,
+	"состав":               true, // Состав ткани в %
+	"страна производства":  true,
+}
+
+// stage1Issue — один issue из Stage 1: расхождение между фото и карточкой.
+type stage1Issue struct {
+	CharcID      *int   `json:"charc_id"`
+	Field        string `json:"field"`
+	CardValue    string `json:"card_value"`
+	CorrectValue string `json:"correct_value"`
+	Reason       string `json:"reason"`
+}
+
+// matchedIssue — issue с привязанным charc_id из справочника предмета.
+type matchedIssue struct {
+	CharcID      int
+	Name         string
+	CardValue    string
+	CorrectValue string
+	Reason       string
+	IsEmpty      bool // true если card_value == "(пусто)" или пустая строка
+}
+
+// parseIssuesFromSummary извлекает структурированные issues из vision_summary.
+// Stage 1 хранит issues в формате: "<summary text>\n[ISSUES] [{...}]"
+func parseIssuesFromSummary(summary string) []stage1Issue {
+	idx := strings.Index(summary, "[ISSUES] ")
+	if idx == -1 {
+		return nil
+	}
+	jsonPart := summary[idx+len("[ISSUES] "):]
+
+	var issues []stage1Issue
+	if err := json.Unmarshal([]byte(jsonPart), &issues); err != nil {
+		return nil
+	}
+	return issues
+}
+
+// matchIssuesToCharcIDs маппит issues на charc_id из справочника предмета.
+// Приоритет: charc_id из Stage 1 > name matching (backward compat).
+// Фильтрует системные характеристики (skipCharcIDs + preserveCharNames).
+func matchIssuesToCharcIDs(nmID int, issues []stage1Issue, charEntries []CharEntry) (matched []matchedIssue, unmatched []stage1Issue) {
+	nameIndex := make(map[string]CharEntry, len(charEntries))
+	idIndex := make(map[int]CharEntry, len(charEntries))
+	for _, e := range charEntries {
+		nameIndex[strings.ToLower(e.Name)] = e
+		idIndex[e.CharcID] = e
+	}
+
+	for _, issue := range issues {
+		var entry CharEntry
+		var found bool
+
+		// Path 1: charc_id из Stage 1 (предпочтительный)
+		if issue.CharcID != nil {
+			entry, found = idIndex[*issue.CharcID]
+			if !found {
+				log.Printf("    WARN nm_id=%d: charc_id=%d не найден в справочнике предмета — unmatched", nmID, *issue.CharcID)
+				unmatched = append(unmatched, issue)
+				continue
+			}
+		} else {
+			// Path 2: fallback на name matching (старые данные)
+			entry, found = nameIndex[strings.ToLower(issue.Field)]
+			if !found {
+				unmatched = append(unmatched, issue)
+				continue
+			}
+		}
+
+		// Защита: системные charc_id
+		if skipCharcIDs[entry.CharcID] {
+			log.Printf("    WARN nm_id=%d: issue для системного поля %q (charc_id=%d) — пропускаем", nmID, entry.Name, entry.CharcID)
+			continue
+		}
+
+		// Защита: характеристик по имени (ТНВЭД, сертификаты, НДС и т.д.)
+		if preserveCharNames[strings.ToLower(entry.Name)] {
+			log.Printf("    WARN nm_id=%d: issue для защищённого поля %q (charc_id=%d) — пропускаем", nmID, entry.Name, entry.CharcID)
+			continue
+		}
+
+		isEmpty := issue.CardValue == "(пусто)" || issue.CardValue == ""
+		matched = append(matched, matchedIssue{
+			CharcID:      entry.CharcID,
+			Name:         entry.Name,
+			CardValue:    issue.CardValue,
+			CorrectValue: issue.CorrectValue,
+			Reason:       issue.Reason,
+			IsEmpty:      isEmpty,
+		})
+	}
+	return
+}
+
+// runStage4 генерирует исправленные характеристики карточки через линейный pipeline (этап 4).
 //
-// Линейный pipeline (без цикла):
+// Линейный pipeline:
 //  1. (КОД) Загрузить ВСЕ предметы WB из source DB
 //  2. (LLM) Выбрать подходящий предмет по Vision-описанию → JSON {subject_id, subject_name}
 //  3. (КОД) Загрузить характеристики для выбранного subject_id из кэша
-//  4. (LLM) Заполнить title, description, характеристики → JSON результат
-func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, provider llm.Provider, cfg CLIConfig) error {
-	nmIDs, err := results.LoadVisionDiscrepancies(ctx)
+//  4. (КОД) Парсинг issues из vision_summary → маппинг на charc_id
+//  5. (LLM) Форматирование исправленных характеристик по issues
+func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, provider llm.Provider, cfg CLIConfig, force bool, keepSubject bool) error {
+	nmIDs, err := results.LoadVisionDiscrepancies(ctx, force)
 	if err != nil {
 		return fmt.Errorf("load vision discrepancies: %w", err)
 	}
 	if len(nmIDs) == 0 {
-		log.Println("Stage 4: no vision discrepancies found. Run stage 3 first.")
+		log.Println("Stage 4: no vision discrepancies found. Run stage 1 first.")
+		return nil
+	}
+
+	// Применяем фильтры из config: nm_ids, subject_ids, vendor_codes
+	nmIDs, err = results.FilterByConfig(ctx, nmIDs, cfg.Filter)
+	if err != nil {
+		return fmt.Errorf("filter by config: %w", err)
+	}
+	log.Printf("  After filter: %d cards match", len(nmIDs))
+
+	if len(nmIDs) == 0 {
+		log.Println("  No cards match filter config")
 		return nil
 	}
 
@@ -64,19 +180,23 @@ func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 	}
 
 	// Resume: пропускаем карточки, уже обработанные Stage 4
-	pending, err := results.LoadPendingGenerateCards(ctx, nmIDs)
-	if err != nil {
-		return fmt.Errorf("load pending generate cards: %w", err)
+	if !force {
+		pending, err := results.LoadPendingGenerateCards(ctx, nmIDs)
+		if err != nil {
+			return fmt.Errorf("load pending generate cards: %w", err)
+		}
+		log.Printf("  Resume: %d already done, %d pending", len(nmIDs)-len(pending), len(pending))
+		nmIDs = pending
+	} else {
+		log.Printf("  Force: re-processing all %d cards", len(nmIDs))
 	}
-	log.Printf("  Resume: %d already done, %d pending", len(nmIDs)-len(pending), len(pending))
-	nmIDs = pending
 
 	if len(nmIDs) == 0 {
 		log.Println("  All cards already generated")
 		return nil
 	}
 
-	log.Printf("Stage 4: generating new params for %d cards with %s (linear pipeline)", len(nmIDs), cfg.Text.Model)
+	log.Printf("Stage 4: generating corrected characteristics for %d cards with %s (issues-driven pipeline)", len(nmIDs), cfg.Text.Model)
 
 	cachePath := expandHome(cfg.CharDict.DBPath)
 	charDict, err := NewCharDictRepo(cachePath)
@@ -107,20 +227,15 @@ func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 		return fmt.Errorf("load characteristics: %w", err)
 	}
 
-	searchQueriesMap, err := source.LoadTopSearchQueries(ctx, nmIDs, 5)
-	if err != nil {
-		log.Printf("  WARN: load search queries: %v (continuing without queries)", err)
-		searchQueriesMap = nil
-	}
-
 	cardsMap, err := loadCardsMap(ctx, source, nmIDs)
 	if err != nil {
 		return fmt.Errorf("load cards map: %w", err)
 	}
 
-	brand := cfg.Brand
-	if brand == "" {
-		brand = "PlayToday"
+	for i := range analysisRows {
+		if card, ok := cardsMap[analysisRows[i].NmID]; ok {
+			analysisRows[i].Description = card.Description
+		}
 	}
 
 	var (
@@ -133,6 +248,7 @@ func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 	tracker := progress.NewCLITrackerWithConfig(progress.CLITrackerConfig{
 		Total:  len(analysisRows),
 		Prefix: "Stage 4",
+		Width:  -1,
 	})
 
 	for _, row := range analysisRows {
@@ -152,8 +268,8 @@ func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 			chars := charsMap[r.NmID]
 
 			start := time.Now()
-			newTitle, newDesc, newChars, subjectName, subjectID, err := generateNewParams(
-				ctx, provider, charDict, allSubjects, subjectSet, r, chars, card, cfg, brand, searchQueriesMap)
+			newChars, subjectName, subjectID, err := generateNewParams(
+				ctx, provider, charDict, allSubjects, subjectSet, r, chars, card, cfg, force, keepSubject, results)
 			dur := time.Since(start)
 
 			if err != nil {
@@ -164,15 +280,19 @@ func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 				return
 			}
 
-			charsJSON, _ := json.Marshal(newChars)
-			if err := results.SaveNewParams(ctx, r.NmID, newTitle, newDesc, string(charsJSON), subjectID, subjectName); err != nil {
+				if newChars == nil {
+					return // guard уже сохранил + отметил generate_done
+				}
+
+				charsJSON, _ := json.Marshal(newChars)
+			if err := results.SaveNewParams(ctx, r.NmID, "", "", string(charsJSON), subjectID, subjectName); err != nil {
 				mu.Lock()
 				errCount++
 				mu.Unlock()
 				log.Printf("  ERROR save nm_id=%d: %v", r.NmID, err)
 				return
 			}
-			if err := results.MarkGenerateDone(ctx, r.NmID); err != nil {
+			if err := results.MarkGenerateDone(ctx, r.NmID, force); err != nil {
 				mu.Lock()
 				errCount++
 				mu.Unlock()
@@ -184,9 +304,10 @@ func runStage4(ctx context.Context, source *SourceRepo, results *ResultsRepo, pr
 
 			mu.Lock()
 			n := tracker.Current()
-			log.Printf("  [%d/%d] %s | %.1fs | subject=%s (%d) | chars=%d | ETA %s",
+			log.Printf("  [%d/%d] %s | nm_id=%d | %.1fs | subject=%s (%d) | chars=%d | ETA %s",
 				n, tracker.Total(),
 				time.Now().Format("15:04:05"),
+				row.NmID,
 				dur.Seconds(),
 				subjectName, subjectID, len(newChars),
 				tracker.ETA())
@@ -212,19 +333,19 @@ func generateNewParams(
 	chars []CardChar,
 	card CardData,
 	cfg CLIConfig,
-	brand string,
-	searchQueriesMap map[int][]SearchQuery,
-) (string, string, []any, string, int, error) {
+	force bool, keepSubject bool,
+	results *ResultsRepo,
+) ([]any, string, int, error) {
 	// Шаг 2: LLM выбирает предмет из списка всех предметов WB
 	subjectID, subjectName, err := selectSubject(ctx, provider, allSubjects, row, card, cfg.Text, cfg.Prompts)
 	if err != nil {
-		return "", "", nil, "", 0, fmt.Errorf("select subject: %w", err)
+		return nil, "", 0, fmt.Errorf("select subject: %w", err)
 	}
 
 	// Валидация: subject_id обязан быть в справочнике
 	canonicalName, ok := subjectSet[subjectID]
 	if !ok {
-		return "", "", nil, "", 0, fmt.Errorf("LLM вернула subject_id=%d (%q), которого нет в справочнике из %d предметов — галлюцинация модели",
+		return nil, "", 0, fmt.Errorf("LLM вернула subject_id=%d (%q), которого нет в справочнике из %d предметов — галлюцинация модели",
 			subjectID, subjectName, len(allSubjects))
 	}
 	// Исправляем subject_name если LLM выдумала название
@@ -236,15 +357,30 @@ func generateNewParams(
 
 	log.Printf("    nm_id=%d: selected subject=%s (%d)", row.NmID, subjectName, subjectID)
 
+	// Guard: если LLM предложила смену предмета
+	if subjectID != card.SubjectID {
+		if !keepSubject {
+			log.Printf("  SKIP nm_id=%d: subject changed %d→%d (%q→%q). Use --keep-subject to override.",
+				row.NmID, card.SubjectID, subjectID, card.SubjectName, subjectName)
+			// Сохраняем обнаруженную смену предмета для видимости в XLSX
+			results.SaveNewParams(ctx, row.NmID, "", "", "", subjectID, subjectName)
+			results.MarkGenerateDone(ctx, row.NmID, force)
+			return nil, "", 0, nil
+		}
+		log.Printf("  INFO nm_id=%d: --keep-subject: keeping %d (%q), ignoring LLM suggestion %d (%q)",
+			row.NmID, card.SubjectID, card.SubjectName, subjectID, subjectName)
+		subjectID = card.SubjectID
+		subjectName = card.SubjectName
+	}
+
 	// Шаг 3: загружаем характеристики для выбранного предмета
 	charEntries, err := charDict.LoadCharacteristicsForSubject(ctx, subjectID)
 	if err != nil {
-		return "", "", nil, "", 0, fmt.Errorf("load characteristics for subject %d: %w", subjectID, err)
+		return nil, "", 0, fmt.Errorf("load characteristics for subject %d: %w", subjectID, err)
 	}
 
-	// Шаг 4: LLM заполняет параметры на основе Vision + загруженных характеристик
-	searchQueries := searchQueriesMap[row.NmID]
-	return fillCardParams(ctx, provider, row, chars, subjectID, subjectName, charEntries, cfg.Text, brand, cfg.Prompts, searchQueries)
+	// Шаг 4: LLM форматирует исправленные характеристики по issues
+	return fillCardParams(ctx, provider, row, chars, subjectID, subjectName, charEntries, cfg.Text, cfg.Prompts)
 }
 
 // selectSubject — шаг 2: LLM выбирает подходящий предмет из списка.
@@ -261,33 +397,30 @@ func selectSubject(
 
 	system, user := buildStage4SelectMessages(card, row, string(subjectsJSON), prompts)
 
-	resp, err := generateWithRetry(ctx, provider,
-		[]llm.Message{
-			{Role: llm.RoleSystem, Content: system},
-			{Role: llm.RoleUser, Content: user},
-		},
-		llm.WithModel(modelCfg.Model),
-		llm.WithTemperature(0),
-		llm.WithMaxTokens(200),
-	)
-	if err != nil {
-		return 0, "", fmt.Errorf("LLM call: %w", err)
-	}
-
 	var result struct {
 		SubjectID   int    `json:"subject_id"`
 		SubjectName string `json:"subject_name"`
 	}
-	if err := json.Unmarshal([]byte(extractJSON(resp.Content)), &result); err != nil {
-		return 0, "", fmt.Errorf("parse subject JSON: %w (raw: %s)", err, truncate(resp.Content, 200))
+	if err := llm.GenerateJSON(ctx, provider,
+		[]llm.Message{
+			{Role: llm.RoleSystem, Content: system},
+			{Role: llm.RoleUser, Content: user},
+		},
+		&result,
+		llm.WithModel(modelCfg.Model),
+		llm.WithTemperature(0),
+		llm.WithMaxTokens(2000),
+	); err != nil {
+		return 0, "", fmt.Errorf("select subject: %w", err)
 	}
 	if result.SubjectID == 0 {
-		return 0, "", fmt.Errorf("LLM returned subject_id=0 (raw: %s)", truncate(resp.Content, 200))
+		return 0, "", fmt.Errorf("LLM returned subject_id=0")
 	}
 	return result.SubjectID, result.SubjectName, nil
 }
 
-// fillCardParams — шаг 4: LLM заполняет характеристики на основе Vision (без старых характеристик).
+// fillCardParams — issues-driven генерация характеристик.
+// Парсит issues из vision_summary, маппит на charc_id, отправляет LLM для форматирования.
 func fillCardParams(
 	ctx context.Context,
 	provider llm.Provider,
@@ -297,65 +430,112 @@ func fillCardParams(
 	subjectName string,
 	charEntries []CharEntry,
 	modelCfg ModelConfig,
-	brand string,
 	prompts PromptConfig,
-	searchQueries []SearchQuery,
-) (string, string, []any, string, int, error) {
-	// Формируем список доступных характеристик с charcID
+) ([]any, string, int, error) {
+	// Шаг 4a: парсим issues из vision_summary
+	issues := parseIssuesFromSummary(row.VisionSummary)
+	if len(issues) == 0 {
+		return nil, "", 0, fmt.Errorf("no [ISSUES] block in vision_summary — skip card (run stage 1 first)")
+	}
+	log.Printf("    nm_id=%d: parsed %d issues from vision_summary", row.NmID, len(issues))
+
+	// Шаг 4b: маппим issues на charc_id из справочника предмета
+	matched, unmatched := matchIssuesToCharcIDs(row.NmID, issues, charEntries)
+	log.Printf("    nm_id=%d: %d matched, %d unmatched issues", row.NmID, len(matched), len(unmatched))
+
+	if len(matched) == 0 && len(unmatched) == 0 {
+		return nil, "", 0, fmt.Errorf("all issues filtered (system/preserved fields) — nothing to fix")
+	}
+
+	// Шаг 4c: фильтруем charEntries — только релевантные для issues
+	relevantCharcIDs := make(map[int]bool)
+	for _, m := range matched {
+		relevantCharcIDs[m.CharcID] = true
+	}
+	// Для unmatched issues тоже пытаемся включить возможные маппинги
 	type charDef struct {
 		CharcID  int    `json:"charc_id"`
 		Name     string `json:"name"`
 		Required bool   `json:"required"`
 		MaxCount int    `json:"max_count"`
 	}
-	defs := make([]charDef, len(charEntries))
-	for i, c := range charEntries {
-		defs[i] = charDef{c.CharcID, c.Name, c.Required, c.MaxCount}
+	var relevantDefs []charDef
+	for _, e := range charEntries {
+		if relevantCharcIDs[e.CharcID] {
+			relevantDefs = append(relevantDefs, charDef{e.CharcID, e.Name, e.Required, e.MaxCount})
+		}
 	}
-	defsJSON, _ := json.Marshal(defs)
+	// Для unmatched — добавляем все записи, чьё имя может совпасть по подстроке
+	for _, u := range unmatched {
+		uLower := strings.ToLower(u.Field)
+		for _, e := range charEntries {
+			if relevantCharcIDs[e.CharcID] {
+				continue
+			}
+			if strings.Contains(strings.ToLower(e.Name), uLower) || strings.Contains(uLower, strings.ToLower(e.Name)) {
+				relevantDefs = append(relevantDefs, charDef{e.CharcID, e.Name, e.Required, e.MaxCount})
+				relevantCharcIDs[e.CharcID] = true
+			}
+		}
+	}
+	// Если unmatched остались без маппинга — добавляем ВСЕ charEntries (LLM сама разберётся)
+	if len(unmatched) > 0 && len(relevantDefs) == 0 {
+		for _, e := range charEntries {
+			relevantDefs = append(relevantDefs, charDef{e.CharcID, e.Name, e.Required, e.MaxCount})
+		}
+	}
 
-	// Парсим аудиторию и пол из Vision attributes
-	audience, gender := parseAudienceFromVision(row.NmID, row.VisionAttributes)
+	defsJSON, _ := json.Marshal(relevantDefs)
 
-	titleRules, descRules, seoContext := audiencePromptRules(audience, gender, brand, prompts)
+	// Шаг 4d: формируем issues_structured JSON
+	issuesJSON := buildIssuesStructuredJSON(matched, unmatched)
 
-	system, user := buildStage4FillMessages(
-		row, chars, subjectID, subjectName, string(defsJSON),
-		brand, audience, titleRules, descRules, seoContext,
-		formatSearchQueries(searchQueries), prompts,
+	// Шаг 4e: фильтруем текущие характеристики — только проблемные
+	var relevantChars []CardChar
+	relevantCharNames := make(map[string]bool)
+	for id := range relevantCharcIDs {
+		for _, e := range charEntries {
+			if e.CharcID == id {
+				relevantCharNames[strings.ToLower(e.Name)] = true
+			}
+		}
+	}
+	for _, c := range chars {
+		if relevantCharNames[strings.ToLower(c.Name)] {
+			relevantChars = append(relevantChars, c)
+		}
+	}
+
+	// Шаг 4f: LLM форматирование с retry на parse failure
+	system, user := buildStage4CharsMessages(
+		row, relevantChars, subjectID, subjectName, string(defsJSON), issuesJSON, prompts,
 	)
 
-	resp, err := generateWithRetry(ctx, provider,
+	type charResult struct {
+		CharcID int            `json:"charc_id"`
+		Value   flexibleString `json:"value"`
+	}
+	type charsResponse struct {
+		Characteristics []charResult `json:"characteristics"`
+	}
+
+	var result charsResponse
+
+	if err := llm.GenerateJSON(ctx, provider,
 		[]llm.Message{
 			{Role: llm.RoleSystem, Content: system},
 			{Role: llm.RoleUser, Content: user},
 		},
+		&result,
 		llm.WithModel(modelCfg.Model),
 		llm.WithTemperature(modelCfg.Temperature),
 		llm.WithMaxTokens(modelCfg.MaxTokens),
-	)
-	if err != nil {
-		return "", "", nil, "", 0, fmt.Errorf("LLM call: %w", err)
+	); err != nil {
+		return nil, "", 0, fmt.Errorf("fill chars: %w", err)
 	}
 
-	var result struct {
-		Title           string `json:"title"`
-		Description     string `json:"description"`
-		Characteristics []struct {
-			CharcID int    `json:"charc_id"`
-			Value   string `json:"value"`
-		} `json:"characteristics"`
-	}
-	if err := json.Unmarshal([]byte(extractJSON(resp.Content)), &result); err != nil {
-		return "", "", nil, "", 0, fmt.Errorf("parse fill result: %w (raw: %s)", err, truncate(resp.Content, 200))
-	}
-
-	// Guard: пустой результат — ошибка
-	if result.Title == "" && result.Description == "" && len(result.Characteristics) == 0 {
-		return "", "", nil, "", 0, fmt.Errorf("LLM вернула пустой результат (raw: %s)", truncate(resp.Content, 200))
-	}
-	if result.Title == "" {
-		log.Printf("    WARN nm_id=%d: LLM вернула пустой title", row.NmID)
+	if len(result.Characteristics) == 0 {
+		return nil, "", 0, fmt.Errorf("LLM вернула пустые характеристики")
 	}
 
 	// Валидация charc_id против справочника предмета
@@ -378,70 +558,206 @@ func fillCardParams(
 			continue
 		}
 		seen[c.CharcID] = true
-		entry := map[string]any{
+		charsRaw = append(charsRaw, map[string]any{
 			"charc_id": c.CharcID,
 			"name":     charcNames[c.CharcID],
 			"value":    c.Value,
+		})
+	}
+
+	return charsRaw, subjectName, subjectID, nil
+}
+
+// buildIssuesStructuredJSON формирует JSON для плейсхолдера {issues_structured}.
+func buildIssuesStructuredJSON(matched []matchedIssue, unmatched []stage1Issue) string {
+	type jsonMatched struct {
+		CharcID  int    `json:"charc_id"`
+		Name     string `json:"name"`
+		Current  string `json:"current"`
+		Suggested string `json:"suggested"`
+		Reason   string `json:"reason"`
+		IsEmpty  bool   `json:"is_empty"`
+	}
+	type jsonUnmatched struct {
+		Field    string `json:"field"`
+		Current  string `json:"current"`
+		Suggested string `json:"suggested"`
+		Reason   string `json:"reason"`
+	}
+
+	jm := make([]jsonMatched, len(matched))
+	for i, m := range matched {
+		jm[i] = jsonMatched{m.CharcID, m.Name, m.CardValue, m.CorrectValue, m.Reason, m.IsEmpty}
+	}
+	ju := make([]jsonUnmatched, len(unmatched))
+	for i, u := range unmatched {
+		ju[i] = jsonUnmatched{u.Field, u.CardValue, u.CorrectValue, u.Reason}
+	}
+
+	data := map[string]any{
+		"matched":   jm,
+		"unmatched": ju,
+	}
+	b, _ := json.Marshal(data)
+	return string(b)
+}
+
+// runStage4Diff показывает before/after сравнение характеристик для карточек, обработанных Stage 4.
+func runStage4Diff(ctx context.Context, source *SourceRepo, results *ResultsRepo, cfg CLIConfig, full bool, force bool) error {
+	rows, err := results.LoadAnalysisForUpdate(ctx, cfg.Filter, force)
+	if err != nil {
+		return fmt.Errorf("load analysis for update: %w", err)
+	}
+	if len(rows) == 0 {
+		log.Println("No cards with generated params. Run stage 4 first.")
+		return nil
+	}
+
+	// Применяем фильтры из config: nm_ids, subject_ids, vendor_codes
+	if len(cfg.Filter.NmIDs) > 0 || len(cfg.Filter.SubjectIDs) > 0 || len(cfg.Filter.VendorCodes) > 0 {
+		nmIDSet := make(map[int]bool)
+		rowMap := make(map[int]AnalysisRow)
+		filteredIDs := make([]int, 0, len(rows))
+		for _, r := range rows {
+			nmIDSet[r.NmID] = true
+			rowMap[r.NmID] = r
+			filteredIDs = append(filteredIDs, r.NmID)
 		}
-		charsRaw = append(charsRaw, entry)
+		filteredIDs, err = results.FilterByConfig(ctx, filteredIDs, cfg.Filter)
+		if err != nil {
+			return fmt.Errorf("filter diff by config: %w", err)
+		}
+		var filtered []AnalysisRow
+		for _, id := range filteredIDs {
+			filtered = append(filtered, rowMap[id])
+		}
+		rows = filtered
+		log.Printf("  After filter: %d cards match", len(rows))
 	}
 
-	return result.Title, result.Description, charsRaw, subjectName, subjectID, nil
+	if cfg.Analysis.Limit > 0 && len(rows) > cfg.Analysis.Limit {
+		rows = rows[:cfg.Analysis.Limit]
+	}
+
+	// Open charDict for --full mode (all characteristics per subject)
+	var charDict *CharDictRepo
+	if full {
+		cachePath := expandHome(cfg.CharDict.DBPath)
+		dict, err := NewCharDictRepo(cachePath)
+		if err != nil {
+			return fmt.Errorf("open char-dict-cache: %w", err)
+		}
+		charDict = dict
+		defer charDict.Close()
+	}
+
+	for _, row := range rows {
+		if full {
+			// --full: show ALL characteristics for the subject (filled + empty)
+			if row.NewSubjectID == nil {
+				log.Printf("  WARN nm_id=%d: no subject_id \u2014 skipping", row.NmID)
+				continue
+			}
+			subjectID := *row.NewSubjectID
+
+			allCharEntries, err := charDict.LoadCharacteristicsForSubject(ctx, subjectID)
+			if err != nil {
+				log.Printf("  ERROR load char entries nm_id=%d: %v", row.NmID, err)
+				continue
+			}
+
+			charsMap, err := source.LoadCharacteristics(ctx, []int{row.NmID})
+			if err != nil {
+				log.Printf("  ERROR load chars nm_id=%d: %v", row.NmID, err)
+				continue
+			}
+			currentIdx := make(map[int]string)
+			for _, c := range charsMap[row.NmID] {
+				currentIdx[c.CharID] = unpackCharValue(c.Value)
+			}
+
+			var newChars []charcEntry
+			json.Unmarshal([]byte(row.NewCharacteristics), &newChars)
+			newIdx := make(map[int]string)
+			for _, nc := range newChars {
+				newIdx[nc.CharcID] = nc.Value
+			}
+
+			fmt.Printf("═══ nm_id=%d vendor_code=%s subject=%s (%d) ═══\n", row.NmID, row.VendorCode, row.NewSubjectName, subjectID)
+			fmt.Printf("  %-35s │ %-30s │ %-30s\n", "Характеристика", "Текущее", "Stage 4")
+			fmt.Printf("  %s─%s─%s\n", strings.Repeat("─", 35), strings.Repeat("─", 30), strings.Repeat("─", 30))
+
+			for _, e := range allCharEntries {
+				if skipCharcIDs[e.CharcID] {
+					continue
+				}
+				cur := currentIdx[e.CharcID]
+				if cur == "" {
+					cur = "(пусто)"
+				}
+				if newVal, ok := newIdx[e.CharcID]; ok {
+					fmt.Printf("  %-35s │ %-30s │ %-30s\n", e.Name, cur, newVal)
+				} else {
+					fmt.Printf("  %-35s │ %-30s │ %s\n", e.Name, cur, "—")
+				}
+			}
+			fmt.Println()
+		} else {
+			// --diff: show only changed characteristics
+			fmt.Printf("═══ nm_id=%d vendor_code=%s subject=%s═══\n", row.NmID, row.VendorCode, row.NewSubjectName)
+
+			charsMap, err := source.LoadCharacteristics(ctx, []int{row.NmID})
+			if err != nil {
+				log.Printf("  ERROR load chars nm_id=%d: %v", row.NmID, err)
+				continue
+			}
+			currentChars := charsMap[row.NmID]
+
+			currentIdx := make(map[int]string)
+			currentNames := make(map[int]string)
+			for _, c := range currentChars {
+				currentIdx[c.CharID] = unpackCharValue(c.Value)
+				currentNames[c.CharID] = c.Name
+			}
+
+			var newChars []charcEntry
+			if err := json.Unmarshal([]byte(row.NewCharacteristics), &newChars); err != nil {
+				log.Printf("  ERROR parse new chars nm_id=%d: %v", row.NmID, err)
+				continue
+			}
+
+			fmt.Printf("  %-35s │ %-30s │ %-30s\n", "Характеристика", "Было", "Стало")
+			fmt.Printf("  %s─%s─%s\n", strings.Repeat("─", 35), strings.Repeat("─", 30), strings.Repeat("─", 30))
+
+			for _, nc := range newChars {
+				oldVal := currentIdx[nc.CharcID]
+				name := nc.Name
+				if name == "" {
+					name = currentNames[nc.CharcID]
+				}
+				if oldVal == "" {
+					oldVal = "(пусто)"
+				}
+				fmt.Printf("  %-35s │ %-30s │ %-30s\n", name, oldVal, nc.Value)
+			}
+
+			fmt.Println()
+		}
+	}
+
+	return nil
 }
 
-// parseAudienceFromVision извлекает аудиторию и пол из Vision attributes JSON.
-func parseAudienceFromVision(nmID int, attrsJSON string) (audience, gender string) {
-	var attrs map[string]string
-	if err := json.Unmarshal([]byte(attrsJSON), &attrs); err != nil {
-		log.Printf("    WARN nm_id=%d: failed to parse vision attributes, using default audience", nmID)
-		return "девочка (6-10)", "женский"
+func unpackCharValue(raw string) string {
+	var arr []string
+	if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+		return strings.Join(arr, ", ")
 	}
-	if a, ok := attrs["аудитория"]; ok && a != "" {
-		audience = a
-	} else {
-		log.Printf("    WARN nm_id=%d: audience not determined from vision, using default: девочка (6-10)", nmID)
-		audience = "девочка (6-10)"
+	var s string
+	if err := json.Unmarshal([]byte(raw), &s); err == nil {
+		return s
 	}
-	if g, ok := attrs["пол"]; ok && g != "" {
-		gender = g
-	} else {
-		gender = "женский"
-	}
-	return
-}
-
-// audiencePromptRules возвращает правила для title/description в зависимости от аудитории.
-// Сначала ищет в конфиге (prompts.AudienceRules), затем fallback на дефолты.
-func audiencePromptRules(audience, gender, brand string, prompts PromptConfig) (titleRules, descRules, seoContext string) {
-	rules := resolveAudienceRules(prompts.AudienceRules)
-
-	// Определяем ключ для поиска правил на основе fuzzy matching
-	a := strings.ToLower(audience)
-	var key string
-	switch {
-	case strings.Contains(a, "взрослая женщина") || strings.Contains(a, "женщин"):
-		key = "взрослая женщина"
-	case strings.Contains(a, "взрослый мужч") || strings.Contains(a, "мужчин"):
-		key = "взрослый мужчина"
-	case strings.Contains(a, "подросток") && (strings.Contains(a, "девочк") || gender == "женский"):
-		key = "девочка-подросток (11-16)"
-	case strings.Contains(a, "подросток") && strings.Contains(a, "мальчик"):
-		key = "мальчик-подросток (11-16)"
-	case strings.Contains(a, "малыш"):
-		key = "малыш"
-	default:
-		key = "по умолчанию"
-	}
-
-	rule, ok := rules[key]
-	if !ok {
-		rule = rules["по умолчанию"]
-	}
-
-	titleRules = applyTemplate(rule.TitleRules, "{brand}", brand)
-	descRules = applyTemplate(rule.DescRules, "{brand}", brand)
-	seoContext = rule.SEOContext
-	return
+	return raw
 }
 
 // loadCardsMap загружает map nm_id → CardData для получения subject_id.

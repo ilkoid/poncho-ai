@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,6 +22,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
 // CLIConfig — конфигурация утилиты из config.yaml.
@@ -33,8 +35,9 @@ type CLIConfig struct {
 	Results  ResultsConfig  `yaml:"results"`
 	CharDict CharDictConfig `yaml:"char_dict"`
 	Filter   FilterConfig   `yaml:"filter"`
-	Analysis AnalysisConfig `yaml:"analysis"`
+	Analysis AnalysisConfig  `yaml:"analysis"`
 	Prompts  PromptConfig   `yaml:"prompts"`
+	WBUpdate WBUpdateConfig `yaml:"wb_update"`
 }
 
 // AudienceRule — правила генерации title/description для конкретной аудитории.
@@ -53,6 +56,8 @@ type PromptConfig struct {
 	Stage4SelectUser string                   `yaml:"stage4_select_user"`
 	Stage4FillSys    string                   `yaml:"stage4_fill_system"`
 	Stage4FillUser   string                   `yaml:"stage4_fill_user"`
+	Stage4CharsSys   string                   `yaml:"stage4_chars_system"`
+	Stage4CharsUser  string                   `yaml:"stage4_chars_user"`
 	AudienceRules    map[string]AudienceRule  `yaml:"audience_rules"`
 }
 
@@ -117,6 +122,17 @@ type AnalysisConfig struct {
 	Limit       int `yaml:"limit"`
 }
 
+type WBUpdateConfig struct {
+	APIKey            string `yaml:"api_key"`
+	BatchSize         int    `yaml:"batch_size"`
+	RatePerMin         int `yaml:"rate_per_min"`
+	RateBurst          int `yaml:"rate_burst"`
+	APIFloorPerMin     int `yaml:"api_floor_per_min"`
+	APIFloorBurst      int `yaml:"api_floor_burst"`
+	AdaptiveProbeAfter int `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int `yaml:"max_backoff_seconds"`
+}
+
 // toModelDef конвертирует CLIConfig в config.ModelDef для openai.NewClient().
 func (c CLIConfig) toModelDef() config.ModelDef {
 	return config.ModelDef{
@@ -150,8 +166,14 @@ func main() {
 	limit := flag.Int("limit", 0, "Limit number of cards (0=all)")
 	mock := flag.Bool("mock", false, "Stage 5: mock mode (no real WB API call)")
 	yes := flag.Bool("yes", false, "Stage 5: confirm real WB update")
+	diff := flag.Bool("diff", false, "Stage 4: show before/after diff instead of generating")
+	full := flag.Bool("full", false, "Stage 4 --diff: show ALL characteristics (filled + empty)")
 	listSubjects := flag.String("list-subjects", "", "List WB subjects (empty=all, or search query)")
+	listCharcs := flag.Int("list-charcs", 0, "List characteristics for WB subject ID")
 	exportPath := flag.String("export", "", "Export card_analysis to XLSX file and exit")
+	force := flag.Bool("force", false, "Force re-processing of already completed cards")
+	keepSubject := flag.Bool("keep-subject", false, "Stage 4: ignore LLM subject changes, keep current subject")
+	check := flag.Bool("check", false, "Stage 5: check WB error list only (no update)")
 	flag.Parse()
 
 	// Load config
@@ -166,6 +188,27 @@ func main() {
 	}
 	if cfg.Vision.PhotosPerCard == 0 {
 		cfg.Vision.PhotosPerCard = 3
+	}
+	if cfg.WBUpdate.BatchSize == 0 {
+		cfg.WBUpdate.BatchSize = 50
+	}
+	if cfg.WBUpdate.RatePerMin == 0 {
+		cfg.WBUpdate.RatePerMin = 10
+	}
+	if cfg.WBUpdate.RateBurst == 0 {
+		cfg.WBUpdate.RateBurst = 5
+	}
+	if cfg.WBUpdate.APIFloorPerMin == 0 {
+		cfg.WBUpdate.APIFloorPerMin = 10
+	}
+	if cfg.WBUpdate.APIFloorBurst == 0 {
+		cfg.WBUpdate.APIFloorBurst = 5
+	}
+	if cfg.WBUpdate.AdaptiveProbeAfter == 0 {
+		cfg.WBUpdate.AdaptiveProbeAfter = 10
+	}
+	if cfg.WBUpdate.MaxBackoffSeconds == 0 {
+		cfg.WBUpdate.MaxBackoffSeconds = 60
 	}
 
 	// CLI overrides
@@ -195,6 +238,12 @@ func main() {
 	// --list-subjects: вывести предметы WB и выйти
 	if *listSubjects != "" {
 		printSubjects(ctx, source, *listSubjects)
+		return
+	}
+
+	// --list-charcs: вывести характеристики предмета WB и выйти
+	if *listCharcs > 0 {
+		printCharacteristics(ctx, *listCharcs, cfg)
 		return
 	}
 
@@ -263,7 +312,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Create Vision provider for Audit: %v", err)
 		}
-		if err := runStage1Audit(ctx, source, results, provider, cfg); err != nil {
+		if err := runStage1Audit(ctx, source, results, provider, cfg, *force); err != nil {
 			log.Fatalf("Stage 1 Audit: %v", err)
 		}
 
@@ -273,20 +322,31 @@ func main() {
 		}
 
 	case 4:
-		provider, err := createProvider(cfg)
-		if err != nil {
-			log.Fatalf("Create LLM provider: %v", err)
-		}
-		if err := runStage4(ctx, source, results, provider, cfg); err != nil {
-			log.Fatalf("Stage 4: %v", err)
+		if *diff || *full {
+			if err := runStage4Diff(ctx, source, results, cfg, *full, *force); err != nil {
+				log.Fatalf("Stage 4 diff: %v", err)
+			}
+		} else {
+			provider, err := createProvider(cfg)
+			if err != nil {
+				log.Fatalf("Create LLM provider: %v", err)
+			}
+			if err := runStage4(ctx, source, results, provider, cfg, *force, *keepSubject); err != nil {
+				log.Fatalf("Stage 4: %v", err)
+			}
 		}
 
 	case 5:
-		if !*mock && !*yes {
-			log.Fatal("Stage 5 requires --mock (dry run) or --yes (real update)")
-		}
-		if err := runStage5(ctx, source, results, cfg, *mock); err != nil {
-			log.Fatalf("Stage 5: %v", err)
+		if *check {
+			if err := runStage5Check(ctx, cfg); err != nil {
+				log.Fatalf("Stage 5 check: %v", err)
+			}
+		} else if !*mock && !*yes {
+			log.Fatal("Stage 5 requires --mock (dry run), --yes (real update), or --check (error list only)")
+		} else {
+			if err := runStage5(ctx, source, results, cfg, *mock, *force); err != nil {
+				log.Fatalf("Stage 5: %v", err)
+			}
 		}
 
 	default:
@@ -355,6 +415,62 @@ func printSubjects(ctx context.Context, source *SourceRepo, query string) {
 		fmt.Printf("%-8d  %s\n", s.SubjectID, s.SubjectName)
 	}
 	fmt.Printf("\nTotal: %d subjects\n", len(subjects))
+}
+
+// printCharacteristics выводит характеристики предмета WB по его subject_id.
+func printCharacteristics(ctx context.Context, subjectID int, cfg CLIConfig) {
+	apiKey := getWBApiKey(cfg.WBUpdate.APIKey)
+	if apiKey == "" {
+		log.Fatal("WB_API_KEY (or WB_API_ANALYTICS_AND_PROMO_KEY) not set")
+	}
+
+	client := wb.New(apiKey)
+	client.SetRateLimit("cards_content",
+		cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst,
+		cfg.WBUpdate.APIFloorPerMin, cfg.WBUpdate.APIFloorBurst)
+
+	charcs, err := client.GetCharacteristics(ctx, wb.CardsBaseURL,
+		cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst, subjectID)
+	if err != nil {
+		log.Fatalf("GetCharacteristics: %v", err)
+	}
+	if len(charcs) == 0 {
+		fmt.Printf("No characteristics found for subject_id=%d\n", subjectID)
+		return
+	}
+
+	// Sort: Required DESC → Popular DESC → Name ASC
+	sort.Slice(charcs, func(i, j int) bool {
+		if charcs[i].Required != charcs[j].Required {
+			return charcs[i].Required
+		}
+		if charcs[i].Popular != charcs[j].Popular {
+			return charcs[i].Popular
+		}
+		return charcs[i].Name < charcs[j].Name
+	})
+
+	fmt.Printf("Characteristics for subject_id=%d (%d total)\n\n", subjectID, len(charcs))
+	fmt.Printf("%-8s  %-4s  %-6s  %-3s  %-3s  %s\n", "ID", "Type", "Unit", "Req", "Pop", "Name")
+	fmt.Printf("%-8s  %-4s  %-6s  %-3s  %-3s  %s\n", "--------", "----", "------", "---", "---", "----")
+
+	var required, popular int
+	for _, c := range charcs {
+		req := ""
+		if c.Required {
+			req = "+"
+			required++
+		}
+		pop := ""
+		if c.Popular {
+			pop = "+"
+			popular++
+		}
+		fmt.Printf("%-8d  %-4d  %-6s  %-3s  %-3s  %s\n",
+			c.CharcID, c.CharcType, c.UnitName, req, pop, c.Name)
+	}
+
+	fmt.Printf("\nTotal: %d characteristics (required: %d, popular: %d)\n", len(charcs), required, popular)
 }
 
 // downloadThumbnails скачивает миниатюры по URL-мапе, конвертирует WebP → JPEG,
