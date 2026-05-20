@@ -116,6 +116,25 @@ Recovery cycle: `desired` → 429 triggers backoff → `api floor` (after 5 OKs)
 - Promotion V2 normquery stats: **10 req/min** (stricter than list/bids/minus at 5/sec)
 - Date columns in `sales` table use `_dt` suffix: `order_dt`, `sale_dt`, `rr_dt` (not `sale_date`)
 
+## WB API Safety Rules
+
+**MASS WRITES TO WB API ARE FORBIDDEN.** Claude must NEVER generate or execute code that performs bulk updates via WB Content API (`POST /content/v2/cards/update`, `POST /content/v2/cards/upload`, or any other write endpoint).
+
+- Only the user may run write operations against WB API manually
+- Claude MAY build staging tables, generate payloads, prepare data, show dry-run output
+- Claude MUST NOT call `client.UpdateCards()`, `client.CreateCards()`, or any POST/PUT/DELETE to WB Content API
+- This applies to all utilities: fix-utilities, data-downloaders, data-analyzers, tools
+- Reason: `POST /content/v2/cards/update` fully overwrites cards — partial updates are NOT supported. A wrong payload destroys existing data.
+
+## Utility Development Rules
+
+All utilities in `cmd/` (fix-utilities, data-downloaders, data-analyzers) MUST support:
+
+- **`--mock` mode** — runs without real API calls, uses deterministic fake data. For downloaders: returns mock responses. For fix-utilities: reads/writes only local data without touching external APIs.
+- **`--dry-run` mode** — shows exactly what would be sent/changed without executing. Prints payloads, SQL statements, or API requests to stdout. The user reviews before running for real.
+
+No utility should ever require a real API key or live database to test its logic.
+
 ## Testing
 - Unit: `mockHTTPClient` for wb.Client internals, `MockClient`/`MockPromotionClient` for downloader logic
 - E2E: `SnapshotDBClient` reads from SQLite instead of API — `wb.NewSnapshotDBClient("e2e-snapshot.db")`
