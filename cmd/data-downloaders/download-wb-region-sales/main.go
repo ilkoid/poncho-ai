@@ -7,14 +7,15 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -82,7 +83,14 @@ func main() {
 	}
 
 	// 6. Print header
-	printHeader(cfg, *mockMode)
+	fields := []dllog.HeaderField{
+		{Key: "DB", Value: cfg.RegionSales.DbPath},
+		{Key: "Period", Value: cfg.RegionSales.Begin + " -> " + cfg.RegionSales.End},
+	}
+	if *mockMode {
+		fields = append(fields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
+	}
+	dllog.PrintHeader("WB Region Sales Downloader", fields...)
 
 	// 7. Handle Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
@@ -119,7 +127,7 @@ func main() {
 		wbClient.SetRateLimit("get_region_sale", rl.RegionSale, rl.RegionSaleBurst, rl.RegionSaleApi, rl.RegionSaleApiBurst)
 		wbClient.SetAdaptiveParams(0, cfg.RegionSales.AdaptiveProbeAfter, cfg.RegionSales.MaxBackoffSeconds)
 		client = wbClient
-		fmt.Printf("API Key: %s\n", maskAPIKey(apiKey))
+		dllog.Log("API Key: %s", utils.MaskAPIKey(apiKey))
 	}
 
 	// 10. Download data
@@ -129,16 +137,11 @@ func main() {
 	}
 
 	// 11. Summary
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println("✅ Download complete!")
-	fmt.Printf("  Period:    %s to %s\n", cfg.RegionSales.Begin, cfg.RegionSales.End)
-	fmt.Printf("  Rows:      %d\n", result.TotalRows)
-	fmt.Printf("  Requests:  %d\n", result.Requests)
-	fmt.Printf("  Duration:  %s\n", result.Duration.Round(time.Second))
-	fmt.Printf("  Database:  %s\n", cfg.RegionSales.DbPath)
+	dllog.Done(result.Duration, "%d rows, %d requests", result.TotalRows, result.Requests)
+	dllog.Log("Period: %s to %s, DB: %s", cfg.RegionSales.Begin, cfg.RegionSales.End, cfg.RegionSales.DbPath)
 
 	count, _ := repo.CountRegionSales(ctx)
-	fmt.Printf("  DB total:  %d\n", count)
+	dllog.Log("DB total: %d", count)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -213,16 +216,4 @@ Examples:
   go run . --mock
 
 `)
-}
-
-func printHeader(cfg *Config, mock bool) {
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println("WB Region Sales Downloader")
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Printf("Database:  %s\n", cfg.RegionSales.DbPath)
-	fmt.Printf("Period:    %s to %s\n", cfg.RegionSales.Begin, cfg.RegionSales.End)
-	if mock {
-		fmt.Println("Mode:      Mock")
-	}
-	fmt.Println(strings.Repeat("=", 60))
 }

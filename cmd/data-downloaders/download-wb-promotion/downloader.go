@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -79,7 +80,7 @@ func DownloadCampaignStats(
 		var err error
 		lastDates, err = repo.GetLastCampaignStatsDateAll(ctx)
 		if err != nil {
-			fmt.Printf("⚠️  Could not get last dates: %v\n", err)
+			dllog.Log("could not get last dates: %v", err)
 			lastDates = make(map[int]time.Time)
 		}
 	}
@@ -108,12 +109,7 @@ func DownloadCampaignStats(
 		batch := campaignIDs[i:endIdx]
 		batchNum := i/batchSize + 1
 
-		eta, elapsed := progress.formatETA(batchNum - 1)
-		if eta != "" {
-			fmt.Printf("  [%d/%d] 📦 Batch %d-%d (%d campaigns)... ETA %s (%s)\n", batchNum, totalBatches, i+1, endIdx, len(batch), eta, elapsed)
-		} else {
-			fmt.Printf("  [%d/%d] 📦 Batch %d-%d (%d campaigns)...\n", batchNum, totalBatches, i+1, endIdx, len(batch))
-		}
+		dllog.Progress(batchNum, totalBatches, "stats", fmt.Sprintf("batch %d-%d (%d campaigns)", i+1, endIdx, len(batch)), progress.start)
 
 		// Adjust date range for resume mode
 		batchBegin := beginDate
@@ -129,7 +125,7 @@ func DownloadCampaignStats(
 			if earliestLast.Before(end) {
 				batchBegin = earliestLast.AddDate(0, 0, 1).Format("2006-01-02")
 				if batchBegin > endDate {
-					fmt.Printf("     ⏭️  Skipped (already loaded)\n")
+					dllog.Log("skipped (already loaded)")
 					continue
 				}
 			}
@@ -138,12 +134,12 @@ func DownloadCampaignStats(
 		// Split date range into 31-day windows (API limit)
 		windows := splitDateRanges(batchBegin, endDate)
 		if len(windows) > 1 {
-			fmt.Printf("     📅 %d date windows (max %d days each)\n", len(windows), maxStatsWindowDays)
+			dllog.Log("%d date windows (max %d days each)", len(windows), maxStatsWindowDays)
 		}
 
 		for _, w := range windows {
 			if len(windows) > 1 {
-				fmt.Printf("     📅 %s → %s\n", w.begin, w.end)
+				dllog.Log("window: %s -> %s", w.begin, w.end)
 			}
 
 			// Get raw stats from API (4-level hierarchy)
@@ -156,9 +152,9 @@ func DownloadCampaignStats(
 
 			if len(responses) == 0 {
 				if len(windows) > 1 {
-					fmt.Println("        ⏭️  No data")
+					dllog.Log("no data")
 				} else {
-					fmt.Println("     ⏭️  No data")
+					dllog.Log("no data")
 				}
 				continue
 			}
@@ -189,21 +185,13 @@ func DownloadCampaignStats(
 			summary.NmRows += len(flat.Nm)
 			summary.BoosterRows += len(flat.Booster)
 			summary.Campaigns += len(responses)
-			summary.DateWindows++
+				summary.DateWindows++
 
-			if len(windows) > 1 {
-				fmt.Printf("        ✅ %d daily, %d app, %d nm, %d booster (api %s, flatten %s, db %s)\n",
-					len(flat.Daily), len(flat.App), len(flat.Nm), len(flat.Booster),
-					apiDur.Truncate(time.Millisecond), flatDur.Truncate(time.Millisecond), dbDur.Truncate(time.Millisecond))
-			} else {
-				fmt.Printf("     ✅ %d daily, %d app, %d nm, %d booster (api %s, flatten %s, db %s)\n",
-					len(flat.Daily), len(flat.App), len(flat.Nm), len(flat.Booster),
-					apiDur.Truncate(time.Millisecond), flatDur.Truncate(time.Millisecond), dbDur.Truncate(time.Millisecond))
+				dllog.Log("%d daily, %d app, %d nm, %d booster (api %s, flat %s, db %s)", len(flat.Daily), len(flat.App), len(flat.Nm), len(flat.Booster), apiDur.Truncate(time.Millisecond), flatDur.Truncate(time.Millisecond), dbDur.Truncate(time.Millisecond))
 			}
 		}
-	}
 
-	return summary, nil
+		return summary, nil
 }
 
 // DownloadCampaignDetails downloads campaign metadata from /api/advert/v2/adverts.
@@ -228,12 +216,7 @@ func DownloadCampaignDetails(ctx context.Context, client PromotionClient, repo *
 		batch := campaignIDs[i:endIdx]
 		batchNum := i/batchSize + 1
 
-		eta, elapsed := progress.formatETA(batchNum - 1)
-		if eta != "" {
-			fmt.Printf("  [%d/%d] 📦 Details batch %d-%d (%d IDs)... ETA %s (%s)\n", batchNum, totalBatches, i+1, endIdx, len(batch), eta, elapsed)
-		} else {
-			fmt.Printf("  [%d/%d] 📦 Details batch %d-%d (%d IDs)...\n", batchNum, totalBatches, i+1, endIdx, len(batch))
-		}
+		dllog.Progress(batchNum, totalBatches, "details", fmt.Sprintf("batch %d-%d (%d IDs)", i+1, endIdx, len(batch)), progress.start)
 
 		details, err := client.GetAdvertDetails(ctx, batch)
 		if err != nil {
@@ -241,7 +224,7 @@ func DownloadCampaignDetails(ctx context.Context, client PromotionClient, repo *
 		}
 
 		if len(details) == 0 {
-			fmt.Println("     ⏭️  No details returned (unsupported campaign types)")
+			dllog.Log("no details returned (unsupported campaign types)")
 			continue
 		}
 
@@ -250,7 +233,7 @@ func DownloadCampaignDetails(ctx context.Context, client PromotionClient, repo *
 		}
 
 		totalLoaded += len(details)
-		fmt.Printf("     ✅ %d/%d campaigns updated\n", len(details), len(batch))
+		dllog.Log("%d/%d campaigns updated", len(details), len(batch))
 	}
 
 	return totalLoaded, nil
@@ -317,7 +300,7 @@ func containsInt(slice []int, val int) bool {
 	return false
 }
 
-// progressTracker tracks batch progress and estimates remaining time.
+// progressTracker tracks batch start time for ETA calculation.
 type progressTracker struct {
 	total int
 	start time.Time
@@ -325,31 +308,4 @@ type progressTracker struct {
 
 func newProgressTracker(total int) *progressTracker {
 	return &progressTracker{total: total, start: time.Now()}
-}
-
-// formatETA returns estimated time remaining and elapsed for the given batch number (0-based).
-func (p *progressTracker) formatETA(batchIdx int) (eta string, elapsed time.Duration) {
-	elapsed = time.Since(p.start).Truncate(time.Second)
-	if batchIdx == 0 {
-		return "", elapsed
-	}
-	avgPerBatch := time.Since(p.start) / time.Duration(batchIdx)
-	remaining := time.Duration(p.total-batchIdx) * avgPerBatch
-	return "~" + formatDuration(remaining), elapsed
-}
-
-// formatDuration formats a duration as human-readable string.
-func formatDuration(d time.Duration) string {
-	d = d.Truncate(time.Second)
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	s := int(d.Seconds()) % 60
-	switch {
-	case h > 0:
-		return fmt.Sprintf("%dh %dm", h, m)
-	case m > 0:
-		return fmt.Sprintf("%dm %ds", m, s)
-	default:
-		return fmt.Sprintf("%ds", s)
-	}
 }

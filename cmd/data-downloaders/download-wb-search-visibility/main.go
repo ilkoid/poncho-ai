@@ -24,7 +24,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -55,7 +57,7 @@ func main() {
 
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
-		log.Printf("Config not found, using defaults: %v", err)
+		dllog.Log("config not found, using defaults: %v", err)
 		cfg = defaultConfig()
 	}
 
@@ -85,7 +87,20 @@ func main() {
 	cfg.SearchVisibility = cfg.SearchVisibility.GetDefaults()
 	beginDate, endDate := calculateDateRange(cfg)
 	snapshotDate := time.Now().Format("2006-01-02")
-	printHeader(cfg, beginDate, endDate, snapshotDate, *mock)
+
+	// Print header
+	{
+		fields := []dllog.HeaderField{
+			{Key: "Database", Value: cfg.SearchVisibility.DbPath},
+			{Key: "Period", Value: fmt.Sprintf("%s -> %s", beginDate, endDate)},
+			{Key: "Snapshot", Value: snapshotDate},
+			{Key: "Query limit", Value: fmt.Sprintf("%d per product", cfg.SearchVisibility.Limit)},
+		}
+		if *mock {
+			fields = append(fields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
+		}
+		dllog.PrintHeader("WB Search Visibility Downloader (positions, queries, visibility)", fields...)
+	}
 
 	// Handle Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
@@ -93,13 +108,13 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\nInterrupted!")
+		dllog.Error("interrupted!")
 		cancel()
 	}()
 
 	repo, err := sqlite.NewSQLiteSalesRepository(cfg.SearchVisibility.DbPath)
 	if err != nil {
-		log.Fatalf("Failed to create repository: %v", err)
+		log.Fatalf("failed to create repository: %v", err)
 	}
 	defer repo.Close()
 
@@ -109,11 +124,11 @@ func main() {
 			log.Fatalf("FATAL: --mock mode with production database (%s). Use --db test.db or run from a directory with a local config.", cfg.SearchVisibility.DbPath)
 		}
 		client = NewMockSearchVisibilityClient()
-		fmt.Println("Mock mode - using simulated data")
+		dllog.Log("mock mode - using simulated data")
 	} else {
 		apiKey := getAPIKey(cfg)
 		if apiKey == "" {
-			log.Fatal("No API key. Set WB_API_ANALYTICS_AND_PROMO_KEY or WB_API_KEY")
+			log.Fatal("no API key. Set WB_API_ANALYTICS_AND_PROMO_KEY or WB_API_KEY")
 		}
 		wbClient, err := wb.NewFromConfig(config.WBConfig{
 			APIKey:        apiKey,
@@ -121,23 +136,23 @@ func main() {
 			RetryAttempts: 3,
 		})
 		if err != nil {
-			log.Fatalf("Failed to create WB client: %v", err)
+			log.Fatalf("failed to create WB client: %v", err)
 		}
 		applyRateLimits(wbClient, cfg.SearchVisibility.RateLimits)
 		wbClient.SetAdaptiveParams(0, cfg.SearchVisibility.AdaptiveProbeAfter, cfg.SearchVisibility.MaxBackoffSeconds)
 		client = wbClient
-		fmt.Printf("API Key: %s...\n", maskKey(apiKey))
+		dllog.Log("API Key: %s", utils.MaskAPIKey(apiKey))
 	}
 
 	// Load nmIDs
 	nmIDs, err := loadNmIDs(ctx, repo, *nmIDsFlag)
 	if err != nil {
-		log.Fatalf("Failed to load nmIDs: %v", err)
+		log.Fatalf("failed to load nmIDs: %v", err)
 	}
 	if len(nmIDs) == 0 {
-		log.Fatal("No nmIDs found. Load sales data first or use --nm-ids flag.")
+		log.Fatal("no nmIDs found. Load sales data first or use --nm-ids flag.")
 	}
-	fmt.Printf("Loaded %d nmIDs\n", len(nmIDs))
+	dllog.Log("loaded %d nmIDs", len(nmIDs))
 
 	// Apply filters (same pattern as funnel_loader.go)
 	filter := cfg.SearchVisibility.Filter
@@ -182,7 +197,7 @@ func main() {
 		}
 
 		nmIDs = filtered
-		fmt.Printf("  After filter: %d products (excluded %d)\n", len(nmIDs), before-len(nmIDs))
+		dllog.Log("after filter: %d products (excluded %d)", len(nmIDs), before-len(nmIDs))
 	}
 
 	if filter.ActiveDays > 0 {
@@ -191,10 +206,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to filter active products: %v", err)
 		}
-		fmt.Printf("  Active (%d days): %d products (excluded %d inactive)\n", filter.ActiveDays, len(nmIDs), before-len(nmIDs))
+		dllog.Log("active (%d days): %d products (excluded %d inactive)", filter.ActiveDays, len(nmIDs), before-len(nmIDs))
 	}
-
-	fmt.Println()
 
 	rl := cfg.SearchVisibility.RateLimits
 	totalSteps := 0
@@ -205,27 +218,28 @@ func main() {
 		totalSteps++
 	}
 	if totalSteps == 0 {
-		fmt.Println("Nothing to do (all steps skipped)")
+		dllog.Log("nothing to do (all steps skipped)")
 		return
 	}
 
+	t0 := time.Now()
 	stepNum := 0
 
 	// Phase 1: Search Positions
 	if !cfg.SearchVisibility.SkipPositions {
 		stepNum++
-		fmt.Printf("[%d/%d] Search Positions...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Search Positions...", stepNum, totalSteps)
 		if err := DownloadSearchPositions(ctx, client, repo, nmIDs, beginDate, endDate, snapshotDate, rl.SearchReport, rl.SearchReportBurst); err != nil {
-			log.Printf("Warning: Search Positions failed: %v", err)
+			dllog.Error("Search Positions: %v", err)
 		}
 	}
 
 	// Phase 2: Search Queries
 	if !cfg.SearchVisibility.SkipQueries {
 		stepNum++
-		fmt.Printf("[%d/%d] Search Queries (limit=%d)...\n", stepNum, totalSteps, cfg.SearchVisibility.Limit)
+		dllog.Log("[%d/%d] Search Queries (limit=%d)...", stepNum, totalSteps, cfg.SearchVisibility.Limit)
 		if err := DownloadSearchQueries(ctx, client, repo, nmIDs, beginDate, endDate, snapshotDate, cfg.SearchVisibility.Limit, rl.SearchTexts, rl.SearchTextsBurst); err != nil {
-			log.Printf("Warning: Search Queries failed: %v", err)
+			dllog.Error("Search Queries: %v", err)
 		}
 	}
 
@@ -233,12 +247,7 @@ func main() {
 	posCount, _ := repo.CountSearchPositions(ctx)
 	qCount, _ := repo.CountSearchQueries(ctx)
 
-	fmt.Println("\n" + strings.Repeat("=", 71))
-	fmt.Println("Download complete!")
-	fmt.Printf("   Database:   %s\n", cfg.SearchVisibility.DbPath)
-	fmt.Printf("   Positions:  %d rows\n", posCount)
-	fmt.Printf("   Queries:    %d rows\n", qCount)
-	fmt.Println(strings.Repeat("=", 71))
+	dllog.Done(time.Since(t0), "positions=%d queries=%d db=%s", posCount, qCount, cfg.SearchVisibility.DbPath)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -300,30 +309,9 @@ func getAPIKey(cfg *Config) string {
 	return cfg.WB.APIKey
 }
 
-func maskKey(key string) string {
-	if len(key) < 10 {
-		return key
-	}
-	return key[:5] + "..." + key[len(key)-3:]
-}
-
 func applyRateLimits(client *wb.Client, rl config.SearchVisibilityRateLimits) {
 	client.SetRateLimit("search_report", rl.SearchReport, rl.SearchReportBurst, rl.SearchReportApi, rl.SearchReportApiBurst)
 	client.SetRateLimit("search_texts", rl.SearchTexts, rl.SearchTextsBurst, rl.SearchTextsApi, rl.SearchTextsApiBurst)
-}
-
-func printHeader(cfg *Config, beginDate, endDate, snapshotDate string, mock bool) {
-	fmt.Println(strings.Repeat("=", 71))
-	fmt.Println("WB Search Visibility Downloader (positions, queries, visibility)")
-	fmt.Println(strings.Repeat("=", 71))
-	fmt.Printf("Database:      %s\n", cfg.SearchVisibility.DbPath)
-	fmt.Printf("Period:        %s -> %s\n", beginDate, endDate)
-	fmt.Printf("Snapshot:      %s\n", snapshotDate)
-	fmt.Printf("Query limit:   %d per product\n", cfg.SearchVisibility.Limit)
-	if mock {
-		fmt.Println("Mode:          Mock")
-	}
-	fmt.Println(strings.Repeat("=", 71))
 }
 
 func printHelp() {

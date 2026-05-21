@@ -20,7 +20,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -52,7 +54,7 @@ func main() {
 	// Load config
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
-		log.Printf("⚠️  Config not found, using defaults: %v", err)
+		dllog.Log("config not found, using defaults: %v", err)
 		cfg = defaultConfig()
 	}
 
@@ -80,7 +82,22 @@ func main() {
 	beginDate, endDate := calculateDateRange(cfg)
 
 	// Print header
-	printHeader(cfg, beginDate, endDate, *mock)
+	{
+		fields := []dllog.HeaderField{
+			{Key: "DB", Value: cfg.Promotion.DbPath},
+			{Key: "Period", Value: fmt.Sprintf("%s -> %s", beginDate, endDate)},
+		}
+		if len(cfg.Promotion.Statuses) > 0 {
+			fields = append(fields, dllog.HeaderField{Key: "Statuses", Value: fmt.Sprintf("%v", cfg.Promotion.Statuses)})
+		}
+		if cfg.Promotion.Resume {
+			fields = append(fields, dllog.HeaderField{Key: "Resume", Value: "yes"})
+		}
+		if *mock {
+			fields = append(fields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
+		}
+		dllog.PrintHeader("WB Promotion Downloader", fields...)
+	}
 
 	// Handle Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
@@ -88,14 +105,14 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\n⚠️  Interrupted!")
+		dllog.Error("interrupted!")
 		cancel()
 	}()
 
 	// Create repository
 	repo, err := sqlite.NewSQLiteSalesRepository(cfg.Promotion.DbPath)
 	if err != nil {
-		log.Fatalf("❌ Failed to create repository: %v", err)
+		log.Fatalf("failed to create repository: %v", err)
 	}
 	defer repo.Close()
 
@@ -104,11 +121,11 @@ func main() {
 	if *mock {
 		client = NewMockPromotionClient()
 		PopulateMockData(client.(*MockPromotionClient), 10, cfg.Promotion.Days)
-		fmt.Println("🎭 Mock mode - using simulated data")
+		dllog.Log("mock mode - using simulated data")
 	} else {
 		apiKey := getAPIKey(cfg)
 		if apiKey == "" {
-			log.Fatal("❌ No API key. Set WB_API_KEY or WB_API_ANALYTICS_AND_PROMO_KEY")
+			log.Fatal("no API key. Set WB_API_KEY or WB_API_ANALYTICS_AND_PROMO_KEY")
 		}
 		wbClient, err := wb.NewFromConfig(config.WBConfig{
 			APIKey:        apiKey,
@@ -116,7 +133,7 @@ func main() {
 			RetryAttempts: 3,
 		})
 		if err != nil {
-			log.Fatalf("❌ Failed to create WB client: %v", err)
+			log.Fatalf("failed to create WB client: %v", err)
 		}
 		applyRateLimits(wbClient, cfg.Promotion.GetDefaults().RateLimits)
 		wbClient.SetAdaptiveParams(
@@ -125,10 +142,11 @@ func main() {
 			cfg.Promotion.GetDefaults().MaxBackoffSeconds,
 		)
 		client = wbClient
-		fmt.Printf("🔑 API Key: %s...%s\n", maskKey(apiKey), "")
+		dllog.Log("API Key: %s", utils.MaskAPIKey(apiKey))
 	}
 
 	// Download campaigns (or reuse from DB)
+	start := time.Now()
 	var allCampaigns, campaigns []int
 	var summary StatsSummary
 	var t0 time.Time
@@ -144,102 +162,94 @@ func main() {
 		totalSteps++
 	}
 	if totalSteps == 0 {
-		fmt.Println("⚠️  Nothing to do (all steps skipped)")
+		dllog.Log("nothing to do (all steps skipped)")
 		return
 	}
 	stepNum := 0
 
 	if cfg.Promotion.SkipCampaigns {
 		// Load IDs from database
-		fmt.Printf("\n[%d/%d] 📥 Loading campaigns from database... ", stepNum+1, totalSteps)
+		dllog.Log("[%d/%d] Loading campaigns from database...", stepNum+1, totalSteps)
 		stepNum++
 		t0 := time.Now()
 		allCampaigns, err = repo.GetCampaignIDsByStatus(ctx, cfg.Promotion.Statuses)
 		if err != nil {
-			log.Fatalf("❌ Failed to load campaigns from DB: %v", err)
+			log.Fatalf("failed to load campaigns from DB: %v", err)
 		}
 		if len(cfg.Promotion.Statuses) > 0 {
 			campaigns = allCampaigns // statuses already filtered by DB query
 		} else {
 			campaigns = allCampaigns
 		}
-		fmt.Printf("✅ %d campaigns (%d for stats) from DB (%s)\n", len(allCampaigns), len(campaigns), time.Since(t0).Truncate(time.Second))
+		dllog.Log("%d campaigns (%d for stats) from DB (%s)", len(allCampaigns), len(campaigns), time.Since(t0).Truncate(time.Second))
 	} else {
-		fmt.Printf("\n[%d/%d] 📥 Downloading campaigns... ", stepNum+1, totalSteps)
+		dllog.Log("[%d/%d] Downloading campaigns...", stepNum+1, totalSteps)
 		stepNum++
 		t0 := time.Now()
 		allCampaigns, campaigns, err = DownloadCampaigns(ctx, client, repo, cfg.Promotion.Statuses)
 		if err != nil {
-			log.Fatalf("❌ Failed to download campaigns: %v", err)
+			log.Fatalf("failed to download campaigns: %v", err)
 		}
-		fmt.Printf("✅ %d campaigns (%d for stats) (%s)\n", len(allCampaigns), len(campaigns), time.Since(t0).Truncate(time.Second))
+		dllog.Log("%d campaigns (%d for stats) (%s)", len(allCampaigns), len(campaigns), time.Since(t0).Truncate(time.Second))
 	}
 
 	if len(allCampaigns) == 0 {
-		fmt.Println("⚠️  No campaigns found")
+		dllog.Log("no campaigns found")
 		return
 	}
 
 	// Download campaign details (metadata from /api/advert/v2/adverts)
 	if cfg.Promotion.SkipDetails {
-		fmt.Printf("[%d/%d] 📋 Skipping campaign details\n", stepNum+1, totalSteps)
+		dllog.Log("[%d/%d] Skipping campaign details", stepNum+1, totalSteps)
 		stepNum++
 	} else {
 		detailsBatches := (len(allCampaigns) + 49) / 50
-		fmt.Printf("[%d/%d] 📋 Downloading campaign details (%d batches)...\n", stepNum+1, totalSteps, detailsBatches)
+		dllog.Log("[%d/%d] Downloading campaign details (%d batches)...", stepNum+1, totalSteps, detailsBatches)
 		stepNum++
 		t0 = time.Now()
 		detailsLoaded, err := DownloadCampaignDetails(ctx, client, repo, allCampaigns)
 		if err != nil {
-			log.Fatalf("❌ Failed to download campaign details: %v", err)
+			log.Fatalf("failed to download campaign details: %v", err)
 		}
-		fmt.Printf("   ✅ %d/%d (%s)\n", detailsLoaded, len(allCampaigns), time.Since(t0).Truncate(time.Second))
+		dllog.Log("details: %d/%d (%s)", detailsLoaded, len(allCampaigns), time.Since(t0).Truncate(time.Second))
 	}
 
 	// Download stats
 	if cfg.Promotion.SkipStats {
-		fmt.Printf("[%d/%d] 📊 Skipping stats\n", stepNum+1, totalSteps)
+		dllog.Log("[%d/%d] Skipping stats", stepNum+1, totalSteps)
 		stepNum++
 	} else {
 		statsBatches := (len(campaigns) + 49) / 50
 		dateWindows := countDateWindows(beginDate, endDate)
 		totalAPICalls := statsBatches * dateWindows
-		fmt.Printf("[%d/%d] 📊 Downloading stats (%s → %s, %d batches × %d windows = %d API calls)...\n",
-			stepNum+1, totalSteps, beginDate, endDate, statsBatches, dateWindows, totalAPICalls)
+		dllog.Log("[%d/%d] Downloading stats (%s -> %s, %d batches x %d windows = %d API calls)...", stepNum+1, totalSteps, beginDate, endDate, statsBatches, dateWindows, totalAPICalls)
 		stepNum++
 		t0 = time.Now()
 		rl := cfg.Promotion.GetDefaults().RateLimits
 		summary, err = DownloadCampaignStats(ctx, client, repo, campaigns, beginDate, endDate, cfg.Promotion.Resume, rl.Fullstats, rl.FullstatsBurst)
 		if err != nil {
-			log.Fatalf("❌ Failed to download stats: %v", err)
+			log.Fatalf("failed to download stats: %v", err)
 		}
-		fmt.Printf("   ✅ Done (%s)\n", time.Since(t0).Truncate(time.Second))
+		dllog.Log("stats done (%s)", time.Since(t0).Truncate(time.Second))
 	}
 
 	// Rebuild campaign_products materialized view
-	fmt.Println("\n🔄 Rebuilding campaign_products...")
+	dllog.Log("rebuilding campaign_products...")
 	if err := repo.PopulateCampaignProducts(ctx); err != nil {
-		log.Fatalf("❌ Failed to populate campaign_products: %v", err)
+		log.Fatalf("failed to populate campaign_products: %v", err)
 	}
 
 	// Update aggregates
-	fmt.Println("\n📈 Updating campaign aggregates...")
+	dllog.Log("updating campaign aggregates...")
 	for _, id := range campaigns {
 		if err := repo.UpdateCampaignAggregates(ctx, id); err != nil {
-			log.Printf("⚠️  Failed to update aggregates for campaign %d: %v", id, err)
+			dllog.Error("aggregates campaign %d: %v", id, err)
 		}
 	}
 
 	// Summary
-	fmt.Println("\n" + strings.Repeat("=", 71))
-	fmt.Println("🎉 Download complete!")
-	fmt.Printf("   Campaigns: %d\n", len(campaigns))
-	fmt.Printf("   Windows:   %d\n", summary.DateWindows)
-	fmt.Printf("   Daily:     %d rows\n", summary.DailyRows)
-	fmt.Printf("   App:       %d rows\n", summary.AppRows)
-	fmt.Printf("   Nm:        %d rows\n", summary.NmRows)
-	fmt.Printf("   Booster:   %d rows\n", summary.BoosterRows)
-	fmt.Printf("   Database:  %s\n", cfg.Promotion.DbPath)
+	dllog.Done(time.Since(start), "campaigns=%d windows=%d daily=%d app=%d nm=%d booster=%d db=%s",
+		len(campaigns), summary.DateWindows, summary.DailyRows, summary.AppRows, summary.NmRows, summary.BoosterRows, cfg.Promotion.DbPath)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -307,13 +317,6 @@ func getAPIKey(cfg *Config) string {
 	return cfg.WB.APIKey
 }
 
-func maskKey(key string) string {
-	if len(key) < 10 {
-		return key
-	}
-	return key[:5] + "..." + key[len(key)-3:]
-}
-
 func printHelp() {
 	fmt.Print(`WB Promotion Downloader - Download campaign data from WB Promotion API
 
@@ -349,28 +352,6 @@ Examples:
   go run main.go --mock --days=7
 
 `)
-}
-
-func printHeader(cfg *Config, beginDate, endDate string, mock bool) {
-	fmt.Println(strings.Repeat("=", 71))
-	fmt.Println("📥 WB Promotion Downloader")
-	fmt.Println(strings.Repeat("=", 71))
-	fmt.Printf("Config:     %s\n", cfg.Promotion.DbPath)
-	fmt.Printf("Period:     %s → %s\n", beginDate, endDate)
-
-	if len(cfg.Promotion.Statuses) > 0 {
-		fmt.Printf("Statuses:   %v\n", cfg.Promotion.Statuses)
-	}
-
-	if cfg.Promotion.Resume {
-		fmt.Println("Resume:     ✓")
-	}
-
-	if mock {
-		fmt.Println("Mode:       🎭 Mock")
-	}
-
-	fmt.Println(strings.Repeat("=", 71))
 }
 
 // applyRateLimits pre-sets rate limiters on wb.Client from config values.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
@@ -355,9 +356,9 @@ func chunkIntSlice(slice []int, size int) [][]int {
 // PrintFunnelSummary prints funnel loading summary with trend analysis.
 func PrintFunnelSummary(result *FunnelLoadResult, repo *sqlite.SQLiteSalesRepository) {
 	fmt.Println()
-	fmt.Println(repeat("=", 71))
+	fmt.Println(strings.Repeat("=", 71))
 	fmt.Println("📊 ИТОГИ ЗАГРУЗКИ FUNNEL")
-	fmt.Println(repeat("=", 71))
+	fmt.Println(strings.Repeat("=", 71))
 	fmt.Printf("Товаров загружено:  %d\n", result.ProductsLoaded)
 	fmt.Printf("Метрик загружено:   %d\n", result.MetricsLoaded)
 	fmt.Printf("Время выполнения:   %s\n", result.Duration.Round(time.Second))
@@ -379,10 +380,10 @@ func PrintFunnelSummary(result *FunnelLoadResult, repo *sqlite.SQLiteSalesReposi
 	}
 
 	fmt.Println("📈 ТОП-10 ТРЕНДОВЫХ ТОВАРОВ (неделя к неделе)")
-	fmt.Println(repeat("-", 71))
+	fmt.Println(strings.Repeat("-", 71))
 	fmt.Printf("%-12s %-30s %8s %8s %12s\n",
 		"nm_id", "название", "7д", "пр.7д", "рост%")
-	fmt.Println(repeat("-", 71))
+	fmt.Println(strings.Repeat("-", 71))
 
 	for _, tp := range trending {
 		title := tp.Title

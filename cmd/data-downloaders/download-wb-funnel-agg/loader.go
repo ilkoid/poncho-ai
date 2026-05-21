@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -190,12 +191,11 @@ func LoadAggregatedFunnel(ctx context.Context, cfg AggregatedLoaderConfig) (*Agg
 // PrintAggregatedSummary prints loading summary.
 func PrintAggregatedSummary(result *AggregatedLoadResult, periodStart, periodEnd string) {
 	fmt.Println()
-	fmt.Println(repeat("=", 71))
-	fmt.Println("📊 ИТОГИ ЗАГРУЗКИ AGGREGATED FUNNEL")
-	fmt.Println(repeat("=", 71))
-	fmt.Printf("Период:            %s → %s\n", periodStart, periodEnd)
-	fmt.Printf("Товаров загружено: %d\n", result.ProductsLoaded)
-	fmt.Printf("Страниц загружено: %d\n", result.PagesLoaded)
-	fmt.Printf("Время выполнения:  %s\n", result.Duration.Round(time.Second))
+	dllog.PrintHeader("AGGREGATED FUNNEL RESULTS",
+		dllog.HeaderField{Key: "Period", Value: periodStart + " -> " + periodEnd},
+		dllog.HeaderField{Key: "Products loaded", Value: fmt.Sprintf("%d", result.ProductsLoaded)},
+		dllog.HeaderField{Key: "Pages loaded", Value: fmt.Sprintf("%d", result.PagesLoaded)},
+	)
+	dllog.Done(result.Duration, "%d products from %d pages", result.ProductsLoaded, result.PagesLoaded)
 	fmt.Println()
 }

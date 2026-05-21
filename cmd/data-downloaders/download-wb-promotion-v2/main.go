@@ -23,7 +23,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -74,7 +76,6 @@ func main() {
 
 	cfg.PromotionV2 = cfg.PromotionV2.GetDefaults()
 	beginDate, endDate := calculateDateRange(cfg)
-	printHeader(cfg, beginDate, endDate, *mock)
 
 	// Handle Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
@@ -82,7 +83,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\nInterrupted!")
+		dllog.Log("interrupted!")
 		cancel()
 	}()
 
@@ -93,11 +94,11 @@ func main() {
 	defer repo.Close()
 
 	var client V2Client
+	var apiKey string
 	if *mock {
 		client = NewMockV2Client()
-		fmt.Println("Mock mode - using simulated data")
 	} else {
-		apiKey := getAPIKey(cfg)
+		apiKey = getAPIKey(cfg)
 		if apiKey == "" {
 			log.Fatal("No API key. Set WB_API_KEY or WB_API_ANALYTICS_AND_PROMO_KEY")
 		}
@@ -113,11 +114,28 @@ func main() {
 		wbClient.SetAdaptiveParams(0, cfg.PromotionV2.AdaptiveProbeAfter, cfg.PromotionV2.MaxBackoffSeconds)
 		if calendarKey := getCalendarAPIKey(cfg); calendarKey != "" {
 			wbClient.SetCalendarKey(calendarKey)
-			fmt.Printf("Calendar Key: %s...\n", maskKey(calendarKey))
 		}
 		client = wbClient
-		fmt.Printf("API Key: %s...\n", maskKey(apiKey))
 	}
+
+	// Print startup header
+	headerFields := []dllog.HeaderField{
+		{Key: "DB", Value: cfg.PromotionV2.DbPath},
+		{Key: "Period", Value: beginDate + " -> " + endDate},
+	}
+	if apiKey != "" {
+		headerFields = append(headerFields, dllog.HeaderField{Key: "API Key", Value: utils.MaskAPIKey(apiKey)})
+	}
+	if calendarKey := getCalendarAPIKey(cfg); calendarKey != "" {
+		headerFields = append(headerFields, dllog.HeaderField{Key: "Calendar Key", Value: utils.MaskAPIKey(calendarKey)})
+	}
+	if len(cfg.PromotionV2.Statuses) > 0 {
+		headerFields = append(headerFields, dllog.HeaderField{Key: "Statuses", Value: fmt.Sprintf("%v", cfg.PromotionV2.Statuses)})
+	}
+	if *mock {
+		headerFields = append(headerFields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
+	}
+	dllog.PrintHeader("WB Promotion V2 Downloader", headerFields...)
 
 	// Load (advert_id, nm_id) pairs from V1 tables
 	rl := cfg.PromotionV2.RateLimits
@@ -133,20 +151,20 @@ func main() {
 	}
 
 	if cutoff != "" {
-		fmt.Printf("Incremental mode: campaigns changed since %s\n", cutoff)
+		dllog.Log("incremental mode: campaigns changed since %s", cutoff)
 	} else {
-		fmt.Println("Full scan mode: all matching campaigns")
+		dllog.Log("full scan mode: all matching campaigns")
 	}
 
 	productIDs, err := repo.GetCampaignProductIDs(ctx, cfg.PromotionV2.Statuses, cutoff)
 	if err != nil {
 		log.Fatalf("Failed to load campaign product IDs: %v", err)
 	}
-	fmt.Printf("Loaded %d (advert_id, nm_id) pairs from V1 tables\n\n", len(productIDs))
+	dllog.Log("loaded %d (advert_id, nm_id) pairs from V1 tables", len(productIDs))
 
 	hasV1Data := len(productIDs) > 0
 	if !hasV1Data {
-		fmt.Println("No V1 campaign products — skipping V1-dependent phases, running calendar only.")
+		dllog.Log("no V1 campaign products — skipping V1-dependent phases, running calendar only")
 	}
 
 	// Execute phases
@@ -173,75 +191,76 @@ func main() {
 		totalSteps++
 	}
 	if totalSteps == 0 {
-		fmt.Println("Nothing to do (all steps skipped)")
+		dllog.Log("nothing to do (all steps skipped)")
 		return
 	}
 
 	stepNum := 0
+	t0 := time.Now()
 
 	// Phase 1: Campaign Bids (from AdvertDetails)
 	if hasV1Data && !cfg.PromotionV2.SkipBids {
 		stepNum++
-		fmt.Printf("[%d/%d] Campaign Bids...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Campaign Bids...", stepNum, totalSteps)
 		if err := DownloadCampaignBids(ctx, client, repo, productIDs, rl.Normquery, rl.NormqueryBurst); err != nil {
-			log.Printf("Warning: Campaign Bids failed: %v", err)
+			dllog.Error("Campaign Bids: %v", err)
 		}
 	}
 
 	// Phase 2-5: Normquery
 	if hasV1Data && !cfg.PromotionV2.SkipNormquery {
 		stepNum++
-		fmt.Printf("[%d/%d] Normquery Stats...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Normquery Stats...", stepNum, totalSteps)
 		if err := DownloadNormqueryStats(ctx, client, repo, productIDs, beginDate, endDate, rl.NormqueryStats, rl.NormqueryStatsBurst); err != nil {
-			log.Printf("Warning: Normquery Stats failed: %v", err)
+			dllog.Error("Normquery Stats: %v", err)
 		}
 
 		stepNum++
-		fmt.Printf("[%d/%d] Normquery Clusters...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Normquery Clusters...", stepNum, totalSteps)
 		if err := DownloadNormqueryClusters(ctx, client, repo, productIDs, rl.Normquery, rl.NormqueryBurst); err != nil {
-			log.Printf("Warning: Normquery Clusters failed: %v", err)
+			dllog.Error("Normquery Clusters: %v", err)
 		}
 
 		stepNum++
-		fmt.Printf("[%d/%d] Normquery Bids...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Normquery Bids...", stepNum, totalSteps)
 		if err := DownloadNormqueryBids(ctx, client, repo, productIDs, rl.Normquery, rl.NormqueryBurst); err != nil {
-			log.Printf("Warning: Normquery Bids failed: %v", err)
+			dllog.Error("Normquery Bids: %v", err)
 		}
 
 		stepNum++
-		fmt.Printf("[%d/%d] Normquery Minus...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Normquery Minus...", stepNum, totalSteps)
 		if err := DownloadNormqueryMinus(ctx, client, repo, productIDs, rl.Normquery, rl.NormqueryBurst); err != nil {
-			log.Printf("Warning: Normquery Minus failed: %v", err)
+			dllog.Error("Normquery Minus: %v", err)
 		}
 	}
 
 	// Phase 6: Bid Recommendations
 	if hasV1Data && !cfg.PromotionV2.SkipRecommendations {
 		stepNum++
-		fmt.Printf("[%d/%d] Bid Recommendations...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Bid Recommendations...", stepNum, totalSteps)
 		if err := DownloadBidRecommendations(ctx, client, repo, productIDs, rl.BidRec, rl.BidRecBurst); err != nil {
-			log.Printf("Warning: Bid Recommendations failed: %v", err)
+			dllog.Error("Bid Recommendations: %v", err)
 		}
 	}
 
 	// Phase 7-9: Finance
 	if !cfg.PromotionV2.SkipFinance {
 		stepNum++
-		fmt.Printf("[%d/%d] Expenses...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Expenses...", stepNum, totalSteps)
 		if err := DownloadExpenses(ctx, client, repo, beginDate, endDate, rl.Finance, rl.FinanceBurst); err != nil {
-			log.Printf("Warning: Expenses failed: %v", err)
+			dllog.Error("Expenses: %v", err)
 		}
 
 		stepNum++
-		fmt.Printf("[%d/%d] Balance...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Balance...", stepNum, totalSteps)
 		if err := DownloadBalance(ctx, client, repo, rl.Finance, rl.FinanceBurst); err != nil {
-			log.Printf("Warning: Balance failed: %v", err)
+			dllog.Error("Balance: %v", err)
 		}
 
 		stepNum++
-		fmt.Printf("[%d/%d] Payments...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Payments...", stepNum, totalSteps)
 		if err := DownloadPayments(ctx, client, repo, beginDate, endDate, rl.Finance, rl.FinanceBurst); err != nil {
-			log.Printf("Warning: Payments failed: %v", err)
+			dllog.Error("Payments: %v", err)
 		}
 	}
 
@@ -249,45 +268,43 @@ func main() {
 	if !cfg.PromotionV2.SkipCalendar {
 		calBegin, calEnd := calculateCalendarDateRange(cfg)
 		stepNum++
-		fmt.Printf("[%d/%d] Calendar Promotions (%s -> %s)...\n", stepNum, totalSteps, calBegin, calEnd)
+		dllog.Log("[%d/%d] Calendar Promotions (%s -> %s)...", stepNum, totalSteps, calBegin, calEnd)
 		if err := DownloadCalendarPromotions(ctx, client, repo, calBegin, calEnd, rl.Calendar, rl.CalendarBurst); err != nil {
-			log.Printf("Warning: Calendar failed: %v", err)
+			dllog.Error("Calendar: %v", err)
 		}
 
 		stepNum++
-		fmt.Printf("[%d/%d] Calendar Details...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Calendar Details...", stepNum, totalSteps)
 		if err := DownloadCalendarPromotionDetails(ctx, client, repo, rl.Calendar, rl.CalendarBurst); err != nil {
-			log.Printf("Warning: Calendar Details failed: %v", err)
+			dllog.Error("Calendar Details: %v", err)
 		}
 
 		stepNum++
-		fmt.Printf("[%d/%d] Calendar Nomenclatures...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Calendar Nomenclatures...", stepNum, totalSteps)
 		if err := DownloadCalendarPromotionNomenclatures(ctx, client, repo, rl.Calendar, rl.CalendarBurst); err != nil {
-			log.Printf("Warning: Calendar Nomenclatures failed: %v", err)
+			dllog.Error("Calendar Nomenclatures: %v", err)
 		}
 	}
 
 	// Phase 13: Campaign Budgets
 	if hasV1Data && !cfg.PromotionV2.SkipBudgets {
 		stepNum++
-		fmt.Printf("[%d/%d] Campaign Budgets...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Campaign Budgets...", stepNum, totalSteps)
 		if err := DownloadCampaignBudgets(ctx, client, repo, productIDs, rl.Finance, rl.FinanceBurst); err != nil {
-			log.Printf("Warning: Campaign Budgets failed: %v", err)
+			dllog.Error("Campaign Budgets: %v", err)
 		}
 	}
 
 	// Phase 14: Minimum Bids
 	if hasV1Data && !cfg.PromotionV2.SkipMinBids {
 		stepNum++
-		fmt.Printf("[%d/%d] Minimum Bids...\n", stepNum, totalSteps)
+		dllog.Log("[%d/%d] Minimum Bids...", stepNum, totalSteps)
 		if err := DownloadMinBids(ctx, client, repo, productIDs, rl.MinBids, rl.MinBidsBurst); err != nil {
-			log.Printf("Warning: Minimum Bids failed: %v", err)
+			dllog.Error("Minimum Bids: %v", err)
 		}
 	}
 
-	fmt.Println("\n" + strings.Repeat("=", 71))
-	fmt.Println("Download complete!")
-	fmt.Printf("   Database:  %s\n", cfg.PromotionV2.DbPath)
+	dllog.Done(time.Since(t0), "%d/%d phases completed, DB: %s", stepNum, totalSteps, cfg.PromotionV2.DbPath)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -320,8 +337,6 @@ func calculateDateRange(cfg *Config) (string, string) {
 	begin := now.AddDate(0, 0, -days).Format("2006-01-02")
 	return begin, end
 }
-
-
 
 func calculateCalendarDateRange(cfg *Config) (string, string) {
 	now := time.Now()
@@ -360,28 +375,6 @@ func getCalendarAPIKey(cfg *Config) string {
 		return key
 	}
 	return cfg.WB.CalendarAPIKey
-}
-
-func maskKey(key string) string {
-	if len(key) < 10 {
-		return key
-	}
-	return key[:5] + "..." + key[len(key)-3:]
-}
-
-func printHeader(cfg *Config, beginDate, endDate string, mock bool) {
-	fmt.Println(strings.Repeat("=", 71))
-	fmt.Println("WB Promotion V2 Downloader (normquery, bids, finance, calendar)")
-	fmt.Println(strings.Repeat("=", 71))
-	fmt.Printf("Database:  %s\n", cfg.PromotionV2.DbPath)
-	fmt.Printf("Period:    %s -> %s\n", beginDate, endDate)
-	if len(cfg.PromotionV2.Statuses) > 0 {
-		fmt.Printf("Statuses:  %v\n", cfg.PromotionV2.Statuses)
-	}
-	if mock {
-		fmt.Println("Mode:      Mock")
-	}
-	fmt.Println(strings.Repeat("=", 71))
 }
 
 func applyRateLimits(client *wb.Client, rl config.PromotionV2RateLimits) {

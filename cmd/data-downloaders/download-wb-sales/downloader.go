@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
@@ -396,7 +397,7 @@ func progressBar(progress, max int) string {
 
 // PrintSummary prints download summary with FBW analysis and service records.
 func PrintSummary(result *DownloadResult, repo *sqlite.SQLiteSalesRepository, skipServiceRecords bool) {
-	fmt.Println("\n" + repeat("=", 71))
+	fmt.Println("\n" + strings.Repeat("=", 71))
 	fmt.Printf("🕐 Окончание загрузки: %s\n", time.Now().Format("2006-01-02 15:04:05"))
 	fmt.Printf("✅ Загружено: %d продаж за %d периодов\n", result.TotalRows, result.PeriodsCount)
 	fmt.Printf("⏱️  Общее время: %s\n", result.Duration.Round(time.Second))
@@ -460,7 +461,7 @@ func PrintSummary(result *DownloadResult, repo *sqlite.SQLiteSalesRepository, sk
 	fmt.Println("\n💡 FBW фильтрация:")
 	fmt.Println("  - gi_box_type_name = 'Микс', 'Без коробов', 'Моно' → FBW")
 	fmt.Println("  - gi_box_type_name = '(пусто)' → возможно FBS")
-	fmt.Println(repeat("=", 71))
+	fmt.Println(strings.Repeat("=", 71))
 	fmt.Println("🎉 Утилита завершена успешно!")
 }
 

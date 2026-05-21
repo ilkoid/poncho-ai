@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 )
 
@@ -32,6 +32,9 @@ func DownloadSearchPositions(
 ) error {
 	var allRows []sqlite.SearchPositionRow
 
+	totalBatches := (len(nmIDs) + batchSize - 1) / batchSize
+	startTime := time.Now()
+
 	for i := 0; i < len(nmIDs); i += batchSize {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -42,8 +45,7 @@ func DownloadSearchPositions(
 			end = len(nmIDs)
 		}
 		batch := nmIDs[i:end]
-
-		prog := formatProgress(i, len(nmIDs), batchSize, time.Now())
+		batchNum := i/batchSize + 1
 
 		pastStart, pastEnd := calculatePastPeriod(beginDate, endDate)
 
@@ -72,14 +74,14 @@ func DownloadSearchPositions(
 		err := client.Post(ctx, "search_report", "https://seller-analytics-api.wildberries.ru",
 			rateLimit, burst, "/api/v2/search-report/report", reqBody, &response)
 		if err != nil {
-			log.Printf("Warning: search-report batch %d-%d failed: %v", i, end, err)
+			dllog.Error("search-report batch %d-%d: %v", i, end, err)
 			continue
 		}
 
 		rows := parsePositionResponse(response, batch, snapshotDate, beginDate, endDate)
 		allRows = append(allRows, rows...)
 
-		fmt.Printf("  Positions: %s — %d rows\n", prog, len(rows))
+		dllog.Progress(batchNum, totalBatches, "positions", fmt.Sprintf("%d rows", len(rows)), startTime)
 	}
 
 	if len(allRows) > 0 {
@@ -88,7 +90,7 @@ func DownloadSearchPositions(
 		}
 	}
 
-	fmt.Printf("  Saved %d position snapshots\n", len(allRows))
+	dllog.Log("saved %d position snapshots", len(allRows))
 	return nil
 }
 
@@ -119,7 +121,6 @@ func DownloadSearchQueries(
 		batch := nmIDs[i:end]
 
 		batchNum := i/queryBatchSize + 1
-		prog := formatProgress(batchNum-1, totalBatches, 1, startTime)
 
 		reqBody := map[string]interface{}{
 			"nmIds": batch,
@@ -144,7 +145,7 @@ func DownloadSearchQueries(
 		err := client.Post(ctx, "search_texts", "https://seller-analytics-api.wildberries.ru",
 			rateLimit, burst, "/api/v2/search-report/product/search-texts", reqBody, &response)
 		if err != nil {
-			log.Printf("Warning: search-texts batch %d-%d failed: %v", i, end, err)
+			dllog.Error("search-texts batch %d-%d: %v", i, end, err)
 			continue
 		}
 
@@ -174,7 +175,7 @@ func DownloadSearchQueries(
 			})
 		}
 
-		fmt.Printf("  Queries: %s — %d total rows\n", prog, len(allRows))
+			dllog.Progress(batchNum, totalBatches, "queries", fmt.Sprintf("%d total rows", len(allRows)), startTime)
 	}
 
 	if len(allRows) > 0 {
@@ -183,7 +184,7 @@ func DownloadSearchQueries(
 		}
 	}
 
-	fmt.Printf("  Saved %d query snapshots for %d products\n", len(allRows), len(nmIDs))
+	dllog.Log("saved %d query snapshots for %d products", len(allRows), len(nmIDs))
 	return nil
 }
 
@@ -271,16 +272,6 @@ func calculatePastPeriod(begin, end string) (string, string) {
 	pastEnd := b.AddDate(0, 0, -1)
 	pastBegin := pastEnd.AddDate(0, 0, -days)
 	return pastBegin.Format("2006-01-02"), pastEnd.Format("2006-01-02")
-}
-
-func formatProgress(current, total, batchSize int, startTime time.Time) string {
-	pct := float64(current) / float64(total) * 100
-	elapsed := time.Since(startTime)
-	if current > 0 {
-		remaining := elapsed / time.Duration(current) * time.Duration(total-current)
-		return fmt.Sprintf("%d/%d (%.0f%%, ETA %s)", current, total, pct, remaining.Truncate(time.Second))
-	}
-	return fmt.Sprintf("%d/%d (%.0f%%)", current, total, pct)
 }
 
 func getFloat(m map[string]interface{}, key string) float64 {

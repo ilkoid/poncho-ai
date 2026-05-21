@@ -8,38 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
-
-// formatProgress returns a progress string with percentage and ETA.
-// Returns "done/total" when done==0 (no baseline for ETA).
-func formatProgress(done, total int, start time.Time) string {
-	if total == 0 || done == 0 {
-		return fmt.Sprintf("%d/%d", done, total)
-	}
-	pct := float64(done) * 100 / float64(total)
-	elapsed := time.Since(start)
-	avg := elapsed / time.Duration(done)
-	remaining := time.Duration(total-done) * avg
-	return fmt.Sprintf("%d/%d %.0f%% ETA %s", done, total, pct, formatDur(remaining))
-}
-
-// formatDur formats a duration as human-readable string.
-func formatDur(d time.Duration) string {
-	d = d.Truncate(time.Second)
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	s := int(d.Seconds()) % 60
-	switch {
-	case h > 0:
-		return fmt.Sprintf("~%dh %dm", h, m)
-	case m > 0:
-		return fmt.Sprintf("~%dm %ds", m, s)
-	default:
-		return fmt.Sprintf("~%ds", s)
-	}
-}
 
 // V2Client is the interface for V2 Promotion API operations.
 // Defined in cmd/ per Rule 6 (consumer's interface).
@@ -78,7 +50,7 @@ func DownloadCampaignBids(ctx context.Context, client V2Client, repo *sqlite.SQL
 
 	for i := 0; i < len(advertIDs); i += batchSize {
 		if ctx.Err() != nil {
-			fmt.Printf("   Interrupted [%d/%d]\n", i/batchSize+1, totalBatches)
+			dllog.Log("interrupted [%d/%d]", i/batchSize+1, totalBatches)
 			return ctx.Err()
 		}
 		endIdx := i + batchSize
@@ -90,7 +62,7 @@ func DownloadCampaignBids(ctx context.Context, client V2Client, repo *sqlite.SQL
 
 		details, err := client.GetAdvertDetails(ctx, batch)
 		if err != nil {
-			fmt.Printf("   Error batch %d-%d: %v\n", i+1, endIdx, err)
+			dllog.Error("batch %d-%d: %v", i+1, endIdx, err)
 			continue
 		}
 
@@ -109,14 +81,14 @@ func DownloadCampaignBids(ctx context.Context, client V2Client, repo *sqlite.SQL
 		}
 
 		if err := repo.SaveCampaignBids(ctx, rows); err != nil {
-			fmt.Printf("   Error saving bids: %v\n", err)
+			dllog.Error("saving bids: %v", err)
 			continue
 		}
 		totalBids += len(rows)
-		fmt.Printf("   [%s] %d bids saved\n", formatProgress(batchNum, totalBatches, t0), len(rows))
+		dllog.Progress(batchNum, totalBatches, "campaign-bids", fmt.Sprintf("%d saved", len(rows)), t0)
 	}
 
-	fmt.Printf("   Done: %d bids from %d campaigns (%s)\n", totalBids, len(advertIDs), time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d bids from %d campaigns", totalBids, len(advertIDs))
 	return nil
 }
 
@@ -129,7 +101,7 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 
 	for i := 0; i < len(productIDs); i += batchSize {
 		if ctx.Err() != nil {
-			fmt.Printf("   Interrupted [%d/%d]\n", i/batchSize+1, totalBatches)
+			dllog.Log("interrupted [%d/%d]", i/batchSize+1, totalBatches)
 			return ctx.Err()
 		}
 		endIdx := i + batchSize
@@ -146,7 +118,7 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 		}
 		resp, err := client.GetNormqueryStats(ctx, req, rateLimit, burst)
 		if err != nil {
-			fmt.Printf("   [%s] Error: %v\n", formatProgress(batchNum, totalBatches, t0), err)
+			dllog.Error("batch %d: %v", batchNum, err)
 			continue
 		}
 
@@ -155,14 +127,14 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 				continue
 			}
 			if err := repo.SaveNormqueryStats(ctx, group.AdvertID, group.NmID, beginDate, group.Stats); err != nil {
-				fmt.Printf("   Error saving stats advert=%d nm=%d: %v\n", group.AdvertID, group.NmID, err)
+				dllog.Error("stats advert=%d nm=%d: %v", group.AdvertID, group.NmID, err)
 			}
 			totalStats += len(group.Stats)
 		}
-		fmt.Printf("   [%s] %d clusters\n", formatProgress(batchNum, totalBatches, t0), totalStats)
+		dllog.Progress(batchNum, totalBatches, "normquery-stats", fmt.Sprintf("%d clusters", totalStats), t0)
 	}
 
-	fmt.Printf("   Done: %d stat rows from %d products (%s)\n", totalStats, len(productIDs), time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d stat rows from %d products", totalStats, len(productIDs))
 	return nil
 }
 
@@ -200,7 +172,7 @@ func DownloadNormqueryBids(ctx context.Context, client V2Client, repo *sqlite.SQ
 
 // DownloadNormqueryMinus downloads minus phrases per (advert_id, nm_id).
 func DownloadNormqueryMinus(ctx context.Context, client V2Client, repo *sqlite.SQLiteSalesRepository, productIDs []wb.NormqueryItem, rateLimit, burst int) error {
-	return downloadBatched(ctx, client, repo, productIDs, rateLimit, burst, "minus phrases", func(ctx context.Context, batch []wb.NormqueryItem) (int, error) {
+	return downloadBatched(ctx, client, repo, productIDs, rateLimit, burst, "minus-phrases", func(ctx context.Context, batch []wb.NormqueryItem) (int, error) {
 		resp, err := client.GetNormqueryMinus(ctx, wb.NormqueryMinusRequest{Items: batch}, rateLimit, burst)
 		if err != nil {
 			return 0, err
@@ -242,7 +214,7 @@ func DownloadBidRecommendations(ctx context.Context, client V2Client, repo *sqli
 
 	for i, p := range productIDs {
 		if ctx.Err() != nil {
-			fmt.Printf("   Interrupted %s\n", formatProgress(i, len(productIDs), t0))
+			dllog.Log("interrupted [%d/%d]", i, len(productIDs))
 			return ctx.Err()
 		}
 		if staleAdverts[p.AdvertID] {
@@ -255,24 +227,23 @@ func DownloadBidRecommendations(ctx context.Context, client V2Client, repo *sqli
 			if strings.Contains(err.Error(), "nm_not_belong_to_advert") {
 				staleAdverts[p.AdvertID] = true
 				staleCount++
-				fmt.Printf("   Stale: nm=%d no longer in advert=%d (skipping remaining nms)\n", p.NmID, p.AdvertID)
+				dllog.Log("stale: nm=%d no longer in advert=%d (skipping remaining nms)", p.NmID, p.AdvertID)
 				continue
 			}
-			fmt.Printf("   Error nm=%d advert=%d: %v\n", p.NmID, p.AdvertID, err)
+			dllog.Error("nm=%d advert=%d: %v", p.NmID, p.AdvertID, err)
 			continue
 		}
 		if err := repo.SaveBidRecommendations(ctx, []wb.BidRecommendationsResponse{*resp}, snapshotDate); err != nil {
-			fmt.Printf("   Error saving: %v\n", err)
+			dllog.Error("saving bid recs: %v", err)
 			continue
 		}
 		total++
 		if (i+1)%reportInterval == 0 {
-			fmt.Printf("   [%s] %d ok, %d stale\n", formatProgress(i+1, len(productIDs), t0), total, staleCount)
+			dllog.Progress(i+1, len(productIDs), "bid-recs", fmt.Sprintf("%d ok, %d stale", total, staleCount), t0)
 		}
 	}
 
-	fmt.Printf("   Done: %d recommendations, %d stale pairs (%d campaigns) (%s)\n",
-		total, staleCount, len(staleAdverts), time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d recommendations, %d stale (%d campaigns)", total, staleCount, len(staleAdverts))
 	return nil
 }
 
@@ -286,7 +257,7 @@ func DownloadExpenses(ctx context.Context, client V2Client, repo *sqlite.SQLiteS
 	if err := repo.SaveExpenses(ctx, expenses); err != nil {
 		return fmt.Errorf("save expenses: %w", err)
 	}
-	fmt.Printf("   Done: %d expense records (%s)\n", len(expenses), time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d expense records", len(expenses))
 	return nil
 }
 
@@ -301,7 +272,7 @@ func DownloadBalance(ctx context.Context, client V2Client, repo *sqlite.SQLiteSa
 	if err := repo.SaveBalance(ctx, *balance, snapshotDate); err != nil {
 		return fmt.Errorf("save balance: %w", err)
 	}
-	fmt.Printf("   Done: balance=%d, net=%d, bonus=%d (%s)\n", balance.Balance, balance.Net, balance.Bonus, time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "balance=%d, net=%d, bonus=%d", balance.Balance, balance.Net, balance.Bonus)
 	return nil
 }
 
@@ -313,13 +284,13 @@ func DownloadPayments(ctx context.Context, client V2Client, repo *sqlite.SQLiteS
 		return fmt.Errorf("get payments: %w", err)
 	}
 	if payments == nil {
-		fmt.Println("   Done: no payments in period")
+		dllog.Log("no payments in period")
 		return nil
 	}
 	if err := repo.SavePayments(ctx, payments); err != nil {
 		return fmt.Errorf("save payments: %w", err)
 	}
-	fmt.Printf("   Done: %d payment records (%s)\n", len(payments), time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d payment records", len(payments))
 	return nil
 }
 
@@ -336,7 +307,7 @@ func DownloadCalendarPromotions(ctx context.Context, client V2Client, repo *sqli
 	if err := repo.SaveCalendarPromotions(ctx, promos.Data.Promotions); err != nil {
 		return fmt.Errorf("save calendar: %w", err)
 	}
-	fmt.Printf("   Done: %d promotions (%s)\n", len(promos.Data.Promotions), time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d promotions", len(promos.Data.Promotions))
 	return nil
 }
 
@@ -348,7 +319,7 @@ func DownloadCalendarPromotionDetails(ctx context.Context, client V2Client, repo
 		return fmt.Errorf("get promotion ids: %w", err)
 	}
 	if len(ids) == 0 {
-		fmt.Println("   No calendar promotions found. Run Calendar phase first.")
+		dllog.Log("no calendar promotions found — run Calendar phase first")
 		return nil
 	}
 
@@ -359,7 +330,7 @@ func DownloadCalendarPromotionDetails(ctx context.Context, client V2Client, repo
 
 	for i := 0; i < len(ids); i += batchSize {
 		if ctx.Err() != nil {
-			fmt.Printf("   Interrupted [%d/%d]\n", i/batchSize+1, totalBatches)
+			dllog.Log("interrupted [%d/%d]", i/batchSize+1, totalBatches)
 			return ctx.Err()
 		}
 		endIdx := i + batchSize
@@ -371,19 +342,19 @@ func DownloadCalendarPromotionDetails(ctx context.Context, client V2Client, repo
 
 		resp, err := client.GetCalendarPromotionDetails(ctx, batch, rateLimit, burst)
 		if err != nil {
-			fmt.Printf("   [%s] Error: %v\n", formatProgress(batchNum, totalBatches, t0), err)
+			dllog.Error("details batch %d: %v", batchNum, err)
 			continue
 		}
 
 		if err := repo.SaveCalendarPromotionDetails(ctx, resp.Data.Promotions); err != nil {
-			fmt.Printf("   Error saving details: %v\n", err)
+			dllog.Error("saving details: %v", err)
 			continue
 		}
 		totalDetails += len(resp.Data.Promotions)
-		fmt.Printf("   [%s] %d details saved\n", formatProgress(batchNum, totalBatches, t0), totalDetails)
+		dllog.Progress(batchNum, totalBatches, "calendar-details", fmt.Sprintf("%d saved", totalDetails), t0)
 	}
 
-	fmt.Printf("   Done: %d promotion details (%s)\n", totalDetails, time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d promotion details", totalDetails)
 	return nil
 }
 
@@ -396,7 +367,7 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 		return fmt.Errorf("get promotion ids: %w", err)
 	}
 	if len(ids) == 0 {
-		fmt.Println("   No non-auto promotions found.")
+		dllog.Log("no non-auto promotions found")
 		return nil
 	}
 
@@ -408,7 +379,7 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 
 	for i, promoID := range ids {
 		if ctx.Err() != nil {
-			fmt.Printf("   Interrupted [%d/%d]\n", i, total)
+			dllog.Log("interrupted [%d/%d]", i, total)
 			return ctx.Err()
 		}
 		var allNoms []wb.CalendarPromotionNom
@@ -423,7 +394,7 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 						break // promotion completed or not applicable
 					}
 					errCount++
-					fmt.Printf("   Error promo=%d inAction=%v offset=%d: %v\n", promoID, inAction, offset, err)
+					dllog.Error("promo=%d inAction=%v offset=%d: %v", promoID, inAction, offset, err)
 					break
 				}
 				if len(resp.Data.Nomenclatures) == 0 {
@@ -442,16 +413,16 @@ func DownloadCalendarPromotionNomenclatures(ctx context.Context, client V2Client
 		}
 		if len(allNoms) > 0 {
 			if err := repo.SaveCalendarPromotionNomenclatures(ctx, promoID, allNoms, snapshotDate); err != nil {
-				fmt.Printf("   Error saving noms promo=%d: %v\n", promoID, err)
+				dllog.Error("saving noms promo=%d: %v", promoID, err)
 			}
 		}
 		if (i+1)%10 == 0 || i+1 == total {
-			fmt.Printf("   [%s] %d noms\n", formatProgress(i+1, total, t0), totalNoms)
+			dllog.Progress(i+1, total, "calendar-noms", fmt.Sprintf("%d noms", totalNoms), t0)
 		}
 	}
 
-	fmt.Printf("   Done: %d noms from %d promos (422=%d, empty=%d, errors=%d) (%s)\n",
-		totalNoms, len(ids), done422, emptyCount, errCount, time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d noms from %d promos (422=%d, empty=%d, errors=%d)",
+		totalNoms, len(ids), done422, emptyCount, errCount)
 
 	if totalNoms == 0 && (errCount > 0 || len(ids) > 0) {
 		return fmt.Errorf("calendar nomenclatures: 0 results from %d promotions (errors=%d, empty=%d, 422=%d) — check API key and calendar endpoint access", len(ids), errCount, emptyCount, done422)
@@ -476,7 +447,7 @@ func downloadBatched(
 
 	for i := 0; i < len(productIDs); i += batchSize {
 		if ctx.Err() != nil {
-			fmt.Printf("   Interrupted [%d/%d]\n", i/batchSize+1, totalBatches)
+			dllog.Log("interrupted [%d/%d]", i/batchSize+1, totalBatches)
 			return ctx.Err()
 		}
 		endIdx := i + batchSize
@@ -488,14 +459,14 @@ func downloadBatched(
 
 		count, err := fn(ctx, batch)
 		if err != nil {
-			fmt.Printf("   [%s] Error: %v\n", formatProgress(batchNum, totalBatches, t0), err)
+			dllog.Error("batch %d: %v", batchNum, err)
 			continue
 		}
 		total += count
-		fmt.Printf("   [%s] %d %s\n", formatProgress(batchNum, totalBatches, t0), count, label)
+		dllog.Progress(batchNum, totalBatches, label, fmt.Sprintf("%d %s", count, label), t0)
 	}
 
-	fmt.Printf("   Done: %d %s from %d products (%s)\n", total, label, len(productIDs), time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d %s from %d products", total, label, len(productIDs))
 	return nil
 }
 
@@ -517,25 +488,25 @@ func DownloadCampaignBudgets(ctx context.Context, client V2Client, repo *sqlite.
 
 	for i, id := range advertIDs {
 		if ctx.Err() != nil {
-			fmt.Printf("   Interrupted [%d/%d]\n", i, totalAds)
+			dllog.Log("interrupted [%d/%d]", i, totalAds)
 			return ctx.Err()
 		}
 		budget, err := client.GetCampaignBudget(ctx, id, rateLimit, burst)
 		if err != nil {
-			fmt.Printf("   Error advert=%d: %v\n", id, err)
+			dllog.Error("advert=%d: %v", id, err)
 			continue
 		}
 		if err := repo.SaveCampaignBudget(ctx, id, *budget, snapshotDate); err != nil {
-			fmt.Printf("   Error saving budget advert=%d: %v\n", id, err)
+			dllog.Error("saving budget advert=%d: %v", id, err)
 			continue
 		}
 		total++
 		if (i+1)%100 == 0 || i+1 == totalAds {
-			fmt.Printf("   [%s] %d budgets saved\n", formatProgress(i+1, totalAds, t0), total)
+			dllog.Progress(i+1, totalAds, "budgets", fmt.Sprintf("%d saved", total), t0)
 		}
 	}
 
-	fmt.Printf("   Done: %d campaign budgets (%s)\n", total, time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d campaign budgets", total)
 	return nil
 }
 
@@ -558,14 +529,14 @@ func DownloadMinBids(ctx context.Context, client V2Client, repo *sqlite.SQLiteSa
 
 	for ai, advertID := range advertList {
 		if ctx.Err() != nil {
-			fmt.Printf("   Interrupted [%d/%d]\n", ai, totalAds)
+			dllog.Log("interrupted [%d/%d]", ai, totalAds)
 			return ctx.Err()
 		}
 		nmIDs := byAdvert[advertID]
 		// Batch nm_ids (max 100 per request)
 		for i := 0; i < len(nmIDs); i += 100 {
 			if ctx.Err() != nil {
-				fmt.Printf("   Interrupted [%d/%d]\n", ai, totalAds)
+				dllog.Log("interrupted [%d/%d]", ai, totalAds)
 				return ctx.Err()
 			}
 			endIdx := i + 100
@@ -585,11 +556,11 @@ func DownloadMinBids(ctx context.Context, client V2Client, repo *sqlite.SQLiteSa
 				if wb.IsHTTPError(err, 400) {
 					continue // nm_ids no longer belong to this campaign
 				}
-				fmt.Printf("   Error advert=%d nm=%d-%d: %v\n", advertID, batch[0], batch[len(batch)-1], err)
+				dllog.Error("advert=%d nm=%d-%d: %v", advertID, batch[0], batch[len(batch)-1], err)
 				continue
 			}
 			if err := repo.SaveMinBids(ctx, advertID, resp.Bids, snapshotDate); err != nil {
-				fmt.Printf("   Error saving min_bids advert=%d: %v\n", advertID, err)
+				dllog.Error("saving min_bids advert=%d: %v", advertID, err)
 				continue
 			}
 			for _, item := range resp.Bids {
@@ -597,10 +568,10 @@ func DownloadMinBids(ctx context.Context, client V2Client, repo *sqlite.SQLiteSa
 			}
 		}
 		if (ai+1)%100 == 0 || ai+1 == totalAds {
-			fmt.Printf("   [%s] %d bids from %d campaigns\n", formatProgress(ai+1, totalAds, t0), totalBids, ai+1)
+			dllog.Progress(ai+1, totalAds, "min-bids", fmt.Sprintf("%d bids from %d campaigns", totalBids, ai+1), t0)
 		}
 	}
 
-	fmt.Printf("   Done: %d min-bid entries from %d campaigns (%s)\n", totalBids, len(byAdvert), time.Since(t0).Truncate(time.Second))
+	dllog.Done(time.Since(t0), "%d min-bid entries from %d campaigns", totalBids, len(byAdvert))
 	return nil
 }

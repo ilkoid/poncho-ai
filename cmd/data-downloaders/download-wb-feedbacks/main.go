@@ -15,13 +15,14 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -46,6 +47,8 @@ func main() {
 		printHelp()
 		return
 	}
+
+	t0 := time.Now()
 
 	// Load config
 	cfg, err := loadConfig(*configPath)
@@ -76,7 +79,24 @@ func main() {
 	beginDate, endDate := calculateDateRange(cfg)
 
 	// Print header
-	printHeader(cfg, beginDate, endDate, *mock)
+	apiKey := getAPIKey(cfg)
+	fields := []dllog.HeaderField{
+		{Key: "Database", Value: cfg.Feedbacks.DbPath},
+		{Key: "Period", Value: fmt.Sprintf("%s -> %s", beginDate, endDate)},
+	}
+	if !cfg.Feedbacks.Feedbacks {
+		fields = append(fields, dllog.HeaderField{Key: "Feedbacks", Value: "disabled"})
+	}
+	if !cfg.Feedbacks.Questions {
+		fields = append(fields, dllog.HeaderField{Key: "Questions", Value: "disabled"})
+	}
+	if *mock {
+		fields = append(fields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
+	}
+	if apiKey != "" {
+		fields = append(fields, dllog.HeaderField{Key: "API Key", Value: utils.MaskAPIKey(apiKey)})
+	}
+	dllog.PrintHeader("WB Feedbacks Downloader", fields...)
 
 	// Handle Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
@@ -175,13 +195,9 @@ func main() {
 	qAnswered, _ := repo.CountQuestionsWithAnswer(ctx)
 
 	// Summary
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println("Download complete!")
-	fmt.Printf("  Feedbacks: %d total, %d with answer (%.1f%%)\n",
-		fbCount, fbAnswered, pct(fbAnswered, fbCount))
-	fmt.Printf("  Questions: %d total, %d with answer (%.1f%%)\n",
-		qCount, qAnswered, pct(qAnswered, qCount))
-	fmt.Printf("  Database:  %s\n", cfg.Feedbacks.DbPath)
+	dllog.Done(time.Since(t0), "Feedbacks: %d total (%d answered), Questions: %d total (%d answered)",
+		fbCount, fbAnswered, qCount, qAnswered)
+	dllog.Log("Database: %s", cfg.Feedbacks.DbPath)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -256,26 +272,6 @@ Examples:
   go run . --mock --days=7
 
 `)
-}
-
-func printHeader(cfg *Config, beginDate, endDate string, mock bool) {
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println("WB Feedbacks Downloader")
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Printf("Config:     %s\n", cfg.Feedbacks.DbPath)
-	fmt.Printf("Period:     %s -> %s\n", beginDate, endDate)
-
-	if !cfg.Feedbacks.Feedbacks {
-		fmt.Println("Feedbacks:  disabled")
-	}
-	if !cfg.Feedbacks.Questions {
-		fmt.Println("Questions:  disabled")
-	}
-	if mock {
-		fmt.Println("Mode:       Mock")
-	}
-
-	fmt.Println(strings.Repeat("=", 60))
 }
 
 // ============================================================================

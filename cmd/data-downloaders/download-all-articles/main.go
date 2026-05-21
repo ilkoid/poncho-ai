@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/s3storage"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 // S3 конфигурация (захардкожена для одноразовой утилиты)
@@ -31,22 +33,24 @@ const (
 func main() {
 	ctx := context.Background()
 
-	fmt.Println("🚀 S3 Article Downloader")
-	fmt.Println("========================")
-	fmt.Printf("Endpoint: %s\n", s3Endpoint)
-	fmt.Printf("Bucket:   %s\n", s3Bucket)
-	fmt.Println()
+	// 1. Print header
+	dllog.PrintHeader("S3 Article Downloader",
+		dllog.HeaderField{Key: "Endpoint", Value: s3Endpoint},
+		dllog.HeaderField{Key: "Bucket", Value: s3Bucket},
+	)
 
-	// 1. Получаем credentials из переменных окружения
+	// 2. Получаем credentials из переменных окружения
 	accessKey := os.Getenv("S3_ACCESS_KEY")
 	secretKey := os.Getenv("S3_SECRET_KEY")
 
 	if accessKey == "" || secretKey == "" {
-		fmt.Println("❌ Ошибка: требуются переменные окружения S3_ACCESS_KEY и S3_SECRET_KEY")
+		dllog.Error("Требуются переменные окружения S3_ACCESS_KEY и S3_SECRET_KEY")
 		os.Exit(1)
 	}
 
-	// 2. Создаём S3 клиент
+	dllog.Log("Access Key: %s", utils.MaskAPIKey(accessKey))
+
+	// 3. Создаём S3 клиент
 	client, err := s3storage.New(config.S3Config{
 		Endpoint:  s3Endpoint,
 		Bucket:    s3Bucket,
@@ -56,35 +60,35 @@ func main() {
 		UseSSL:    s3UseSSL,
 	})
 	if err != nil {
-		fmt.Printf("❌ Ошибка создания S3 клиента: %v\n", err)
+		dllog.Error("Ошибка создания S3 клиента: %v", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("✅ S3 клиент создан")
+	dllog.Log("S3 клиент создан")
 
-	// 3. Получаем список всех папок артикулов
-	fmt.Println("📂 Получение списка артикулов...")
+	// 4. Получаем список всех папок артикулов
+	dllog.Log("Получение списка артикулов...")
 	folders, err := client.ListTopLevelFolders(ctx)
 	if err != nil {
-		fmt.Printf("❌ Ошибка получения списка папок: %v\n", err)
+		dllog.Error("Ошибка получения списка папок: %v", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Найдено артикулов: %d\n\n", len(folders))
+	dllog.Log("Найдено артикулов: %d", len(folders))
 
-	// 4. Создаём папку ЗАГРУЗКИ
+	// 5. Создаём папку ЗАГРУЗКИ
 	execPath, _ := os.Executable()
 	execDir := filepath.Dir(execPath)
 	downloadDir := filepath.Join(execDir, "ЗАГРУЗКИ")
 
 	if err := os.MkdirAll(downloadDir, 0755); err != nil {
-		fmt.Printf("❌ Ошибка создания папки ЗАГРУЗКИ: %v\n", err)
+		dllog.Error("Ошибка создания папки ЗАГРУЗКИ: %v", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("📁 Папка для скачивания: %s\n\n", downloadDir)
+	dllog.Log("Папка для скачивания: %s", downloadDir)
 
-	// 5. Скачиваем каждый артикул
+	// 6. Скачиваем каждый артикул
 	startTime := time.Now()
 	var totalFiles int
 	var totalSize int64
@@ -92,40 +96,29 @@ func main() {
 
 	for i, folder := range folders {
 		articleID := strings.TrimSuffix(folder.Key, "/")
-		fmt.Printf("[%d/%d] 📥 Скачиваю артикул %s...\n", i+1, len(folders), articleID)
 
 		filesCount, size, err := downloadArticle(ctx, client, folder.Key, downloadDir)
 		if err != nil {
 			errMsg := fmt.Sprintf("Артикул %s: %v", articleID, err)
 			errors = append(errors, errMsg)
-			fmt.Printf("         ⚠️  Ошибка: %v\n", err)
+			dllog.Error("Артикул %s: %v", articleID, err)
 			continue
 		}
 
 		totalFiles += filesCount
 		totalSize += size
-		fmt.Printf("         ✅ Скачано файлов: %d, размер: %s\n", filesCount, formatSize(size))
+		dllog.Progress(i+1, len(folders), articleID, fmt.Sprintf("%d files, %s", filesCount, formatSize(size)), startTime)
 	}
 
-	// 6. Выводим статистику
-	elapsed := time.Since(startTime)
-	fmt.Println()
-	fmt.Println("================================")
-	fmt.Println("📊 ИТОГИ")
-	fmt.Println("================================")
-	fmt.Printf("Артикулов обработано: %d\n", len(folders))
-	fmt.Printf("Файлов скачано:       %d\n", totalFiles)
-	fmt.Printf("Общий размер:         %s\n", formatSize(totalSize))
-	fmt.Printf("Время выполнения:     %v\n", elapsed)
+	// 7. Summary
+	dllog.Done(time.Since(startTime), "%d articles, %d files, %s", len(folders), totalFiles, formatSize(totalSize))
 
 	if len(errors) > 0 {
-		fmt.Printf("\n⚠️  Ошибки (%d):\n", len(errors))
+		dllog.Error("Ошибки (%d):", len(errors))
 		for _, e := range errors {
-			fmt.Printf("   - %s\n", e)
+			dllog.Log("  - %s", e)
 		}
 	}
-
-	fmt.Println("\n✅ Готово!")
 }
 
 // downloadArticle скачивает все файлы из папки артикула

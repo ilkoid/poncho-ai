@@ -7,14 +7,15 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -66,7 +67,10 @@ func main() {
 	snapshotDate := time.Now().Format("2006-01-02")
 
 	// Print header
-	printHeader(cfg, *mockMode, snapshotDate)
+	dllog.PrintHeader("WB Product Prices Downloader",
+		dllog.HeaderField{Key: "Database", Value: cfg.Prices.DbPath},
+		dllog.HeaderField{Key: "Date", Value: snapshotDate},
+	)
 
 	// Handle Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
@@ -113,7 +117,7 @@ func main() {
 		wbClient.SetRateLimit("get_prices", rl.PricesList, rl.PricesListBurst, rl.PricesListApi, rl.PricesListApiBurst)
 		wbClient.SetAdaptiveParams(0, cfg.Prices.AdaptiveProbeAfter, cfg.Prices.MaxBackoffSeconds)
 		client = wbClient
-		fmt.Printf("API Key: %s\n", maskAPIKey(apiKey))
+		dllog.Log("API Key: %s", utils.MaskAPIKey(apiKey))
 	}
 
 	// Download prices
@@ -123,17 +127,10 @@ func main() {
 	}
 
 	// Summary
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println("Download complete!")
-	fmt.Printf("  Products:  %d\n", result.TotalProducts)
-	fmt.Printf("  Pages:     %d\n", result.Pages)
-	fmt.Printf("  Requests:  %d\n", result.Requests)
-	fmt.Printf("  Date:      %s\n", snapshotDate)
-	fmt.Printf("  Duration:  %s\n", result.Duration.Round(time.Second))
-	fmt.Printf("  Database:  %s\n", cfg.Prices.DbPath)
-
 	count, _ := repo.CountPrices(ctx)
-	fmt.Printf("  DB total:  %d\n", count)
+	dllog.Done(result.Duration, "%d products, %d pages, %d requests, DB total: %d",
+		result.TotalProducts, result.Pages, result.Requests, count)
+	dllog.Log("Date: %s, Database: %s", snapshotDate, cfg.Prices.DbPath)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -162,50 +159,31 @@ func getAPIKey(cfg *Config) string {
 	return cfg.WB.APIKey
 }
 
-func maskAPIKey(key string) string {
-	if len(key) <= 8 {
-		return "****"
-	}
-	return key[:4] + "..." + key[len(key)-4:]
-}
-
 func printHelp() {
 	fmt.Print(`WB Product Prices Downloader — загрузка текущих цен товаров
 
-Usage:
-  go run . [options]
+	Usage:
+	  go run . [options]
 
-Options:
-  --config PATH     Путь к конфигу (default: config.yaml)
-  --db PATH         Путь к базе (overrides config)
-  --clean           Clean database before download
-  --mock            Mock mode (no API calls)
-  --help            Справка
+	Options:
+	  --config PATH     Путь к конфигу (default: config.yaml)
+	  --db PATH         Путь к базе (overrides config)
+	  --clean           Clean database before download
+	  --mock            Mock mode (no API calls)
+	  --help            Справка
 
-Examples:
-  # Download current prices (snapshot)
-  WB_API_KEY=xxx go run .
+	Examples:
+	  # Download current prices (snapshot)
+	  WB_API_KEY=xxx go run .
 
-  # Mock mode (testing)
-  go run . --mock
+	  # Mock mode (testing)
+	  go run . --mock
 
-  # Custom database path
-  WB_API_KEY=xxx go run . --db /path/to/prices.db
+	  # Custom database path
+	  WB_API_KEY=xxx go run . --db /path/to/prices.db
 
-  # Clean and redownload
-  WB_API_KEY=xxx go run . --clean
+	  # Clean and redownload
+	  WB_API_KEY=xxx go run . --clean
 
 `)
-}
-
-func printHeader(cfg *Config, mock bool, snapshotDate string) {
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println("WB Product Prices Downloader")
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Printf("Database:  %s\n", cfg.Prices.DbPath)
-	fmt.Printf("Date:      %s\n", snapshotDate)
-	if mock {
-		fmt.Println("Mode:      Mock")
-	}
-	fmt.Println(strings.Repeat("=", 60))
 }

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -14,7 +15,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 )
 
 type Config struct {
@@ -85,56 +88,53 @@ func main() {
 	goodsURL := strings.TrimRight(apiURL, "/") + "/goods/"
 	pricesURL := strings.TrimRight(apiURL, "/") + "/prices/"
 
+	// Print startup info
+	maskedAPI := maskURL(apiURL)
+	maskedPIM := maskURL(pimURL)
+	dllog.PrintHeader("1C Data Downloader (товары + цены + PIM)",
+		dllog.HeaderField{Key: "Database", Value: defaults.DbPath},
+		dllog.HeaderField{Key: "1C API", Value: maskedAPI},
+		dllog.HeaderField{Key: "PIM API", Value: maskedPIM},
+	)
+
 	// Step 1: Goods + SKUs
-	fmt.Println(repeat("═", 71))
-	fmt.Println("📦 Шаг 1/3: Загрузка товаров 1C...")
-	fmt.Println(repeat("═", 71))
+	dllog.Log("Step 1/3: Loading 1C goods...")
 	goodsStart := time.Now()
 	goodsCount, skuCount, err := client.FetchGoods(ctx, goodsURL, repo)
 	if err != nil {
 		log.Fatalf("❌ Ошибка загрузки товаров: %v", err)
 	}
-	fmt.Printf("✅ Товары: %d, SKU: %d (%.1fs)\n", goodsCount, skuCount, time.Since(goodsStart).Seconds())
+	dllog.Done(time.Since(goodsStart), "%d goods, %d SKUs", goodsCount, skuCount)
 
 	if ctx.Err() != nil {
 		return
 	}
 
 	// Step 2: Prices
-	fmt.Println(repeat("═", 71))
-	fmt.Println("💰 Шаг 2/3: Загрузка цен 1C...")
-	fmt.Println(repeat("═", 71))
+	dllog.Log("Step 2/3: Loading 1C prices...")
 	pricesStart := time.Now()
 	priceRows, priceProducts, err := client.FetchPrices(ctx, pricesURL, snapshotDate, repo)
 	if err != nil {
 		log.Fatalf("❌ Ошибка загрузки цен: %v", err)
 	}
-	fmt.Printf("✅ Цены: %d строк от %d товаров (%.1fs)\n", priceRows, priceProducts, time.Since(pricesStart).Seconds())
+	dllog.Done(time.Since(pricesStart), "%d price rows from %d products", priceRows, priceProducts)
 
 	if ctx.Err() != nil {
 		return
 	}
 
 	// Step 3: PIM Goods
-	fmt.Println(repeat("═", 71))
-	fmt.Println("📋 Шаг 3/3: Загрузка PIM атрибутов...")
-	fmt.Println(repeat("═", 71))
+	dllog.Log("Step 3/3: Loading PIM attributes...")
 	pimStart := time.Now()
 	pimCount, err := client.FetchPIMGoods(ctx, pimURL, repo)
 	if err != nil {
 		log.Fatalf("❌ Ошибка загрузки PIM: %v", err)
 	}
-	fmt.Printf("✅ PIM товары: %d (%.1fs)\n", pimCount, time.Since(pimStart).Seconds())
+	dllog.Done(time.Since(pimStart), "%d PIM goods", pimCount)
 
 	// Summary
-	fmt.Println(repeat("═", 71))
-	fmt.Println("📊 Итого:")
-	fmt.Printf("   1C товары:  %d\n", goodsCount)
-	fmt.Printf("   1C SKU:     %d\n", skuCount)
-	fmt.Printf("   1C цены:    %d строк (snapshot: %s)\n", priceRows, snapshotDate)
-	fmt.Printf("   PIM товары: %d\n", pimCount)
-	fmt.Printf("   Время:      %.1fs\n", time.Since(totalStart).Seconds())
-	fmt.Println(repeat("═", 71))
+	dllog.Done(time.Since(totalStart), "1C goods: %d, SKUs: %d, prices: %d rows, PIM: %d",
+		goodsCount, skuCount, priceRows, pimCount)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -174,6 +174,17 @@ func printHelp() {
 	fmt.Println("  ONEC_PIM_URL    URL PIM Goods API (с basic auth)")
 }
 
-func repeat(s string, n int) string {
-	return strings.Repeat(s, n)
+// maskURL masks credentials in a URL with basic auth.
+func maskURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.User == nil {
+		if len(rawURL) > 12 {
+			return rawURL[:5] + "..." + rawURL[len(rawURL)-4:]
+		}
+		return "***"
+	}
+	user := u.User.Username()
+	pass, _ := u.User.Password()
+	u.User = url.UserPassword(utils.MaskAPIKey(user), utils.MaskAPIKey(pass))
+	return u.String()
 }

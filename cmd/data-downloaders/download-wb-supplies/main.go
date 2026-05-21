@@ -14,7 +14,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -40,7 +42,7 @@ func main() {
 	// 2. Load config
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
-		log.Fatalf("❌ Failed to load config: %v", err)
+		log.Fatalf("failed to load config: %v", err)
 	}
 	supplyCfg := cfg.Supply.GetDefaults()
 	cfg.WB = cfg.WB.GetDefaults()
@@ -69,13 +71,25 @@ func main() {
 		supplyCfg.End = endDate
 	}
 
-	fmt.Printf("=== download-wb-supplies ===\n")
-	fmt.Printf("Период: %s — %s (фильтр: %s)\n", supplyCfg.Begin, supplyCfg.End, supplyCfg.DateFilterType)
-
 	// 5. Get API key
 	apiKey := getAPIKey(cfg)
 	if apiKey == "" && !*mockMode {
-		log.Fatal("❌ No API key. Set WB_API_KEY or configure yaml api_key.")
+		log.Fatal("no API key. Set WB_API_KEY or configure yaml api_key.")
+	}
+
+	// Print header
+	{
+		fields := []dllog.HeaderField{
+			{Key: "Database", Value: supplyCfg.DbPath},
+			{Key: "Period", Value: fmt.Sprintf("%s — %s (filter: %s)", supplyCfg.Begin, supplyCfg.End, supplyCfg.DateFilterType)},
+		}
+		if *mockMode {
+			fields = append(fields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
+		}
+		if apiKey != "" {
+			fields = append(fields, dllog.HeaderField{Key: "API Key", Value: utils.MaskAPIKey(apiKey)})
+		}
+		dllog.PrintHeader("WB Supplies Downloader (FBW)", fields...)
 	}
 
 	// 6. Handle Ctrl+C
@@ -85,25 +99,25 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\n⚠️  Прервано")
+		dllog.Error("interrupted")
 		cancel()
 	}()
 
 	// 7. Open database
 	if *clean {
 		os.Remove(supplyCfg.DbPath)
-		fmt.Println("  База удалена (--clean)")
+		dllog.Log("database deleted (--clean)")
 	}
 	repo, err := sqlite.NewSQLiteSalesRepository(supplyCfg.DbPath)
 	if err != nil {
-		log.Fatalf("❌ Failed to open database: %v", err)
+		log.Fatalf("failed to open database: %v", err)
 	}
 	defer repo.Close()
 
 	start := time.Now()
 
 	if *mockMode {
-		fmt.Println("🧪 MOCK MODE")
+		dllog.Log("mock mode")
 		runMock(ctx, repo, supplyCfg)
 	} else {
 		// 8. Create client with adaptive rate limiting
@@ -120,8 +134,7 @@ func main() {
 		runDownload(ctx, wbClient, repo, supplyCfg, *skipRef)
 	}
 
-	elapsed := time.Since(start)
-	fmt.Printf("\n=== Готово за %s ===\n", elapsed.Round(time.Second))
+	dllog.Done(time.Since(start), "download-wb-supplies complete")
 }
 
 func runDownload(
@@ -135,17 +148,17 @@ func runDownload(
 
 	// Step 1: Reference data (warehouses, tariffs)
 	if !skipRef {
-		fmt.Println("\n--- Справочники ---")
+		dllog.Log("--- Reference data ---")
 		whSaved, tSaved, err := DownloadReference(ctx, client, repo, rl)
 		if err != nil {
-			fmt.Printf("❌ Ошибка справочников: %v\n", err)
+			dllog.Error("reference data: %v", err)
 		} else {
-			fmt.Printf("✅ Справочники: %d складов, %d тарифов\n", whSaved, tSaved)
+			dllog.Log("reference: %d warehouses, %d tariffs", whSaved, tSaved)
 		}
 	}
 
 	// Step 2: Download supplies list
-	fmt.Println("\n--- Поставки ---")
+	dllog.Log("--- Supplies ---")
 	filter := wb.SuppliesFilterRequest{
 		Dates: []wb.DateFilter{
 			{
@@ -159,7 +172,7 @@ func runDownload(
 
 	supplies, supplyReqs, err := DownloadSupplies(ctx, client, rl, filter)
 	if err != nil {
-		fmt.Printf("❌ Ошибка поставок: %v\n", err)
+		dllog.Error("supplies: %v", err)
 		return
 	}
 
@@ -172,16 +185,16 @@ func runDownload(
 		}
 		saved, err := repo.SaveSupplies(ctx, rows)
 		if err != nil {
-			fmt.Printf("❌ Ошибка сохранения поставок: %v\n", err)
+			dllog.Error("save supplies: %v", err)
 			return
 		}
-		fmt.Printf("✅ Поставок: %d (сохранено: %d)\n", len(supplies), saved)
+		dllog.Log("supplies: %d (saved: %d)", len(supplies), saved)
 	} else {
-		fmt.Println("  Поставок не найдено")
+		dllog.Log("no supplies found")
 	}
 
 	// Step 3: Download goods and packages for each supply
-	fmt.Println("\n--- Товары и упаковка ---")
+	dllog.Log("--- Goods & Packages ---")
 	pairs := make([]sqlite.SupplyIDPair, 0, len(supplies))
 	for _, s := range supplies {
 		supplyID := int64(0)
@@ -193,15 +206,15 @@ func runDownload(
 
 	goods, packages, detailReqs, err := DownloadSupplyDetails(ctx, client, repo, rl, pairs)
 	if err != nil {
-		fmt.Printf("❌ Ошибка деталей: %v\n", err)
+		dllog.Error("supply details: %v", err)
 	}
-	fmt.Printf("✅ Товаров: %d, Упаковок: %d\n", goods, packages)
+	dllog.Log("goods: %d, packages: %d", goods, packages)
 
 	totalReqs := supplyReqs + detailReqs
 	if !skipRef {
 		totalReqs += 2 // warehouses + tariffs
 	}
-	fmt.Printf("\nЗапросов: %d\n", totalReqs)
+	dllog.Log("total API requests: %d", totalReqs)
 }
 
 func printHelp() {

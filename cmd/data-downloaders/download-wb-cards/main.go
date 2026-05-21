@@ -7,14 +7,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
-	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -66,7 +66,16 @@ func main() {
 	}
 
 	// 6. Print header
-	printHeader(cfg, *mockMode, *resume)
+	headerFields := []dllog.HeaderField{
+		{Key: "Database", Value: cfg.Cards.DbPath},
+	}
+	if *resume {
+		headerFields = append(headerFields, dllog.HeaderField{Key: "Mode", Value: "Resume"})
+	}
+	if *mockMode {
+		headerFields = append(headerFields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
+	}
+	dllog.PrintHeader("WB Content Cards Downloader", headerFields...)
 
 	// 7. Handle Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
@@ -103,7 +112,7 @@ func main() {
 		wbClient.SetRateLimit("get_cards_list", rl.CardsList, rl.CardsListBurst, rl.CardsListApi, rl.CardsListApiBurst)
 		wbClient.SetAdaptiveParams(0, cfg.Cards.AdaptiveProbeAfter, cfg.Cards.MaxBackoffSeconds)
 		client = wbClient
-		fmt.Printf("API Key: %s\n", maskAPIKey(apiKey))
+		dllog.Log("API Key: %s", utils.MaskAPIKey(apiKey))
 	}
 
 	// 10. Download data
@@ -113,16 +122,12 @@ func main() {
 	}
 
 	// 11. Summary
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println("✅ Download complete!")
-	fmt.Printf("  Cards:     %d\n", result.TotalCards)
-	fmt.Printf("  Pages:     %d\n", result.Pages)
-	fmt.Printf("  Requests:  %d\n", result.Requests)
-	fmt.Printf("  Duration:  %s\n", result.Duration.Round(time.Second))
-	fmt.Printf("  Database:  %s\n", cfg.Cards.DbPath)
+	dllog.Done(result.Duration, "%d cards, %d pages, %d requests",
+		result.TotalCards, result.Pages, result.Requests)
+	dllog.Log("Database: %s", cfg.Cards.DbPath)
 
 	count, _ := repo.CountCards(ctx)
-	fmt.Printf("  DB total:  %d\n", count)
+	dllog.Log("DB total: %d", count)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -186,16 +191,3 @@ Examples:
 `)
 }
 
-func printHeader(cfg *Config, mock, resume bool) {
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println("WB Content Cards Downloader")
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Printf("Database:  %s\n", cfg.Cards.DbPath)
-	if resume {
-		fmt.Println("Mode:      Resume")
-	}
-	if mock {
-		fmt.Println("Mode:      Mock")
-	}
-	fmt.Println(strings.Repeat("=", 60))
-}

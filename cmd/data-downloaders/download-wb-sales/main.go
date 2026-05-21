@@ -18,7 +18,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -92,11 +94,17 @@ func main() {
 	}()
 
 	// Print header
-	printHeader(cfg)
+	dllog.PrintHeader("WB Sales Downloader",
+		dllog.HeaderField{Key: "Config", Value: "config.yaml"},
+		dllog.HeaderField{Key: "Period", Value: fmt.Sprintf("%s -> %s", cfg.Download.From, cfg.Download.To)},
+		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DbPath},
+		dllog.HeaderField{Key: "FBW only", Value: fmt.Sprintf("%v", cfg.Download.FBWOnly)},
+		dllog.HeaderField{Key: "Resume", Value: fmt.Sprintf("%v", cfg.Download.Resume)},
+		dllog.HeaderField{Key: "API Key", Value: utils.MaskAPIKey(cfg.WB.APIKey)},
+	)
 
 	// Show download start time
-	fmt.Printf("🕐 Начало загрузки: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-	fmt.Println(repeat("=", 71))
+	dllog.Log("Начало загрузки: %s", time.Now().Format("2006-01-02 15:04:05"))
 
 	// Parse date range (supports both YYYY-MM-DD and RFC3339 formats)
 	from, err := ParseDateTime(cfg.Download.From)
@@ -115,8 +123,7 @@ func main() {
 
 	// Split period into intervals
 	ranges := SplitPeriod(from, to)
-	fmt.Printf("Интервалы:  %d (по %d дней)\n", len(ranges), maxDaysPerPeriod)
-	fmt.Println(repeat("=", 71))
+	dllog.Log("Интервалы: %d (по %d дней)", len(ranges), maxDaysPerPeriod)
 
 	// Create SalesRepository (needed for both real and mock mode)
 	repo, err := sqlite.NewSQLiteSalesRepository(cfg.Storage.DbPath)
@@ -137,9 +144,8 @@ func main() {
 			funnelBatchSize = 20
 		}
 
-		fmt.Println("📊 FUNNEL MODE: Загрузка аналитики воронки")
-		fmt.Printf("📅 Дней истории: %d\n", funnelDays)
-		fmt.Println(repeat("=", 71))
+		dllog.Log("FUNNEL MODE: Загрузка аналитики воронки")
+		dllog.Log("Дней истории: %d", funnelDays)
 
 		var funnelResult *FunnelLoadResult
 
@@ -160,7 +166,7 @@ func main() {
 			}
 
 			// Show which key is being used
-			fmt.Printf("🔑 API Key: %s (Analytics)\n", maskAPIKey(analyticsKey))
+			dllog.Log("API Key: %s (Analytics)", utils.MaskAPIKey(analyticsKey))
 
 			// Get funnel config with defaults
 			funnelDefaults := cfg.Funnel.GetDefaults()
@@ -295,26 +301,6 @@ func loadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
-}
-
-// printHeader prints utility header with configuration info.
-func printHeader(cfg *Config) {
-	fmt.Println("📥 WB Sales Downloader")
-	fmt.Println(repeat("=", 71))
-	fmt.Printf("Config:     config.yaml\n")
-	fmt.Printf("Период:     %s → %s\n", cfg.Download.From, cfg.Download.To)
-	fmt.Printf("База:       %s\n", cfg.Storage.DbPath)
-	fmt.Printf("FBW only:   %v\n", cfg.Download.FBWOnly)
-	fmt.Printf("Resume:     %v\n", cfg.Download.Resume)
-	fmt.Printf("API Key:    %s\n", maskAPIKey(cfg.WB.APIKey))
-}
-
-// maskAPIKey hides most of the API key for security.
-func maskAPIKey(key string) string {
-	if len(key) <= 8 {
-		return "***"
-	}
-	return key[:4] + "..." + key[len(key)-4:]
 }
 
 // printHelp prints usage information.

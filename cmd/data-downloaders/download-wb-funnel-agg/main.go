@@ -20,7 +20,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -82,11 +84,18 @@ func main() {
 		cancel()
 	}()
 
-	printHeader(cfg, *configPath)
+	defaults := cfg.FunnelAggregated.GetDefaults()
 
-	// Show download start time
-	fmt.Printf("🕐 Начало загрузки: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-	fmt.Println(repeat("=", 71))
+	dllog.PrintHeader("WB Aggregated Funnel Downloader",
+		dllog.HeaderField{Key: "Config", Value: *configPath},
+		dllog.HeaderField{Key: "DB", Value: cfg.FunnelAggregated.DBPath},
+		dllog.HeaderField{Key: "Selected period", Value: defaults.SelectedStart + " -> " + defaults.SelectedEnd},
+		dllog.HeaderField{Key: "API Key", Value: utils.MaskAPIKey(apiKey) + " (Analytics)"},
+	)
+	if defaults.PastStart != "" && defaults.PastEnd != "" {
+		dllog.Log("Past period: %s -> %s", defaults.PastStart, defaults.PastEnd)
+	}
+	dllog.Log("Page size: %d, Rate limit: %d req/min, burst: %d", defaults.PageSize, defaults.RateLimit, defaults.BurstLimit)
 
 	// Create repository
 	repo, err := sqlite.NewSQLiteSalesRepository(cfg.FunnelAggregated.DBPath)
@@ -94,21 +103,6 @@ func main() {
 		log.Fatalf("❌ Failed to open database: %v", err)
 	}
 	defer repo.Close()
-
-	// Apply defaults
-	defaults := cfg.FunnelAggregated.GetDefaults()
-
-	fmt.Printf("📊 AGGREGATED FUNNEL MODE: Загрузка агрегированных данных\n")
-	fmt.Printf("📅 Selected период: %s → %s\n", defaults.SelectedStart, defaults.SelectedEnd)
-	if defaults.PastStart != "" && defaults.PastEnd != "" {
-		fmt.Printf("📅 Past период:    %s → %s\n", defaults.PastStart, defaults.PastEnd)
-	}
-	fmt.Printf("📦 Размер страницы: %d товаров\n", defaults.PageSize)
-	fmt.Printf("⏱️  Rate limit: %d req/min, burst: %d\n", defaults.RateLimit, defaults.BurstLimit)
-	fmt.Println(repeat("=", 71))
-
-	// Show which key is being used
-	fmt.Printf("🔑 API Key: %s (Analytics)\n", maskAPIKey(apiKey))
 
 	// Create WB client
 	wbClient := wb.New(apiKey)
@@ -145,22 +139,6 @@ func loadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
-}
-
-// printHeader prints utility header with configuration info.
-func printHeader(cfg *Config, configPath string) {
-	fmt.Println("📥 WB Aggregated Funnel Downloader - Загрузка агрегированной воронки")
-	fmt.Println(repeat("=", 71))
-	fmt.Printf("Config:     %s\n", configPath)
-	fmt.Printf("База:       %s\n", cfg.FunnelAggregated.DBPath)
-}
-
-// maskAPIKey hides most of the API key for security.
-func maskAPIKey(key string) string {
-	if len(key) <= 8 {
-		return "***"
-	}
-	return key[:4] + "..." + key[len(key)-4:]
 }
 
 // printHelp prints usage information.

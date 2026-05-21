@@ -14,13 +14,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -62,7 +63,10 @@ func main() {
 	}
 
 	// Print header
-	printHeader(cfg, snapshotDate, *mock)
+	dllog.PrintHeader("WB Stocks Warehouse Downloader",
+		dllog.HeaderField{Key: "Database", Value: cfg.Stocks.DbPath},
+		dllog.HeaderField{Key: "Date", Value: snapshotDate},
+	)
 
 	// Handle Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
@@ -107,7 +111,7 @@ func main() {
 		wbClient.SetRateLimit("get_stocks_warehouses", rl.Warehouse, rl.WarehouseBurst, rl.WarehouseApi, rl.WarehouseApiBurst)
 		wbClient.SetAdaptiveParams(0, cfg.Stocks.GetDefaults().AdaptiveProbeAfter, cfg.Stocks.GetDefaults().MaxBackoffSeconds)
 		client = wbClient // *wb.Client satisfies StocksClient directly
-		fmt.Printf("API Key: %s...\n", maskKey(apiKey))
+		dllog.Log("API Key: %s", utils.MaskAPIKey(apiKey))
 	}
 
 	// Gap detection
@@ -123,22 +127,17 @@ func main() {
 
 	// Download snapshot
 	fmt.Printf("\nDownloading stock snapshot for %s...\n", snapshotDate)
+	downloadStart := time.Now()
 	result, err := DownloadStockSnapshot(ctx, client, repo, snapshotDate, rl.Warehouse, rl.WarehouseBurst)
 	if err != nil {
 		log.Fatalf("Failed to download stocks: %v", err)
 	}
 
 	// Summary
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println("Download complete!")
-	fmt.Printf("  Snapshot:  %s\n", snapshotDate)
-	fmt.Printf("  Rows:      %d\n", result.TotalRows)
-	fmt.Printf("  Pages:     %d\n", result.Pages)
-	fmt.Printf("  Database:  %s\n", cfg.Stocks.DbPath)
-
-	// Verify count
 	count, _ := repo.CountStocks(ctx)
-	fmt.Printf("  DB total:  %d\n", count)
+	dllog.Done(time.Since(downloadStart), "%d rows, %d pages, DB total: %d",
+		result.TotalRows, result.Pages, count)
+	dllog.Log("Snapshot: %s, Database: %s", snapshotDate, cfg.Stocks.DbPath)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -176,13 +175,6 @@ func getAPIKey(cfg *Config) string {
 	return cfg.WB.APIKey
 }
 
-func maskKey(key string) string {
-	if len(key) < 10 {
-		return key
-	}
-	return key[:5] + "..." + key[len(key)-3:]
-}
-
 func printHelp() {
 	fmt.Print(`WB Stocks Warehouse Downloader - Download warehouse stock snapshots from WB API
 
@@ -211,19 +203,4 @@ Examples:
   go run . --clean --db=test-stocks.db
 
 `)
-}
-
-func printHeader(cfg *Config, snapshotDate string, mock bool) {
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println("WB Stocks Warehouse Downloader")
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Printf("Database:  %s\n", cfg.Stocks.DbPath)
-	fmt.Printf("Date:      %s\n", snapshotDate)
-	if cfg.Stocks.FirstDate != "" {
-		fmt.Printf("FirstDate: %s\n", cfg.Stocks.FirstDate)
-	}
-	if mock {
-		fmt.Println("Mode:      Mock")
-	}
-	fmt.Println(strings.Repeat("=", 60))
 }

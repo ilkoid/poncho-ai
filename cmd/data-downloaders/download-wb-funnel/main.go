@@ -20,7 +20,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -84,11 +86,14 @@ func main() {
 	}()
 
 	// Print header
-	printHeader(cfg, *configPath)
+	dllog.PrintHeader("WB Funnel Downloader",
+		dllog.HeaderField{Key: "Config", Value: *configPath},
+		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DBPath},
+		dllog.HeaderField{Key: "Refresh", Value: fmt.Sprintf("%d дней", cfg.Storage.FunnelRefreshWindow)},
+	)
 
 	// Show download start time
-	fmt.Printf("🕐 Начало загрузки: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-	fmt.Println(repeat("=", 71))
+	dllog.Log("Начало загрузки: %s", time.Now().Format("2006-01-02 15:04:05"))
 
 	// Create SalesRepository
 	repo, err := sqlite.NewSQLiteSalesRepository(cfg.Storage.DBPath)
@@ -102,15 +107,14 @@ func main() {
 	funnelDays := funnelDefaults.Days
 	funnelBatchSize := funnelDefaults.BatchSize
 
-	fmt.Printf("📊 FUNNEL MODE: Загрузка аналитики воронки\n")
+	dllog.Log("FUNNEL MODE: Загрузка аналитики воронки")
 	// Period info is shown in LoadFunnelHistory (handles from/to vs days)
-	fmt.Printf("📦 Batch size: %d товаров\n", funnelBatchSize)
-	fmt.Printf("⏱️  Rate limit: %d req/min (desired), %d req/min (api floor), burst: %d\n",
+	dllog.Log("Batch size: %d товаров", funnelBatchSize)
+	dllog.Log("Rate limit: %d req/min (desired), %d req/min (api floor), burst: %d",
 		funnelDefaults.FunnelRateLimit, funnelDefaults.FunnelRateLimitApi, funnelDefaults.FunnelRateLimitBurst)
-	fmt.Println(repeat("=", 71))
 
 	// Show which key is being used
-	fmt.Printf("🔑 API Key: %s (Analytics)\n", maskAPIKey(analyticsKey))
+	dllog.Log("API Key: %s (Analytics)", utils.MaskAPIKey(analyticsKey))
 
 	// Create WB client for Analytics API with funnel-specific rate limits
 	wbCfg := config.WBConfig{
@@ -165,23 +169,6 @@ func loadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
-}
-
-// printHeader prints utility header with configuration info.
-func printHeader(cfg *Config, configPath string) {
-	fmt.Println("📥 WB Funnel Downloader - Загрузка аналитики воронки")
-	fmt.Println(repeat("=", 71))
-	fmt.Printf("Config:     %s\n", configPath)
-	fmt.Printf("База:       %s\n", cfg.Storage.DBPath)
-	fmt.Printf("Refresh:    %d дней\n", cfg.Storage.FunnelRefreshWindow)
-}
-
-// maskAPIKey hides most of the API key for security.
-func maskAPIKey(key string) string {
-	if len(key) <= 8 {
-		return "***"
-	}
-	return key[:4] + "..." + key[len(key)-4:]
 }
 
 // printHelp prints usage information.

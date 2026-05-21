@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -46,7 +47,7 @@ func DownloadRegionSales(
 	from, _ := time.Parse("2006-01-02", begin)
 	earliestAvailable := time.Now().AddDate(0, 0, -maxRegionSaleDataAvailability)
 	if from.Before(earliestAvailable) {
-		fmt.Printf("⚠️  Warning: begin date %s is older than %d days — WB API may return no data for this period\n",
+		dllog.Error("Warning: begin date %s is older than %d days — WB API may return no data for this period",
 			begin, maxRegionSaleDataAvailability)
 	}
 
@@ -57,7 +58,7 @@ func DownloadRegionSales(
 	default:
 	}
 
-	fmt.Printf("Requesting %s to %s\n", begin, end)
+	dllog.Log("Requesting %s to %s", begin, end)
 
 	items, err := client.GetRegionSales(ctx, begin, end, rateLimit, burst)
 	if err != nil {
@@ -65,7 +66,7 @@ func DownloadRegionSales(
 	}
 
 	if len(items) == 0 {
-		fmt.Println("No data")
+		dllog.Log("No data")
 		result.Requests = 1
 		result.Duration = time.Since(start)
 		return result, nil
@@ -79,6 +80,6 @@ func DownloadRegionSales(
 	result.TotalRows = n
 	result.Requests = 1
 	result.Duration = time.Since(start)
-	fmt.Printf("✅ Saved %d rows\n", n)
+	dllog.Log("Saved %d rows", n)
 	return result, nil
 }

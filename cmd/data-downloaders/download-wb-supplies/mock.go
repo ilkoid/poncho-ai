@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -19,7 +19,7 @@ func runMock(ctx context.Context, repo *sqlite.SQLiteSalesRepository, supplyCfg 
 		{ID: 300461, Name: "Гомель 2", Address: "Гомель", WorkTime: "24/7", IsActive: false, IsTransitActive: true},
 	}
 	whSaved, _ := repo.SaveWarehouses(ctx, warehouses)
-	fmt.Printf("  ✅ Складов: %d\n", whSaved)
+	dllog.Log("warehouses: %d", whSaved)
 
 	// 2. Mock tariffs
 	tariffs := []wb.TransitTariff{
@@ -35,7 +35,7 @@ func runMock(ctx context.Context, repo *sqlite.SQLiteSalesRepository, supplyCfg 
 		},
 	}
 	tSaved, _ := repo.SaveTransitTariffs(ctx, tariffs)
-	fmt.Printf("  ✅ Тарифов: %d\n", tSaved)
+	dllog.Log("tariffs: %d", tSaved)
 
 	// 3. Mock supplies
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -51,7 +51,7 @@ func runMock(ctx context.Context, repo *sqlite.SQLiteSalesRepository, supplyCfg 
 		rows = append(rows, SupplyRowFromAPI(&supplies[i], now))
 	}
 	sSaved, _ := repo.SaveSupplies(ctx, rows)
-	fmt.Printf("  ✅ Поставок: %d\n", sSaved)
+	dllog.Log("supplies: %d", sSaved)
 
 	// 3b. Mock supply details (warehouse info)
 	whID1 := 507
@@ -83,7 +83,7 @@ func runMock(ctx context.Context, repo *sqlite.SQLiteSalesRepository, supplyCfg 
 		}(),
 	}
 	dSaved, _ := repo.SaveSupplies(ctx, detailRows)
-	fmt.Printf("  ✅ Деталей поставок: %d\n", dSaved)
+	dllog.Log("supply details: %d", dSaved)
 
 	// 4. Mock goods
 	goods := []wb.GoodInSupply{
@@ -91,19 +91,19 @@ func runMock(ctx context.Context, repo *sqlite.SQLiteSalesRepository, supplyCfg 
 		{Barcode: "9876543210987", VendorCode: "wb7xkqw2a", NmID: 987456655, TechSize: "M", Quantity: 5},
 	}
 	gSaved, _ := repo.SaveSupplyGoods(ctx, supplyID1, 34601223, goods)
-	fmt.Printf("  ✅ Товаров: %d\n", gSaved)
+	dllog.Log("goods: %d", gSaved)
 
 	// 5. Mock packages
 	boxes := []wb.Box{
 		{PackageCode: "WB_689", Quantity: 1, Barcodes: []wb.GoodInBox{{Barcode: "1234567891234", Quantity: 1}}},
 	}
 	pSaved, _ := repo.SaveSupplyPackages(ctx, supplyID1, 34601223, boxes)
-	fmt.Printf("  ✅ Упаковок: %d\n", pSaved)
+	dllog.Log("packages: %d", pSaved)
 
 	// 6. Verify counts
 	supplyCount, _ := repo.CountSupplies(ctx)
 	goodsCount, _ := repo.CountSupplyGoods(ctx)
-	fmt.Printf("\n  Итого в БД: %d поставок, %d товаров\n", supplyCount, goodsCount)
+	dllog.Log("DB total: %d supplies, %d goods", supplyCount, goodsCount)
 }
 
 func strPtr(s string) *string { return &s }

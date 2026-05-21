@@ -14,13 +14,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -47,7 +48,7 @@ func main() {
 	// Load config
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
-		log.Printf("⚠️  Config not found, using defaults: %v", err)
+		dllog.Log("config not found, using defaults: %v", err)
 		cfg = defaultConfig()
 	}
 
@@ -82,7 +83,23 @@ func main() {
 	beginDate, endDate := calculateDateRange(cfg)
 
 	// Print header
-	printHeader(cfg, beginDate, endDate, *mock)
+	{
+		fields := []dllog.HeaderField{
+			{Key: "Config", Value: cfg.StockHistory.DbPath},
+			{Key: "Period", Value: fmt.Sprintf("%s → %s", beginDate, endDate)},
+			{Key: "Type", Value: cfg.StockHistory.ReportType},
+		}
+		if cfg.StockHistory.StockType != "" {
+			fields = append(fields, dllog.HeaderField{Key: "Stock Type", Value: cfg.StockHistory.StockType})
+		}
+		if cfg.StockHistory.Resume {
+			fields = append(fields, dllog.HeaderField{Key: "Resume", Value: "✓"})
+		}
+		if *mock {
+			fields = append(fields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
+		}
+		dllog.PrintHeader("WB Stock History CSV Downloader", fields...)
+	}
 
 	// Handle Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
@@ -90,22 +107,22 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\n⚠️  Interrupted!")
+		dllog.Error("interrupted!")
 		cancel()
 	}()
 
 	// Delete database if --clean
 	if *clean {
 		if err := os.Remove(cfg.StockHistory.DbPath); err != nil && !os.IsNotExist(err) {
-			log.Fatalf("❌ Failed to delete database: %v", err)
+			log.Fatalf("failed to delete database: %v", err)
 		}
-		fmt.Println("🗑️  Database deleted")
+		dllog.Log("database deleted")
 	}
 
 	// Create repository
 	repo, err := sqlite.NewSQLiteSalesRepository(cfg.StockHistory.DbPath)
 	if err != nil {
-		log.Fatalf("❌ Failed to create repository: %v", err)
+		log.Fatalf("failed to create repository: %v", err)
 	}
 	defer repo.Close()
 
@@ -114,33 +131,31 @@ func main() {
 	if *mock {
 		mockClient := NewMockStockHistoryClient()
 		PopulateMockStockHistory(mockClient, 5)
-		fmt.Println("🎭 Mock mode - using simulated data")
+		dllog.Log("mock mode — using simulated data")
 		// Mock doesn't implement wb.Client, so we skip the actual download
-		fmt.Println("\n⚠️  Mock mode - skipping actual download")
+		dllog.Log("mock mode — skipping actual download")
 		return
 	} else {
 		apiKey := getAPIKey(cfg)
 		if apiKey == "" {
-			log.Fatal("❌ No API key. Set WB_API_KEY")
+			log.Fatal("no API key. Set WB_API_KEY")
 		}
 		wbClient = wb.New(apiKey)
-		fmt.Printf("🔑 API Key: %s...\n", maskKey(apiKey))
+		dllog.Log("API Key: %s", utils.MaskAPIKey(apiKey))
 	}
 
 	// Download stock history
-	fmt.Printf("\n📥 Downloading stock history (%s)...\n", cfg.StockHistory.ReportType)
+	t0 := time.Now()
+	dllog.Log("downloading stock history (%s)...", cfg.StockHistory.ReportType)
 	result, err := DownloadStockHistory(ctx, wbClient, repo, cfg.StockHistory, beginDate, endDate)
 	if err != nil {
-		log.Fatalf("❌ Failed to download: %v", err)
+		dllog.Error("failed to download: %v", err)
+		os.Exit(1)
 	}
 
 	// Summary
-	fmt.Println("\n" + strings.Repeat("=", 71))
-	fmt.Println("🎉 Download complete!")
-	fmt.Printf("  Report ID:  %s\n", result.ReportID)
-	fmt.Printf("  Rows:       %d\n", result.RowsCount)
-	fmt.Printf("  Period:     %s → %s\n", beginDate, endDate)
-	fmt.Printf("  Database:   %s\n", cfg.StockHistory.DbPath)
+	dllog.Done(time.Since(t0), "report=%s rows=%d period=%s→%s db=%s",
+		result.ReportID, result.RowsCount, beginDate, endDate, cfg.StockHistory.DbPath)
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -185,13 +200,6 @@ func getAPIKey(cfg *Config) string {
 	return cfg.WB.APIKey
 }
 
-func maskKey(key string) string {
-	if len(key) < 10 {
-		return key
-	}
-	return key[:5] + "..." + key[len(key)-3:]
-}
-
 func printHelp() {
 	fmt.Print(`WB Stock History CSV Downloader - Download historical stock data from WB API
 
@@ -226,23 +234,4 @@ Examples:
   go run . --mock --days=3
 
 `)
-}
-
-func printHeader(cfg *Config, beginDate, endDate string, mock bool) {
-	fmt.Println(strings.Repeat("=", 71))
-	fmt.Println("📥 WB Stock History CSV Downloader")
-	fmt.Println(strings.Repeat("=", 71))
-	fmt.Printf("Config:     %s\n", cfg.StockHistory.DbPath)
-	fmt.Printf("Period:     %s → %s\n", beginDate, endDate)
-	fmt.Printf("Type:       %s\n", cfg.StockHistory.ReportType)
-	if cfg.StockHistory.StockType != "" {
-		fmt.Printf("Stock Type: %s\n", cfg.StockHistory.StockType)
-	}
-	if cfg.StockHistory.Resume {
-		fmt.Println("Resume:     ✓")
-	}
-	if mock {
-		fmt.Println("Mode:       🎭 Mock")
-	}
-	fmt.Println(strings.Repeat("=", 71))
 }

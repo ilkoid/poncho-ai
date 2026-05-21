@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -34,7 +35,7 @@ func DownloadReference(
 	rl config.SupplyRateLimits,
 ) (int, int, error) {
 	// 1. Warehouses
-	fmt.Println("  Скачивание справочника складов...")
+	dllog.Log("downloading warehouses reference...")
 	warehouses, err := client.GetWarehouses(ctx, rl.Ref, rl.RefBurst)
 	if err != nil {
 		return 0, 0, fmt.Errorf("get warehouses: %w", err)
@@ -43,10 +44,10 @@ func DownloadReference(
 	if err != nil {
 		return 0, 0, fmt.Errorf("save warehouses: %w", err)
 	}
-	fmt.Printf("  ✅ Складов: %d\n", whSaved)
+	dllog.Log("warehouses: %d saved", whSaved)
 
 	// 2. Transit tariffs
-	fmt.Println("  Скачивание транзитных тарифов...")
+	dllog.Log("downloading transit tariffs...")
 	tariffs, err := client.GetTransitTariffs(ctx, rl.Ref, rl.RefBurst)
 	if err != nil {
 		return whSaved, 0, fmt.Errorf("get transit tariffs: %w", err)
@@ -55,7 +56,7 @@ func DownloadReference(
 	if err != nil {
 		return whSaved, 0, fmt.Errorf("save tariffs: %w", err)
 	}
-	fmt.Printf("  ✅ Тарифов: %d\n", tSaved)
+	dllog.Log("tariffs: %d saved", tSaved)
 
 	return whSaved, tSaved, nil
 }
@@ -91,7 +92,7 @@ func DownloadSupplies(
 		}
 
 		allSupplies = append(allSupplies, supplies...)
-		fmt.Printf("  Страница: offset=%d, получено=%d, всего=%d\n", offset, len(supplies), len(allSupplies))
+		dllog.Log("page: offset=%d received=%d total=%d", offset, len(supplies), len(allSupplies))
 
 		if len(supplies) < suppliesPageSize {
 			break
@@ -139,7 +140,7 @@ func DownloadSupplyDetails(
 		details, err := client.GetSupplyDetails(ctx, rl.Details, rl.DetailsBurst, pair.SupplyID)
 		totalRequests++
 		if err != nil {
-			fmt.Printf("  ❌ Ошибка детали supply_id=%d: %v\n", pair.SupplyID, err)
+			dllog.Error("details supply_id=%d: %v", pair.SupplyID, err)
 		} else if details != nil {
 			row := sqlite.SupplyFromAPIDetail(details, now)
 			row.SupplyID = pair.SupplyID
@@ -154,7 +155,7 @@ func DownloadSupplyDetails(
 			goods, err := client.GetSupplyGoods(ctx, rl.Goods, rl.GoodsBurst, pair.SupplyID, goodsPageSize, goodsOffset)
 			totalRequests++
 			if err != nil {
-				fmt.Printf("  ❌ Ошибка товары supply_id=%d: %v\n", pair.SupplyID, err)
+				dllog.Error("goods supply_id=%d: %v", pair.SupplyID, err)
 				break
 			}
 			allGoods = append(allGoods, goods...)
@@ -167,7 +168,7 @@ func DownloadSupplyDetails(
 		if len(allGoods) > 0 {
 			saved, err := repo.SaveSupplyGoods(ctx, pair.SupplyID, pair.PreorderID, allGoods)
 			if err != nil {
-				fmt.Printf("  ❌ Ошибка сохранения товаров supply_id=%d: %v\n", pair.SupplyID, err)
+				dllog.Error("save goods supply_id=%d: %v", pair.SupplyID, err)
 			} else {
 				totalGoods += saved
 			}
@@ -177,11 +178,11 @@ func DownloadSupplyDetails(
 		boxes, err := client.GetSupplyPackages(ctx, rl.Package, rl.PackageBurst, pair.SupplyID)
 		totalRequests++
 		if err != nil {
-			fmt.Printf("  ❌ Ошибка упаковка supply_id=%d: %v\n", pair.SupplyID, err)
+			dllog.Error("packages supply_id=%d: %v", pair.SupplyID, err)
 		} else if len(boxes) > 0 {
 			saved, err := repo.SaveSupplyPackages(ctx, pair.SupplyID, pair.PreorderID, boxes)
 			if err != nil {
-				fmt.Printf("  ❌ Ошибка сохранения упаковки supply_id=%d: %v\n", pair.SupplyID, err)
+				dllog.Error("save packages supply_id=%d: %v", pair.SupplyID, err)
 			} else {
 				totalPackages += saved
 			}
@@ -189,8 +190,7 @@ func DownloadSupplyDetails(
 
 		// Progress every 10 supplies
 		if (i+1)%10 == 0 || i+1 == len(supplyIDs) {
-			fmt.Printf("  Обработано поставок: %d/%d (товаров: %d, упаковок: %d)\n",
-				i+1, len(supplyIDs), totalGoods, totalPackages)
+			dllog.Progress(i+1, len(supplyIDs), "supplies", fmt.Sprintf("goods: %d, packages: %d", totalGoods, totalPackages), time.Time{})
 		}
 	}
 
@@ -198,9 +198,9 @@ func DownloadSupplyDetails(
 	if len(detailRows) > 0 {
 		saved, err := repo.SaveSupplies(ctx, detailRows)
 		if err != nil {
-			fmt.Printf("  ❌ Ошибка сохранения деталей поставок: %v\n", err)
+			dllog.Error("save supply details: %v", err)
 		} else {
-			fmt.Printf("  ✅ Деталей поставок обновлено: %d\n", saved)
+			dllog.Log("supply details updated: %d", saved)
 		}
 	}
 
