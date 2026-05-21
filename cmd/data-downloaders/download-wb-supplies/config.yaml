@@ -2,7 +2,7 @@
 # API: supplies-api.wildberries.ru (FBW Supplies)
 
 wb:
-  api_key: ""
+  api_key: "WB_API_SUPPLIES"
   timeout: "60s"
 
 supply:

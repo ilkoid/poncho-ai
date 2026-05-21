@@ -128,6 +128,31 @@ CREATE INDEX IF NOT EXISTS idx_pim_goods_family ON pim_goods(family);
 
 -- Index for freshness checks
 CREATE INDEX IF NOT EXISTS idx_pim_goods_downloaded_at ON pim_goods(downloaded_at);
+
+-- ============================================================================
+-- 1C RESTS (warehouse stock levels / остатки)
+-- Grain: one row per (good_guid, sku_guid, storage_guid, snapshot_date)
+-- JOIN chain: onec_rests.good_guid → onec_goods.guid → onec_goods.article
+--
+--	→ cards.vendor_code → cards.nm_id
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS onec_rests (
+    good_guid       TEXT    NOT NULL,
+    sku_guid        TEXT    NOT NULL DEFAULT '',
+    storage_guid    TEXT    NOT NULL,
+    snapshot_date   TEXT    NOT NULL,
+    storage_name    TEXT    DEFAULT '',
+    stock           INTEGER DEFAULT 0,
+    reserv          INTEGER DEFAULT 0,
+    free            INTEGER DEFAULT 0,
+    first_stage     INTEGER DEFAULT 0,
+    downloaded_at   TEXT    DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (good_guid, sku_guid, storage_guid, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_onec_rests_snapshot ON onec_rests(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_onec_rests_good_guid ON onec_rests(good_guid);
+CREATE INDEX IF NOT EXISTS idx_onec_rests_storage_guid ON onec_rests(storage_guid);
 `
 
 // GetOneCSchemaSQL returns the SQL for 1C/PIM tables creation.

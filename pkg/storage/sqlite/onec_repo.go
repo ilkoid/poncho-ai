@@ -233,10 +233,90 @@ func (r *SQLiteSalesRepository) CountPIMGoods(ctx context.Context) (int, error) 
 
 // CleanOneCData deletes all data from 1C/PIM tables.
 func (r *SQLiteSalesRepository) CleanOneCData(ctx context.Context) error {
-	for _, table := range []string{"onec_prices", "onec_goods_sku", "onec_goods", "pim_goods"} {
+	for _, table := range []string{"onec_prices", "onec_goods_sku", "onec_goods", "pim_goods", "onec_rests"} {
 		if _, err := r.db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("clean table %s: %w", table, err)
 		}
 	}
 	return nil
+}
+
+// SaveOneCRests saves a batch of 1C rests rows using INSERT OR REPLACE.
+// snapshotDate is applied to all rows (YYYY-MM-DD, set by caller).
+// Returns number of rows inserted/replaced.
+func (r *SQLiteSalesRepository) SaveOneCRests(ctx context.Context, rests []OneCRestsRow, snapshotDate string) (int, error) {
+	if len(rests) == 0 {
+		return 0, nil
+	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
+	const batchSize = 500
+	totalSaved := 0
+
+	for i := 0; i < len(rests); i += batchSize {
+		end := min(i+batchSize, len(rests))
+		batch := rests[i:end]
+
+		var placeholders []string
+		var args []any
+
+		for _, r := range batch {
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			args = append(args,
+				r.GoodGUID, r.SKUGUID, r.StorageGUID, snapshotDate,
+				r.StorageName, r.Stock, r.Reserv, r.Free, boolToInt(r.FirstStage),
+			)
+		}
+
+		query := fmt.Sprintf(`
+			INSERT OR REPLACE INTO onec_rests (
+				good_guid, sku_guid, storage_guid, snapshot_date,
+				storage_name, stock, reserv, free, first_stage
+			) VALUES %s
+		`, strings.Join(placeholders, ", "))
+
+		result, err := r.db.ExecContext(ctx, query, args...)
+		if err != nil {
+			return totalSaved, fmt.Errorf("save onec_rests batch (offset %d): %w", i, err)
+		}
+
+		affected, _ := result.RowsAffected()
+		totalSaved += int(affected)
+	}
+
+	return totalSaved, nil
+}
+
+// CountOneCRests returns total number of 1C rests rows in the database.
+func (r *SQLiteSalesRepository) CountOneCRests(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM onec_rests").Scan(&count)
+	return count, err
+}
+
+// CleanOneCRests deletes all data from onec_rests table.
+func (r *SQLiteSalesRepository) CleanOneCRests(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM onec_rests")
+	return err
+}
+
+// PurgeOldRestsSnapshots deletes snapshots older than retentionDays counting from yesterday.
+// retentionDays=7 → keep snapshots from date('now','-1 day') through date('now','-7 days').
+// Today's snapshot is always kept (day still in progress).
+func (r *SQLiteSalesRepository) PurgeOldRestsSnapshots(ctx context.Context, retentionDays int) (int, error) {
+	if retentionDays <= 0 {
+		return 0, nil
+	}
+
+	cutoff := fmt.Sprintf("-%d days", retentionDays+1)
+	result, err := r.db.ExecContext(ctx,
+		"DELETE FROM onec_rests WHERE snapshot_date < date('now', ?)", cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("purge old rests snapshots: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	return int(affected), nil
 }

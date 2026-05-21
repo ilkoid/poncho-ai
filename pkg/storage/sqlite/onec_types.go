@@ -79,3 +79,16 @@ type PIMGoodsRow struct {
 	Updated           string
 	ValuesJSON        string // Full values dict as JSON
 }
+
+// OneCRestsRow — lightweight input struct for batch save.
+// Maps to onec_rests table. snapshot_date set by caller.
+type OneCRestsRow struct {
+	GoodGUID    string
+	SKUGUID     string
+	StorageGUID string
+	StorageName string
+	Stock       int
+	Reserv      int
+	Free        int
+	FirstStage  bool
+}

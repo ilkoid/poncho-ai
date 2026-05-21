@@ -60,6 +60,10 @@ type SQLiteSalesRepository struct {
 // NewSQLiteSalesRepository creates a new SQLite repository.
 // Opens database at given path and initializes schema.
 func NewSQLiteSalesRepository(dbPath string) (*SQLiteSalesRepository, error) {
+	if dbPath == "" {
+		return nil, fmt.Errorf("db_path is required — set it in config or --db flag")
+	}
+
 	// DSN parameters set PRAGMAs on every connection (persist across reconnects).
 	// Supported by go-sqlite3: _journal_mode, _cache_size, _busy_timeout, _foreign_keys, _synchronous.
 	// _journal_mode=WAL also auto-sets synchronous=NORMAL.

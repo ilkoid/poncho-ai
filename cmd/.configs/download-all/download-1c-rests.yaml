@@ -1,0 +1,7 @@
+onec_rests:
+  rest_url: ${ONEC_API_REST_URL}
+  db_path: "/var/db/wb-sales.db"
+  retention_days: 7
+  storage_filter:
+    guids: []
+    name_patterns: []

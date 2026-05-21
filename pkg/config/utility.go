@@ -8,6 +8,8 @@
 //   - Rule 2: Configuration — YAML с ENV поддержкой
 package config
 
+import "strings"
+
 // PromotionConfig — конфигурация для download-wb-promotion утилиты.
 //
 // Используется для загрузки данных о продвижении товаров с WB API.
@@ -988,6 +990,56 @@ func (c OneCConfig) GetDefaults() OneCConfig {
 	result := c
 	if result.DbPath == "" {
 		result.DbPath = "/var/db/wb-sales.db"
+	}
+	return result
+}
+
+// OneCRestsStorageFilter defines warehouse filtering rules.
+// A storage row passes if it matches GUID OR name pattern (union).
+// If both lists are empty, all storages are accepted.
+type OneCRestsStorageFilter struct {
+	GUIDs        []string `yaml:"guids"`         // exact storage_guid match
+	NamePatterns []string `yaml:"name_patterns"` // case-insensitive substring match on storage_name
+}
+
+// Matches returns true if the storage row passes the filter.
+func (f OneCRestsStorageFilter) Matches(guid, name string) bool {
+	if len(f.GUIDs) == 0 && len(f.NamePatterns) == 0 {
+		return true
+	}
+	for _, g := range f.GUIDs {
+		if strings.EqualFold(g, guid) {
+			return true
+		}
+	}
+	lower := strings.ToLower(name)
+	for _, p := range f.NamePatterns {
+		if strings.Contains(lower, strings.ToLower(p)) {
+			return true
+		}
+	}
+	return false
+}
+
+// OneCRestsConfig — конфигурация для download-1c-rests утилиты.
+//
+// Загружает остатки товаров со складов из 1C RESTs API.
+// URL содержит basic auth (user:pass@host) и подставляется через ONEC_API_REST_URL.
+type OneCRestsConfig struct {
+	RestURL       string                  `yaml:"rest_url"`
+	DbPath        string                  `yaml:"db_path"`
+	RetentionDays int                     `yaml:"retention_days"`
+	StorageFilter OneCRestsStorageFilter  `yaml:"storage_filter"`
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c OneCRestsConfig) GetDefaults() OneCRestsConfig {
+	result := c
+	if result.DbPath == "" {
+		result.DbPath = "/var/db/wb-sales.db"
+	}
+	if result.RetentionDays == 0 {
+		result.RetentionDays = 7
 	}
 	return result
 }
