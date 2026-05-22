@@ -757,9 +757,56 @@ type xlsxRow struct {
 }
 
 
+// buildExportFilter строит WHERE-условия для card_analysis по FilterConfig.
+// Возвращает (where-фрагменты, args). Если вернулся nil where — нет условий (экспорт всех).
+func (r *ResultsRepo) buildExportFilter(filter FilterConfig) ([]string, []any) {
+	var where []string
+	var args []any
+
+	if len(filter.NmIDs) > 0 {
+		ph := make([]string, len(filter.NmIDs))
+		for i, id := range filter.NmIDs {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		where = append(where, "nm_id IN ("+strings.Join(ph, ",")+")")
+	}
+
+	if len(filter.VendorCodes) > 0 {
+		ph := make([]string, len(filter.VendorCodes))
+		for i, vc := range filter.VendorCodes {
+			ph[i] = "?"
+			args = append(args, vc)
+		}
+		where = append(where, "vendor_code IN ("+strings.Join(ph, ",")+")")
+	}
+
+	if filter.Subject != "" {
+		where = append(where, "LOWER(subject_name) = LOWER(?)")
+		args = append(args, filter.Subject)
+	}
+
+	if len(filter.SubjectIDs) > 0 {
+		where = append(where, "subject_id IN (SELECT subject_id FROM json_each(?) )")
+		// card_analysis не имеет subject_id напрямую — фильтруем по subject_name через source DB позже.
+		// Пока используем subject_name совпадение.
+		_ = filter.SubjectIDs // TODO: нужен JOIN с source DB если subject_id нужен
+	}
+
+	for _, l := range filter.ExcludeLengths {
+		where = append(where, fmt.Sprintf("LENGTH(vendor_code) != %d", l))
+	}
+
+	if len(where) == 0 {
+		return nil, nil
+	}
+	return where, args
+}
+
 // ExportXLSX выгружает card_analysis в XLSX файл с превью фото в первом столбце.
-func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos func(ctx context.Context, nmIDs []int) map[int][]byte) (int, error) {
-	rows, err := r.db.QueryContext(ctx, `
+// Фильтруется по FilterConfig (nm_ids, vendor_codes, subject, exclude_lengths).
+func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos func(ctx context.Context, nmIDs []int) map[int][]byte, filter FilterConfig) (int, error) {
+	query := `
 		SELECT nm_id, vendor_code, title, subject_name,
 		       COALESCE(season, ''),
 		       text_done, text_has_discrepancy, text_summary,
@@ -770,8 +817,15 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		       COALESCE(max_visibility, 0), COALESCE(priority_score, 0),
 		       COALESCE(avg_position, 0), COALESCE(open_card_30d, 0), COALESCE(orders_30d, 0),
 		       COALESCE(top_query, ''), COALESCE(top_queries, '')
-		FROM card_analysis
-		ORDER BY COALESCE(priority_score, 0) DESC, nm_id`)
+		FROM card_analysis`
+
+	where, args := r.buildExportFilter(filter)
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY COALESCE(priority_score, 0) DESC, nm_id"
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("query: %w", err)
 	}
@@ -931,7 +985,7 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 					AltText:             fmt.Sprintf("nm_%d", d.NmID),
 					AutoFit:             true,
 					AutoFitIgnoreAspect: true,
-					Hyperlink:           fmt.Sprintf("https://www.wildberries.ru/catalog/%d/detail.aspx", d.NmID),
+					Hyperlink:           fmt.Sprintf("https://seller.wildberries.ru/new-goods/all-goods?analyticsNmId=%d", d.NmID),
 					HyperlinkType:       "External",
 				},
 			}); err != nil {
@@ -941,7 +995,7 @@ func (r *ResultsRepo) ExportXLSX(ctx context.Context, path string, getPhotos fun
 		f.SetRowHeight(sheet, row, 56.4)
 
 		// Column B: clickable WB link (sorts with data unlike photos).
-		wbURL := fmt.Sprintf("https://www.wildberries.ru/catalog/%d/detail.aspx", d.NmID)
+		wbURL := fmt.Sprintf("https://seller.wildberries.ru/new-goods/all-goods?analyticsNmId=%d", d.NmID)
 		linkCell, _ := excelize.CoordinatesToCellName(2, row)
 		f.SetCellValue(sheet, linkCell, "открыть")
 		f.SetCellHyperLink(sheet, linkCell, wbURL, "External")

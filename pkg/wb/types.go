@@ -363,11 +363,14 @@ type CardTag struct {
 }
 
 // CardUpdateItem — карточка в теле запроса POST /content/v2/cards/update.
+// API полностью перезаписывает карточку — все поля должны быть заполнены.
 type CardUpdateItem struct {
 	NmID            int                `json:"nmID"`
 	VendorCode      string             `json:"vendorCode,omitempty"`
+	Brand           string             `json:"brand,omitempty"`
 	Title           string             `json:"title,omitempty"`
 	Description     string             `json:"description,omitempty"`
+	Dimensions      *CardDimensions    `json:"dimensions,omitempty"`
 	Characteristics []CardUpdateCharc  `json:"characteristics,omitempty"`
 	Sizes           []CardSize         `json:"sizes,omitempty"`
 }

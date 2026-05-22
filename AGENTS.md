@@ -1,0 +1,48 @@
+# AGENTS.md
+
+## Fast Start (Verified)
+- Go version is `1.25.1` (`go.mod`); SQLite uses `mattn/go-sqlite3` (CGO required).
+- Main runnable targets are utility entrypoints under `cmd/` (downloaders, analyzers, dashboards).
+- Run full test suite: `go test ./...`
+- Run focused WB adaptive limiter test: `go test ./pkg/wb/ -run TestAdaptiveRateLimit_ReducesOn429 -v`
+- Build one utility fast: `go build ./cmd/data-analyzers/check-card-consistency/`
+- Build all cmd utilities: `go build ./cmd/...`
+
+## Pipeline Commands That Matter
+- Full WB refresh: `bash download-all.sh [days]`
+  - Uses lock file: `.download-all.lock`
+  - Writes to: `/var/db/wb-sales.db`
+  - Phase order in script is intentional: Catalog → Feedbacks → Sales & Revenue → Stock & Logistics → Advertising → Analytics
+- Daily VPS pipeline: `run-daily-analytics.sh`
+  - Expects prebuilt binaries in `bin/`
+  - Loads env from `.env`
+  - Runs non-fatal `git pull` before downloads
+  - Runs MA builder after downloads
+
+## Config & Path Conventions
+- Config loader expands env vars directly from YAML (`config.LoadYAML` + `os.ExpandEnv`), so `${VAR}` placeholders are first-class.
+- Utility configs for full refresh live in `cmd/.configs/download-all/*.yaml`.
+- Most utilities accept `--config` and default to `config.yaml`.
+- `pkg/app/standalone.go` strict mode resolves config next to binary (not CWD), validates prompts dir, and fails fast if prompt files are missing.
+
+## Architecture Guardrails (Do Not Break)
+- Package boundaries are strict:
+  - `pkg/` = reusable library code
+  - `internal/` = app-specific logic
+  - `cmd/` = entrypoint/orchestration
+- Tool interface is immutable:
+  - `Definition() ToolDefinition`
+  - `Execute(ctx, argsJSON string) (string, error)`
+- Tools must be registered through `Registry.Register()` (not called directly).
+- LLM-dependent business logic should depend on `llm.Provider`, not provider SDKs directly.
+- Prefer error returns over panic in business flow.
+
+## WB Client / Downloader Gotchas
+- `wb.NewFromConfig(...)` creates client defaults but per-tool adaptive limiter behavior depends on explicit `SetRateLimit(toolID, ...)`.
+- `toolID` must match between limiter setup and request path usage; mismatches create separate limiter state.
+- Analytics/search endpoints are configured around strict low limits (notably 3 req/min for funnel/search visibility related flows); keep this in mind when changing batch/concurrency.
+
+## DB Reality Check Before Writes
+- Scripted downloader target DB is usually `/var/db/wb-sales.db`.
+- Some analyzers use other DBs (example: `cmd/data-analyzers/check-card-consistency/config.yaml` points to `/mnt/d/db/card-analysis.db`).
+- Before running write operations, confirm the exact DB path in the utility config being used.

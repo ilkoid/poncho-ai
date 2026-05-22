@@ -1,0 +1,13 @@
+wb:
+  api_key: ""
+  timeout: "60s"
+
+sync:
+  db_path: "/var/db/wb-sales.db"
+  api_key_env: "WB_API_KEY"
+  batch_size: 3000
+  rate_limits:
+    update_per_min: 10
+    update_burst: 5
+    update_api_floor: 10
+    update_api_burst: 5

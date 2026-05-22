@@ -37,7 +37,8 @@ type CLIConfig struct {
 	Filter   FilterConfig   `yaml:"filter"`
 	Analysis AnalysisConfig  `yaml:"analysis"`
 	Prompts  PromptConfig   `yaml:"prompts"`
-	WBUpdate WBUpdateConfig `yaml:"wb_update"`
+	WBUpdate        WBUpdateConfig `yaml:"wb_update"`
+	ProtectedCharIDs []int         `yaml:"protected_char_ids"`
 }
 
 // AudienceRule — правила генерации title/description для конкретной аудитории.
@@ -273,7 +274,7 @@ func main() {
 			return downloadThumbnails(ctx, urlMap)
 		}
 
-		n, err := results.ExportXLSX(ctx, *exportPath, photoLoader)
+		n, err := results.ExportXLSX(ctx, *exportPath, photoLoader, cfg.Filter)
 		if err != nil {
 			log.Fatalf("Export: %v", err)
 		}

@@ -320,3 +320,117 @@ func (r *SQLiteSalesRepository) PurgeOldRestsSnapshots(ctx context.Context, rete
 	affected, _ := result.RowsAffected()
 	return int(affected), nil
 }
+
+// ImportDimensions saves a batch of per-SKU dimension rows using INSERT OR REPLACE.
+// Returns number of rows inserted/replaced.
+func (r *SQLiteSalesRepository) ImportDimensions(ctx context.Context, rows []OneCDimensionRow) (int, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
+	const batchSize = 500
+	totalSaved := 0
+
+	for i := 0; i < len(rows); i += batchSize {
+		end := min(i+batchSize, len(rows))
+		batch := rows[i:end]
+
+		var placeholders []string
+		var args []any
+
+		for _, d := range batch {
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			args = append(args,
+				d.GoodGUID, d.SKUGUID, d.GoodName, d.SizeName,
+				d.LengthDM, d.WidthDM, d.HeightDM, d.WeightKG,
+				d.VolumeCM3, d.Source,
+			)
+		}
+
+		query := fmt.Sprintf(`
+			INSERT OR REPLACE INTO onec_dimensions (
+				good_guid, sku_guid, good_name, size_name,
+				length_dm, width_dm, height_dm, weight_kg,
+				volume_cm3, source
+			) VALUES %s
+		`, strings.Join(placeholders, ", "))
+
+		result, err := r.db.ExecContext(ctx, query, args...)
+		if err != nil {
+			return totalSaved, fmt.Errorf("save onec_dimensions batch (offset %d): %w", i, err)
+		}
+
+		affected, _ := result.RowsAffected()
+		totalSaved += int(affected)
+	}
+
+	return totalSaved, nil
+}
+
+// CountDimensions returns total number of rows in onec_dimensions.
+func (r *SQLiteSalesRepository) CountDimensions(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM onec_dimensions").Scan(&count)
+	return count, err
+}
+
+// DimensionAggRow is the aggregated (MAX per good_guid) dimension result.
+type DimensionAggRow struct {
+	NmID       int
+	VendorCode string
+	OldLength  float64
+	OldWidth   float64
+	OldHeight  float64
+	OldWeight  float64
+	NewLength  float64
+	NewWidth   float64
+	NewHeight  float64
+	NewWeight  float64
+}
+
+// GetAggregatedDimensions joins onec_dimensions with cards via onec_goods,
+// aggregates MAX across sizes, and returns only cards with missing dims.
+func (r *SQLiteSalesRepository) GetAggregatedDimensions(ctx context.Context) ([]DimensionAggRow, error) {
+	query := `
+		SELECT
+			c.nm_id,
+			c.vendor_code,
+			COALESCE(c.dim_length, 0),
+			COALESCE(c.dim_width, 0),
+			COALESCE(c.dim_height, 0),
+			COALESCE(c.dim_weight_brutto, 0),
+			MAX(d.length_dm * 10),
+			MAX(d.width_dm * 10),
+			MAX(d.height_dm * 10),
+			MAX(d.weight_kg)
+		FROM onec_dimensions d
+		JOIN onec_goods og ON og.guid = d.good_guid
+		JOIN cards c ON c.vendor_code = og.article
+		WHERE (c.dim_length = 0 OR c.dim_width = 0 OR c.dim_height = 0 OR c.dim_weight_brutto = 0)
+		GROUP BY c.nm_id ORDER BY c.vendor_code
+	`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query aggregated dimensions: %w", err)
+	}
+	defer rows.Close()
+
+	var result []DimensionAggRow
+	for rows.Next() {
+		var r DimensionAggRow
+		if err := rows.Scan(
+			&r.NmID, &r.VendorCode,
+			&r.OldLength, &r.OldWidth, &r.OldHeight, &r.OldWeight,
+			&r.NewLength, &r.NewWidth, &r.NewHeight, &r.NewWeight,
+		); err != nil {
+			return nil, fmt.Errorf("scan dimension agg row: %w", err)
+		}
+		result = append(result, r)
+	}
+
+	return result, rows.Err()
+}

@@ -27,14 +27,20 @@ type StockHistoryReport struct {
 // SaveStockHistoryReport saves report metadata to database.
 // Uses INSERT OR REPLACE for idempotency (resume mode).
 // Deletes child records for existing report before REPLACE to avoid FOREIGN KEY constraint.
+// Retries on "database is locked" (concurrent writers from other downloaders).
 func (r *SQLiteSalesRepository) SaveStockHistoryReport(ctx context.Context, report *StockHistoryReport) error {
+	return retryOnBusy(ctx, func() error {
+		return r.saveStockHistoryReport(ctx, report)
+	})
+}
+
+func (r *SQLiteSalesRepository) saveStockHistoryReport(ctx context.Context, report *StockHistoryReport) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Find existing report with same unique key to delete its children before REPLACE
 	var oldID string
 	_ = tx.QueryRowContext(ctx,
 		`SELECT id FROM stock_history_reports WHERE report_type = ? AND start_date = ? AND end_date = ? AND stock_type = ?`,
@@ -136,11 +142,17 @@ type StockHistoryMetricRow struct {
 }
 
 // SaveStockHistoryMetrics saves metrics rows to database.
+// Retries on "database is locked" (concurrent writers from other downloaders).
 func (r *SQLiteSalesRepository) SaveStockHistoryMetrics(ctx context.Context, rows []StockHistoryMetricRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
+	return retryOnBusy(ctx, func() error {
+		return r.saveStockHistoryMetrics(ctx, rows)
+	})
+}
 
+func (r *SQLiteSalesRepository) saveStockHistoryMetrics(ctx context.Context, rows []StockHistoryMetricRow) error {
 	r.db.Exec("PRAGMA synchronous = OFF")
 	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 

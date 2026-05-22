@@ -1,0 +1,34 @@
+# fix-card-dimensions configuration
+#
+# Обновление весо-габаритных характеристик карточек WB из данных 1С WMS.
+# Workflow:
+#   --import-xls file.xlsx --db /var/db/wb-sales.db   # импорт XLS → onec_dimensions
+#   --stage --db /var/db/wb-sales.db                   # анализ + staging
+#   --diff --db /var/db/wb-sales.db                    # before/after
+#   --apply --dry-run --db /var/db/wb-sales.db         # проверить payload
+#   --apply --db /var/db/wb-sales.db                   # отправить в WB API
+
+db_path: "/var/db/wb-sales.db"
+xls_path: ""
+
+# Фильтрация карточек. Все фильтры AND-combined.
+filters:
+  in_stock: false            # только товары в наличии (stocks_daily_warehouses)
+  allowed_years: []           # год коллекции из позиций 2-3 vendor_code (26 = 2026). Пусто = все
+  exclude_lengths: [5, 6]     # исключить мусор (5 симв) и устаревшие (6 симв)
+  seasons: []                 # фильтр по сезонам из характеристик (пусто = все)
+  subject: ""                 # фильтр по названию предмета WB (пусто = все)
+  subject_ids: []             # фильтр по ID предметов WB (пусто = все)
+  vendor_codes: []            # артикулы продавца — 8 симв (пусто = все)
+  nm_ids: [739760572, 739760578, 739760584, 739760587, 739760590, 739760602, 739762031, 739942138, 739942222, 739942359, 739942422, 746928089, 746928165, 748717371, 748813761, 748881213, 749626137]  # 17 карточек без веса/габаритов, чинимых из onec_dimensions
+# WB API update settings
+wb_update:
+  api_key: ""           # WB Content API ключ. Пусто = autodetect WB_API_CONTENT_KEY → WB_API_KEY → WB_API_ANALYTICS_AND_PROMO_KEY
+  batch_size: 30                     # карточек на один API-запрос
+  rate_per_min: 8                    # запросов/мин (желаемая скорость)
+  rate_burst: 2                      # burst для rate limiter
+  api_floor_per_min: 5               # безопасный минимум после 429
+  api_floor_burst: 1                 # burst после 429
+  adaptive_probe_after: 10           # OK-ответов до возврата к желаемой скорости
+  max_backoff_seconds: 60            # максимальный экспоненциальный откат на 429
+  interval_seconds: 8                # пауза между батчами (сек)

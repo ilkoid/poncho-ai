@@ -111,7 +111,7 @@ func (r *SourceRepo) buildFilterClause(ctx context.Context, filter FilterConfig)
 	var where []string
 	var args []any
 
-	// Приоритет: nm_ids > vendor_codes > allowed_years
+	// Выбор базы: nm_ids > vendor_codes > всё
 	if len(filter.NmIDs) > 0 {
 		ph := make([]string, len(filter.NmIDs))
 		for i, id := range filter.NmIDs {
@@ -126,14 +126,17 @@ func (r *SourceRepo) buildFilterClause(ctx context.Context, filter FilterConfig)
 			args = append(args, vc)
 		}
 		where = append(where, "c.vendor_code IN ("+strings.Join(ph, ",")+")")
-	} else if len(filter.AllowedYears) > 0 {
+	}
+
+	// allowed_years — дополнительный фильтр поверх базы
+	if len(filter.AllowedYears) > 0 {
 		entries := r.loadYearEntries(ctx)
-		filtered := config.FilterNmIDsByYear(entries, filter.AllowedYears)
-		if len(filtered) == 0 {
+		yearNmIDs := config.FilterNmIDsByYear(entries, filter.AllowedYears)
+		if len(yearNmIDs) == 0 {
 			return nil, nil
 		}
-		ph := make([]string, len(filtered))
-		for i, id := range filtered {
+		ph := make([]string, len(yearNmIDs))
+		for i, id := range yearNmIDs {
 			ph[i] = "?"
 			args = append(args, id)
 		}
@@ -285,13 +288,31 @@ func (r *SourceRepo) LoadCharacteristics(ctx context.Context, nmIDs []int) (map[
 	return result, rows.Err()
 }
 
-// LoadTitleDescription возвращает текущие title и description карточки из source DB.
-func (r *SourceRepo) LoadTitleDescription(ctx context.Context, nmID int) (string, string, error) {
-	var title, desc string
-	err := r.db.QueryRowContext(ctx,
-		"SELECT COALESCE(title,''), COALESCE(description,'') FROM cards WHERE nm_id = ?", nmID,
-	).Scan(&title, &desc)
-	return title, desc, err
+// LoadTitleDescriptionBrand возвращает текущие title, description и brand карточки из source DB.
+func (r *SourceRepo) LoadTitleDescriptionBrand(ctx context.Context, nmID int) (title, desc, brand string, needKiz bool, err error) {
+	var kiz int
+	err = r.db.QueryRowContext(ctx,
+		"SELECT COALESCE(title,''), COALESCE(description,''), COALESCE(brand,''), COALESCE(need_kiz,0) FROM cards WHERE nm_id = ?", nmID,
+	).Scan(&title, &desc, &brand, &kiz)
+	return title, desc, brand, kiz != 0, err
+}
+
+// LoadDimensions загружает весо-габаритные данные карточки из cards (dim_* columns).
+// Возвращает nil если все значения нулевые (нет данных).
+func (r *SourceRepo) LoadDimensions(ctx context.Context, nmID int) (*wb.CardDimensions, error) {
+	var l, w, h, wt float64
+	var valid int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT dim_length, dim_width, dim_height, dim_weight_brutto, dim_is_valid
+		FROM cards WHERE nm_id = ?
+	`, nmID).Scan(&l, &w, &h, &wt, &valid)
+	if err != nil {
+		return nil, err
+	}
+	if l == 0 && w == 0 && h == 0 && wt == 0 {
+		return nil, nil
+	}
+	return &wb.CardDimensions{Length: l, Width: w, Height: h, WeightBrutto: wt, IsValid: valid != 0}, nil
 }
 
 	// LoadSizes загружает размеры для указанных nm_id из card_sizes.

@@ -22,53 +22,79 @@
 
 ## Быстрый старт
 
+Все команды — из каталога утилиты. Конфиг подхватывается из `config.yaml` рядом с `main.go`.
+
 ```bash
 cd cmd/data-analyzers/check-card-consistency
+```
 
-Ключ --keep-subject уже существует — он описан в main.go:175:
+### Справочники (без LLM, без записи в БД)
 
-# Посмотреть предметы WB (для фильтра subject_id)
+```bash
+# Посмотреть предметы WB (для подбора subject_id)
 go run . --list-subjects="сабо"
 go run . --list-subjects="all"
 
-# Посмотреть характеристики предмета WB (для понимания charc_id и типов)
+# Посмотреть характеристики предмета WB
 go run . --list-charcs=105
+```
 
-# Этап 0: превью — сколько карточек пройдёт фильтры (без LLM, без записи в БД)
+### Этап 0: превью (без LLM, без записи в БД)
+
+```bash
 go run . --stage 0
 go run . --stage 0 --limit 50
+```
 
-# Этап 1: единый аудит (текст + Vision)
+### Этап 1: аудит (текст + Vision)
+
+```bash
 go run . --stage 1
-go run . --stage 1 --limit 10         # только 10 карточек
+go run . --stage 1 --limit 10
+go run . --stage 1 --force                # перепроверить уже обработанные
+```
 
-# Посмотреть что нашлось (summary + структурированные issues)
-sqlite3 /mnt/d/db/card-analysis.db \
+### Посмотреть что нашлось
+
+```bash
+sqlite3 /mnt/d/db/card-correction-final.db \
   "SELECT vendor_code, substr(title,1,40), vision_summary
    FROM card_analysis WHERE vision_has_discrepancy = 1 LIMIT 20"
+```
 
-# Этап 2: подтянуть метрики без LLM
+### Этап 2: подтянуть метрики (без LLM)
+
+```bash
 go run . --stage 2
+```
 
-# Этап 4: генерация новых параметров
+### Этап 4: генерация новых параметров
+
+```bash
 go run . --stage 4
+go run . --stage 4 --force                # перегенерировать уже готовые
 
-# Посмотреть что будет изменено
-sqlite3 /mnt/d/db/card-analysis.db \
-  "SELECT vendor_code, new_title, length(new_description), new_characteristics
-   FROM card_analysis WHERE new_description != ''"
+# Diff до/после (без генерации, только просмотр)
+go run . --stage 4 --diff
+go run . --stage 4 --diff --full          # все характеристики, не только изменённые
 
-# Этап 5: моковый прогон (БЕЗ отправки в WB)
-go run . --stage 5 --mock
+# Генерация без смены предмета WB
+go run . --stage 4 --keep-subject
+```
 
-# Этап 5: реальное обновление (ТРЕБУЕТ --yes)
-go run . --stage 5 --yes
+### Этап 5: обновление WB API
 
-# Этап 5: повторное обновление карточек, уже отправленных ранее
-go run . --stage 5 --yes --force
+```bash
+go run . --stage 5 --mock                 # мок — показать payloads без отправки
+go run . --stage 5 --check                # проверить ошибки валидации WB
+go run . --stage 5 --yes                  # реальное обновление
+go run . --stage 5 --yes --force          # повторно отправить уже обновлённые
+```
 
-# Этап 5: проверить ошибки валидации WB (без обновления)
-go run . --stage 5 --check
+### Экспорт в XLSX
+
+```bash
+go run . --export result.xlsx             # с фильтрами из config.yaml
 ```
 
 ## Флаги

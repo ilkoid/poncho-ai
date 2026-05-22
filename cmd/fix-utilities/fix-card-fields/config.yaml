@@ -1,0 +1,70 @@
+# fix-card-fields configuration example
+#
+# This utility fixes specific characteristic values in WB cards with strict filtering:
+# 1. Only cards matching ALL filters are affected
+# 2. Protected char_ids cannot be modified (fails validation)
+# 3. Smart Merge preserves ALL existing characteristics when updating
+#
+# Workflow:
+#   --stage   : Collect cards, match rules, write to staging table
+#   --diff    : Review before/after for staged cards
+#   --apply   : Send changes to WB API (use --dry-run first!)
+
+db_path: "/var/db/wb-sales.db"
+
+# Rules defining what to change.
+# A rule matches when the current value equals search_value.
+# Empty search_value ("") matches missing/empty/[]/null characteristics.
+fix_rules:
+  - char_id: 15003971           # "Материал верха"
+    search_value: ""            # Empty/missing field
+    replace_value: "Искусственная кожа"
+    # value_type: "string"      # Optional: string (default), number, boolean
+
+# Filters restrict which cards are affected.
+# ALL filters are AND-combined — a card must match every condition.
+filters:
+  subject_ids: [105]           # Category: Кроссовы (sneakers)
+  vendor_codes: []              # Optional: list specific vendor_codes
+  nm_ids: []                    # Optional: list specific nm_ids (one-card testing)
+  vendor_code_prefix: ""        # Optional: first char of vendor_code
+  vendor_code_years: [22]   # Years extracted from positions 2-3 of vendor_code
+  in_stock: false               # true = only cards with stock > 0
+
+# Protected characteristic IDs that CANNOT be modified.
+# If a fix_rule references any of these, validation will fail.
+# These are critical system fields that should never change via automation.
+#
+# NOTE: Title and description are ALWAYS preserved automatically —
+# they are not characteristics but card-level fields.
+# The apply step reads them from DB and passes through unchanged.
+protected_char_ids:
+  - 15000001  # ТНВЭД
+  - 15001650  # ИКПУ
+  - 14177452  # Описание
+  - 14177453  # SKU/Артикул продавца
+  - 14177446  # Бренд
+  - 54337     # Размер
+  - 88952     # Вес товара с упаковкой
+  - 15001136  # Номер сертификата соответствия
+  - 15001137  # Дата регистрации сертификата/декларации
+  - 15001138  # Дата окончания действия сертификата/декларации
+  - 15001135  # Номер декларации соответствия
+  - 15003293  # Артикул OZON
+  - 15003988  # NTIN
+  - 15003991  # количество штук в товаре по ЭС
+  - 15003989  # Код ТРУ 1
+  - 15003990  # Код ТРУ 2
+  - 14177453  # SKU
+  - 14177451  # Страна производства
+  - 15001405  # Ставка НДС
+
+
+# WB API update settings (batch size, rate limiting, delays)
+wb_update:
+  batch_size: 30               # Cards per API request
+  rate_per_min: 8              # Desired rate (may exceed swagger)
+  rate_burst: 2                # Burst for desired rate
+  api_floor_per_min: 5         # Swagger-documented rate (recovery floor)
+  api_floor_burst: 1           # Burst for api floor
+  interval_seconds: 8          # Sleep between batches

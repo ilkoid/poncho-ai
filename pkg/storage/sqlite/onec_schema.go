@@ -153,6 +153,31 @@ CREATE TABLE IF NOT EXISTS onec_rests (
 CREATE INDEX IF NOT EXISTS idx_onec_rests_snapshot ON onec_rests(snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_onec_rests_good_guid ON onec_rests(good_guid);
 CREATE INDEX IF NOT EXISTS idx_onec_rests_storage_guid ON onec_rests(storage_guid);
+
+-- ============================================================================
+-- 1C DIMENSIONS (weight-dimension data per SKU from 1C WMS)
+-- Grain: one row per (good_guid, sku_guid) — per-SKU measurements.
+-- WB aggregates to card level (MAX), but raw per-SKU data kept for Ozon/Yandex.
+-- JOIN chain: onec_dimensions.good_guid → onec_goods.guid → onec_goods.article
+--
+--	→ cards.vendor_code → cards.nm_id
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS onec_dimensions (
+    good_guid    TEXT NOT NULL,
+    sku_guid     TEXT NOT NULL,
+    good_name    TEXT NOT NULL DEFAULT '',
+    size_name    TEXT NOT NULL DEFAULT '',
+    length_dm    REAL NOT NULL DEFAULT 0,
+    width_dm     REAL NOT NULL DEFAULT 0,
+    height_dm    REAL NOT NULL DEFAULT 0,
+    weight_kg    REAL NOT NULL DEFAULT 0,
+    volume_cm3   REAL NOT NULL DEFAULT 0,
+    source       TEXT NOT NULL DEFAULT 'xls',
+    created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (good_guid, sku_guid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_onec_dimensions_good_guid ON onec_dimensions(good_guid);
 `
 
 // GetOneCSchemaSQL returns the SQL for 1C/PIM tables creation.

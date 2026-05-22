@@ -282,6 +282,12 @@ func (r *SQLiteSalesRepository) Close() error {
 	return r.db.Close()
 }
 
+// DB returns the underlying *sql.DB for direct queries needed by cmd utilities
+// (staging tables, complex joins not in the repository layer).
+func (r *SQLiteSalesRepository) DB() *sql.DB {
+	return r.db
+}
+
 // Optimize updates query planner statistics via ANALYZE.
 // Call after bulk data loads for optimal query plans.
 func (r *SQLiteSalesRepository) Optimize(ctx context.Context) error {

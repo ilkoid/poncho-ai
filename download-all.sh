@@ -49,7 +49,7 @@ echo ""
 echo "── Phase 2: Feedbacks ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-feedbacks" && go run . --config "$CONFIGS/download-wb-feedbacks.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-feedbacks" && go run . --config "$CONFIGS/download-wb-feedbacks.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 2 done in $(( SECONDS - PHASE_START ))s"
 
@@ -59,8 +59,8 @@ echo ""
 echo "── Phase 3: Sales & Revenue ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-sales" && go run . --no-service --config "$CONFIGS/download-wb-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-region-sales" && go run . --config "$CONFIGS/download-wb-region-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-sales" && go run . --no-service --config "$CONFIGS/download-wb-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-region-sales" && go run . --config "$CONFIGS/download-wb-region-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 3 done in $(( SECONDS - PHASE_START ))s"
 
@@ -70,7 +70,7 @@ echo ""
 echo "── Phase 4: Stock & Logistics ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-stocks" && go run . --config "$CONFIGS/download-wb-stocks.yaml" --date $(date +%Y-%m-%d)) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-stocks" && go run . --config "$CONFIGS/download-wb-stocks.yaml" --date $(date +%Y-%m-%d)) || exit $?
 (cd "$PONCHO/cmd/data-downloaders/download-wb-stock-history" && go run . --config "$CONFIGS/download-wb-stock-history.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 (cd "$PONCHO/cmd/data-downloaders/download-wb-supplies" && go run . --config "$CONFIGS/download-wb-supplies.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 
@@ -82,7 +82,7 @@ echo ""
 echo "── Phase 5: Advertising ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion" && go run . --config "$CONFIGS/download-wb-promotion.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion" && go run . --config "$CONFIGS/download-wb-promotion.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 
 (cd "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" && go run . --config "$CONFIGS/download-wb-promotion-v2.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 

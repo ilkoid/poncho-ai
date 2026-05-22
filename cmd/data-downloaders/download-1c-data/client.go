@@ -153,8 +153,8 @@ func (c *OneCClient) FetchPrices(ctx context.Context, apiURL string, snapshotDat
 	defer body.Close()
 
 	dec := json.NewDecoder(body)
-	if err := expectDelim(dec, '['); err != nil {
-		return 0, 0, err
+	if err := expectArrayDelim(dec); err != nil {
+		return 0, 0, fmt.Errorf("prices API: %w", err)
 	}
 
 	priceBatch := make([]sqlite.OneCPriceRow, 0, 500)
@@ -403,4 +403,38 @@ func expectDelim(dec *json.Decoder, expected json.Delim) error {
 		return fmt.Errorf("expected '%c', got %v", expected, t)
 	}
 	return nil
+}
+
+// expectArrayDelim expects a JSON array opening '['.
+// When the API returns an object instead (e.g. error response),
+// reads up to 256 bytes of the object body for a helpful error message.
+func expectArrayDelim(dec *json.Decoder) error {
+	t, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("read opening token: %w", err)
+	}
+	d, ok := t.(json.Delim)
+	if ok && d == '[' {
+		return nil
+	}
+	if ok && d == '{' {
+		var raw struct {
+			Detail string `json:"detail"`
+			Error  string `json:"error"`
+			Msg    string `json:"message"`
+		}
+		_ = dec.Decode(&raw)
+		hint := raw.Detail
+		if hint == "" {
+			hint = raw.Error
+		}
+		if hint == "" {
+			hint = raw.Msg
+		}
+		if hint != "" {
+			return fmt.Errorf("API returned error object: %s", hint)
+		}
+		return fmt.Errorf("API returned JSON object instead of array (format changed?)")
+	}
+	return fmt.Errorf("expected '[', got %v", t)
 }

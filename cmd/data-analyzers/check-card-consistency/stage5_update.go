@@ -56,6 +56,14 @@ func runStage5(ctx context.Context, source *SourceRepo, results *ResultsRepo, cf
 		log.Printf("  Loaded %d max_count rules from char_dict", len(maxCounts))
 	}
 
+	protectedSet := make(map[int]bool, len(cfg.ProtectedCharIDs))
+	for _, id := range cfg.ProtectedCharIDs {
+		protectedSet[id] = true
+	}
+	if len(protectedSet) > 0 {
+		log.Printf("  Protected char IDs: %v (will keep original values)", cfg.ProtectedCharIDs)
+	}
+
 	tracker := progress.NewCLITrackerWithConfig(progress.CLITrackerConfig{
 		Total:  len(rows),
 		Prefix: "Stage 5",
@@ -64,13 +72,13 @@ func runStage5(ctx context.Context, source *SourceRepo, results *ResultsRepo, cf
 	defer tracker.Done()
 
 	if mock {
-		return stage5Mock(ctx, source, results, rows, tracker, cfg, maxCounts)
+		return stage5Mock(ctx, source, results, rows, tracker, cfg, maxCounts, protectedSet)
 	}
-	return stage5Real(ctx, source, results, rows, tracker, cfg, maxCounts)
+	return stage5Real(ctx, source, results, rows, tracker, cfg, maxCounts, protectedSet)
 }
 
 // stage5Real — реальное обновление через WB API (production) с батчами и rate limiting.
-func stage5Real(ctx context.Context, source *SourceRepo, results *ResultsRepo, rows []AnalysisRow, tracker *progress.CLITracker, cfg CLIConfig, maxCounts map[int]int) error {
+func stage5Real(ctx context.Context, source *SourceRepo, results *ResultsRepo, rows []AnalysisRow, tracker *progress.CLITracker, cfg CLIConfig, maxCounts map[int]int, protectedSet map[int]bool) error {
 	apiKey := getWBApiKey(cfg.WBUpdate.APIKey)
 	if apiKey == "" {
 		return fmt.Errorf("WB_API_KEY (or WB_API_ANALYTICS_AND_PROMO_KEY) not set")
@@ -103,7 +111,7 @@ func stage5Real(ctx context.Context, source *SourceRepo, results *ResultsRepo, r
 		items := make([]wb.CardUpdateItem, 0, len(batch))
 		var batchNmIDs []int
 		for _, row := range batch {
-			req, err := buildUpdateRequest(ctx, row, source, maxCounts)
+			req, err := buildUpdateRequest(ctx, row, source, maxCounts, protectedSet)
 			if err != nil {
 				log.Printf("  ERROR build request nm_id=%d: %v", row.NmID, err)
 				tracker.Update(1)
@@ -154,7 +162,7 @@ func stage5Real(ctx context.Context, source *SourceRepo, results *ResultsRepo, r
 
 // stage5Mock — отправка в песочницу WB (sandbox) через WB_API_TEST.
 // Ошибки sandbox — non-fatal, логируются и не прерывают обработку.
-func stage5Mock(ctx context.Context, source *SourceRepo, results *ResultsRepo, rows []AnalysisRow, tracker *progress.CLITracker, cfg CLIConfig, maxCounts map[int]int) error {
+func stage5Mock(ctx context.Context, source *SourceRepo, results *ResultsRepo, rows []AnalysisRow, tracker *progress.CLITracker, cfg CLIConfig, maxCounts map[int]int, protectedSet map[int]bool) error {
 	apiKey := os.Getenv("WB_API_TEST")
 
 	var wbClient *wb.Client
@@ -181,7 +189,7 @@ func stage5Mock(ctx context.Context, source *SourceRepo, results *ResultsRepo, r
 			continue
 		}
 
-		ok, err := stage5MockCard(ctx, wbClient, source, results, row, maxCounts)
+		ok, err := stage5MockCard(ctx, wbClient, source, results, row, maxCounts, protectedSet)
 		if err != nil {
 			log.Printf("    ERROR mock nm_id=%d: %v", row.NmID, err)
 			errors++
@@ -201,8 +209,8 @@ func stage5Mock(ctx context.Context, source *SourceRepo, results *ResultsRepo, r
 }
 
 // stage5MockCard — sandbox-логика для одной карточки (search → update/create).
-func stage5MockCard(ctx context.Context, client *wb.Client, source *SourceRepo, results *ResultsRepo, row AnalysisRow, maxCounts map[int]int) (bool, error) {
-	updateReq, err := buildUpdateRequest(ctx, row, source, maxCounts)
+func stage5MockCard(ctx context.Context, client *wb.Client, source *SourceRepo, results *ResultsRepo, row AnalysisRow, maxCounts map[int]int, protectedSet map[int]bool) (bool, error) {
+	updateReq, err := buildUpdateRequest(ctx, row, source, maxCounts, protectedSet)
 	if err != nil {
 		return false, fmt.Errorf("build update request: %w", err)
 	}
@@ -337,16 +345,16 @@ func logCardChanges(ctx context.Context, results *ResultsRepo, row AnalysisRow, 
 }
 
 // buildUpdateRequest формирует тело запроса для WB API update со Smart Merge.
-func buildUpdateRequest(ctx context.Context, row AnalysisRow, source *SourceRepo, maxCounts map[int]int) (wb.CardUpdateItem, error) {
+func buildUpdateRequest(ctx context.Context, row AnalysisRow, source *SourceRepo, maxCounts map[int]int, protectedSet map[int]bool) (wb.CardUpdateItem, error) {
 	req := wb.CardUpdateItem{
 		NmID:       row.NmID,
 		VendorCode: row.VendorCode,
 	}
 
-	// WB API полностью перезаписывает title/description — всегда отправляем текущие значения
-	title, desc, err := source.LoadTitleDescription(ctx, row.NmID)
+	// WB API полностью перезаписывает карточку — все поля должны быть заполнены
+	title, desc, brand, _, err := source.LoadTitleDescriptionBrand(ctx, row.NmID)
 	if err != nil {
-		return req, fmt.Errorf("load title/description: %w", err)
+		return req, fmt.Errorf("load title/description/brand: %w", err)
 	}
 	req.Title = row.NewTitle
 	if req.Title == "" {
@@ -356,6 +364,14 @@ func buildUpdateRequest(ctx context.Context, row AnalysisRow, source *SourceRepo
 	if req.Description == "" {
 		req.Description = desc
 	}
+	req.Brand = brand
+
+	// Сохраняем текущие весо-габаритные данные (WB fully replaces card)
+	dims, err := source.LoadDimensions(ctx, row.NmID)
+	if err != nil {
+		log.Printf("  WARN: load dimensions nm_id=%d: %v", row.NmID, err)
+	}
+	req.Dimensions = dims
 
 	if row.NewCharacteristics != "" {
 		var generatedChars []charcEntry
@@ -386,7 +402,7 @@ func buildUpdateRequest(ctx context.Context, row AnalysisRow, source *SourceRepo
 			}
 			val = unwrapValue(val)
 
-			if skipCharcIDs[curr.CharID] {
+			if skipCharcIDs[curr.CharID] || protectedSet[curr.CharID] {
 				finalChars = append(finalChars, wb.CardUpdateCharc{ID: curr.CharID, Value: val})
 				seenIDs[curr.CharID] = true
 			} else if gen, exists := generatedMap[curr.CharID]; exists {

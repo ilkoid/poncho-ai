@@ -92,3 +92,18 @@ type OneCRestsRow struct {
 	Free        int
 	FirstStage  bool
 }
+
+// OneCDimensionRow — lightweight input struct for batch save.
+// Maps to onec_dimensions table. Stores per-SKU weight-dimension data from 1C WMS.
+type OneCDimensionRow struct {
+	GoodGUID  string
+	SKUGUID   string
+	GoodName  string
+	SizeName  string
+	LengthDM  float64
+	WidthDM   float64
+	HeightDM  float64
+	WeightKG  float64
+	VolumeCM3 float64
+	Source    string // "xls" or "api"
+}
