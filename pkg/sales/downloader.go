@@ -11,21 +11,22 @@ import (
 )
 
 // Downloader is a reusable sales downloader.
-// Depends on SalesWriter (persistence) and *wb.Client (WB API).
-// No direct dependency on SQLite — SalesWriter is injected.
+// Depends on SalesSource (WB API) and SalesWriter (persistence) — both are interfaces.
 type Downloader struct {
-	client *wb.Client
+	source SalesSource
 	writer SalesWriter
 	opts   DownloadOptions
 }
 
-// NewDownloader creates a downloader from a WB client and a SalesWriter.
-func NewDownloader(client *wb.Client, writer SalesWriter, opts DownloadOptions) *Downloader {
+const statsAPIURL = "https://statistics-api.wildberries.ru"
+
+// NewDownloader creates a downloader from a SalesSource and a SalesWriter.
+func NewDownloader(source SalesSource, writer SalesWriter, opts DownloadOptions) *Downloader {
 	if opts.MaxDaysPerPeriod > 0 {
 		wb.MaxDaysPerPeriod = opts.MaxDaysPerPeriod
 	}
 	return &Downloader{
-		client: client,
+		source: source,
 		writer: writer,
 		opts:   opts,
 	}
@@ -111,7 +112,7 @@ func (d *Downloader) downloadPeriod(ctx context.Context, dr wb.DateRange, period
 	d.progress("\n=== Период %d/%d: %s ===", periodNum+1, total, dr.String())
 	d.progress("  🕐 Начало: %s", time.Now().Format("2006-01-02 15:04:05"))
 
-	if d.opts.Rewrite {
+	if d.opts.Rewrite && !d.opts.DryRun {
 		fromStr := dr.From.Format("2006-01-02T15:04:05Z07:00")
 		toStr := dr.To.Format("2006-01-02T15:04:05Z07:00")
 
@@ -134,13 +135,11 @@ func (d *Downloader) downloadPeriod(ctx context.Context, dr wb.DateRange, period
 		}
 	}
 
-	statsAPIURL := "https://statistics-api.wildberries.ru"
-
 	res := &periodResult{}
 
 	if dr.HasTime() {
 		d.progress("  🔧 Time-based mode: %s → %s", dr.FromRFC3339(), dr.ToRFC3339())
-		_, err := d.client.ReportDetailByPeriodIteratorWithTime(
+		_, err := d.source.ReportDetailByPeriodIteratorWithTime(
 			ctx,
 			statsAPIURL,
 			d.opts.RateLimit,
@@ -156,7 +155,7 @@ func (d *Downloader) downloadPeriod(ctx context.Context, dr wb.DateRange, period
 		}
 	} else {
 		d.progress("  🔧 Date-based mode: %d → %d", dr.FromInt(), dr.ToInt())
-		_, err := d.client.ReportDetailByPeriodIterator(
+		_, err := d.source.ReportDetailByPeriodIterator(
 			ctx,
 			statsAPIURL,
 			d.opts.RateLimit,
@@ -207,6 +206,13 @@ func (d *Downloader) saveRows(ctx context.Context, rows []wb.RealizationReportRo
 		}
 	}
 
+
+	if d.opts.DryRun {
+		d.progress("  🏜️  [DRY-RUN] %d sales + %d service records (skip)", len(salesRows), len(serviceRows))
+		res.Rows += len(salesRows)
+		res.Pages++
+		return nil
+	}
 	if d.opts.SkipServiceRecords && len(serviceRows) > 0 {
 		d.progress("  ⏭️  Пропущено %d служебных записей", len(serviceRows))
 	} else if len(serviceRows) > 0 {

@@ -7,7 +7,7 @@ wb:
   analytics_api_key: "WB_API_ANALYTICS_AND_PROMO_KEY"
   # Calendar API key (dp-calendar-api.wildberries.ru)
   # Falls back to WB_API_MARKET_KEY env var, then to main api_key
-  calendar_api_key: "WB_API_KEY"
+  calendar_api_key: "${WB_API_KEY}"
   timeout: 120s
 
 # Promotion V2 Settings

@@ -49,9 +49,10 @@ type DownloadOptions struct {
 	Burst              int
 	SkipServiceRecords bool
 	Filter             config.FunnelFilterConfig
-	MaxDaysPerPeriod   int  // 0 means use package default
-	Rewrite            bool // delete existing data for the period before download
-	OnProgress         func(msg string) // nil = silent (ideal for Tools); CLI passes fmt.Println
+	MaxDaysPerPeriod   int
+	Rewrite            bool
+	DryRun             bool // if true, skip all DB writes
+	OnProgress         func(msg string) // nil = silent (ideal for Tools)
 }
 
 // DownloadResult contains high-level statistics after the download completes.
@@ -60,20 +61,4 @@ type DownloadResult struct {
 	TotalPages   int
 	Duration     time.Duration
 	PeriodsCount int
-}
-
-// DownloadJob describes one logical download task.
-type DownloadJob struct {
-	Ranges  []wb.DateRange
-	Resume  bool
-	Rewrite bool
-}
-
-// NewDownloadOptions creates sane defaults.
-func NewDownloadOptions() DownloadOptions {
-	return DownloadOptions{
-		RateLimit:          60,
-		Burst:              1,
-		SkipServiceRecords: false,
-	}
 }

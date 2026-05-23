@@ -5,7 +5,7 @@ wb:
   api_key: ${WB_STAT}
   analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
   rate_limit: 1
-  burst: 2
+  burst_limit: 2
   endpoint: https://statistics-api.wildberries.ru
   timeout: 30m
 
