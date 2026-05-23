@@ -28,6 +28,60 @@ type OneCGood struct {
 	IsNew             bool
 	ModelStatus       string
 	Date              string
+
+	// Dimensions & Weight (cm / grams)
+	Length     float64
+	Wideness   float64
+	Height     float64
+	WeightSKUG float64 // grams! _g suffix — divide by 1000 for WB kg
+
+	// Certificate
+	Certificate    string
+	HasCertificate bool
+
+	// Dates
+	ApprovalDate     string
+	DateOfProduction string
+	DateOfReceipt    string
+	PPSDate          string
+
+	// Seasons & Collections
+	CollectionSeason    string
+	CollectionYear      string
+	LookSeason          string
+	OptCollectionSeason string
+	OptCollectionYear   string
+	ProductionSeason    string
+	ProductionYear      string
+
+	// Categories
+	CategoryLevel1Name string
+	CategoryLevel2Name string
+
+	// Product attributes
+	Age             string
+	FigureFeatures  string
+	Licensor        string
+	MainCapture     string
+	Markirovka      string
+	ModelHeight     string
+	RatioHeat       string
+	Recommendations string
+	SizeOnModel     string
+	Tag             string
+	QuantityBarCode int
+
+	// Boolean flags
+	IsAdult            bool
+	IsArticleBlocked   bool
+	IsExcludeFromSite  bool
+	IsExclusive        bool
+	IsGenuineLeather   bool
+	IsModelCancelled   bool
+	IsNewCollection    bool
+	IsNotRequireIroning bool
+	IsPPS              bool
+	IsYaPriceListOpt   bool
 }
 
 // OneCSKU — lightweight input struct for batch save.

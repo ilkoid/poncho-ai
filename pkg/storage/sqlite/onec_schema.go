@@ -42,7 +42,54 @@ CREATE TABLE IF NOT EXISTS onec_goods (
     is_new              INTEGER DEFAULT 0,
     model_status        TEXT    DEFAULT '',
     date                TEXT    DEFAULT '',
-    downloaded_at       TEXT    DEFAULT CURRENT_TIMESTAMP
+    downloaded_at       TEXT    DEFAULT CURRENT_TIMESTAMP,
+    -- Dimensions & Weight (cm / grams)
+    length              REAL    DEFAULT 0,
+    wideness            REAL    DEFAULT 0,
+    height              REAL    DEFAULT 0,
+    weight_sku_g        REAL    DEFAULT 0,       -- grams! _g suffix — divide by 1000 for WB kg
+    -- Certificate
+    certificate         TEXT    DEFAULT '',
+    has_certificate     INTEGER DEFAULT 0,
+    -- Dates
+    approval_date       TEXT    DEFAULT '',
+    date_of_production  TEXT    DEFAULT '',
+    date_of_receipt     TEXT    DEFAULT '',
+    pps_date            TEXT    DEFAULT '',
+    -- Seasons & Collections
+    collection_season   TEXT    DEFAULT '',
+    collection_year     TEXT    DEFAULT '',
+    look_season         TEXT    DEFAULT '',
+    opt_collection_season TEXT  DEFAULT '',
+    opt_collection_year TEXT    DEFAULT '',
+    production_season   TEXT    DEFAULT '',
+    production_year     TEXT    DEFAULT '',
+    -- Categories
+    category_level1_name TEXT   DEFAULT '',
+    category_level2_name TEXT   DEFAULT '',
+    -- Product attributes
+    age                 TEXT    DEFAULT '',
+    figure_features     TEXT    DEFAULT '',
+    licensor            TEXT    DEFAULT '',
+    main_capture        TEXT    DEFAULT '',
+    markirovka          TEXT    DEFAULT '',
+    model_height        TEXT    DEFAULT '',
+    ratio_heat          TEXT    DEFAULT '',
+    recommendations     TEXT    DEFAULT '',
+    size_on_model       TEXT    DEFAULT '',
+    tag                 TEXT    DEFAULT '',
+    quantity_bar_code   INTEGER DEFAULT 0,
+    -- Boolean flags
+    is_adult            INTEGER DEFAULT 0,
+    is_article_blocked  INTEGER DEFAULT 0,
+    is_exclude_from_site INTEGER DEFAULT 0,
+    is_exclusive        INTEGER DEFAULT 0,
+    is_genuine_leather  INTEGER DEFAULT 0,
+    is_model_cancelled  INTEGER DEFAULT 0,
+    is_new_collection   INTEGER DEFAULT 0,
+    is_not_require_ironing INTEGER DEFAULT 0,
+    is_pps              INTEGER DEFAULT 0,
+    is_ya_price_list_opt INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_onec_goods_article ON onec_goods(article);

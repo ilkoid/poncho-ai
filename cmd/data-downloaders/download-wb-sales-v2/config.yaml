@@ -1,0 +1,24 @@
+# config.yaml for download-wb-sales-v2 (uses new pkg/sales library)
+# Этот файл критически важен для тестирования v2.
+
+wb:
+  api_key: ${WB_STAT}
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+  rate_limit: 1
+  burst: 2
+  endpoint: https://statistics-api.wildberries.ru
+  timeout: 30m
+
+# Sales download settings
+download:
+  days: 1                        # Quick v2 validation
+  resume: false
+  rewrite: false
+  skip_service_records: false
+
+  adaptive_recover_after: 5
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  db_path: "/tmp/wb-sales-v2-test.db"

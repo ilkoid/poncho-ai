@@ -16,7 +16,8 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 	r.db.Exec("PRAGMA synchronous = OFF")
 	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
-	const batchSize = 500
+	// SQLite default limit: 999 variables per statement. 66 cols × 15 = 990 < 999.
+	const batchSize = 15
 	totalSaved := 0
 
 	for i := 0; i < len(goods); i += batchSize {
@@ -27,7 +28,7 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 		var args []any
 
 		for _, g := range batch {
-			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args,
 				g.GUID, g.Article, g.Name, g.NameIM, g.Description,
 				g.Brand, g.Type, g.Category, g.CategoryLevel1, g.CategoryLevel2,
@@ -35,6 +36,26 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 				g.Collection, g.CountryOfOrigin, g.Weight, g.SizeRange,
 				g.TnvedCodes, g.BusinessLine,
 				g.IsSale, g.IsNew, g.ModelStatus, g.Date,
+				// Dimensions & Weight
+				g.Length, g.Wideness, g.Height, g.WeightSKUG,
+				// Certificate
+				g.Certificate, g.HasCertificate,
+				// Dates
+				g.ApprovalDate, g.DateOfProduction, g.DateOfReceipt, g.PPSDate,
+				// Seasons & Collections
+				g.CollectionSeason, g.CollectionYear, g.LookSeason,
+				g.OptCollectionSeason, g.OptCollectionYear,
+				g.ProductionSeason, g.ProductionYear,
+				// Categories
+				g.CategoryLevel1Name, g.CategoryLevel2Name,
+				// Product attributes
+				g.Age, g.FigureFeatures, g.Licensor, g.MainCapture,
+				g.Markirovka, g.ModelHeight, g.RatioHeat, g.Recommendations,
+				g.SizeOnModel, g.Tag, g.QuantityBarCode,
+				// Boolean flags
+				g.IsAdult, g.IsArticleBlocked, g.IsExcludeFromSite, g.IsExclusive,
+				g.IsGenuineLeather, g.IsModelCancelled, g.IsNewCollection,
+				g.IsNotRequireIroning, g.IsPPS, g.IsYaPriceListOpt,
 			)
 		}
 
@@ -45,7 +66,20 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 				sex, season, composition, composition_lining, color,
 				collection, country_of_origin, weight, size_range,
 				tnved_codes, business_line,
-				is_sale, is_new, model_status, date
+				is_sale, is_new, model_status, date,
+				length, wideness, height, weight_sku_g,
+				certificate, has_certificate,
+				approval_date, date_of_production, date_of_receipt, pps_date,
+				collection_season, collection_year, look_season,
+				opt_collection_season, opt_collection_year,
+				production_season, production_year,
+				category_level1_name, category_level2_name,
+				age, figure_features, licensor, main_capture,
+				markirovka, model_height, ratio_heat, recommendations,
+				size_on_model, tag, quantity_bar_code,
+				is_adult, is_article_blocked, is_exclude_from_site, is_exclusive,
+				is_genuine_leather, is_model_cancelled, is_new_collection,
+				is_not_require_ironing, is_pps, is_ya_price_list_opt
 			) VALUES %s
 		`, strings.Join(placeholders, ", "))
 

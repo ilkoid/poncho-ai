@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -40,11 +41,12 @@ func (c *OneCClient) FetchGoods(ctx context.Context, apiURL string, repo *sqlite
 	}
 	defer body.Close()
 
-	dec := json.NewDecoder(body)
+	br := bufio.NewReaderSize(body, 4096)
+	peek, _ := br.Peek(256)
+	dec := json.NewDecoder(br)
 
-	// Read opening '['
-	if err := expectDelim(dec, '['); err != nil {
-		return 0, 0, err
+	if err := expectArrayDelim(dec, peek); err != nil {
+		return 0, 0, fmt.Errorf("goods API: %w", err)
 	}
 
 	goodsBatch := make([]sqlite.OneCGood, 0, 500)
@@ -85,6 +87,53 @@ func (c *OneCClient) FetchGoods(ctx context.Context, apiURL string, repo *sqlite
 			IsNew:             raw.New,
 			ModelStatus:       raw.ModelStatus,
 			Date:              raw.Date,
+			// Dimensions & Weight
+			Length:     raw.Length,
+			Wideness:   raw.Wideness,
+			Height:     raw.Height,
+			WeightSKUG: raw.WeightSKU,
+			// Certificate
+			Certificate:    raw.Certificate,
+			HasCertificate: raw.HasCertificate,
+			// Dates
+			ApprovalDate:     raw.ApprovalDate,
+			DateOfProduction: raw.DateOfProduction,
+			DateOfReceipt:    raw.DateOfReceipt,
+			PPSDate:          raw.PPSDate,
+			// Seasons & Collections
+			CollectionSeason:    raw.CollectionSeason,
+			CollectionYear:      raw.CollectionYear,
+			LookSeason:          raw.LookSeason,
+			OptCollectionSeason: raw.OptCollectionSeason,
+			OptCollectionYear:   raw.OptCollectionYear,
+			ProductionSeason:    raw.ProductionSeason,
+			ProductionYear:      raw.ProductionYear,
+			// Categories
+			CategoryLevel1Name: raw.CategoryLevel1Name,
+			CategoryLevel2Name: raw.CategoryLevel2Name,
+			// Product attributes
+			Age:             raw.Age,
+			FigureFeatures:  raw.FigureFeatures,
+			Licensor:        raw.Licensor,
+			MainCapture:     raw.MainCapture,
+			Markirovka:      raw.Markirovka,
+			ModelHeight:     raw.ModelHeight,
+			RatioHeat:       raw.RatioHeat,
+			Recommendations: raw.Recommendations,
+			SizeOnModel:     raw.SizeOnModel,
+			Tag:             raw.Tag,
+			QuantityBarCode: raw.QuantityBarCode,
+			// Boolean flags
+			IsAdult:             raw.Adult,
+			IsArticleBlocked:    raw.ArticleBlocked,
+			IsExcludeFromSite:   raw.ExcludeFromSite,
+			IsExclusive:         raw.Exclusive,
+			IsGenuineLeather:    raw.GenuineLeather,
+			IsModelCancelled:    raw.ModelCancelled,
+			IsNewCollection:     raw.NewCollection,
+			IsNotRequireIroning: raw.NotRequireIroning,
+			IsPPS:               raw.PPS,
+			IsYaPriceListOpt:    raw.YaPriceListOpt,
 		})
 
 		// Collect SKUs from this good
@@ -152,8 +201,10 @@ func (c *OneCClient) FetchPrices(ctx context.Context, apiURL string, snapshotDat
 	}
 	defer body.Close()
 
-	dec := json.NewDecoder(body)
-	if err := expectArrayDelim(dec); err != nil {
+	br := bufio.NewReaderSize(body, 4096)
+	peek, _ := br.Peek(256)
+	dec := json.NewDecoder(br)
+	if err := expectArrayDelim(dec, peek); err != nil {
 		return 0, 0, fmt.Errorf("prices API: %w", err)
 	}
 
@@ -214,9 +265,11 @@ func (c *OneCClient) FetchPIMGoods(ctx context.Context, pimURL string, repo *sql
 	}
 	defer body.Close()
 
-	dec := json.NewDecoder(body)
-	if err := expectDelim(dec, '['); err != nil {
-		return 0, err
+	br := bufio.NewReaderSize(body, 4096)
+	peek, _ := br.Peek(256)
+	dec := json.NewDecoder(br)
+	if err := expectArrayDelim(dec, peek); err != nil {
+		return 0, fmt.Errorf("pim API: %w", err)
 	}
 
 	batch := make([]sqlite.PIMGoodsRow, 0, 500)
@@ -392,23 +445,10 @@ func toJSONStrings(items []string) string {
 	return string(b)
 }
 
-// expectDelim reads and validates the opening JSON delimiter.
-func expectDelim(dec *json.Decoder, expected json.Delim) error {
-	t, err := dec.Token()
-	if err != nil {
-		return fmt.Errorf("read opening token: %w", err)
-	}
-	d, ok := t.(json.Delim)
-	if !ok || d != expected {
-		return fmt.Errorf("expected '%c', got %v", expected, t)
-	}
-	return nil
-}
-
 // expectArrayDelim expects a JSON array opening '['.
 // When the API returns an object instead (e.g. error response),
-// reads up to 256 bytes of the object body for a helpful error message.
-func expectArrayDelim(dec *json.Decoder) error {
+// tries to extract an error message. Includes raw body preview for diagnostics.
+func expectArrayDelim(dec *json.Decoder, peek []byte) error {
 	t, err := dec.Token()
 	if err != nil {
 		return fmt.Errorf("read opening token: %w", err)
@@ -434,7 +474,11 @@ func expectArrayDelim(dec *json.Decoder) error {
 		if hint != "" {
 			return fmt.Errorf("API returned error object: %s", hint)
 		}
-		return fmt.Errorf("API returned JSON object instead of array (format changed?)")
+		preview := string(peek)
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		return fmt.Errorf("API returned JSON object instead of array (format changed?). Response preview: %s", preview)
 	}
 	return fmt.Errorf("expected '[', got %v", t)
 }

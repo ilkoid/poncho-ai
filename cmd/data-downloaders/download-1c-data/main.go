@@ -79,10 +79,11 @@ func main() {
 		}
 	}
 
-	// 7. Sequential download: goods → prices → PIM
+	// 7. Sequential download: goods → prices → PIM (non-fatal per step)
 	client := NewOneCClient()
 	snapshotDate := time.Now().Format("2006-01-02")
 	totalStart := time.Now()
+	hasErrors := false
 
 	// Build full endpoint URLs from base: /feeds/ones → /feeds/ones/goods/, /feeds/ones/prices/
 	goodsURL := strings.TrimRight(apiURL, "/") + "/goods/"
@@ -102,9 +103,11 @@ func main() {
 	goodsStart := time.Now()
 	goodsCount, skuCount, err := client.FetchGoods(ctx, goodsURL, repo)
 	if err != nil {
-		log.Fatalf("❌ Ошибка загрузки товаров: %v", err)
+		dllog.Error("Goods: %v", err)
+		hasErrors = true
+	} else {
+		dllog.Done(time.Since(goodsStart), "%d goods, %d SKUs", goodsCount, skuCount)
 	}
-	dllog.Done(time.Since(goodsStart), "%d goods, %d SKUs", goodsCount, skuCount)
 
 	if ctx.Err() != nil {
 		return
@@ -115,9 +118,11 @@ func main() {
 	pricesStart := time.Now()
 	priceRows, priceProducts, err := client.FetchPrices(ctx, pricesURL, snapshotDate, repo)
 	if err != nil {
-		log.Fatalf("❌ Ошибка загрузки цен: %v", err)
+		dllog.Error("Prices: %v", err)
+		hasErrors = true
+	} else {
+		dllog.Done(time.Since(pricesStart), "%d price rows from %d products", priceRows, priceProducts)
 	}
-	dllog.Done(time.Since(pricesStart), "%d price rows from %d products", priceRows, priceProducts)
 
 	if ctx.Err() != nil {
 		return
@@ -128,13 +133,19 @@ func main() {
 	pimStart := time.Now()
 	pimCount, err := client.FetchPIMGoods(ctx, pimURL, repo)
 	if err != nil {
-		log.Fatalf("❌ Ошибка загрузки PIM: %v", err)
+		dllog.Error("PIM: %v", err)
+		hasErrors = true
+	} else {
+		dllog.Done(time.Since(pimStart), "%d PIM goods", pimCount)
 	}
-	dllog.Done(time.Since(pimStart), "%d PIM goods", pimCount)
 
 	// Summary
 	dllog.Done(time.Since(totalStart), "1C goods: %d, SKUs: %d, prices: %d rows, PIM: %d",
 		goodsCount, skuCount, priceRows, pimCount)
+
+	if hasErrors {
+		os.Exit(1)
+	}
 }
 
 func loadConfig(path string) (*Config, error) {

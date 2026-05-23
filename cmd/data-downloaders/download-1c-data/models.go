@@ -32,7 +32,61 @@ type OneCGood struct {
 	New               bool       `json:"New"`
 	ModelStatus       string     `json:"ModelStatus"`
 	Date              string     `json:"date"`
-	SKUs              []OneCSKU  `json:"sku"`
+	// Dimensions & Weight (cm / grams)
+	Length    float64 `json:"Length"`
+	Wideness  float64 `json:"Wideness"`
+	Height    float64 `json:"Height"`
+	WeightSKU float64 `json:"Weight_sku"` // grams!
+
+	// Certificate
+	Certificate    string `json:"Certificate"`
+	HasCertificate bool   `json:"HasCertificate"`
+
+	// Dates
+	ApprovalDate    string `json:"ApprovalDate"`
+	DateOfProduction string `json:"DateOfProduction"`
+	DateOfReceipt   string `json:"DateOfReceipt"`
+	PPSDate         string `json:"PPSDate"`
+
+	// Seasons & Collections
+	CollectionSeason   string `json:"CollectionSeason"`
+	CollectionYear     string `json:"CollectionYear"`
+	LookSeason         string `json:"LookSeason"`
+	OptCollectionSeason string `json:"OptCollectionSeason"`
+	OptCollectionYear  string `json:"OptCollectionYear"`
+	ProductionSeason   string `json:"ProductionSeason"`
+	ProductionYear     string `json:"ProductionYear"`
+
+	// Categories
+	CategoryLevel1Name string `json:"CategoryLevel1Name"`
+	CategoryLevel2Name string `json:"CategoryLevel2Name"`
+
+	// Product attributes
+	Age            string `json:"Age"`
+	FigureFeatures string `json:"FigureFeatures"`
+	Licensor       string `json:"Licensor"`
+	MainCapture    string `json:"MainCapture"`
+	Markirovka     string `json:"Markirovka"`
+	ModelHeight    string `json:"ModelHeight"`
+	RatioHeat      string `json:"RatioHeat"`
+	Recommendations string `json:"Recommendations"`
+	SizeOnModel    string `json:"SizeOnModel"`
+	Tag            string `json:"Tag"`
+	QuantityBarCode int   `json:"QuantityBarCode"`
+
+	// Boolean flags
+	Adult            bool `json:"Adult"`
+	ArticleBlocked   bool `json:"ArticleBlocked"`
+	ExcludeFromSite  bool `json:"ExcludeFromSite"`
+	Exclusive        bool `json:"Exclusive"`
+	GenuineLeather   bool `json:"GenuineLeather"`
+	ModelCancelled   bool `json:"ModelCancelled"`
+	NewCollection    bool `json:"NewCollection"`
+	NotRequireIroning bool `json:"NotRequireIroning"`
+	PPS              bool `json:"PPS"`
+	YaPriceListOpt   bool `json:"YaPriceListOpt"`
+
+	SKUs []OneCSKU `json:"sku"`
 }
 
 // OneCSKU represents a size variant (barcode) of a product.

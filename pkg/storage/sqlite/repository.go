@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/sales"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -51,6 +52,9 @@ type SalesRepository interface {
 
 // Ensure implementation satisfies interface.
 var _ SalesRepository = (*SQLiteSalesRepository)(nil)
+
+// Ensure implementation satisfies sales.SalesWriter (narrow persistence port).
+var _ sales.SalesWriter = (*SQLiteSalesRepository)(nil)
 
 // SQLiteSalesRepository implements SalesRepository for SQLite database.
 type SQLiteSalesRepository struct {
@@ -263,6 +267,52 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		_, err = r.db.Exec(GetOneCSchemaSQL())
 		if err != nil {
 			return err
+		}
+		// Migrations for 1C goods new fields (41 columns)
+		onecGoodsMigrations := []string{
+			"ALTER TABLE onec_goods ADD COLUMN length REAL DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN wideness REAL DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN height REAL DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN weight_sku_g REAL DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN certificate TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN has_certificate INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN approval_date TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN date_of_production TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN date_of_receipt TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN pps_date TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN collection_season TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN collection_year TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN look_season TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN opt_collection_season TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN opt_collection_year TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN production_season TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN production_year TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN category_level1_name TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN category_level2_name TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN age TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN figure_features TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN licensor TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN main_capture TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN markirovka TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN model_height TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN ratio_heat TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN recommendations TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN size_on_model TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN tag TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN quantity_bar_code INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_adult INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_article_blocked INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_exclude_from_site INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_exclusive INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_genuine_leather INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_model_cancelled INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_new_collection INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_not_require_ironing INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_pps INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN is_ya_price_list_opt INTEGER DEFAULT 0",
+		}
+		for _, m := range onecGoodsMigrations {
+			_, _ = r.db.Exec(m)
 		}
 		// Create supply tables (warehouses, tariffs, supplies, goods, packages)
 		_, err = r.db.Exec(GetSupplySchemaSQL())
