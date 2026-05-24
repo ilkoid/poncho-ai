@@ -1,0 +1,22 @@
+wb:
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+  timeout: 30m
+
+funnel:
+  days: 3
+  batch_size: 20
+  funnel_rate_limit: 3
+  funnel_rate_limit_burst: 3
+  funnel_rate_limit_api: 3
+  funnel_rate_limit_api_burst: 3
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+  max_batches: 0
+
+storage:
+  db_path: "/var/db/wb-sales.db"
+  funnel_refresh_window: 4
+
+filter:
+  exclude_lengths: [6]
+  allowed_years: [24, 25, 26]

@@ -1,0 +1,27 @@
+wb:
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+  timeout: 30m
+
+funnel_csv:
+  report_type: detail
+  rate_limits:
+    create: 3
+    create_burst: 3
+    create_api: 3
+    create_api_burst: 3
+    status_check: 3
+    status_check_burst: 3
+    status_check_api: 3
+    status_check_api_burst: 3
+    download: 3
+    download_burst: 3
+    download_api: 3
+    download_api_burst: 3
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+  poll_interval_sec: 30
+  poll_timeout_min: 30
+
+storage:
+  db_path: "/var/db/wb-sales.db"
+  funnel_refresh_window: 2

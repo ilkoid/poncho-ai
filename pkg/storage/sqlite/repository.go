@@ -324,6 +324,21 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+
+		// Create nm-report funnel tables (report tracking + grouped metrics)
+		_, err = r.db.Exec(GetNmReportSchemaSQL())
+		if err != nil {
+			return err
+		}
+
+		// Migrations for funnel_metrics_daily: cancel columns (from nm-report CSV)
+		funnelMigrations := []string{
+			"ALTER TABLE funnel_metrics_daily ADD COLUMN cancel_count INTEGER DEFAULT 0",
+			"ALTER TABLE funnel_metrics_daily ADD COLUMN cancel_sum_rub INTEGER DEFAULT 0",
+		}
+		for _, m := range funnelMigrations {
+			_, _ = r.db.Exec(m)
+		}
 	return nil
 }
 

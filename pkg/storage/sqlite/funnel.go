@@ -8,9 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/funnel"
+
 	"github.com/ilkoid/poncho-ai/pkg/storage"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// Compile-time assertion: SQLiteSalesRepository implements funnel.FunnelWriter.
+var _ funnel.FunnelWriter = (*SQLiteSalesRepository)(nil)
 
 // SaveProduct saves or updates product metadata.
 // Uses INSERT OR REPLACE for upsert (nm_id is PRIMARY KEY).

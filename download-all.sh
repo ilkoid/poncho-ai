@@ -94,7 +94,8 @@ echo ""
 echo "── Phase 6: Analytics (funnel, funnel-agg, search-visibility) ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel" && go run . --config "$CONFIGS/download-wb-funnel.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel" && go run . --config "$CONFIGS/download-wb-funnel.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv" && go run . --config "$CONFIGS/download-wb-funnel-csv.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 (cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg" && go run . --config "$CONFIGS/download-wb-funnel-agg.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 (cd "$PONCHO/cmd/data-downloaders/download-wb-search-visibility" && go run . --config "$CONFIGS/download-wb-search-visibility.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 

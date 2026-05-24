@@ -1233,3 +1233,53 @@ CREATE INDEX IF NOT EXISTS idx_stocks_warehouse
 	func GetStocksWarehouseSchemaSQL() string {
 		return StocksWarehouseSchemaSQL
 	}
+
+	// NmReportSchemaSQL defines tables for nm-report funnel CSV downloads.
+	// Tracks async report lifecycle + stores grouped funnel metrics.
+	const NmReportSchemaSQL = `
+-- ============================================================================
+-- NM REPORT FUNNEL TABLES (async CSV report lifecycle + grouped metrics)
+-- ============================================================================
+
+-- Report tracking for --resume support
+CREATE TABLE IF NOT EXISTS nm_report_downloads (
+    id TEXT PRIMARY KEY,
+    report_type TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'WAITING',
+    file_size INTEGER DEFAULT 0,
+    rows_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
+-- Grouped funnel metrics (GROUPED_HISTORY_REPORT)
+-- Grain: one row per metric_date
+CREATE TABLE IF NOT EXISTS funnel_metrics_grouped_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    metric_date TEXT NOT NULL,
+    open_card_count INTEGER DEFAULT 0,
+    add_to_cart_count INTEGER DEFAULT 0,
+    orders_count INTEGER DEFAULT 0,
+    orders_sum_rub INTEGER DEFAULT 0,
+    buyouts_count INTEGER DEFAULT 0,
+    buyouts_sum_rub INTEGER DEFAULT 0,
+    cancel_count INTEGER DEFAULT 0,
+    cancel_sum_rub INTEGER DEFAULT 0,
+    conversion_add_to_cart REAL,
+    conversion_cart_to_order REAL,
+    conversion_buyout REAL,
+    add_to_wishlist INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(metric_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_grouped_funnel_date
+    ON funnel_metrics_grouped_daily(metric_date);
+`
+
+	// GetNmReportSchemaSQL returns the nm-report tables schema.
+	func GetNmReportSchemaSQL() string {
+		return NmReportSchemaSQL
+	}
