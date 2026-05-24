@@ -140,6 +140,7 @@ No utility should ever require a real API key or live database to test its logic
 - E2E: `SnapshotDBClient` reads from SQLite instead of API — `wb.NewSnapshotDBClient("e2e-snapshot.db")`
 - E2E collector: `examples/e2e-mock-collector/` — collection order: Sales first → funnel → campaigns → feedbacks
 - Downloader testing: `--mock` flag on all downloaders, uses mock client returning deterministic fake data
+- Claude MUST NOT generate calls that hit write endpoints on prod
 
 ## 1C/PIM Integration
 Streaming JSON decode → SQLite: `onec_goods`, `onec_goods_sku`, `onec_prices`, `pim_goods`.

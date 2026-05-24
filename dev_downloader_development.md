@@ -1,5 +1,9 @@
 # Downloader Development Guide
 
+> **DEPRECATED for new development.** This document describes the **v1 (monolithic)** downloader pattern where all logic lives in `cmd/data-downloaders/*/main.go`.
+> For new development and migration, use [dev_utils.md](dev_utils.md) (v2 pkg/-based pattern).
+> Existing v1 downloaders continue to work. Migrate when touching a downloader.
+
 Руководство по созданию новых загрузчиков данных в `cmd/data-downloaders/`.
 
 ---

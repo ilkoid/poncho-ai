@@ -62,9 +62,7 @@ func (c *PromotionConfig) GetDefaults() PromotionConfig {
 	if result.DbPath == "" {
 		result.DbPath = "/var/db/wb-sales.db"
 	}
-	if result.Days == 0 {
-		result.Days = 7
-	}
+	// NOTE: Days is NOT defaulted here — default in main.go only when Begin/End empty.
 
 	// Promotion count
 	if result.RateLimits.PromotionCountApi == 0 {
@@ -188,9 +186,7 @@ type FunnelConfig struct {
 // Каскадные дефолты: api → desired, api_burst → desired_burst.
 func (c *FunnelConfig) GetDefaults() FunnelConfig {
 	result := *c
-	if result.Days == 0 {
-		result.Days = 7
-	}
+	// NOTE: Days is NOT defaulted here — default in main.go only when From/To empty.
 	if result.BatchSize == 0 {
 		result.BatchSize = 20
 	}
@@ -486,9 +482,7 @@ func (c *FeedbacksConfig) GetDefaults() FeedbacksConfig {
 	if result.DbPath == "" {
 		result.DbPath = "/var/db/wb-sales.db"
 	}
-	if result.Days == 0 {
-		result.Days = 7
-	}
+	// NOTE: Days is NOT defaulted here — default in main.go only when Begin/End empty.
 	if !result.Feedbacks && !result.Questions {
 		result.Feedbacks = true
 		result.Questions = true
@@ -740,7 +734,7 @@ type StockHistoryRateLimits struct {
 func (c *StockHistoryConfig) GetDefaults() StockHistoryConfig {
 	result := *c
 	if result.DbPath == "" { result.DbPath = "/var/db/wb-sales.db" }
-	if result.Days == 0 { result.Days = 30 }
+	// NOTE: Days is NOT defaulted here — default in main.go only when Begin/End empty.
 	if result.ReportType == "" { result.ReportType = "daily" }
 	if result.StockType == "" { result.StockType = "" }
 	if result.RateLimits.CreateApi == 0 { result.RateLimits.CreateApi = 3 }
@@ -1254,9 +1248,7 @@ func (c *SearchVisibilityConfig) GetDefaults() SearchVisibilityConfig {
 	if result.DbPath == "" {
 		result.DbPath = "/var/db/wb-sales.db"
 	}
-	if result.Days == 0 {
-		result.Days = 7
-	}
+	// NOTE: Days is NOT defaulted here — default in main.go only when Begin/End empty.
 	if result.Limit == 0 {
 		result.Limit = 30
 	}

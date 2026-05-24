@@ -248,8 +248,12 @@ func main() {
 	}
 
 	// Summary
-	dllog.Done(time.Since(start), "campaigns=%d windows=%d daily=%d app=%d nm=%d booster=%d db=%s",
-		len(campaigns), summary.DateWindows, summary.DailyRows, summary.AppRows, summary.NmRows, summary.BoosterRows, cfg.Promotion.DbPath)
+	dllog.Done(time.Since(start), "campaigns=%d windows=%d daily=%d app=%d nm=%d booster=%d errors=%d db=%s",
+		len(campaigns), summary.DateWindows, summary.DailyRows, summary.AppRows, summary.NmRows, summary.BoosterRows, summary.Errors, cfg.Promotion.DbPath)
+
+	if summary.Errors > 0 {
+		dllog.Error("%d batches/windows failed — check logs above for details", summary.Errors)
+	}
 }
 
 func loadConfig(path string) (*Config, error) {

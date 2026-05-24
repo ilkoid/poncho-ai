@@ -75,7 +75,7 @@ func main() {
 		wbClient := wb.New(cfg.WB.APIKey)
 		wbClient.SetRateLimit("sales",
 			cfg.WB.RateLimit, cfg.WB.BurstLimit,
-			1, 1) // api floor: 1 req/min
+			cfg.WB.RateLimit, cfg.WB.BurstLimit)
 		wbClient.SetAdaptiveParams(
 			cfg.Download.AdaptiveRecoverAfter,
 			cfg.Download.AdaptiveProbeAfter,

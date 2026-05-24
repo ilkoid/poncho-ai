@@ -3,7 +3,6 @@
 // Usage:
 //
 //	WB_API_KEY=your_key go run . --days=7
-//	go run . --mock --days=7    # Mock mode
 //	go run . --help             # Show help
 package main
 
@@ -28,7 +27,6 @@ import (
 func main() {
 	// Flags
 	configPath := flag.String("config", "config.yaml", "Path to config file")
-	mock := flag.Bool("mock", false, "Use mock client (no API calls)")
 	clean := flag.Bool("clean", false, "Delete database before download")
 	begin := flag.String("begin", "", "Begin date (YYYY-MM-DD)")
 	end := flag.String("end", "", "End date (YYYY-MM-DD)")
@@ -95,10 +93,7 @@ func main() {
 		if cfg.StockHistory.Resume {
 			fields = append(fields, dllog.HeaderField{Key: "Resume", Value: "✓"})
 		}
-		if *mock {
-			fields = append(fields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
-		}
-		dllog.PrintHeader("WB Stock History CSV Downloader", fields...)
+			dllog.PrintHeader("WB Stock History CSV Downloader", fields...)
 	}
 
 	// Handle Ctrl+C
@@ -128,21 +123,12 @@ func main() {
 
 	// Create client
 	var wbClient *wb.Client
-	if *mock {
-		mockClient := NewMockStockHistoryClient()
-		PopulateMockStockHistory(mockClient, 5)
-		dllog.Log("mock mode — using simulated data")
-		// Mock doesn't implement wb.Client, so we skip the actual download
-		dllog.Log("mock mode — skipping actual download")
-		return
-	} else {
-		apiKey := getAPIKey(cfg)
-		if apiKey == "" {
-			log.Fatal("no API key. Set WB_API_KEY")
-		}
-		wbClient = wb.New(apiKey)
-		dllog.Log("API Key: %s", utils.MaskAPIKey(apiKey))
+	apiKey := getAPIKey(cfg)
+	if apiKey == "" {
+		log.Fatal("no API key. Set WB_API_KEY")
 	}
+	wbClient = wb.New(apiKey)
+	dllog.Log("API Key: %s", utils.MaskAPIKey(apiKey))
 
 	// Download stock history
 	t0 := time.Now()
@@ -208,7 +194,6 @@ Usage:
 
 Options:
   --config PATH     Config file path (default: config.yaml)
-  --mock            Use mock client (no API calls)
   --clean           Delete database before download
   --begin DATE      Begin date (YYYY-MM-DD)
   --end DATE        End date (YYYY-MM-DD)
@@ -230,8 +215,6 @@ Examples:
   # Download metrics for specific period
   WB_API_KEY=xxx go run . --report-type=metrics --begin=2026-01-01 --end=2026-01-31
 
-  # Mock mode for testing
-  go run . --mock --days=3
 
 `)
 }

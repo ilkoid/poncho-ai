@@ -147,7 +147,9 @@ func DownloadCampaignStats(
 			responses, err := client.GetCampaignFullstats(ctx, batch, w.begin, w.end, rateLimit, burst)
 			apiDur := time.Since(tAPI)
 			if err != nil {
-				return summary, fmt.Errorf("get fullstats batch: %w", err)
+				dllog.Error("fullstats batch %d-%d (window %s-%s): %v", i+1, endIdx, w.begin, w.end, err)
+				summary.Errors++
+				continue
 			}
 
 			if len(responses) == 0 {
@@ -167,16 +169,24 @@ func DownloadCampaignStats(
 			// Save to all tables
 			tDB := time.Now()
 			if err := repo.SaveCampaignStats(ctx, flat.Daily); err != nil {
-				return summary, fmt.Errorf("save daily stats: %w", err)
+				dllog.Error("save daily stats: %v", err)
+				summary.Errors++
+				continue
 			}
 			if err := repo.SaveCampaignAppStats(ctx, flat.App); err != nil {
-				return summary, fmt.Errorf("save app stats: %w", err)
+				dllog.Error("save app stats: %v", err)
+				summary.Errors++
+				continue
 			}
 			if err := repo.SaveCampaignNmStats(ctx, flat.Nm); err != nil {
-				return summary, fmt.Errorf("save nm stats: %w", err)
+				dllog.Error("save nm stats: %v", err)
+				summary.Errors++
+				continue
 			}
 			if err := repo.SaveCampaignBoosterStats(ctx, flat.Booster); err != nil {
-				return summary, fmt.Errorf("save booster stats: %w", err)
+				dllog.Error("save booster stats: %v", err)
+				summary.Errors++
+				continue
 			}
 			dbDur := time.Since(tDB)
 
@@ -247,6 +257,7 @@ type StatsSummary struct {
 	AppRows     int
 	NmRows      int
 	BoosterRows int
+	Errors      int // Batches/windows that failed but were skipped
 }
 
 // maxStatsWindowDays is the maximum date range per /adv/v3/fullstats request.

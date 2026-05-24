@@ -43,6 +43,9 @@ type StorageConfig struct {
 func main() {
 	// Parse flags
 	configPath := flag.String("config", "config.yaml", "путь к YAML конфигу")
+	begin := flag.String("begin", "", "начальная дата (YYYY-MM-DD)")
+	end := flag.String("end", "", "конечная дата (YYYY-MM-DD)")
+	days := flag.Int("days", 0, "период в днях (альтернатива begin/end)")
 	help := flag.Bool("help", false, "показать справку")
 	flag.BoolVar(help, "h", false, "показать справку")
 	flag.Parse()
@@ -56,6 +59,17 @@ func main() {
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("❌ Failed to load config: %v", err)
+	}
+
+	// Apply CLI overrides for date range
+	if *begin != "" {
+		cfg.Funnel.From = *begin
+	}
+	if *end != "" {
+		cfg.Funnel.To = *end
+	}
+	if *days > 0 {
+		cfg.Funnel.Days = *days
 	}
 
 	// Validate API key
@@ -180,6 +194,9 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("ОПЦИИ:")
 	fmt.Println("  --config PATH   Путь к YAML конфигу (default: config.yaml)")
+	fmt.Println("  --begin DATE    Начальная дата YYYY-MM-DD")
+	fmt.Println("  --end DATE      Конечная дата YYYY-MM-DD")
+	fmt.Println("  --days N        Период в днях (альтернатива begin/end, default: 7)")
 	fmt.Println("  --help, -h      Показать справку")
 	fmt.Println()
 	fmt.Println("ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ:")
@@ -196,6 +213,9 @@ func printHelp() {
 	fmt.Println("ПРИМЕРЫ:")
 	fmt.Println("  # С конфигом по умолчанию")
 	fmt.Println("  WB_API_ANALYTICS_AND_PROMO_KEY=xxx go run .")
+	fmt.Println()
+	fmt.Println("  # Последние 14 дней")
+	fmt.Println("  WB_API_ANALYTICS_AND_PROMO_KEY=xxx go run . --days=14")
 	fmt.Println()
 	fmt.Println("  # С кастомным конфигом")
 	fmt.Println("  go run . --config /path/to/config.yaml")

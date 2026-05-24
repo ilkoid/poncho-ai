@@ -1,5 +1,7 @@
 # Go Best Practices & Architecture Guide
 
+> **Scope:** Go-specific patterns and best practices. Architectural rules → [dev_manifest.md](dev_manifest.md). Downloader rules → [dev_utils.md](dev_utils.md) (v2) / [dev_downloader_development.md](dev_downloader_development.md) (v1).
+
 ---
 
 ## Rule 0: Code Reuse First

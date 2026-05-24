@@ -3,7 +3,7 @@
 Утилиты v2 — это загрузчики и анализаторы данных, бизнес-логика которых вынесена в `pkg/` и готова к использованию как через CLI, так и через Tool-обёртку агента. Документ описывает правила миграции и создания новых утилит по архитектуре v2.
 
 **Связанные документы:**
-- [dev_downloader_development.md](dev_downloader_development.md) — v1: правила для монолитных загрузчиков в `cmd/`
+- [dev_downloader_development.md](dev_downloader_development.md) — **v1 (DEPRECATED)**: правила для монолитных загрузчиков в `cmd/`
 - [dev_manifest.md](dev_manifest.md) — общие архитектурные правила (Rule 6, Rule 13)
 - [raw-data-downloaders-as-tools-plan.md](plans/raw-data-downloaders-as-tools-plan.md) — стратегия миграции v1 → v2
   - [persistence-интерфейсов стратегия](plans/data-downloaders-persistence-interfaces-strategy.md) — Writer интерфейсы для всех доменов
@@ -21,6 +21,24 @@ pkg/sales/                          ← ядро (Source + Writer интерфе
 cmd/.../download-wb-sales-v2/       ← тонкий драйвер (flags, config, wiring)
 pkg/tools/std/download_sales_tool.go ← Tool-обёртка (фаза 3)
 ```
+
+---
+
+## Migration Status (2026-05-25)
+
+| Downloader | v2 pkg/ | v2 cmd/ | Mock | Tests |
+|---|---|---|---|---|
+| download-wb-sales | `pkg/sales/` | sales-v2 | Yes | Yes |
+| download-wb-funnel | `pkg/funnel/` | funnel-v2 | Yes | Yes |
+| download-wb-funnel-csv | `pkg/nmreport/` | (same cmd/) | Yes | Yes |
+| Others (16) | -- | v1 only | Partial | Partial |
+
+## When to Migrate v1 → v2
+
+Do NOT mass-migrate all downloaders. Migrate when:
+1. Bug fix needed → fix in v1, then create v2
+2. New feature needed → implement in v2 directly
+3. Active analysis usage → prioritize v2 for testability
 
 ---
 

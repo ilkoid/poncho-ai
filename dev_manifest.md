@@ -75,8 +75,7 @@ New features added only through:
 
 ### 9. Rule of Testing
 Each tool must have mockable dependencies for unit tests. No direct HTTP calls without abstraction.
-**Instead of tests initially:** Prepare utility in `/examples` for verification.
-Config, prompts, logs - all should lie next to the utility. Runs from its own folder.
+**Testing approach:** Use `--mock` flag for deterministic fake data. E2E tests use `SnapshotDBClient` with SQLite.
 
 ### 10. Rule of Documentation
 All public APIs must have godoc comments. Interface changes must update usage examples.
@@ -97,7 +96,7 @@ Validate all inputs, redact sensitive data in logs, use HTTPS only.
 
 ### 13. Rule of Resource Localization
 Any app in `/cmd` or in `/example` must be autonomous and store resources nearby:
-- **Prompts**: `{app_dir}/prompts/` (flat structure, no nested folders)
+- **Prompts**: `./prompts/` (shared root directory, flat structure, no nested folders)
 - **Config**: `{app_dir}/config.yaml` (next to executable)
 - **Logs**: `{app_dir}/logs/` or stdout for CLI utilities
 
