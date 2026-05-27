@@ -301,7 +301,7 @@ func (c *OneCClient) FetchPrices(ctx context.Context, apiURL string, snapshotDat
 //
 // Optimization: PIM API returns 228MB JSON with 25K products × 109 attributes.
 // json.Decoder processes one product at a time. High-value attributes are
-// extracted into typed columns; the full values dict is preserved as values_json.
+// extracted into typed columns.
 func (c *OneCClient) FetchPIMGoods(ctx context.Context, pimURL string, repo *sqlite.SQLiteSalesRepository) (int, error) {
 	body, err := c.fetchBody(ctx, pimURL)
 	if err != nil {
@@ -350,7 +350,6 @@ func (c *OneCClient) FetchPIMGoods(ctx context.Context, pimURL string, repo *sql
 			Description:        pimString(raw.Values, "description"),
 			Name:               pimString(raw.Values, "name"),
 			Updated:            raw.Updated,
-			ValuesJSON:         valuesToJSON(raw.Values),
 			WildberriesLength:  pimFloat(raw.Values, "wildberries_length"),
 			WildberriesWidth:   pimFloat(raw.Values, "wildberries_width"),
 			WildberriesHeight:  pimFloat(raw.Values, "wildberries_height"),
@@ -489,19 +488,6 @@ func pimFloat(values map[string][]PIMValue, key string) float64 {
 	default:
 		return 0
 	}
-}
-
-// valuesToJSON serializes the full values map for storage.
-// Preserves all 109 attributes for future use.
-func valuesToJSON(values map[string][]PIMValue) string {
-	if len(values) == 0 {
-		return "{}"
-	}
-	b, err := json.Marshal(values)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
 }
 
 // toJSONStrings serializes a string slice to JSON.

@@ -153,7 +153,7 @@ CREATE INDEX IF NOT EXISTS idx_onec_prices_good_guid ON onec_prices(good_guid);
 -- ============================================================================
 -- PIM GOODS (validated product attributes from PIM system)
 -- Grain: one row per identifier (=article)
--- 24 dedicated columns for high-value attributes + values_json for the rest
+-- 27 dedicated columns for high-value attributes
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS pim_goods (
     identifier          TEXT PRIMARY KEY,
@@ -180,7 +180,6 @@ CREATE TABLE IF NOT EXISTS pim_goods (
     description         TEXT    DEFAULT '',
     name                TEXT    DEFAULT '',
     updated             TEXT    DEFAULT '',
-    values_json         TEXT    DEFAULT '',           -- Full values dict as JSON blob
     wildberries_length  REAL    DEFAULT 0,            -- cm, from PIM attribute
     wildberries_width   REAL    DEFAULT 0,            -- cm, from PIM attribute
     wildberries_height  REAL    DEFAULT 0,            -- cm, from PIM attribute

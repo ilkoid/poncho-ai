@@ -228,7 +228,7 @@ func (r *SQLiteSalesRepository) SavePIMGoods(ctx context.Context, items []PIMGoo
 		var args []any
 
 		for _, p := range batch {
-			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args,
 				p.Identifier, p.Enabled, p.Family, p.Categories, p.ProductType,
 				p.Sex, p.Season, p.Color, p.FilterColor, p.WbNmID,
@@ -236,7 +236,6 @@ func (r *SQLiteSalesRepository) SavePIMGoods(ctx context.Context, items []PIMGoo
 				p.Composition, p.Naznacenie, p.Minicollection,
 				p.BrandCountry, p.CountryManufacture, p.SizeTable,
 				p.FeaturesCare, p.Description, p.Name, p.Updated,
-				p.ValuesJSON,
 				p.WildberriesLength, p.WildberriesWidth, p.WildberriesHeight,
 			)
 		}
@@ -249,7 +248,6 @@ func (r *SQLiteSalesRepository) SavePIMGoods(ctx context.Context, items []PIMGoo
 				composition, naznacenie, minicollection,
 				brand_country, country_manufacture, size_table,
 				features_care, description, name, updated,
-				values_json,
 				wildberries_length, wildberries_width, wildberries_height
 			) VALUES %s
 		`, strings.Join(placeholders, ", "))

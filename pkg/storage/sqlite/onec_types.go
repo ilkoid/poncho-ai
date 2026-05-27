@@ -140,7 +140,6 @@ type PIMGoodsRow struct {
 	Description       string
 	Name              string
 	Updated           string
-	ValuesJSON        string // Full values dict as JSON
 	WildberriesLength float64
 	WildberriesWidth  float64
 	WildberriesHeight float64
