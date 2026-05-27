@@ -331,6 +331,17 @@ func (r *SQLiteSalesRepository) initSchema() error {
 
 		// New certificate field
 		_, _ = r.db.Exec("ALTER TABLE onec_goods ADD COLUMN certificate_type TEXT DEFAULT ''")
+
+		// PIM wildberries dimensions (cm, from PIM Akeneo attributes)
+		pimMigrations := []string{
+			"ALTER TABLE pim_goods ADD COLUMN wildberries_length REAL DEFAULT 0",
+			"ALTER TABLE pim_goods ADD COLUMN wildberries_width REAL DEFAULT 0",
+			"ALTER TABLE pim_goods ADD COLUMN wildberries_height REAL DEFAULT 0",
+		}
+		for _, m := range pimMigrations {
+			_, _ = r.db.Exec(m)
+		}
+
 		// Create supply tables (warehouses, tariffs, supplies, goods, packages)
 		_, err = r.db.Exec(GetSupplySchemaSQL())
 		if err != nil {
