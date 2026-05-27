@@ -349,7 +349,7 @@ func updateStagingStatus(ctx context.Context, db *sql.DB, nmID int, status, errM
 }
 
 // getAllAggregatedDimensions returns all cards with 1C dimension data,
-// including those that already have dimensions set (--force mode).
+// selecting the SKU with the largest volume per good_guid (--force mode).
 func getAllAggregatedDimensions(ctx context.Context, db *sql.DB) ([]sqlite.DimensionAggRow, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT
@@ -359,13 +359,21 @@ func getAllAggregatedDimensions(ctx context.Context, db *sql.DB) ([]sqlite.Dimen
 			COALESCE(c.dim_width, 0),
 			COALESCE(c.dim_height, 0),
 			COALESCE(c.dim_weight_brutto, 0),
-			MAX(d.length_dm * 10),
-			MAX(d.width_dm * 10),
-			MAX(d.height_dm * 10),
-			MAX(d.weight_kg)
+			d.length_dm * 10,
+			d.width_dm * 10,
+			d.height_dm * 10,
+			d.weight_kg
 		FROM onec_dimensions d
 		JOIN onec_goods og ON og.guid = d.good_guid
 		JOIN cards c ON c.vendor_code = og.article
+		WHERE CASE WHEN d.volume_cm3 > 0 THEN d.volume_cm3
+		           ELSE (d.length_dm * 10) * (d.width_dm * 10) * (d.height_dm * 10)
+		      END = (
+			  SELECT MAX(CASE WHEN d2.volume_cm3 > 0 THEN d2.volume_cm3
+			                  ELSE (d2.length_dm * 10) * (d2.width_dm * 10) * (d2.height_dm * 10)
+			             END)
+			  FROM onec_dimensions d2 WHERE d2.good_guid = d.good_guid
+		  )
 		GROUP BY c.nm_id ORDER BY c.vendor_code
 	`)
 	if err != nil {

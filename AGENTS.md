@@ -42,6 +42,24 @@
 - `toolID` must match between limiter setup and request path usage; mismatches create separate limiter state.
 - Analytics/search endpoints are configured around strict low limits (notably 3 req/min for funnel/search visibility related flows); keep this in mind when changing batch/concurrency.
 
+## Development Guides (by scenario)
+
+Full map with priorities → `dev_manifest.md` → "Карта документов разработчика".
+
+| Scenario | Document |
+|----------|----------|
+| General Go, code review | `dev_solid.md` |
+| Project architecture (immutable) | `dev_manifest.md` |
+| Code placement, patterns | `dev_best_practices.md` |
+| WB API write-utilities, sandboxes | `dev_swagger_reusable_packages.md` |
+| Downloader migration v1→v2 | `dev_utils.md` |
+
+Rule: more specific document overrides more general.
+
+## WB API Safety
+
+**MASS WRITES TO WB API ARE FORBIDDEN.** Never generate or execute code that performs bulk updates via WB Content API or any write endpoint. Only the user may run write operations manually. For write-utility development see `dev_swagger_reusable_packages.md`.
+
 ## DB Reality Check Before Writes
 - Scripted downloader target DB is usually `/var/db/wb-sales.db`.
 - Some analyzers use other DBs (example: `cmd/data-analyzers/check-card-consistency/config.yaml` points to `/mnt/d/db/card-analysis.db`).

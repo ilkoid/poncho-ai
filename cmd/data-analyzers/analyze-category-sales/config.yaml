@@ -1,0 +1,23 @@
+source:
+  db_path: "/var/db/wb-sales.db"
+
+results:
+  db_path: "/var/db/category-sales.db"
+
+analysis:
+  period_days: 30
+  velocity_hot: 2.0
+  velocity_warm: 0.5
+  trend_threshold: 20.0
+  pareto:
+    a: 80
+    b: 95
+    c: 99
+  price_brackets:
+    - 0
+    - 500
+    - 1000
+    - 1500
+    - 2000
+    - 3000
+    - 5000

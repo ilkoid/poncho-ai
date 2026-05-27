@@ -162,6 +162,20 @@ Mapping: `onec_prices(good_guid) → onec_goods(guid) → article → cards.vend
 ## Compact Instructions
 When compacting, preserve: goal, changed files, failing command, current hypothesis, test results, next exact command.
 
+## Development Guides
+
+Project root contains development documents with a clear priority hierarchy (see `dev_manifest.md` → "Карта документов разработчика"):
+
+| Scenario | Document | Read when |
+|----------|----------|-----------|
+| General Go principles, code review | `dev_solid.md` | Architecture questions |
+| Project architecture, immutable rules | `dev_manifest.md` | Any development |
+| Code placement, common patterns | `dev_best_practices.md` | "Where do I put X?" |
+| WB API write-utilities, sandboxes | `dev_swagger_reusable_packages.md` | Write-utility work, sandbox testing |
+| Downloader migration v1→v2 | `dev_utils.md` | Creating/migrating a downloader |
+
+**Rule:** more specific document overrides more general. For write-utilities, `dev_swagger_reusable_packages.md` overrides `dev_solid.md`.
+
 ## SQLite database placement
 production bases, **read-only**: /var/db
 - wwb-sales.db - major data-lake based on wb api data

@@ -363,16 +363,16 @@ type CardTag struct {
 }
 
 // CardUpdateItem — карточка в теле запроса POST /content/v2/cards/update.
-// API полностью перезаписывает карточку — все поля должны быть заполнены.
+// API полностью перезаписывает карточку — все поля отправляются явно, без omitempty.
 type CardUpdateItem struct {
 	NmID            int                `json:"nmID"`
-	VendorCode      string             `json:"vendorCode,omitempty"`
-	Brand           string             `json:"brand,omitempty"`
-	Title           string             `json:"title,omitempty"`
-	Description     string             `json:"description,omitempty"`
-	Dimensions      *CardDimensions    `json:"dimensions,omitempty"`
-	Characteristics []CardUpdateCharc  `json:"characteristics,omitempty"`
-	Sizes           []CardSize         `json:"sizes,omitempty"`
+	VendorCode      string             `json:"vendorCode"`
+	Brand           string             `json:"brand"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Dimensions      *CardDimensions    `json:"dimensions"`
+	Characteristics []CardUpdateCharc  `json:"characteristics"`
+	Sizes           []CardSize         `json:"sizes"`
 }
 
 // CardUpdateCharc — характеристика в запросе обновления.

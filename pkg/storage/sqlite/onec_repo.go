@@ -16,8 +16,14 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 	r.db.Exec("PRAGMA synchronous = OFF")
 	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
-	// SQLite default limit: 999 variables per statement. 66 cols × 15 = 990 < 999.
-	const batchSize = 15
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	// SQLite default limit: 999 variables per statement. 69 cols × 14 = 966 < 999.
+	const batchSize = 14
 	totalSaved := 0
 
 	for i := 0; i < len(goods); i += batchSize {
@@ -28,7 +34,7 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 		var args []any
 
 		for _, g := range batch {
-			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args,
 				g.GUID, g.Article, g.Name, g.NameIM, g.Description,
 				g.Brand, g.Type, g.Category, g.CategoryLevel1, g.CategoryLevel2,
@@ -39,7 +45,7 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 				// Dimensions & Weight
 				g.Length, g.Wideness, g.Height, g.WeightSKUG,
 				// Certificate
-				g.Certificate, g.HasCertificate,
+				g.Certificate, g.CertificateType, g.HasCertificate, g.CertificateBegin, g.CertificateEnd, g.CertificateNumber,
 				// Dates
 				g.ApprovalDate, g.DateOfProduction, g.DateOfReceipt, g.PPSDate,
 				// Seasons & Collections
@@ -68,7 +74,8 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 				tnved_codes, business_line,
 				is_sale, is_new, model_status, date,
 				length, wideness, height, weight_sku_g,
-				certificate, has_certificate,
+				certificate, certificate_type, has_certificate,
+				certificate_begin, certificate_end, certificate_number,
 				approval_date, date_of_production, date_of_receipt, pps_date,
 				collection_season, collection_year, look_season,
 				opt_collection_season, opt_collection_year,
@@ -83,7 +90,7 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 			) VALUES %s
 		`, strings.Join(placeholders, ", "))
 
-		result, err := r.db.ExecContext(ctx, query, args...)
+		result, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return totalSaved, fmt.Errorf("save onec_goods batch (offset %d): %w", i, err)
 		}
@@ -92,7 +99,7 @@ func (r *SQLiteSalesRepository) SaveOneCGoods(ctx context.Context, goods []OneCG
 		totalSaved += int(affected)
 	}
 
-	return totalSaved, nil
+	return totalSaved, tx.Commit()
 }
 
 // SaveOneCSKUs saves a batch of 1C SKUs using INSERT OR REPLACE.
@@ -105,7 +112,14 @@ func (r *SQLiteSalesRepository) SaveOneCSKUs(ctx context.Context, skus []OneCSKU
 	r.db.Exec("PRAGMA synchronous = OFF")
 	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
-	const batchSize = 500
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	// SQLite default limit: 999 variables per statement. 9 cols × 111 = 999.
+	const batchSize = 111
 	totalSaved := 0
 
 	for i := 0; i < len(skus); i += batchSize {
@@ -116,16 +130,17 @@ func (r *SQLiteSalesRepository) SaveOneCSKUs(ctx context.Context, skus []OneCSKU
 		var args []any
 
 		for _, s := range batch {
-			placeholders = append(placeholders, "(?, ?, ?, ?, ?)")
-			args = append(args, s.SKUGUID, s.GUID, s.Barcode, s.Size, s.NDS)
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			args = append(args, s.SKUGUID, s.GUID, s.Barcode, s.Size, s.NDS,
+				s.Length, s.Wideness, s.Height, s.WeightSKUG)
 		}
 
 		query := fmt.Sprintf(`
-			INSERT OR REPLACE INTO onec_goods_sku (sku_guid, guid, barcode, size, nds)
+			INSERT OR REPLACE INTO onec_goods_sku (sku_guid, guid, barcode, size, nds, length, wideness, height, weight_sku_g)
 			VALUES %s
 		`, strings.Join(placeholders, ", "))
 
-		result, err := r.db.ExecContext(ctx, query, args...)
+		result, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return totalSaved, fmt.Errorf("save onec_goods_sku batch (offset %d): %w", i, err)
 		}
@@ -134,7 +149,7 @@ func (r *SQLiteSalesRepository) SaveOneCSKUs(ctx context.Context, skus []OneCSKU
 		totalSaved += int(affected)
 	}
 
-	return totalSaved, nil
+	return totalSaved, tx.Commit()
 }
 
 // SaveOneCPrices saves a batch of 1C price rows using INSERT OR REPLACE.
@@ -147,6 +162,12 @@ func (r *SQLiteSalesRepository) SaveOneCPrices(ctx context.Context, prices []One
 
 	r.db.Exec("PRAGMA synchronous = OFF")
 	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 
 	const batchSize = 500
 	totalSaved := 0
@@ -168,7 +189,7 @@ func (r *SQLiteSalesRepository) SaveOneCPrices(ctx context.Context, prices []One
 			VALUES %s
 		`, strings.Join(placeholders, ", "))
 
-		result, err := r.db.ExecContext(ctx, query, args...)
+		result, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return totalSaved, fmt.Errorf("save onec_prices batch (offset %d): %w", i, err)
 		}
@@ -177,7 +198,7 @@ func (r *SQLiteSalesRepository) SaveOneCPrices(ctx context.Context, prices []One
 		totalSaved += int(affected)
 	}
 
-	return totalSaved, nil
+	return totalSaved, tx.Commit()
 }
 
 // SavePIMGoods saves a batch of PIM goods using INSERT OR REPLACE.
@@ -190,6 +211,12 @@ func (r *SQLiteSalesRepository) SavePIMGoods(ctx context.Context, items []PIMGoo
 	r.db.Exec("PRAGMA synchronous = OFF")
 	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
 	const batchSize = 500
 	totalSaved := 0
 
@@ -201,7 +228,7 @@ func (r *SQLiteSalesRepository) SavePIMGoods(ctx context.Context, items []PIMGoo
 		var args []any
 
 		for _, p := range batch {
-			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args,
 				p.Identifier, p.Enabled, p.Family, p.Categories, p.ProductType,
 				p.Sex, p.Season, p.Color, p.FilterColor, p.WbNmID,
@@ -210,6 +237,7 @@ func (r *SQLiteSalesRepository) SavePIMGoods(ctx context.Context, items []PIMGoo
 				p.BrandCountry, p.CountryManufacture, p.SizeTable,
 				p.FeaturesCare, p.Description, p.Name, p.Updated,
 				p.ValuesJSON,
+				p.WildberriesLength, p.WildberriesWidth, p.WildberriesHeight,
 			)
 		}
 
@@ -221,11 +249,12 @@ func (r *SQLiteSalesRepository) SavePIMGoods(ctx context.Context, items []PIMGoo
 				composition, naznacenie, minicollection,
 				brand_country, country_manufacture, size_table,
 				features_care, description, name, updated,
-				values_json
+				values_json,
+				wildberries_length, wildberries_width, wildberries_height
 			) VALUES %s
 		`, strings.Join(placeholders, ", "))
 
-		result, err := r.db.ExecContext(ctx, query, args...)
+		result, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return totalSaved, fmt.Errorf("save pim_goods batch (offset %d): %w", i, err)
 		}
@@ -234,7 +263,7 @@ func (r *SQLiteSalesRepository) SavePIMGoods(ctx context.Context, items []PIMGoo
 		totalSaved += int(affected)
 	}
 
-	return totalSaved, nil
+	return totalSaved, tx.Commit()
 }
 
 // CountOneCGoods returns total number of 1C goods in the database.
@@ -272,6 +301,10 @@ func (r *SQLiteSalesRepository) CleanOneCData(ctx context.Context) error {
 			return fmt.Errorf("clean table %s: %w", table, err)
 		}
 	}
+	// Clean API-sourced dimension rows (preserve XLS rows)
+	if _, err := r.db.ExecContext(ctx, "DELETE FROM onec_dimensions WHERE source = 'api'"); err != nil {
+		return fmt.Errorf("clean api dimensions: %w", err)
+	}
 	return nil
 }
 
@@ -285,6 +318,12 @@ func (r *SQLiteSalesRepository) SaveOneCRests(ctx context.Context, rests []OneCR
 
 	r.db.Exec("PRAGMA synchronous = OFF")
 	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 
 	const batchSize = 500
 	totalSaved := 0
@@ -311,7 +350,7 @@ func (r *SQLiteSalesRepository) SaveOneCRests(ctx context.Context, rests []OneCR
 			) VALUES %s
 		`, strings.Join(placeholders, ", "))
 
-		result, err := r.db.ExecContext(ctx, query, args...)
+		result, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return totalSaved, fmt.Errorf("save onec_rests batch (offset %d): %w", i, err)
 		}
@@ -320,7 +359,7 @@ func (r *SQLiteSalesRepository) SaveOneCRests(ctx context.Context, rests []OneCR
 		totalSaved += int(affected)
 	}
 
-	return totalSaved, nil
+	return totalSaved, tx.Commit()
 }
 
 // CountOneCRests returns total number of 1C rests rows in the database.
@@ -365,6 +404,12 @@ func (r *SQLiteSalesRepository) ImportDimensions(ctx context.Context, rows []One
 	r.db.Exec("PRAGMA synchronous = OFF")
 	defer r.db.Exec("PRAGMA synchronous = NORMAL")
 
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
 	const batchSize = 500
 	totalSaved := 0
 
@@ -392,7 +437,7 @@ func (r *SQLiteSalesRepository) ImportDimensions(ctx context.Context, rows []One
 			) VALUES %s
 		`, strings.Join(placeholders, ", "))
 
-		result, err := r.db.ExecContext(ctx, query, args...)
+		result, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return totalSaved, fmt.Errorf("save onec_dimensions batch (offset %d): %w", i, err)
 		}
@@ -401,7 +446,7 @@ func (r *SQLiteSalesRepository) ImportDimensions(ctx context.Context, rows []One
 		totalSaved += int(affected)
 	}
 
-	return totalSaved, nil
+	return totalSaved, tx.Commit()
 }
 
 // CountDimensions returns total number of rows in onec_dimensions.
@@ -411,7 +456,7 @@ func (r *SQLiteSalesRepository) CountDimensions(ctx context.Context) (int, error
 	return count, err
 }
 
-// DimensionAggRow is the aggregated (MAX per good_guid) dimension result.
+// DimensionAggRow is the aggregated dimension result (max-volume SKU per good_guid).
 type DimensionAggRow struct {
 	NmID       int
 	VendorCode string
@@ -426,7 +471,8 @@ type DimensionAggRow struct {
 }
 
 // GetAggregatedDimensions joins onec_dimensions with cards via onec_goods,
-// aggregates MAX across sizes, and returns only cards with missing dims.
+// selects the SKU with the largest volume per good_guid, and returns only
+// cards with missing dims.
 func (r *SQLiteSalesRepository) GetAggregatedDimensions(ctx context.Context) ([]DimensionAggRow, error) {
 	query := `
 		SELECT
@@ -436,14 +482,22 @@ func (r *SQLiteSalesRepository) GetAggregatedDimensions(ctx context.Context) ([]
 			COALESCE(c.dim_width, 0),
 			COALESCE(c.dim_height, 0),
 			COALESCE(c.dim_weight_brutto, 0),
-			MAX(d.length_dm * 10),
-			MAX(d.width_dm * 10),
-			MAX(d.height_dm * 10),
-			MAX(d.weight_kg)
+			d.length_dm * 10,
+			d.width_dm * 10,
+			d.height_dm * 10,
+			d.weight_kg
 		FROM onec_dimensions d
 		JOIN onec_goods og ON og.guid = d.good_guid
 		JOIN cards c ON c.vendor_code = og.article
 		WHERE (c.dim_length = 0 OR c.dim_width = 0 OR c.dim_height = 0 OR c.dim_weight_brutto = 0)
+		  AND CASE WHEN d.volume_cm3 > 0 THEN d.volume_cm3
+		           ELSE (d.length_dm * 10) * (d.width_dm * 10) * (d.height_dm * 10)
+		      END = (
+			  SELECT MAX(CASE WHEN d2.volume_cm3 > 0 THEN d2.volume_cm3
+			                  ELSE (d2.length_dm * 10) * (d2.width_dm * 10) * (d2.height_dm * 10)
+			             END)
+			  FROM onec_dimensions d2 WHERE d2.good_guid = d.good_guid
+		  )
 		GROUP BY c.nm_id ORDER BY c.vendor_code
 	`
 

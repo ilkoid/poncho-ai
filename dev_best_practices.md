@@ -88,12 +88,17 @@ When in doubt about where code belongs: if it could be used by another Go projec
 
 ### Adding a New Downloader
 
+**v2 (рекомендуется):** см. [dev_utils.md](dev_utils.md) — бизнес-логика в `pkg/<domain>/`, CLI — тонкий драйвер ~100 строк.
+
+**v1 (legacy):**
 1. Create `cmd/data-downloaders/download-X/` with `main.go`
 2. Reuse config type from `pkg/config/utility.go` or add new one
 3. Reuse storage schemas from `pkg/storage/sqlite/` or add new file
 4. Call `client.SetRateLimit()` before API methods
 5. Use `INSERT OR REPLACE` for idempotent upserts
 6. Add to `download-all.sh` if applicable
+
+**Write-утилиты** (карточки, цены, кампании): дополнительно см. [dev_swagger_reusable_packages.md](dev_swagger_reusable_packages.md) — sandbox, dry-run с payload diff, readonly-интерфейсы.
 
 ### Adding a New Tool
 

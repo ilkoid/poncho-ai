@@ -39,8 +39,12 @@ type OneCGood struct {
 	WeightSKU float64 `json:"Weight_sku"` // grams!
 
 	// Certificate
-	Certificate    string `json:"Certificate"`
-	HasCertificate bool   `json:"HasCertificate"`
+	Certificate      string `json:"Certificate"`
+	CertificateType  string `json:"CertificateType"`
+	HasCertificate   bool   `json:"HasCertificate"`
+	CertificateBegin  string `json:"CertificateBegin"`
+	CertificateEnd    string `json:"CertificateEnd"`
+	CertificateNumber string `json:"CertificateNumber"`
 
 	// Dates
 	ApprovalDate    string `json:"ApprovalDate"`
@@ -95,6 +99,11 @@ type OneCSKU struct {
 	Barcode string  `json:"barcode"`
 	Size    string  `json:"size"`
 	NDS     int     `json:"nds"`
+	// Per-SKU dimensions from API (cm / grams)
+	Length    float64 `json:"Length"`
+	Wideness  float64 `json:"Wideness"`
+	Height    float64 `json:"Height"`
+	WeightSKU float64 `json:"Weight_sku"`
 }
 
 // --- 1C Prices API (/feeds/ones/prices/) ---

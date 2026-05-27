@@ -143,6 +143,14 @@ CREATE INDEX IF NOT EXISTS idx_card_characteristics_nm_id
 
 CREATE INDEX IF NOT EXISTS idx_card_tags_nm_id
 	ON card_tags(nm_id);
+
+-- Indexes for filter.SubjectName and category analytics
+CREATE INDEX IF NOT EXISTS idx_cards_subject_name
+	ON cards(subject_name);
+
+-- Index for char_id lookups without nm_id (EXISTS subqueries, seasonal queries)
+CREATE INDEX IF NOT EXISTS idx_card_characteristics_char_id
+	ON card_characteristics(char_id);
 `
 )
 

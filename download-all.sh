@@ -36,9 +36,9 @@ echo ""
 echo "── Phase 1: Catalog (cards, prices, 1C/PIM) ──"
 PHASE_START=$SECONDS
 
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-cards" && go run . --config "$CONFIGS/download-wb-cards.yaml") || exit $?
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-prices" && go run . --config "$CONFIGS/download-wb-prices.yaml") || exit $?
-#(cd "$PONCHO/cmd/data-downloaders/download-1c-data" && go run . --config "$CONFIGS/download-1c-data.yaml") || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-cards" && go run . --config "$CONFIGS/download-wb-cards.yaml") || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-prices" && go run . --config "$CONFIGS/download-wb-prices.yaml") || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-1c-data" && go run . --config "$CONFIGS/download-1c-data.yaml") || exit $?
 (cd "$PONCHO/cmd/data-downloaders/download-1c-rests" && go run . --config "$CONFIGS/download-1c-rests.yaml") || exit $?
 
 echo "  Phase 1 done in $(( SECONDS - PHASE_START ))s"

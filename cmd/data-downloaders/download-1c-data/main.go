@@ -101,12 +101,12 @@ func main() {
 	// Step 1: Goods + SKUs
 	dllog.Log("Step 1/3: Loading 1C goods...")
 	goodsStart := time.Now()
-	goodsCount, skuCount, err := client.FetchGoods(ctx, goodsURL, repo)
+	goodsCount, skuCount, dimCount, err := client.FetchGoods(ctx, goodsURL, repo)
 	if err != nil {
 		dllog.Error("Goods: %v", err)
 		hasErrors = true
 	} else {
-		dllog.Done(time.Since(goodsStart), "%d goods, %d SKUs", goodsCount, skuCount)
+		dllog.Done(time.Since(goodsStart), "%d goods, %d SKUs, %d dimensions", goodsCount, skuCount, dimCount)
 	}
 
 	if ctx.Err() != nil {
@@ -140,8 +140,8 @@ func main() {
 	}
 
 	// Summary
-	dllog.Done(time.Since(totalStart), "1C goods: %d, SKUs: %d, prices: %d rows, PIM: %d",
-		goodsCount, skuCount, priceRows, pimCount)
+	dllog.Done(time.Since(totalStart), "1C goods: %d, SKUs: %d, dimensions: %d, prices: %d rows, PIM: %d",
+		goodsCount, skuCount, dimCount, priceRows, pimCount)
 
 	if hasErrors {
 		os.Exit(1)

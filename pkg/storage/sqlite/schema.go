@@ -102,6 +102,9 @@ CREATE INDEX IF NOT EXISTS idx_sales_barcode ON sales(barcode);
 
 -- Index for analytics queries filtering canceled sales by doc type
 CREATE INDEX IF NOT EXISTS idx_sales_cancel_doctype ON sales(is_cancel, doc_type_name);
+
+-- Composite index for product time-series queries (funnel, snapshots, category analytics)
+CREATE INDEX IF NOT EXISTS idx_sales_nm_sale_dt ON sales(nm_id, sale_dt);
 `
 
 	// ServiceRecordsSchemaSQL defines the service_records table structure.

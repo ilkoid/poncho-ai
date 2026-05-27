@@ -50,7 +50,11 @@ CREATE TABLE IF NOT EXISTS onec_goods (
     weight_sku_g        REAL    DEFAULT 0,       -- grams! _g suffix — divide by 1000 for WB kg
     -- Certificate
     certificate         TEXT    DEFAULT '',
+    certificate_type    TEXT    DEFAULT '',
     has_certificate     INTEGER DEFAULT 0,
+    certificate_begin   TEXT    DEFAULT '',
+    certificate_end     TEXT    DEFAULT '',
+    certificate_number  TEXT    DEFAULT '',
     -- Dates
     approval_date       TEXT    DEFAULT '',
     date_of_production  TEXT    DEFAULT '',
@@ -99,6 +103,12 @@ CREATE INDEX IF NOT EXISTS idx_onec_goods_category ON onec_goods(category);
 -- Index for freshness checks
 CREATE INDEX IF NOT EXISTS idx_onec_goods_downloaded_at ON onec_goods(downloaded_at);
 
+-- Indexes for pkg/filter.BuildSQL() and category analytics
+CREATE INDEX IF NOT EXISTS idx_onec_goods_type ON onec_goods(type);
+CREATE INDEX IF NOT EXISTS idx_onec_goods_category_level1 ON onec_goods(category_level1);
+CREATE INDEX IF NOT EXISTS idx_onec_goods_category_level2 ON onec_goods(category_level2);
+CREATE INDEX IF NOT EXISTS idx_onec_goods_active ON onec_goods(is_article_blocked) WHERE is_article_blocked = 1;
+
 -- ============================================================================
 -- 1C GOODS SKU (barcode + size variants)
 -- Grain: one row per (sku_guid, guid) — sku_guid is NOT globally unique,
@@ -110,6 +120,11 @@ CREATE TABLE IF NOT EXISTS onec_goods_sku (
     barcode     TEXT    DEFAULT '',
     size        TEXT    DEFAULT '',
     nds         INTEGER DEFAULT 0,
+    -- Per-SKU dimensions (cm / grams)
+    length      REAL    DEFAULT 0,
+    wideness    REAL    DEFAULT 0,
+    height      REAL    DEFAULT 0,
+    weight_sku_g REAL   DEFAULT 0,
     PRIMARY KEY (sku_guid, guid),
     FOREIGN KEY (guid) REFERENCES onec_goods(guid)
 );
@@ -166,6 +181,9 @@ CREATE TABLE IF NOT EXISTS pim_goods (
     name                TEXT    DEFAULT '',
     updated             TEXT    DEFAULT '',
     values_json         TEXT    DEFAULT '',           -- Full values dict as JSON blob
+    wildberries_length  REAL    DEFAULT 0,            -- cm, from PIM attribute
+    wildberries_width   REAL    DEFAULT 0,            -- cm, from PIM attribute
+    wildberries_height  REAL    DEFAULT 0,            -- cm, from PIM attribute
     downloaded_at       TEXT    DEFAULT CURRENT_TIMESTAMP
 );
 

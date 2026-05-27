@@ -36,8 +36,12 @@ type OneCGood struct {
 	WeightSKUG float64 // grams! _g suffix — divide by 1000 for WB kg
 
 	// Certificate
-	Certificate    string
-	HasCertificate bool
+	Certificate      string
+	CertificateType  string
+	HasCertificate   bool
+	CertificateBegin string
+	CertificateEnd   string
+	CertificateNumber string
 
 	// Dates
 	ApprovalDate     string
@@ -92,6 +96,11 @@ type OneCSKU struct {
 	Barcode  string
 	Size     string
 	NDS      int
+	// Per-SKU dimensions (cm / grams, matching API)
+	Length     float64
+	Wideness   float64
+	Height     float64
+	WeightSKUG float64
 }
 
 // OneCPriceRow — lightweight input struct for batch save.
@@ -132,6 +141,9 @@ type PIMGoodsRow struct {
 	Name              string
 	Updated           string
 	ValuesJSON        string // Full values dict as JSON
+	WildberriesLength float64
+	WildberriesWidth  float64
+	WildberriesHeight float64
 }
 
 // OneCRestsRow — lightweight input struct for batch save.

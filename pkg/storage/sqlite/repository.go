@@ -276,6 +276,9 @@ func (r *SQLiteSalesRepository) initSchema() error {
 			"ALTER TABLE onec_goods ADD COLUMN weight_sku_g REAL DEFAULT 0",
 			"ALTER TABLE onec_goods ADD COLUMN certificate TEXT DEFAULT ''",
 			"ALTER TABLE onec_goods ADD COLUMN has_certificate INTEGER DEFAULT 0",
+			"ALTER TABLE onec_goods ADD COLUMN certificate_begin TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN certificate_end TEXT DEFAULT ''",
+			"ALTER TABLE onec_goods ADD COLUMN certificate_number TEXT DEFAULT ''",
 			"ALTER TABLE onec_goods ADD COLUMN approval_date TEXT DEFAULT ''",
 			"ALTER TABLE onec_goods ADD COLUMN date_of_production TEXT DEFAULT ''",
 			"ALTER TABLE onec_goods ADD COLUMN date_of_receipt TEXT DEFAULT ''",
@@ -314,6 +317,20 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		for _, m := range onecGoodsMigrations {
 			_, _ = r.db.Exec(m)
 		}
+
+		// Migrations for per-SKU dimensions (1C API now returns dims at SKU level)
+		onecSKUMigrations := []string{
+			"ALTER TABLE onec_goods_sku ADD COLUMN length REAL DEFAULT 0",
+			"ALTER TABLE onec_goods_sku ADD COLUMN wideness REAL DEFAULT 0",
+			"ALTER TABLE onec_goods_sku ADD COLUMN height REAL DEFAULT 0",
+			"ALTER TABLE onec_goods_sku ADD COLUMN weight_sku_g REAL DEFAULT 0",
+		}
+		for _, m := range onecSKUMigrations {
+			_, _ = r.db.Exec(m)
+		}
+
+		// New certificate field
+		_, _ = r.db.Exec("ALTER TABLE onec_goods ADD COLUMN certificate_type TEXT DEFAULT ''")
 		// Create supply tables (warehouses, tariffs, supplies, goods, packages)
 		_, err = r.db.Exec(GetSupplySchemaSQL())
 		if err != nil {

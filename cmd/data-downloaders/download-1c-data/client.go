@@ -34,10 +34,10 @@ func NewOneCClient() *OneCClient {
 // Optimization: json.Decoder streams the response body — constant memory usage
 // regardless of payload size. Each good is decoded and saved immediately,
 // avoiding a single 26K-element slice in memory.
-func (c *OneCClient) FetchGoods(ctx context.Context, apiURL string, repo *sqlite.SQLiteSalesRepository) (int, int, error) {
+func (c *OneCClient) FetchGoods(ctx context.Context, apiURL string, repo *sqlite.SQLiteSalesRepository) (int, int, int, error) {
 	body, err := c.fetchBody(ctx, apiURL)
 	if err != nil {
-		return 0, 0, fmt.Errorf("fetch goods: %w", err)
+		return 0, 0, 0, fmt.Errorf("fetch goods: %w", err)
 	}
 	defer body.Close()
 
@@ -46,18 +46,20 @@ func (c *OneCClient) FetchGoods(ctx context.Context, apiURL string, repo *sqlite
 	dec := json.NewDecoder(br)
 
 	if err := expectArrayDelim(dec, peek); err != nil {
-		return 0, 0, fmt.Errorf("goods API: %w", err)
+		return 0, 0, 0, fmt.Errorf("goods API: %w", err)
 	}
 
 	goodsBatch := make([]sqlite.OneCGood, 0, 500)
-	var skuBatch []sqlite.OneCSKU
+	skuBatch := make([]sqlite.OneCSKU, 0, 2500)
+	dimBatch := make([]sqlite.OneCDimensionRow, 0, 250)
 	totalGoods := 0
 	totalSKUs := 0
+	totalDims := 0
 
 	for dec.More() {
 		var raw OneCGood
 		if err := dec.Decode(&raw); err != nil {
-			return totalGoods, totalSKUs, fmt.Errorf("decode good #%d: %w", totalGoods+1, err)
+			return totalGoods, totalSKUs, totalDims, fmt.Errorf("decode good #%d: %w", totalGoods+1, err)
 		}
 
 		// Convert to storage type
@@ -93,8 +95,12 @@ func (c *OneCClient) FetchGoods(ctx context.Context, apiURL string, repo *sqlite
 			Height:     raw.Height,
 			WeightSKUG: raw.WeightSKU,
 			// Certificate
-			Certificate:    raw.Certificate,
-			HasCertificate: raw.HasCertificate,
+			Certificate:       raw.Certificate,
+			CertificateType:   raw.CertificateType,
+			HasCertificate:    raw.HasCertificate,
+			CertificateBegin:  raw.CertificateBegin,
+			CertificateEnd:    raw.CertificateEnd,
+			CertificateNumber: raw.CertificateNumber,
 			// Dates
 			ApprovalDate:     raw.ApprovalDate,
 			DateOfProduction: raw.DateOfProduction,
@@ -136,35 +142,65 @@ func (c *OneCClient) FetchGoods(ctx context.Context, apiURL string, repo *sqlite
 			IsYaPriceListOpt:    raw.YaPriceListOpt,
 		})
 
-		// Collect SKUs from this good
+		// Collect SKUs from this good (with per-SKU dimensions)
 		for _, s := range raw.SKUs {
 			skuBatch = append(skuBatch, sqlite.OneCSKU{
-				SKUGUID: s.GUID,
-				GUID:    raw.GUID,
-				Barcode: s.Barcode,
-				Size:    s.Size,
-				NDS:     s.NDS,
+				SKUGUID:    s.GUID,
+				GUID:       raw.GUID,
+				Barcode:    s.Barcode,
+				Size:       s.Size,
+				NDS:        s.NDS,
+				Length:     s.Length,
+				Wideness:   s.Wideness,
+				Height:     s.Height,
+				WeightSKUG: s.WeightSKU,
 			})
+
+			// Build dimension row for onec_dimensions (source='api').
+			// Width/Height swap: API.Wideness = physical height, API.Height = physical width.
+			if s.Length > 0 || s.Wideness > 0 || s.Height > 0 || s.WeightSKU > 0 {
+				dimBatch = append(dimBatch, sqlite.OneCDimensionRow{
+					GoodGUID:  raw.GUID,
+					SKUGUID:   s.GUID,
+					GoodName:  raw.Name,
+					SizeName:  s.Size,
+					LengthDM:  s.Length / 10,     // cm → dm
+					WidthDM:   s.Height / 10,     // SWAP: API Height = physical width
+					HeightDM:  s.Wideness / 10,   // SWAP: API Wideness = physical height
+					WeightKG:  s.WeightSKU / 1000, // g → kg
+					VolumeCM3: s.Length * s.Wideness * s.Height,
+					Source:    "api",
+				})
+			}
 		}
 
 		// Flush batches when goods reach capacity
 		if len(goodsBatch) >= 500 {
 			n, err := repo.SaveOneCGoods(ctx, goodsBatch)
 			if err != nil {
-				return totalGoods, totalSKUs, err
+				return totalGoods, totalSKUs, totalDims, err
 			}
 			totalGoods += n
 
 			if len(skuBatch) > 0 {
 				sn, err := repo.SaveOneCSKUs(ctx, skuBatch)
 				if err != nil {
-					return totalGoods, totalSKUs, err
+					return totalGoods, totalSKUs, totalDims, err
 				}
 				totalSKUs += sn
 			}
 
+			if len(dimBatch) > 0 {
+				dn, err := repo.ImportDimensions(ctx, dimBatch)
+				if err != nil {
+					return totalGoods, totalSKUs, totalDims, err
+				}
+				totalDims += dn
+			}
+
 			goodsBatch = goodsBatch[:0]
 			skuBatch = skuBatch[:0]
+			dimBatch = dimBatch[:0]
 		}
 	}
 
@@ -172,20 +208,28 @@ func (c *OneCClient) FetchGoods(ctx context.Context, apiURL string, repo *sqlite
 	if len(goodsBatch) > 0 {
 		n, err := repo.SaveOneCGoods(ctx, goodsBatch)
 		if err != nil {
-			return totalGoods, totalSKUs, err
+			return totalGoods, totalSKUs, totalDims, err
 		}
 		totalGoods += n
 
 		if len(skuBatch) > 0 {
 			sn, err := repo.SaveOneCSKUs(ctx, skuBatch)
 			if err != nil {
-				return totalGoods, totalSKUs, err
+				return totalGoods, totalSKUs, totalDims, err
 			}
 			totalSKUs += sn
 		}
+
+		if len(dimBatch) > 0 {
+			dn, err := repo.ImportDimensions(ctx, dimBatch)
+			if err != nil {
+				return totalGoods, totalSKUs, totalDims, err
+			}
+			totalDims += dn
+		}
 	}
 
-	return totalGoods, totalSKUs, nil
+	return totalGoods, totalSKUs, totalDims, nil
 }
 
 // FetchPrices fetches and saves 1C prices using streaming decode.
@@ -307,6 +351,9 @@ func (c *OneCClient) FetchPIMGoods(ctx context.Context, pimURL string, repo *sql
 			Name:               pimString(raw.Values, "name"),
 			Updated:            raw.Updated,
 			ValuesJSON:         valuesToJSON(raw.Values),
+			WildberriesLength:  pimFloat(raw.Values, "wildberries_length"),
+			WildberriesWidth:   pimFloat(raw.Values, "wildberries_width"),
+			WildberriesHeight:  pimFloat(raw.Values, "wildberries_height"),
 		}
 
 		batch = append(batch, row)
@@ -418,6 +465,27 @@ func pimInt(values map[string][]PIMValue, key string) int {
 		var n int
 		fmt.Sscanf(v, "%d", &n)
 		return n
+	default:
+		return 0
+	}
+}
+
+// pimFloat extracts a float64 from PIM values.
+// Handles float64, int, and string representations (e.g., "32.0000" for dimensions).
+func pimFloat(values map[string][]PIMValue, key string) float64 {
+	vs, ok := values[key]
+	if !ok || len(vs) == 0 {
+		return 0
+	}
+	switch v := vs[0].Data.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case string:
+		var f float64
+		fmt.Sscanf(v, "%f", &f)
+		return f
 	default:
 		return 0
 	}

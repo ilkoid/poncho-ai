@@ -1,29 +1,33 @@
-# dev_swagger_reusable_packages.md — Переиспользуемые пакеты WB API строго по Swagger (руководство v2+)
+# dev_swagger_reusable_packages.md — WB API: песочницы, write-безопасность, переиспользуемые пакеты
 
-**Дата**: 2026-05-25  
-**Статус**: Актуальное руководство  
+**Дата**: 2026-05-25
+**Статус**: Целевая архитектура (To Be) — см. секцию «Текущий статус реализации».
 **Связанные документы**:
 - [dev_utils.md](dev_utils.md) — v2-архитектура утилит (Source/Writer, Downloader в pkg/, тонкие драйверы)
-- [CLAUDE.md](CLAUDE.md) — WB API Swagger Docs, safety rules, sandbox
+- [CLAUDE.md](CLAUDE.md) — WB API Swagger Docs, safety rules
 - [dev_manifest.md](dev_manifest.md) — Port & Adapter (Rule 6), pkg/ vs cmd/
-- https://github.com/anomalyco/opencode/issues — для фидбека по подходу
 
 ---
 
 ## Принцип
 
-**Единственный источник правды — файлы `docs/wb_api_swagger/*.yaml`** (и ваша таблица песочниц).
+Этот документ решает одну задачу: **сделать безопасными утилиты, которые пишут в WB API**.
 
-- Весь код пакетов, типов, rate-limit, URL, sandbox-констант и даже тестовых сценариев **выводится только из Swagger + x-расширений** (x-readonly-method, x-category и др.).
-- Никакого codegen / oapi-codegen: **100 % hand-written** (по вашему решению). Методы и типы пишутся вручную, но строго по спецификации (1:1), с комментарием-ссылкой на файл/тег/path.
-- Один и тот же код переиспользуется:
-  - в утилитах (`cmd/.../download-*` и `fix-*` через тонкий драйвер)
-  - в agentic tools (`pkg/tools/std/*.go` — тонкие `Tool.Execute` обёртки)
-- Архитектура повторяет победивший паттерн `dev_utils.md` (pkg/<domain>/ + Source + Writer + Downloader).
+Read-only даунлоадеры (sales, stocks, funnel…) — низкий риск. Для их миграции достаточно [dev_utils.md](dev_utils.md).
+Write-утилиты (карточки, цены, кампании, ответы на отзывы) — **высокий риск**. Ошибка в payload для `POST /content/v2/cards/update` полностью перезаписывает карточку товара. Кривая скидка в `discounts-prices` убивает маржу. Неправильная ставка в `advert` сливает бюджет.
 
-**Ключевое правило безопасности**:
-> **НИКОГДА** автоматические POST/PUT/DELETE/обновления на боевом продакшен-API WB из агентов, тулов или тестов.  
-> Только песочницы (см. таблицу ниже) + ручной запуск + dry-run.
+Поэтому правила в этом документе **асимметричны**:
+
+| | Read-only утилиты | Write-утилиты |
+|---|---|---|
+| Руководство | `dev_utils.md` | `dev_utils.md` + **этот документ** |
+| Swagger-комментарии | Желательно | Обязательно, строгий формат |
+| Sandbox-константы | Не нужны | Обязательно |
+| Readonly-интерфейсы | Не нужны | Обязательно |
+| `//go:build wb_sandbox` | Не нужны | Обязательно |
+| Dry-run | Обязательно | Обязательно + payload diff |
+| Многоуровневое тестирование | Unit + mock | Unit + mock + sandbox + e2e-snapshot |
+| Guard от прод-мутаций | — | Обязательно |
 
 ---
 
@@ -43,214 +47,246 @@
 
 ---
 
-## Слои архитектуры (от Swagger к Tool/CLI)
+## Текущий статус реализации
 
-```
-docs/wb_api_swagger/02-products.yaml …          ← единственный источник
-       ↓ (ручное отображение + x-расширения)
-
-pkg/wb/                                         ← транспорт + hand-written SDK
-  ├── client.go          (doRequest, rate, adaptive, unwrap {data,error})
-  ├── content.go         // POST /content/v2/get/cards/list (из 02-products.yaml)
-  ├── content_sandbox.go // const CardsSandboxURL = "https://content-api-sandbox..."
-  └── ...
-       ↓ (structural typing — *wb.Client удовлетворяет интерфейсам)
-
-pkg/<domain>/                                   ← бизнес-ядро (v2 по dev_utils.md)
-  ├── types.go           // XXXSource (минимальный), XXXWriter, Options, Result
-  ├── downloader.go      // NewDownloader + Run() — только интерфейсы
-  ├── mock.go            // MockSource для --mock и unit-тестов
-  └── downloader_test.go // ≥4 обязательных теста
-
-pkg/storage/sqlite/     ← адаптер (compile-time var _ domain.Writer = (*Repo)(nil))
-
-cmd/.../download-xxx-v2/main.go   ← тонкий драйвер (~100 строк: флаги → DI → Run)
-pkg/tools/std/wb_xxx_tool.go      ← тонкая Tool-обёртка (Definition + Execute)
-```
-
-**Почему именно так (преимущества для переиспользования + тестируемости)**:
-- Source/Writer порты объявляются в потребителе (`pkg/<domain>/`) — Port&Adapter.
-- *wb.Client* «магически» реализует Source без прослойки (позволяет мок подменять напрямую).
-- Tools получают тот же `Downloader`, но с `OnProgress=nil` + readonly Source по умолчанию.
-- Драйверы в cmd/ и tools полностью независимы от деталей HTTP/Swagger.
+| Компонент | Статус | Что есть |
+|-----------|--------|----------|
+| Sandbox-константы | 1 из 6 | Только `CardsSandboxURL` в `pkg/wb/content.go` |
+| Readonly-интерфейсы | Не начато | Тулы используют полный `*wb.Client` |
+| Swagger-комментарии | Частично | Есть rate/endpoint, нет строгого формата `(file.yaml, tag: …)` |
+| `//go:build wb_sandbox` | Не начато | Нет sandbox-тестов с build tag |
+| Domain-пакеты v2 | 3 из 16 | `pkg/sales/`, `pkg/funnel/`, `pkg/nmreport/` |
+| Adaptive rate limiting | Готово | Двухуровневый в `pkg/config/utility.go` |
+| `--mock` / `--dry-run` | Готово | В v2-пакетах и большинстве v1-даунлоадеров |
+| `pkg/cardupdate/` | Готово | Мутации карточек с dry-run |
+| `wb.SnapshotDBClient` | Готово | E2E-тесты через SQLite-снапшоты |
 
 ---
 
-## Правила создания пакета (строго по Swagger)
+## Фундамент (сделать один раз, до миграций)
 
-1. **Rule of Swagger Fidelity**  
-   Каждый метод/тип/константа/URL — с комментарием:
-   ```go
-   // GetCardsList — POST /content/v2/get/cards/list (02-products.yaml, tag: Карточки товаров)
-   // Rate: 100/min, burst 5 (swagger)
-   func (c *Client) GetCardsList(...)
-   ```
-   Новые endpoint появляются **только** после обновления yaml + PR с ревью.
+Эти задачи создают инфраструктуру, которую потом используют все write-утилиты. Делаются отдельными маленькими PR'ами.
 
-2. **Rule of ReadOnly by Default (для Tools & Agents)**  
-   - Создавайте узкие интерфейсы `ContentReadonlySource`, `MarketplaceReadonlySource` и т.д.
-   - В `pkg/tools` и agent-регистрации используйте **только readonly**-варианты (даже если под капотом полный клиент).
-   - Полные мутаторы (`UpdateCards`, `CreateCards`...) — только в `cmd/fix-*`, `pkg/cardupdate` (с dry-run) или ручных скриптах.
-   - Никогда не регистрируйте мутаторы в обычном `tool_categories` агента.
+### 1. Sandbox-константы в `pkg/wb/`
 
-3. **Rule of Generalized Sandbox** (расширение CardsSandboxURL)  
-   В `pkg/wb/` заводите пару констант для **каждого** домена из таблицы:
-   ```go
-   const ContentProdURL    = "https://content-api.wildberries.ru"
-   const ContentSandboxURL = "https://content-api-sandbox.wildberries.ru"
-   // аналогично для discounts-prices, marketplace, advert, feedbacks, statistics, supplies…
-   ```
-   Документируйте в коде и в CLAUDE.md ограничения песочницы (1 req/s, отсутствие locale и т.д.).
-
-4. **Rule of Rate Limits from Swagger**  
-   Все `SetRateLimit(toolID, desired, burst, apiFloor, apiFloorBurst)` — только из swagger + вашей таблицы.  
-   `pkg/config/utility.go` остаётся единственным местом defaults (уже содержит большинство).
-
-5. **Rule of Mandatory Test Modes & Layers**  
-   Каждый новый `<domain>` пакет **обязан** поддерживать:
-   - `--mock` → `MockSource`
-   - `--dry-run` → пропуск Writer.Save/Delete
-   - Unit-тесты с моками (минимум 4–5 кейсов)
-   - E2E со `wb.SnapshotDBClient`
-   - `//go:build wb_sandbox` интеграционные тесты **только против песочниц** таблицы (отдельный `*_sandbox_test.go`, никогда не запускаются в обычном `go test`)
-
-6. **Rule of No Prod Mutations in Agents**  
-   - В `pkg/tools/std` и `pkg/app/tool_setup` — по умолчанию readonly Source.
-   - Мутаторы имеют явный guard: `if !allowWrites || !isSandbox { return "forbidden" }`
-   - CI никогда не включает тэг `wb_sandbox`.
-   - Дополнение к CLAUDE.md: "Claude MUST NOT generate calls that hit write endpoints on prod".
-
-7. **Rule of No Dead Code & Minimal Interfaces**  
-   (как в dev_utils) — только реально используемые методы в Source.
-
-8. **Rule of Documentation**  
-   При добавлении нового домена обновить:
-   - этот файл (добавить в таблицу/примеры)
-   - CLAUDE.md (sandbox + safety)
-   - `pkg/wb/README` или godoc
-   - AGENTS.md (если нужно)
-
----
-
-## Структура примера нового package (на основе 02-products.yaml, readonly)
+Для каждого домена из таблицы песочниц — пара констант:
 
 ```go
-// pkg/catalog/types.go
-type CatalogSource interface {
-    // GetParentCategories — GET /content/v2/object/parent/all (02-products.yaml)
-    GetParentCategories(ctx, baseURL string, rate, burst int) ([]ParentCategory, error)
-    // GetCardsListCursor — POST /content/v2/get/cards/list (cursor pagination)
-    GetCardsListCursor(...) (cursor, cards, error)
-}
+// pkg/wb/content.go (уже есть)
+const CardsSandboxURL = "https://content-api-sandbox.wildberries.ru"
 
-type CatalogReadOnlyDownloader struct { source CatalogSource; opts ... }
+// pkg/wb/advert.go (TO BE)
+const AdvertProdURL    = "https://advert-api.wildberries.ru"
+const AdvertSandboxURL = "https://advert-api-sandbox.wildberries.ru"
 
-func NewCatalogReadOnlyDownloader(src CatalogSource, opts) *...
+// pkg/wb/feedbacks.go (TO BE)
+const FeedbacksSandboxURL = "https://feedbacks-api-sandbox.wildberries.ru"
+
+// и т.д. для discounts-prices, marketplace, supplies, statistics
 ```
 
-```go
-// pkg/catalog/mock.go
-type MockCatalogSource struct { ... } // детерминированные данные
+### 2. Readonly-интерфейсы в `pkg/wb/`
 
-// pkg/catalog/downloader_test.go
-func TestCatalogDownloader_*(t *testing.T) { ... } // + sandbox build tag test
-```
+Узкие интерфейсы, содержащие **только** read-методы. Write-утилиты используют полный клиент, но tools/agents — только readonly.
 
 ```go
-// cmd/data-downloaders/download-wb-catalog-v2/main.go (~100 строк)
-client := wb.New(...)
-client.SetRateLimit("catalog", ...)
-src := client // или варианты с sandbox URL
-dl := catalog.NewCatalogReadOnlyDownloader(src, opts)
-dl.Run(ctx, ...)
-```
+// pkg/wb/interfaces.go (TO BE)
 
-```go
-// pkg/tools/std/wb_catalog_readonly_tool.go
-type WbCatalogReadOnlyTool struct { downloader *catalog.CatalogReadOnlyDownloader }
-func (t *WbCatalogReadOnlyTool) Execute(ctx, argsJSON) (string, error) {
-    // прогресс = nil; только readonly client
+// ContentReadonlySource — только чтение карточек/справочников.
+// Используется в pkg/tools/std/ и pkg/app/tool_setup.go.
+type ContentReadonlySource interface {
+    GetCardsList(ctx context.Context, cursor, limit int) ([]Card, int, error)
+    GetParentCategories(ctx context.Context) ([]ParentCategory, error)
+    // ... только readonly методы
 }
 ```
 
-**Compile-time assertion** в sqlite (если persist) + в моках.
+**Зачем:** compile-time гарантия, что agent/tool не может случайно вызвать `UpdateCards`. Не runtime guard, а невозможность на уровне типов.
+
+### 3. Build tag для sandbox-тестов
+
+```go
+// pkg/<domain>/<name>_sandbox_test.go
+//go:build wb_sandbox
+
+func TestCards_UpdateSandbox(t *testing.T) {
+    // Реальный HTTP-запрос в песочницу
+    // Никогда не запускается в обычном go test / CI
+}
+```
+
+CI не включает тэг `wb_sandbox`. Эти тесты запускаются **только вручную** на тестовом ключе.
 
 ---
 
-## Чеклист создания нового переиспользуемого пакета по Swagger
+## Read-only утилиты: миграция
 
-### 1. Обновление источника
-- [ ] Проверить / добавить sandbox-URL + ограничения в `docs/...yaml` (x-расширения)
-- [ ] Добавить константы `XxxSandboxURL` / `XxxProdURL` в `pkg/wb/`
-- [ ] Обновить таблицу в этом файле + CLAUDE.md
+Для даунлоадеров (sales, stocks, funnel, feedbacks, region-sales и т.д.) — **руководствуйся `dev_utils.md`**. Этот документ не добавляет требований.
 
-### 2. Transport слой (`pkg/wb/`)
-- [ ] Новые методы с точными ссылками на swagger (только readonly сначала)
-- [ ] Обработка песочничных особенностей (комментарий)
-- [ ] Rate limits в двух уровнях (desired + api floor)
-
-### 3. Ядро пакета `pkg/<domain>/` (обязательно!)
-- [ ] `types.go` — минимальные интерфейсы Source (readonly) + Writer
-- [ ] `downloader.go` / `job.go` — чистые интерфейсы в полях
-- [ ] `mock.go` + детерминированные генераторы (или переиспользовать `pkg/testing/wbmock`)
-- [ ] `downloader_test.go` ≥ 4–5 кейсов (basic, dry, resume, rewrite, cancel)
-- [ ] Нет `fmt.Print`, нет прямых `*wb.Client` в полях, нет хардкода URL
-- [ ] build-tag `_sandbox_test.go` (только против песочниц)
-
-### 4. Адаптеры и драйверы
-- [ ] Compile-time assertions в `pkg/storage/sqlite`
-- [ ] Тонкий `cmd/...-v2/main.go` + `config.yaml`
-- [ ] Тонкая Tool-обёртка в `pkg/tools/std/` (регистрация в tool_categories через config)
-- [ ] `--mock` / `--dry-run` / `--sandbox` флаги работают
-
-### 5. Тестирование и безопасность
-- [ ] `go test ./pkg/<domain>/ -v` — все проходят
-- [ ] `go test -tags=wb_sandbox ./pkg/<domain>/...` — только в ручном режиме
-- [ ] Dry-run + mock покрывают 100% путей мутации (если есть)
-- [ ] Запуск утилиты в `--dry-run` и `--mock` без ключей и без сети
-- [ ] Ревью: "никаких путей из pkg/tools в мутаторы на прод"
-
-### 6. Документация
-- [ ] Обновить этот файл (пример + ссылка)
-- [ ] CLAUDE.md (sandbox + запреты)
-- [ ] AGENTS.md (при необходимости)
-- [ ] README godoc в пакете
+Единственное, что стоит сделать попутно при миграции read-only утилиты:
+- Swagger-комментарии на методы в `pkg/wb/` — желательно, но не блокирует.
 
 ---
 
-## Эволюция и миграция (как в dev_utils: v1 → v2)
+## Write-утилиты: полный процесс
 
-| Шаг | Что делаем                             | Проверка                              |
-|-----|----------------------------------------|---------------------------------------|
-| 1   | Добавить sandbox-константы + readonly-методы в pkg/wb по yaml | `go build`, grep по файлу swagger |
-| 2   | Создать `pkg/<domain>/` (типы/мок/тесты) | `go test ./pkg/<domain>/ -v` |
-| 3   | Перевести read-only часть одного даунлоадера на v2 | `--mock` + `--dry-run` работают |
-| 4   | Tool-обёртка + регистрация в config | `go run cmd/simple-agent ... "покажи категории"` |
-| 5   | Sandbox-тесты (wb_sandbox)             | Только вручную, на тест-ключе |
-| 6   | (позже) Тонкая миграция старых cmd     | v1 остаётся нетронутым до ручного прогона |
+**Для кого:** `pkg/cardupdate/`, `cmd/fix-utilities/*`, будущие утилиты для цен, кампаний, ответов на отзывы.
 
-**Мутации (карточки, кампании, ответы на отзывы)** переводятся **только после** полноценного покрытия песочницей + dry-run в инструментах.
+**Почему так тяжело:** `POST /content/v2/cards/update` полностью перезаписывает карточку — частичные обновления не поддерживаются. Ошибочный payload уничтожает существующие данные. Цена ошибки — потерянные продажи, убитая маржа, слитый рекламный бюджет.
+
+### Слои архитектуры (write-утилита)
+
+```
+docs/wb_api_swagger/02-products.yaml …          ← источник правды для payload-структур
+       ↓
+pkg/wb/                                         ← transport + sandbox-константы
+  ├── content.go         // методы с swagger-комментариями
+  │                      // const CardsSandboxURL = "..."
+  └── interfaces.go      // ContentReadonlySource (для tools)
+       ↓
+pkg/cardupdate/                                 ← бизнес-ядро (уже существует)
+  ├── types.go           // Source + Writer интерфейсы, Options, Result
+  ├── cardupdate.go      // Downloader + Run() — только интерфейсы в полях
+  ├── merge.go           // payload-формирование (критичный код!)
+  ├── mock.go            // MockSource для --mock
+  └── cardupdate_test.go // unit-тесты
+       ↓
+pkg/storage/sqlite/     ← адаптер (compile-time var _ cardupdate.Writer = (*Repo)(nil))
+       ↓
+cmd/fix-utilities/fix-*/main.go  ← тонкий драйвер (~100 строк)
+pkg/tools/std/wb_*_tool.go       ← ТОЛЬКО readonly-обёртка (никаких мутаторов)
+```
+
+### Swagger-комментарии (обязательно для write-методов)
+
+Каждый write-метод — с точной ссылкой на swagger, rate limit и documented behaviour:
+
+```go
+// UpdateCards — POST /content/v2/cards/update (02-products.yaml, tag: Карточки товаров)
+// Rate: 100/min, burst 5 (swagger)
+// WARNING: полностью перезаписывает карточку — частичные обновления НЕ поддерживаются.
+// Dry-run: выводит payload в stdout без отправки.
+func (c *Client) UpdateCards(ctx context.Context, cards []CardUpdate) error
+```
+
+### Dry-run с payload diff (обязательно для write-утилит)
+
+Обычный dry-run пропускает `Writer.Save()`. Для write-утилит этого недостаточно — нужно показать **что именно улетит в API**:
+
+```
+$ go run cmd/fix-utilities/fix-card-fields/main.go --dry-run
+
+[DRY-RUN] Card "Кроссовки мужские" (nm_id: 12345678)
+  Материал верха: "Натуральная кожа" → "Искусственная кожа"
+  Цвет: не меняется
+  Payload:
+    {"vendor_code": "...", "characteristics": [{"id": 22, "value": "Искусственная кожа"}]}
+
+  Изменено полей: 1 из 8
+  Карточек к обновлению: 42
+  Отправка НЕ будет выполнена (--dry-run).
+```
+
+### Guard от прод-мутаций (обязательно)
+
+Два уровня защиты:
+
+**Уровень типов** — readonly-интерфейсы:
+```go
+// pkg/tools/std/ — ТОЛЬКО readonly source
+type WbCatalogTool struct {
+    source wb.ContentReadonlySource // не *wb.Client, не полный интерфейс
+}
+```
+
+**Уровень runtime** — guard в мутаторах:
+```go
+// pkg/cardupdate/cardupdate.go
+func (d *Downloader) Run(ctx context.Context, opts Options) (*Result, error) {
+    if !opts.DryRun && !opts.SandboxMode && !opts.AllowProdWrite {
+        return nil, fmt.Errorf("write operations require explicit --allow-prod-write flag")
+    }
+    // ...
+}
+```
 
 ---
 
-## Часто задаваемые проверки (чек для ревью PR)
+## Чеклисты
 
+### Фундамент (один раз, до write-утилит)
+
+- [ ] Добавить sandbox-константы для оставшихся 5 доменов в `pkg/wb/`
+- [ ] Создать `pkg/wb/interfaces.go` с readonly-интерфейсами
+- [ ] Обновить этот файл (статус реализации) + CLAUDE.md
+
+### Read-only миграция (по `dev_utils.md`)
+
+- [ ] `pkg/<domain>/types.go` — Source + Writer интерфейсы
+- [ ] `pkg/<domain>/downloader.go` — Downloader + Run()
+- [ ] `pkg/<domain>/mock.go` — MockSource
+- [ ] `pkg/<domain>/downloader_test.go` — ≥4 кейса
+- [ ] Тонкий `cmd/...-v2/main.go` (~100 строк)
+- [ ] Compile-time assertion в `pkg/storage/sqlite/`
+- [ ] `--mock` + `--dry-run` работают
+
+### Write-утилита (на этом документе)
+
+**pkg/wb/ (transport):**
+- [ ] Swagger-комментарии на write-методы: `(file.yaml, tag: …)` + WARNING
+- [ ] Sandbox-константы для домена
+- [ ] Rate limits из swagger (двухуровневые)
+
+**pkg/<domain>/ (ядро):**
+- [ ] Source + Writer интерфейсы (по dev_utils.md)
+- [ ] Payload-формирование в отдельном файле (`merge.go` / `payload.go`)
+- [ ] `--dry-run` с payload diff (не просто пропуск Save)
+- [ ] `--sandbox` режим → sandbox URL вместо prod
+- [ ] Guard: прод-мутации требуют явный `--allow-prod-write`
+- [ ] Mock + unit-тесты (≥4 кейса)
+
+**Sandbox-тесты:**
+- [ ] `*_sandbox_test.go` с `//go:build wb_sandbox`
+- [ ] Тест write-операции против реальной песочницы
+- [ ] Тест read-after-write для верификации результата
+- [ ] Не запускаются в CI — только вручную на тестовом ключе
+
+**Tools / Agents:**
+- [ ] Tool-обёртка использует **только** readonly-интерфейс
+- [ ] Мутаторы не регистрируются в `tool_categories`
+- [ ] `grep -r "Update\|Create\|Delete" pkg/tools/std/` → только в readonly-контексте
+
+**Документация:**
+- [ ] Обновить этот файл (статус) + CLAUDE.md
+
+---
+
+## Эволюция и миграция (v1 → v2)
+
+| Шаг | Что делаем | Проверка |
+|-----|-----------|----------|
+| 0 | Фундамент: sandbox-константы + readonly-интерфейсы в `pkg/wb/` | `go build`, grep по swagger |
+| 1 | Миграция read-only утилиты по `dev_utils.md` | `go test ./pkg/<domain>/ -v` |
+| 2 | (опционально) Tool-обёртка для read-only | `go run cmd/simple-agent ...` |
+| 3 | Write-утилита: ядро + payload + dry-run + sandbox-mode | `--dry-run` показывает diff |
+| 4 | Sandbox-тесты (wb_sandbox) | Только вручную, на тест-ключе |
+| 5 | (только после п.3-4) Prod-запуск с `--allow-prod-write` | Ручная верификация на 1 карточке |
+
+**Порядок строгий:** write-утилита не идёт в прод без прохождения sandbox-тестов.
+
+---
+
+## Проверки для ревью PR
+
+### Для read-only:
 - `grep -r "fmt\.Print\|log\." pkg/<domain>/` → 0 (кроме helper)
 - Нет импортов `pkg/<domain>` из `internal/`
-- Интерфейс Source содержит **только** методы, реально вызываемые в Run()
-- Tool использует readonly-вариант
-- Тесты sandbox имеют build-tag и никогда не выполняются в обычном CI
-- Все URL/rate из swagger (прокомментировано)
-- Пример запуска песочницы задокументирован в `_test.go` или README пакета
+- Source содержит только методы, реально вызываемые в `Run()`
 
----
-
-**Этот подход гарантирует**:
-- Полное покрытие Swagger → код (исключает drift)
-- Одно ядро для CLI + агентов
-- 5-уровневое тестирование (unit / mock / replay / e2e-snapshot / реальная песочница)
-- Абсолютную невозможность случайной поломки прода через агента
-
-Пишите новые пакеты **только** следуя этому файлу и `dev_utils.md`.
-
-При возникновении вопросов / улучшений — создавайте issue.
+### Для write-утилиты (дополнительно):
+- `grep -r "UpdateCards\|CreateCards\|DeleteCards" pkg/tools/std/` → 0
+- `--dry-run` показывает полный payload, а не просто "skipped"
+- `--sandbox` переключает URL на sandbox-константу
+- Нет пути запуска мутации без явного флага (`--allow-prod-write` / `--sandbox`)
+- Swagger-комментарии на всех write-методах
+- `*_sandbox_test.go` имеет build tag `wb_sandbox`
