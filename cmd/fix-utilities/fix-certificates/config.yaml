@@ -15,7 +15,7 @@ db_path: "/var/db/wb-sales.db"
 filters:
   nm_ids: []             # Конкретные nm_id (для теста на 1 карточке)
   #vendor_codes: [12611060]       # Раскомментируй нужные из списка ниже
-  allowed_years: [26]  # Год из позиций 2-3 артикула (307 шт, см. список ниже)
+  allowed_years: [25]  # Год из позиций 2-3 артикула (307 шт, см. список ниже)
   exclude_lengths: [5, 6]         # Исключить артикулы указанной длины
   # vendor_code_prefix: "1"      # Первая цифра артикула
   subject: ""         # Точное совпадение subject_name (case-insensitive)

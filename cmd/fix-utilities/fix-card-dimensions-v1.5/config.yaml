@@ -13,14 +13,14 @@ xls_path: ""
 
 # Фильтрация карточек. Все фильтры AND-combined.
 filters:
-  in_stock: false            # только товары в наличии (stocks_daily_warehouses)
+ in_stock: false            # только товары в наличии (stocks_daily_warehouses)
   allowed_years: []           # год коллекции из позиций 2-3 vendor_code (26 = 2026). Пусто = все
   exclude_lengths: [5, 6]     # исключить мусор (5 симв) и устаревшие (6 симв)
   seasons: []                 # фильтр по сезонам из характеристик (пусто = все)
   subject: ""                 # фильтр по названию предмета WB (пусто = все)
   subject_ids: []             # фильтр по ID предметов WB (пусто = все)
   vendor_codes: []            # артикулы продавца — 8 симв (пусто = все)
-  nm_ids: [748643185]  # 20 карточек 2026 без размеров/веса, чинимых из onec_dimensions
+  nm_ids: []  # 20 карточек 2026 без размеров/веса, чинимых из onec_dimensions
 # WB API update settings
 wb_update:
   api_key: ""           # WB Content API ключ. Пусто = autodetect WB_API_CONTENT_KEY → WB_API_KEY → WB_API_ANALYTICS_AND_PROMO_KEY
