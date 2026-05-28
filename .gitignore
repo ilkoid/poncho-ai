@@ -191,3 +191,29 @@ cmd/check-db-freshness
 download-wb-*
 !download-wb-*/
 !cmd/.configs/download-wb-*
+
+# Root-level fix/analyzer binaries
+/analyze-category-sales
+/download-1c-data
+/fix-card-dimensions
+/fix-card-dimensions-v1.5
+/fix-certificates
+
+# Cmd binaries (fix utilities)
+cmd/fix-utilities/fix-card-fields/fix-card-fields
+
+# Lock files
+*.lock
+
+# Backup files
+*.bak
+*.bak-*
+
+# Excel files
+*.xlsx
+
+# Local data artifacts in cmd directories
+cmd/data-analyzers/analyze-category-sales/README.md
+cmd/fix-utilities/fix-card-dimensions/conf-bak.txt
+cmd/fix-utilities/fix-card-dimensions-v1.5/*.yaml
+!cmd/fix-utilities/fix-card-dimensions-v1.5/config.yaml
