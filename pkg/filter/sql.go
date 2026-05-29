@@ -46,6 +46,10 @@ func (f *Filter) BuildSQL(cfg SQLConfig) (*SQLResult, error) {
 	}
 
 	// Vendor code derived filters
+	if len(f.ExcludeVendorCodes) > 0 {
+		conds = append(conds, alias+".vendor_code NOT IN ("+placeholders(len(f.ExcludeVendorCodes))+")")
+		args = append(args, stringSliceToAny(f.ExcludeVendorCodes)...)
+	}
 	if len(f.ExcludeLengths) > 0 {
 		conds = append(conds, "LENGTH("+alias+".vendor_code) NOT IN ("+placeholders(len(f.ExcludeLengths))+")")
 		args = append(args, intSliceToAny(f.ExcludeLengths)...)

@@ -26,9 +26,10 @@ type Filter struct {
 	VendorCodes []string `yaml:"vendor_codes"` // supplier articles. Empty = no filter
 
 	// Vendor code derived (AND between, OR within)
-	AllowedYears     []int  `yaml:"allowed_years"`      // year from vendor_code chars 2-3. OR within
-	ExcludeLengths   []int  `yaml:"exclude_lengths"`    // exclude by vendor_code length. NOT IN
-	VendorCodePrefix string `yaml:"vendor_code_prefix"` // first char(s) of vendor_code
+	AllowedYears        []int    `yaml:"allowed_years"`         // year from vendor_code chars 2-3. OR within
+	ExcludeLengths      []int    `yaml:"exclude_lengths"`       // exclude by vendor_code length. NOT IN
+	ExcludeVendorCodes  []string `yaml:"exclude_vendor_codes"`  // skip these vendor codes. NOT IN
+	VendorCodePrefix    string   `yaml:"vendor_code_prefix"`    // first char(s) of vendor_code
 
 	// WB category (OR within list)
 	SubjectIDs  []int    `yaml:"subject_ids"` // WB subject IDs
@@ -53,6 +54,7 @@ func (f *Filter) Empty() bool {
 		len(f.VendorCodes) == 0 &&
 		len(f.AllowedYears) == 0 &&
 		len(f.ExcludeLengths) == 0 &&
+		len(f.ExcludeVendorCodes) == 0 &&
 		f.VendorCodePrefix == "" &&
 		len(f.SubjectIDs) == 0 &&
 		f.SubjectName == "" &&
@@ -100,6 +102,11 @@ func (f *Filter) Matches(item Filterable, stockSet map[int]bool) bool {
 
 	// Vendor code derived filters
 	vc := item.GetVendorCode()
+	if len(f.ExcludeVendorCodes) > 0 {
+		if stringSet(f.ExcludeVendorCodes)[vc] {
+			return false
+		}
+	}
 	if len(f.ExcludeLengths) > 0 {
 		if intSet(f.ExcludeLengths)[utf8.RuneCountInString(vc)] {
 			return false
