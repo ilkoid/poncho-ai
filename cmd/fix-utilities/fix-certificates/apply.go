@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -109,6 +110,11 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg cardupdate
 			}
 			sent += len(chunk)
 			fmt.Printf("  batch %d-%d: OK (%d cards)\n", i+1, end, len(chunk))
+
+			if err := checkWBErrors(ctx, client, cfg, chunk); err != nil {
+				log.Printf("  STOPPING: %v", err)
+				break
+			}
 		}
 
 		if i+cfg.BatchSize < len(batch) {
@@ -259,4 +265,153 @@ func stringToCharArray(s string) []string {
 		return []string{s}
 	}
 	return result
+}
+
+// checkWBErrors queries WB error list after a successful UpdateCards batch.
+// Matches returned errors against vendor_codes from the batch.
+// Returns error if validation errors are found for our cards.
+func checkWBErrors(ctx context.Context, client *wb.Client, cfg cardupdate.WBUpdateConfig, batch []stagingRow) error {
+	items, err := client.GetCardErrorsList(ctx, wb.CardsBaseURL,
+		cfg.RatePerMin, cfg.RateBurst,
+		wb.CardErrorsListRequest{
+			Cursor: &wb.CardErrorsCursor{Limit: 100},
+			Order:  &wb.CardErrorsOrder{Ascending: false},
+		})
+	if err != nil {
+		log.Printf("  WARN: error list query failed: %v (non-fatal)", err)
+		return nil
+	}
+
+	// Build vendor_code → nm_id map from batch.
+	batchVC := make(map[string]int, len(batch))
+	for _, r := range batch {
+		batchVC[r.VendorCode] = r.NmID
+	}
+
+	// Search for errors matching our vendor_codes.
+	var foundErrors map[string][]string
+	for _, item := range items {
+		for vc, errs := range item.Errors {
+			if _, ok := batchVC[vc]; ok {
+				if foundErrors == nil {
+					foundErrors = make(map[string][]string)
+				}
+				foundErrors[vc] = append(foundErrors[vc], errs...)
+			}
+		}
+	}
+
+	if len(foundErrors) == 0 {
+		log.Printf("  WBREPLY: no validation errors in error list")
+		return nil
+	}
+
+	// Save error report.
+	nmIDs := make([]int, 0, len(foundErrors))
+	vcs := make([]string, 0, len(foundErrors))
+	for vc := range foundErrors {
+		nmIDs = append(nmIDs, batchVC[vc])
+		vcs = append(vcs, vc)
+	}
+
+	report := struct {
+		Timestamp   string              `json:"timestamp"`
+		BatchNmIDs  []int               `json:"batch_nm_ids"`
+		VendorCodes []string            `json:"vendor_codes"`
+		WBErrors    map[string][]string `json:"wb_errors"`
+	}{
+		Timestamp:   time.Now().Format(time.RFC3339),
+		BatchNmIDs:  nmIDs,
+		VendorCodes: vcs,
+		WBErrors:    foundErrors,
+	}
+
+	filename := fmt.Sprintf("wb-errors-%s.json", time.Now().Format("2006-01-02_150405"))
+	data, _ := json.MarshalIndent(report, "", "  ")
+	if writeErr := os.WriteFile(filename, data, 0644); writeErr != nil {
+		log.Printf("  ERROR: failed to write error report: %v", writeErr)
+	} else {
+		log.Printf("  Error report saved: %s", filename)
+	}
+
+	for vc, errs := range foundErrors {
+		nmID := batchVC[vc]
+		for _, e := range errs {
+			log.Printf("  WB ERROR vendor_code=%s nm_id=%d: %q", vc, nmID, e)
+		}
+	}
+
+	return fmt.Errorf("WB validation errors found for %d vendor_codes — see %s", len(foundErrors), filename)
+}
+
+// runCheck queries the WB error list and prints all card validation errors.
+func runCheck(ctx context.Context, client *wb.Client, cfg cardupdate.WBUpdateConfig) error {
+	items, err := client.GetCardErrorsList(ctx, wb.CardsBaseURL,
+		cfg.RatePerMin, cfg.RateBurst,
+		wb.CardErrorsListRequest{
+			Cursor: &wb.CardErrorsCursor{Limit: 100},
+			Order:  &wb.CardErrorsOrder{Ascending: false},
+		})
+	if err != nil {
+		return fmt.Errorf("get card errors: %w", err)
+	}
+
+	if len(items) == 0 {
+		fmt.Println("No errors found in WB error list.")
+		return nil
+	}
+
+	totalErrors := 0
+	for i, item := range items {
+		fmt.Printf("\n── Batch %d (UUID: %s) ──\n", i+1, item.BatchUUID)
+		fmt.Printf("  Vendor codes: %v\n", item.VendorCodes)
+		for vc, sub := range item.Subjects {
+			fmt.Printf("  Subject: %s → %s (id=%d)\n", vc, sub.Name, sub.ID)
+		}
+		for vc, errs := range item.Errors {
+			for _, e := range errs {
+				fmt.Printf("  ERROR vendor_code=%s: %s\n", vc, e)
+				totalErrors++
+			}
+		}
+	}
+	fmt.Printf("\nTotal: %d error batches, %d individual errors\n", len(items), totalErrors)
+
+	// Save full report.
+	allVCs := make(map[string]bool)
+	allErrors := make(map[string][]string)
+	for _, item := range items {
+		for _, vc := range item.VendorCodes {
+			allVCs[vc] = true
+		}
+		for vc, errs := range item.Errors {
+			allErrors[vc] = append(allErrors[vc], errs...)
+		}
+	}
+	report := struct {
+		Timestamp   string              `json:"timestamp"`
+		VendorCodes []string            `json:"vendor_codes"`
+		WBErrors    map[string][]string `json:"wb_errors"`
+		RawResponse []wb.CardErrorItem  `json:"raw_response"`
+	}{
+		Timestamp:   time.Now().Format(time.RFC3339),
+		RawResponse: items,
+		WBErrors:    allErrors,
+	}
+	for vc := range allVCs {
+		report.VendorCodes = append(report.VendorCodes, vc)
+	}
+
+	data, _ := json.MarshalIndent(report, "", "  ")
+	filename := fmt.Sprintf("wb-errors-%s.json", time.Now().Format("2006-01-02_150405"))
+	if err := os.WriteFile(filename, data, 0644); err != nil {
+		log.Printf("  WARN: failed to write report: %v", err)
+	} else {
+		log.Printf("Full report saved: %s", filename)
+	}
+
+	if totalErrors > 0 {
+		return fmt.Errorf("WB error list contains %d errors", totalErrors)
+	}
+	return nil
 }

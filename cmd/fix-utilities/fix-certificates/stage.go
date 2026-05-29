@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/ilkoid/poncho-ai/pkg/filter"
 )
@@ -77,6 +76,15 @@ type stageRow struct {
 	OneCCertificateBegin string
 	OneCCertificateEnd   string
 }
+
+// stageRowAdapter wraps stageRow to implement filter.Filterable.
+type stageRowAdapter struct{ row stageRow }
+
+func (a stageRowAdapter) GetNmID() int          { return a.row.NmID }
+func (a stageRowAdapter) GetVendorCode() string  { return a.row.VendorCode }
+func (a stageRowAdapter) GetSubjectID() int      { return 0 }
+func (a stageRowAdapter) GetSubjectName() string { return a.row.SubjectName }
+func (a stageRowAdapter) GetSeasons() []string   { return nil }
 
 type changeEntry struct {
 	CharID int    `json:"char_id"`
@@ -224,6 +232,15 @@ type fixRow struct {
 	WrongValue  string
 }
 
+// fixRowAdapter wraps fixRow to implement filter.Filterable.
+type fixRowAdapter struct{ row fixRow }
+
+func (a fixRowAdapter) GetNmID() int          { return a.row.NmID }
+func (a fixRowAdapter) GetVendorCode() string  { return a.row.VendorCode }
+func (a fixRowAdapter) GetSubjectID() int      { return 0 }
+func (a fixRowAdapter) GetSubjectName() string { return a.row.SubjectName }
+func (a fixRowAdapter) GetSeasons() []string   { return nil }
+
 // runFixTypeStage finds cards where cert/decl number is correct but in the wrong char_id.
 // Only fixes cards where the number string matches between 1C and WB.
 func runFixTypeStage(ctx context.Context, db *sql.DB, f *filter.Filter) error {
@@ -366,6 +383,132 @@ func runFixTypeStage(ctx context.Context, db *sql.DB, f *filter.Filter) error {
 	return nil
 }
 
+// runReconcileStage finds cards where WB cert/decl data differs from 1C (any discrepancy).
+func runReconcileStage(ctx context.Context, db *sql.DB, f *filter.Filter, refTime time.Time) error {
+	if _, err := db.ExecContext(ctx, stagingTableDDL); err != nil {
+		return fmt.Errorf("create staging table: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, "DELETE FROM fix_certificates_staging"); err != nil {
+		return fmt.Errorf("clear staging table: %w", err)
+	}
+
+	fmt.Println("Querying cards with cert/decl discrepancies between WB and 1C...")
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT c.nm_id, c.vendor_code, COALESCE(c.title,''), COALESCE(c.subject_name,''),
+		       COALESCE(og.certificate,''), COALESCE(og.certificate_number,''),
+		       COALESCE(og.certificate_begin,''), COALESCE(og.certificate_end,'')
+		FROM cards c
+		JOIN onec_goods og ON c.vendor_code = og.article
+		WHERE og.has_certificate = 1
+		  AND og.certificate_number != ''
+		  AND (og.certificate LIKE 'Декларация%' OR og.certificate LIKE 'Сертификат%')
+		  AND EXISTS (
+		    SELECT 1 FROM card_characteristics cc
+		    WHERE cc.nm_id = c.nm_id
+		      AND cc.char_id IN (15001135, 15001136)
+		      AND cc.json_value NOT IN ('[]', '')
+		  )
+		ORDER BY c.nm_id
+	`)
+	if err != nil {
+		return fmt.Errorf("query cards: %w", err)
+	}
+	defer rows.Close()
+
+	var cards []stageRow
+	for rows.Next() {
+		var r stageRow
+		if err := rows.Scan(&r.NmID, &r.VendorCode, &r.Title, &r.SubjectName,
+			&r.OneCCertificate, &r.OneCCertificateNum,
+			&r.OneCCertificateBegin, &r.OneCCertificateEnd); err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+		cards = append(cards, r)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("rows: %w", err)
+	}
+
+	cards = applyMemFilters(cards, f)
+	cards, err = applySQLFilters(ctx, db, cards, f)
+	if err != nil {
+		return fmt.Errorf("sql filters: %w", err)
+	}
+
+	fmt.Printf("Found %d candidate cards\n\n", len(cards))
+
+	if len(cards) == 0 {
+		return nil
+	}
+
+	nmIDs := make([]int, len(cards))
+	for i, c := range cards {
+		nmIDs[i] = c.NmID
+	}
+	charsMap, err := loadCharacteristics(ctx, db, nmIDs)
+	if err != nil {
+		return fmt.Errorf("load characteristics: %w", err)
+	}
+	sizesMap, err := loadSizes(ctx, db, nmIDs)
+	if err != nil {
+		return fmt.Errorf("load sizes: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO fix_certificates_staging
+			(nm_id, vendor_code, title, subject_name,
+			 onec_certificate, onec_certificate_number, onec_certificate_begin, onec_certificate_end,
+			 changes_json, all_chars_json, sizes_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("prepare insert: %w", err)
+	}
+	defer stmt.Close()
+
+	staged := 0
+	skipped := 0
+	for _, c := range cards {
+		changes := buildReconcileChanges(charsMap[c.NmID], c, refTime)
+		if len(changes) == 0 {
+			skipped++
+			continue
+		}
+
+		allCharsJSON, _ := json.Marshal(charsMap[c.NmID])
+		sizesJSON, _ := json.Marshal(sizesMap[c.NmID])
+		changesJSON, _ := json.Marshal(changes)
+
+		if _, err := stmt.ExecContext(ctx,
+			c.NmID, c.VendorCode, c.Title, c.SubjectName,
+			c.OneCCertificate, c.OneCCertificateNum, c.OneCCertificateBegin, c.OneCCertificateEnd,
+			string(changesJSON), string(allCharsJSON), string(sizesJSON),
+		); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("insert nm_id=%d: %w", c.NmID, err)
+		}
+		staged++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	printStageStats(ctx, db)
+	fmt.Printf("  already correct (skipped): %d\n", skipped)
+	fmt.Printf("\nNext steps:\n")
+	fmt.Printf("  Diff:    fix-certificates --diff --db <db>\n")
+	fmt.Printf("  Apply:   fix-certificates --apply --dry-run --db <db>\n")
+	return nil
+}
+
 // buildCertChanges creates change entries for missing certificate/declaration fields.
 func buildCertChanges(currentChars []CardChar, c stageRow, refTime time.Time) []changeEntry {
 	kind := parseCertKind(c.OneCCertificate)
@@ -436,7 +579,64 @@ func buildCertChanges(currentChars []CardChar, c stageRow, refTime time.Time) []
 	return changes
 }
 
-// formatDateToDMY converts "2023-02-07T00:00:00" → "07.02.2023".
+// buildReconcileChanges creates change entries for ANY discrepancies between WB card and 1C data.
+// Handles: wrong number, type swap (cert↔decl), both.
+// Returns nil if data already matches — card won't be staged.
+func buildReconcileChanges(currentChars []CardChar, c stageRow, refTime time.Time) []changeEntry {
+	kind := parseCertKind(c.OneCCertificate)
+	if kind == certNone {
+		return nil
+	}
+	if c.OneCCertificateEnd != "" && !isZeroDate(c.OneCCertificateEnd) && isExpired(c.OneCCertificateEnd, refTime) {
+		return nil
+	}
+
+	existing := make(map[int]string)
+	for _, ch := range currentChars {
+		if ch.CharID == charDeclNumber || ch.CharID == charCertNumber || ch.CharID == charCertBegin || ch.CharID == charCertEnd {
+			existing[ch.CharID] = ch.Value
+		}
+	}
+
+	correctID := kind.targetCharID()
+	wrongID := charCertNumber
+	if correctID == charCertNumber {
+		wrongID = charDeclNumber
+	}
+
+	var changes []changeEntry
+
+	// Type swap: data is in the wrong char_id → remove it.
+	wrongVal := normalizeValue(existing[wrongID])
+	if wrongVal != "" {
+		changes = append(changes, changeEntry{CharID: wrongID, Old: wrongVal, New: ""})
+	}
+
+	// Compare number in correctID with 1C.
+	existingNum := normalizeValue(existing[correctID])
+	oneCNum := strings.TrimSpace(c.OneCCertificateNum)
+	if existingNum != oneCNum {
+		changes = append(changes, changeEntry{CharID: correctID, Old: existingNum, New: oneCNum})
+	}
+
+	// Compare begin date.
+	existingBegin := normalizeDate(existing[charCertBegin])
+	oneCBegin := normalizeDate(c.OneCCertificateBegin)
+	if oneCBegin != "" && existingBegin != oneCBegin {
+		changes = append(changes, changeEntry{CharID: charCertBegin, Old: existingBegin, New: oneCBegin})
+	}
+
+	// Compare end date.
+	existingEnd := normalizeDate(existing[charCertEnd])
+	oneCEnd := normalizeDate(c.OneCCertificateEnd)
+	if oneCEnd != "" && existingEnd != oneCEnd {
+		changes = append(changes, changeEntry{CharID: charCertEnd, Old: existingEnd, New: oneCEnd})
+	}
+
+	return changes
+}
+
+// formatDateToDMY converts "2023-02-07T00:00:00" → "07.02.2006".
 // Returns the input unchanged if parsing fails.
 func formatDateToDMY(iso string) string {
 	if iso == "" {
@@ -452,6 +652,39 @@ func formatDateToDMY(iso string) string {
 
 func isZeroDate(iso string) bool {
 	return strings.HasPrefix(iso, "0001-01-01")
+}
+
+// normalizeValue unwraps JSON arrays from card_characteristics values.
+// ["RU Д-CD000000"] → RU Д-CD000000, "" or "[]" → "", plain string → trimmed.
+func normalizeValue(val string) string {
+	val = strings.TrimSpace(val)
+	if val == "" || val == "[]" {
+		return ""
+	}
+	var arr []string
+	if err := json.Unmarshal([]byte(val), &arr); err == nil && len(arr) > 0 {
+		return strings.TrimSpace(arr[0])
+	}
+	return val
+}
+
+// normalizeDate returns a DMY string for comparison.
+// Accepts ISO (2023-02-07T00:00:00), date-only (2023-02-07), or DMY (07.02.2023).
+// Returns "" for empty/zero values.
+func normalizeDate(val string) string {
+	val = normalizeValue(val)
+	if val == "" || strings.HasPrefix(val, "0001-01-01") {
+		return ""
+	}
+	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, val); err == nil {
+			return t.Format("02.01.2006")
+		}
+	}
+	if _, err := time.Parse("02.01.2006", val); err == nil {
+		return val
+	}
+	return val
 }
 
 func printStageStats(ctx context.Context, db *sql.DB) {
@@ -484,62 +717,53 @@ func printStageStats(ctx context.Context, db *sql.DB) {
 }
 
 // applyMemFilters applies in-memory filters on fields available in stageRow.
-// Handles: nm_ids, vendor_codes, allowed_years, exclude_lengths, vendor_code_prefix, subject_name.
 func applyMemFilters(rows []stageRow, f *filter.Filter) []stageRow {
 	memF := filter.Filter{
-		NmIDs:            f.NmIDs,
-		VendorCodes:      f.VendorCodes,
-		AllowedYears:     f.AllowedYears,
-		ExcludeLengths:   f.ExcludeLengths,
-		VendorCodePrefix: f.VendorCodePrefix,
-		SubjectName:      f.SubjectName,
+		NmIDs:              f.NmIDs,
+		VendorCodes:        f.VendorCodes,
+		AllowedYears:       f.AllowedYears,
+		ExcludeLengths:     f.ExcludeLengths,
+		ExcludeVendorCodes: f.ExcludeVendorCodes,
+		VendorCodePrefix:   f.VendorCodePrefix,
+		SubjectName:        f.SubjectName,
 	}
 	if memF.Empty() {
 		return rows
 	}
 	var result []stageRow
 	for _, r := range rows {
-		if memFilterMatch(r, &memF) {
+		if memF.Matches(stageRowAdapter{row: r}, nil) {
 			result = append(result, r)
 		}
 	}
 	return result
 }
 
-func memFilterMatch(r stageRow, f *filter.Filter) bool {
-	if len(f.NmIDs) > 0 {
-		if !intIn(f.NmIDs, r.NmID) {
-			return false
+// --- Local helpers (Rule 6: cmd/ cannot import cmd/) ---
+func applySQLFilters(ctx context.Context, db *sql.DB, rows []stageRow, f *filter.Filter) ([]stageRow, error) {
+	nmIDs := make([]int, len(rows))
+	for i, r := range rows {
+		nmIDs[i] = r.NmID
+	}
+	passSet, err := filterNmIDsBySQL(ctx, db, nmIDs, f)
+	if err != nil {
+		return nil, err
+	}
+	if passSet == nil {
+		return rows, nil
+	}
+	var result []stageRow
+	for _, r := range rows {
+		if passSet[r.NmID] {
+			result = append(result, r)
 		}
 	}
-	if len(f.VendorCodes) > 0 {
-		if !strIn(f.VendorCodes, r.VendorCode) {
-			return false
-		}
-	}
-	if len(f.AllowedYears) > 0 {
-		year := extractVCYear(r.VendorCode)
-		if year < 0 || !intIn(f.AllowedYears, year) {
-			return false
-		}
-	}
-	if len(f.ExcludeLengths) > 0 {
-		if intIn(f.ExcludeLengths, utf8.RuneCountInString(r.VendorCode)) {
-			return false
-		}
-	}
-	if f.VendorCodePrefix != "" && !strings.HasPrefix(r.VendorCode, f.VendorCodePrefix) {
-		return false
-	}
-	if f.SubjectName != "" && !strings.EqualFold(r.SubjectName, f.SubjectName) {
-		return false
-	}
-	return true
+	return result, nil
 }
 
-// applySQLFilters uses filter.BuildSQL() for DB-dependent fields.
-// Handles: in_stock, subject_ids, seasons, onec_type, category_level1/2, active_only.
-func applySQLFilters(ctx context.Context, db *sql.DB, rows []stageRow, f *filter.Filter) ([]stageRow, error) {
+// filterNmIDsBySQL runs SQL-based filters and returns a set of passing nmIDs.
+// Returns nil if no SQL filters are active (caller should skip filtering).
+func filterNmIDsBySQL(ctx context.Context, db *sql.DB, nmIDs []int, f *filter.Filter) (map[int]bool, error) {
 	sqlF := filter.Filter{
 		InStock:        f.InStock,
 		SubjectIDs:     f.SubjectIDs,
@@ -550,7 +774,7 @@ func applySQLFilters(ctx context.Context, db *sql.DB, rows []stageRow, f *filter
 		ActiveOnly:     f.ActiveOnly,
 	}
 	if sqlF.Empty() {
-		return rows, nil
+		return nil, nil
 	}
 
 	r, err := sqlF.BuildSQL(filter.SQLConfig{CardsAlias: "c"})
@@ -558,24 +782,23 @@ func applySQLFilters(ctx context.Context, db *sql.DB, rows []stageRow, f *filter
 		return nil, fmt.Errorf("build sql filter: %w", err)
 	}
 
-	nmIDs := make([]int, len(rows))
-	for i, r := range rows {
-		nmIDs[i] = r.NmID
-	}
-
 	query := "SELECT DISTINCT c.nm_id FROM cards c"
 	for _, join := range r.JOINs {
 		query += " " + join
 	}
 
-	scopePh := localPlaceholders(len(nmIDs))
-	scopeArgs := localIntSliceToAny(nmIDs)
-	if r.Where != "" {
-		query += " WHERE c.nm_id IN (" + scopePh + ") AND " + r.Where
-	} else {
-		query += " WHERE c.nm_id IN (" + scopePh + ")"
+	ph := make([]string, len(nmIDs))
+	args := make([]any, len(nmIDs))
+	for i, id := range nmIDs {
+		ph[i] = "?"
+		args[i] = id
 	}
-	args := append(scopeArgs, r.Args...)
+	if r.Where != "" {
+		query += " WHERE c.nm_id IN (" + strings.Join(ph, ",") + ") AND " + r.Where
+	} else {
+		query += " WHERE c.nm_id IN (" + strings.Join(ph, ",") + ")"
+	}
+	args = append(args, r.Args...)
 
 	sqlRows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -591,77 +814,7 @@ func applySQLFilters(ctx context.Context, db *sql.DB, rows []stageRow, f *filter
 		}
 		passSet[id] = true
 	}
-	if err := sqlRows.Err(); err != nil {
-		return nil, err
-	}
-
-	var result []stageRow
-	for _, r := range rows {
-		if passSet[r.NmID] {
-			result = append(result, r)
-		}
-	}
-	return result, nil
-}
-
-// --- Local helpers (Rule 6: cmd/ cannot import cmd/) ---
-
-func intIn(list []int, v int) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
-func strIn(list []string, v string) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
-// extractVCYear extracts the 2-digit year from vendor_code runes [1:3].
-func extractVCYear(vc string) int {
-	runes := []rune(vc)
-	if len(runes) < 3 {
-		return -1
-	}
-	n, err := parseTwoDigits(string(runes[1:3]))
-	if err != nil {
-		return -1
-	}
-	return n
-}
-
-func parseTwoDigits(s string) (int, error) {
-	n := 0
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, fmt.Errorf("not a digit")
-		}
-		n = n*10 + int(c-'0')
-	}
-	return n, nil
-}
-
-func localPlaceholders(n int) string {
-	parts := make([]string, n)
-	for i := range parts {
-		parts[i] = "?"
-	}
-	return strings.Join(parts, ",")
-}
-
-func localIntSliceToAny(ids []int) []any {
-	result := make([]any, len(ids))
-	for i, id := range ids {
-		result[i] = id
-	}
-	return result
+	return passSet, sqlRows.Err()
 }
 
 func runDiff(ctx context.Context, db *sql.DB) error {
@@ -724,110 +877,42 @@ func fmtVal(s string) string {
 	return s
 }
 
-// applyFixMemFilters applies in-memory filters on fixRow fields (same logic as applyMemFilters).
+// applyFixMemFilters applies in-memory filters on fixRow fields.
 func applyFixMemFilters(rows []fixRow, f *filter.Filter) []fixRow {
 	memF := filter.Filter{
-		NmIDs:            f.NmIDs,
-		VendorCodes:      f.VendorCodes,
-		AllowedYears:     f.AllowedYears,
-		ExcludeLengths:   f.ExcludeLengths,
-		VendorCodePrefix: f.VendorCodePrefix,
-		SubjectName:      f.SubjectName,
+		NmIDs:              f.NmIDs,
+		VendorCodes:        f.VendorCodes,
+		AllowedYears:       f.AllowedYears,
+		ExcludeLengths:     f.ExcludeLengths,
+		ExcludeVendorCodes: f.ExcludeVendorCodes,
+		VendorCodePrefix:   f.VendorCodePrefix,
+		SubjectName:        f.SubjectName,
 	}
 	if memF.Empty() {
 		return rows
 	}
 	var result []fixRow
 	for _, r := range rows {
-		if fixMemMatch(r, &memF) {
+		if memF.Matches(fixRowAdapter{row: r}, nil) {
 			result = append(result, r)
 		}
 	}
 	return result
 }
 
-func fixMemMatch(r fixRow, f *filter.Filter) bool {
-	if len(f.NmIDs) > 0 && !intIn(f.NmIDs, r.NmID) {
-		return false
-	}
-	if len(f.VendorCodes) > 0 && !strIn(f.VendorCodes, r.VendorCode) {
-		return false
-	}
-	if len(f.AllowedYears) > 0 {
-		year := extractVCYear(r.VendorCode)
-		if year < 0 || !intIn(f.AllowedYears, year) {
-			return false
-		}
-	}
-	if len(f.ExcludeLengths) > 0 && intIn(f.ExcludeLengths, utf8.RuneCountInString(r.VendorCode)) {
-		return false
-	}
-	if f.VendorCodePrefix != "" && !strings.HasPrefix(r.VendorCode, f.VendorCodePrefix) {
-		return false
-	}
-	if f.SubjectName != "" && !strings.EqualFold(r.SubjectName, f.SubjectName) {
-		return false
-	}
-	return true
-}
-
-// applyFixSQLFilters applies SQL filters for DB-dependent fields (reuses applySQLFilters logic).
+// applyFixSQLFilters applies SQL filters for DB-dependent fields.
 func applyFixSQLFilters(ctx context.Context, db *sql.DB, rows []fixRow, f *filter.Filter) ([]fixRow, error) {
-	sqlF := filter.Filter{
-		InStock:        f.InStock,
-		SubjectIDs:     f.SubjectIDs,
-		Seasons:        f.Seasons,
-		OneCType:       f.OneCType,
-		CategoryLevel1: f.CategoryLevel1,
-		CategoryLevel2: f.CategoryLevel2,
-		ActiveOnly:     f.ActiveOnly,
-	}
-	if sqlF.Empty() {
-		return rows, nil
-	}
-
-	r, err := sqlF.BuildSQL(filter.SQLConfig{CardsAlias: "c"})
-	if err != nil {
-		return nil, fmt.Errorf("build sql filter: %w", err)
-	}
-
 	nmIDs := make([]int, len(rows))
 	for i, r := range rows {
 		nmIDs[i] = r.NmID
 	}
-
-	query := "SELECT DISTINCT c.nm_id FROM cards c"
-	for _, join := range r.JOINs {
-		query += " " + join
-	}
-
-	scopePh := localPlaceholders(len(nmIDs))
-	scopeArgs := localIntSliceToAny(nmIDs)
-	if r.Where != "" {
-		query += " WHERE c.nm_id IN (" + scopePh + ") AND " + r.Where
-	} else {
-		query += " WHERE c.nm_id IN (" + scopePh + ")"
-	}
-	args := append(scopeArgs, r.Args...)
-
-	sqlRows, err := db.QueryContext(ctx, query, args...)
+	passSet, err := filterNmIDsBySQL(ctx, db, nmIDs, f)
 	if err != nil {
-		return nil, fmt.Errorf("sql filter query: %w", err)
-	}
-	defer sqlRows.Close()
-
-	passSet := make(map[int]bool)
-	for sqlRows.Next() {
-		var id int
-		if err := sqlRows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan filter: %w", err)
-		}
-		passSet[id] = true
-	}
-	if err := sqlRows.Err(); err != nil {
 		return nil, err
 	}
-
+	if passSet == nil {
+		return rows, nil
+	}
 	var result []fixRow
 	for _, r := range rows {
 		if passSet[r.NmID] {
