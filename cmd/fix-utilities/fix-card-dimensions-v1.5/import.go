@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"path/filepath"
 
 	"github.com/xuri/excelize/v2"
 
-	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 )
 
@@ -16,10 +14,9 @@ import (
 // XLS columns: Номенклатура, НоменклатураИдентификатор, Характеристика,
 // ХарактеристикаИдентификатор, Длина, Ширина, Высота, Вес, Объём
 func importXLSFile(ctx context.Context, dbPath, xlsPath string) (int, error) {
-	dllog.PrintHeader("fix-card-dimensions: import XLS",
-		dllog.HeaderField{Key: "DB", Value: dbPath},
-		dllog.HeaderField{Key: "XLS", Value: xlsPath},
-	)
+	fmt.Printf("=== fix-card-dimensions: import XLS ===\n")
+	fmt.Printf("  DB:  %s\n", dbPath)
+	fmt.Printf("  XLS: %s\n\n", xlsPath)
 
 	f, err := excelize.OpenFile(xlsPath)
 	if err != nil {
@@ -37,14 +34,13 @@ func importXLSFile(ctx context.Context, dbPath, xlsPath string) (int, error) {
 		return 0, fmt.Errorf("xlsx has no data rows (only %d rows total)", len(rows))
 	}
 
-	// Skip header row
 	dataRows := rows[1:]
-	dllog.Log("parsed %d data rows from sheet %q", len(dataRows), sheet)
+	fmt.Printf("parsed %d data rows from sheet %q\n", len(dataRows), sheet)
 
 	var dimRows []sqlite.OneCDimensionRow
 	for i, row := range dataRows {
 		if len(row) < 8 {
-			dllog.Error("row %d: only %d columns (need 8), skipping", i+2, len(row))
+			fmt.Printf("  WARN row %d: only %d columns (need 8), skipping\n", i+2, len(row))
 			continue
 		}
 
@@ -66,7 +62,7 @@ func importXLSFile(ctx context.Context, dbPath, xlsPath string) (int, error) {
 		}
 
 		if goodGUID == "" || skuGUID == "" {
-			dllog.Error("row %d: empty GUID (good=%q sku=%q), skipping", i+2, goodGUID, skuGUID)
+			fmt.Printf("  WARN row %d: empty GUID (good=%q sku=%q), skipping\n", i+2, goodGUID, skuGUID)
 			continue
 		}
 
@@ -88,7 +84,8 @@ func importXLSFile(ctx context.Context, dbPath, xlsPath string) (int, error) {
 		return 0, fmt.Errorf("no valid dimension rows found in XLS")
 	}
 
-	repo, err := openDB(dbPath)
+	// import.go still needs the sqlite repo for ImportDimensions/CountDimensions batch methods.
+	repo, err := openDBAsRepo(dbPath)
 	if err != nil {
 		return 0, err
 	}
@@ -100,9 +97,8 @@ func importXLSFile(ctx context.Context, dbPath, xlsPath string) (int, error) {
 	}
 
 	dbCount, _ := repo.CountDimensions(ctx)
-	dllog.Log("onec_dimensions table now has %d rows (imported %d)", dbCount, count)
+	fmt.Printf("onec_dimensions table now has %d rows (imported %d)\n", dbCount, count)
 
-	_ = filepath.Base(xlsPath)
 	return count, nil
 }
 

@@ -7,7 +7,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/filter"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 )
@@ -24,7 +23,6 @@ CREATE TABLE IF NOT EXISTS fix_card_dimensions_staging (
 );
 `
 
-// stagedDimRow is read from the staging table.
 type stagedDimRow struct {
 	NmID       int
 	VendorCode string
@@ -40,35 +38,12 @@ type stagedDimRow struct {
 	ErrorMsg   string
 }
 
-// dimRowAdapter wraps DimensionAggRow to implement filter.Filterable.
-// Only NmID and VendorCode are available from aggregated dimensions.
-type dimRowAdapter struct {
-	row sqlite.DimensionAggRow
-}
-
-func (d dimRowAdapter) GetNmID() int            { return d.row.NmID }
-func (d dimRowAdapter) GetVendorCode() string    { return d.row.VendorCode }
-func (d dimRowAdapter) GetSubjectID() int        { return 0 }
-func (d dimRowAdapter) GetSubjectName() string   { return "" }
-func (d dimRowAdapter) GetSeasons() []string     { return nil }
-
-// runStage joins onec_dimensions with cards and writes results to staging table.
-func runStage(ctx context.Context, cfg *Config, force bool) (int, error) {
-	label := "fix-card-dimensions v1.5: stage"
+func runStage(ctx context.Context, db *sql.DB, f *filter.Filter, force bool) (int, error) {
+	label := "fix-card-dimensions: stage"
 	if force {
 		label += " [FORCE]"
 	}
-	dllog.PrintHeader(label,
-		dllog.HeaderField{Key: "DB", Value: cfg.DBPath},
-	)
-
-	repo, err := openDB(cfg.DBPath)
-	if err != nil {
-		return 0, err
-	}
-	defer repo.Close()
-
-	db := repo.DB()
+	fmt.Printf("=== %s ===\n\n", label)
 
 	if _, err := db.ExecContext(ctx, stagingSchemaDDL); err != nil {
 		return 0, fmt.Errorf("create staging table: %w", err)
@@ -78,41 +53,36 @@ func runStage(ctx context.Context, cfg *Config, force bool) (int, error) {
 		return 0, fmt.Errorf("clear staging: %w", err)
 	}
 
-	// Get all aggregated dimensions
 	var aggRows []sqlite.DimensionAggRow
+	var err error
 	if force {
-		// --force: include all cards with 1C dimension data, even if dims already set
 		aggRows, err = getAllAggregatedDimensions(ctx, db)
 	} else {
-		// Default: only cards with missing dims
-		aggRows, err = repo.GetAggregatedDimensions(ctx)
+		aggRows, err = getMissingDimensions(ctx, db)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("get aggregated dimensions: %w", err)
 	}
 
 	if len(aggRows) == 0 {
-		dllog.Log("no cards with missing dimensions found")
+		fmt.Println("no cards with missing dimensions found")
 		return 0, nil
 	}
 
-	// Stage 1: in-memory filter (nm_ids, vendor_codes, allowed_years, exclude_lengths, vendor_code_prefix)
-	filtered := applyFilters(aggRows, &cfg.Filters)
-	dllog.Log("in-memory filter: %d → %d cards", len(aggRows), len(filtered))
+	filtered := applyFilters(aggRows, f)
+	fmt.Printf("in-memory filter: %d → %d cards\n", len(aggRows), len(filtered))
 
-	// Stage 2: SQL-based filter (in_stock, seasons, subject, subject_ids, 1C fields)
-	filtered, err = applySQLFilters(ctx, db, filtered, &cfg.Filters)
+	filtered, err = applySQLFilters(ctx, db, filtered, f)
 	if err != nil {
 		return 0, fmt.Errorf("apply sql filters: %w", err)
 	}
-	dllog.Log("sql filter: → %d cards", len(filtered))
+	fmt.Printf("sql filter: → %d cards\n", len(filtered))
 
 	if len(filtered) == 0 {
-		dllog.Log("no cards passed filters")
+		fmt.Println("no cards passed filters")
 		return 0, nil
 	}
 
-	// Insert into staging with ceil-converted dimensions
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin staging tx: %w", err)
@@ -145,7 +115,6 @@ func runStage(ctx context.Context, cfg *Config, force bool) (int, error) {
 		return 0, fmt.Errorf("commit staging: %w", err)
 	}
 
-	// Statistics
 	var both, dimOnly, weightOnly int
 	for _, r := range filtered {
 		hasZeroDim := r.OldLength == 0 || r.OldWidth == 0 || r.OldHeight == 0
@@ -160,14 +129,12 @@ func runStage(ctx context.Context, cfg *Config, force bool) (int, error) {
 		}
 	}
 
-	dllog.Log("staging stats: %d cards (both=%d, dim_only=%d, weight_only=%d)",
+	fmt.Printf("staging stats: %d cards (both=%d, dim_only=%d, weight_only=%d)\n",
 		len(filtered), both, dimOnly, weightOnly)
 
 	return len(filtered), nil
 }
 
-// applyFilters uses filter.Matches() for in-memory filtering on fields
-// available in DimensionAggRow (nm_ids, vendor_codes, allowed_years, exclude_lengths, vendor_code_prefix).
 func applyFilters(rows []sqlite.DimensionAggRow, f *filter.Filter) []sqlite.DimensionAggRow {
 	var result []sqlite.DimensionAggRow
 	for _, r := range rows {
@@ -178,10 +145,7 @@ func applyFilters(rows []sqlite.DimensionAggRow, f *filter.Filter) []sqlite.Dime
 	return result
 }
 
-// applySQLFilters uses filter.BuildSQL() for DB-based filters that require
-// data not available in DimensionAggRow (in_stock, seasons, subject, subject_ids, 1C fields).
 func applySQLFilters(ctx context.Context, db *sql.DB, rows []sqlite.DimensionAggRow, f *filter.Filter) ([]sqlite.DimensionAggRow, error) {
-	// Extract only DB-dependent fields into a sub-filter
 	sqlFilter := filter.Filter{
 		InStock:        f.InStock,
 		Seasons:        f.Seasons,
@@ -201,13 +165,11 @@ func applySQLFilters(ctx context.Context, db *sql.DB, rows []sqlite.DimensionAgg
 		return nil, fmt.Errorf("build sql filter: %w", err)
 	}
 
-	// Collect nm_ids from pre-filtered rows
 	nmIDs := make([]int, len(rows))
 	for i, r := range rows {
 		nmIDs[i] = r.NmID
 	}
 
-	// Build scoped query: filter only within our nm_ids
 	query := "SELECT DISTINCT c.nm_id FROM cards c"
 	for _, join := range r.JOINs {
 		query += " " + join
@@ -249,27 +211,18 @@ func applySQLFilters(ctx context.Context, db *sql.DB, rows []sqlite.DimensionAgg
 	return result, nil
 }
 
-// showDiff prints before/after for all staged cards.
-func showDiff(ctx context.Context, dbPath string) error {
-	repo, err := openDB(dbPath)
-	if err != nil {
-		return err
-	}
-	defer repo.Close()
-
-	rows, err := loadStagedRows(ctx, repo.DB())
+func showDiff(ctx context.Context, db *sql.DB) error {
+	rows, err := loadStagedRows(ctx, db)
 	if err != nil {
 		return err
 	}
 
 	if len(rows) == 0 {
-		dllog.Log("no staged cards found")
+		fmt.Println("no staged cards found")
 		return nil
 	}
 
-	dllog.PrintHeader("fix-card-dimensions v1.5: diff",
-		dllog.HeaderField{Key: "Cards", Value: fmt.Sprintf("%d", len(rows))},
-	)
+	fmt.Printf("=== fix-card-dimensions: diff (%d cards) ===\n\n", len(rows))
 
 	fmt.Printf("%-12s %-20s | %-30s | %-30s\n", "nm_id", "vendor_code", "old (L×W×H, W)", "new (L×W×H, W)")
 	fmt.Println(strings.Repeat("-", 100))
@@ -290,7 +243,6 @@ func showDiff(ctx context.Context, dbPath string) error {
 	return nil
 }
 
-// loadStagedRows reads all rows from the staging table.
 func loadStagedRows(ctx context.Context, db *sql.DB) ([]stagedDimRow, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT nm_id, vendor_code, old_length, old_width, old_height, old_weight,
@@ -324,7 +276,6 @@ func loadStagedRows(ctx context.Context, db *sql.DB) ([]stagedDimRow, error) {
 	return result, rows.Err()
 }
 
-// loadPendingStagedRows returns only rows with status='pending'.
 func loadPendingStagedRows(ctx context.Context, db *sql.DB) ([]stagedDimRow, error) {
 	all, err := loadStagedRows(ctx, db)
 	if err != nil {
@@ -339,7 +290,6 @@ func loadPendingStagedRows(ctx context.Context, db *sql.DB) ([]stagedDimRow, err
 	return pending, nil
 }
 
-// updateStagingStatus updates the status/error for a staged card.
 func updateStagingStatus(ctx context.Context, db *sql.DB, nmID int, status, errMsg string) error {
 	_, err := db.ExecContext(ctx,
 		"UPDATE fix_card_dimensions_staging SET status = ?, error_msg = ? WHERE nm_id = ?",
@@ -348,55 +298,6 @@ func updateStagingStatus(ctx context.Context, db *sql.DB, nmID int, status, errM
 	return err
 }
 
-// getAllAggregatedDimensions returns all cards with 1C dimension data,
-// selecting the SKU with the largest volume per good_guid (--force mode).
-func getAllAggregatedDimensions(ctx context.Context, db *sql.DB) ([]sqlite.DimensionAggRow, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT
-			c.nm_id,
-			c.vendor_code,
-			COALESCE(c.dim_length, 0),
-			COALESCE(c.dim_width, 0),
-			COALESCE(c.dim_height, 0),
-			COALESCE(c.dim_weight_brutto, 0),
-			d.length_dm * 10,
-			d.width_dm * 10,
-			d.height_dm * 10,
-			d.weight_kg
-		FROM onec_dimensions d
-		JOIN onec_goods og ON og.guid = d.good_guid
-		JOIN cards c ON c.vendor_code = og.article
-		WHERE CASE WHEN d.volume_cm3 > 0 THEN d.volume_cm3
-		           ELSE (d.length_dm * 10) * (d.width_dm * 10) * (d.height_dm * 10)
-		      END = (
-			  SELECT MAX(CASE WHEN d2.volume_cm3 > 0 THEN d2.volume_cm3
-			                  ELSE (d2.length_dm * 10) * (d2.width_dm * 10) * (d2.height_dm * 10)
-			             END)
-			  FROM onec_dimensions d2 WHERE d2.good_guid = d.good_guid
-		  )
-		GROUP BY c.nm_id ORDER BY c.vendor_code
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("query all aggregated dimensions: %w", err)
-	}
-	defer rows.Close()
-
-	var result []sqlite.DimensionAggRow
-	for rows.Next() {
-		var r sqlite.DimensionAggRow
-		if err := rows.Scan(
-			&r.NmID, &r.VendorCode,
-			&r.OldLength, &r.OldWidth, &r.OldHeight, &r.OldWeight,
-			&r.NewLength, &r.NewWidth, &r.NewHeight, &r.NewWeight,
-		); err != nil {
-			return nil, fmt.Errorf("scan dimension agg row: %w", err)
-		}
-		result = append(result, r)
-	}
-	return result, rows.Err()
-}
-
-// local helpers for SQL scoping (pkg/filter helpers are unexported)
 func localPlaceholders(n int) string {
 	p := make([]string, n)
 	for i := range p {

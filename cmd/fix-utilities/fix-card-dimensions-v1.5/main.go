@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -9,8 +10,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ilkoid/poncho-ai/pkg/dllog"
+	_ "github.com/mattn/go-sqlite3"
+
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
+	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
 func main() {
@@ -20,94 +23,121 @@ func main() {
 	diff := flag.Bool("diff", false, "Show before/after for staged cards")
 	apply := flag.Bool("apply", false, "Apply staged changes via WB API")
 	dryRun := flag.Bool("dry-run", false, "Show payloads without sending (use with --apply)")
+	check := flag.Bool("check", false, "Query WB error list for recent card validation errors")
 	force := flag.Bool("force", false, "Stage cards even if dimensions already set (overwrite from 1C)")
 	dbPath := flag.String("db", "", "Override db_path from config")
 	flag.Parse()
 
-	if *configPath == "" && *importXLS == "" && !*stage && !*diff && !*apply {
-		fmt.Println("Usage: fix-card-dimensions --config config.yaml [--import-xls file.xlsx] [--stage] [--diff] [--apply] [--dry-run]")
-		fmt.Println("       fix-card-dimensions --import-xls file.xlsx --db /tmp/test.db")
-		flag.PrintDefaults()
-		os.Exit(1)
+	if *importXLS == "" && !*stage && !*diff && !*apply && !*check {
+		fmt.Println("fix-card-dimensions — update L/W/H/weight on WB cards from 1C WMS data")
+		fmt.Println()
+		fmt.Println("Usage:")
+		fmt.Println("  fix-card-dimensions --import-xls file.xlsx --db /var/db/wb-sales.db")
+		fmt.Println("  fix-card-dimensions --stage --config config.yaml")
+		fmt.Println("  fix-card-dimensions --diff --config config.yaml")
+		fmt.Println("  fix-card-dimensions --check --config config.yaml")
+		fmt.Println("  fix-card-dimensions --apply --dry-run --config config.yaml")
+		fmt.Println("  fix-card-dimensions --apply --config config.yaml  (⚠ production)")
+		flag.Usage()
+		os.Exit(0)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	cfg := &Config{}
-	if _, err := os.Stat(*configPath); err == nil {
-		cfg, err = loadConfig(*configPath)
-		if err != nil {
-			log.Fatalf("Config error: %v", err)
-		}
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
 	}
+
+	// CLI flags override config.
+	db := cfg.DBPath
 	if *dbPath != "" {
-		cfg.DBPath = *dbPath
+		db = *dbPath
 	}
 
-	if *importXLS != "" {
-		if cfg.DBPath == "" {
-			log.Fatal("--db is required for --import-xls")
-		}
-		count, err := importXLSFile(ctx, cfg.DBPath, *importXLS)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	switch {
+	case *importXLS != "":
+		count, err := importXLSFile(ctx, db, *importXLS)
 		if err != nil {
-			log.Fatalf("Import failed: %v", err)
+			log.Fatalf("import: %v", err)
 		}
-		dllog.Done(0, "imported %d rows into onec_dimensions", count)
-		return
-	}
+		fmt.Printf("\nDone: imported %d rows into onec_dimensions\n", count)
 
-	if *stage {
-		if cfg.DBPath == "" {
-			log.Fatal("--db is required for --stage")
-		}
-		count, err := runStage(ctx, cfg, *force)
+	case *stage:
+		dbConn, err := openDB(db)
 		if err != nil {
-			log.Fatalf("Stage failed: %v", err)
+			log.Fatalf("open db: %v", err)
 		}
-		dllog.Done(0, "staged %d cards for dimension update", count)
-		return
-	}
+		defer dbConn.Close()
 
-	if *diff {
-		if cfg.DBPath == "" {
-			log.Fatal("--db is required for --diff")
-		}
-		if err := showDiff(ctx, cfg.DBPath); err != nil {
-			log.Fatalf("Diff failed: %v", err)
-		}
-		return
-	}
-
-	if *apply {
-		apiKey := getWBApiKey(cfg.WBUpdate.APIKey)
-		if apiKey == "" {
-			log.Fatal("WB_API_KEY (or WB_API_ANALYTICS_AND_PROMO_KEY) not set")
-		}
-		if cfg.DBPath == "" {
-			log.Fatal("--db is required for --apply")
-		}
-		if *dryRun {
-			if err := runDryRun(ctx, cfg, apiKey); err != nil {
-				log.Fatalf("Dry-run failed: %v", err)
-			}
-			return
-		}
-		count, err := runApply(ctx, cfg, apiKey)
+		count, err := runStage(ctx, dbConn, &cfg.Filters, *force)
 		if err != nil {
-			log.Fatalf("Apply failed: %v", err)
+			log.Fatalf("stage: %v", err)
 		}
-		dllog.Done(0, "updated %d cards", count)
-		return
-	}
+		fmt.Printf("\nNext steps:\n")
+		fmt.Printf("  Review:  sqlite3 %s \"SELECT * FROM fix_card_dimensions_staging LIMIT 20\"\n", db)
+		fmt.Printf("  Diff:    fix-card-dimensions --diff --config config.yaml\n")
+		fmt.Printf("  Apply:   fix-card-dimensions --apply --dry-run --config config.yaml\n")
+		_ = count
 
-	fmt.Println("No action specified. Use --import-xls, --stage, --diff, or --apply")
+	case *check:
+		apiKey := resolveAPIKey()
+		client := wb.New(apiKey)
+		client.SetRateLimit("cards_content",
+			cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst,
+			cfg.WBUpdate.APIFloorPerMin, cfg.WBUpdate.APIFloorBurst)
+		if err := runCheck(ctx, client, cfg.WBUpdate); err != nil {
+			log.Fatalf("check: %v", err)
+		}
+
+	case *diff:
+		dbConn, err := openDB(db)
+		if err != nil {
+			log.Fatalf("open db: %v", err)
+		}
+		defer dbConn.Close()
+
+		if err := showDiff(ctx, dbConn); err != nil {
+			log.Fatalf("diff: %v", err)
+		}
+
+	case *apply:
+		dbConn, err := openDB(db)
+		if err != nil {
+			log.Fatalf("open db: %v", err)
+		}
+		defer dbConn.Close()
+
+		apiKey := resolveAPIKey()
+		client := wb.New(apiKey)
+		client.SetRateLimit("cards_content",
+			cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst,
+			cfg.WBUpdate.APIFloorPerMin, cfg.WBUpdate.APIFloorBurst)
+		if err := runApply(ctx, dbConn, client, cfg.WBUpdate, *dryRun); err != nil {
+			log.Fatalf("apply: %v", err)
+		}
+	}
 }
 
-func openDB(dbPath string) (*sqlite.SQLiteSalesRepository, error) {
-	repo, err := sqlite.NewSQLiteSalesRepository(dbPath)
+func openDB(path string) (*sql.DB, error) {
+	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_cache_size=-65536&_busy_timeout=10000&_foreign_keys=1", path)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open db %s: %w", dbPath, err)
+		return nil, err
 	}
-	return repo, nil
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
+
+func resolveAPIKey() string {
+	if k := os.Getenv("WB_API_ANALYTICS_AND_PROMO_KEY"); k != "" {
+		return k
+	}
+	return os.Getenv("WB_API_KEY")
+}
+
+// openDBAsRepo opens a sqlite repo wrapper (needed only for --import-xls batch methods).
+func openDBAsRepo(dbPath string) (*sqlite.SQLiteSalesRepository, error) {
+	return sqlite.NewSQLiteSalesRepository(dbPath)
 }
