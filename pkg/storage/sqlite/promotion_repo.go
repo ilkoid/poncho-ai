@@ -684,6 +684,55 @@ func (r *SQLiteSalesRepository) SaveNormqueryStats(ctx context.Context, advertID
 	return tx.Commit()
 }
 
+// SaveNormqueryStatsBatch saves normquery statistics for multiple (advert_id, nm_id) groups
+// in a single transaction. Uses INSERT OR REPLACE to avoid separate DELETE per group.
+// Much faster than per-group SaveNormqueryStats on WSL2 /mnt/d mounts where fsync is slow.
+func (r *SQLiteSalesRepository) SaveNormqueryStatsBatch(ctx context.Context, groups []wb.NormqueryStatsGroup, date string) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	r.db.Exec("PRAGMA synchronous = OFF")
+	defer r.db.Exec("PRAGMA synchronous = NORMAL")
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO normquery_stats
+		(advert_id, nm_id, stats_date, normquery, views, clicks, ctr, cpc, cpm, avg_pos, orders, shks, atbs, spend)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, group := range groups {
+		for _, row := range group.Stats {
+			var views int
+			if row.Views != nil {
+				views = *row.Views
+			}
+			var ctr float64
+			if row.CTR != nil {
+				ctr = *row.CTR
+			}
+			var cpm float64
+			if row.CPM != nil {
+				cpm = *row.CPM
+			}
+			_, err := stmt.ExecContext(ctx, group.AdvertID, group.NmID, date, row.NormQuery, views, row.Clicks, ctr, row.CPC, cpm, row.AvgPos, row.Orders, row.SHKS, row.Atbs, row.Spend)
+			if err != nil {
+				return fmt.Errorf("insert normquery_stats advert=%d nm=%d cluster=%s: %w", group.AdvertID, group.NmID, row.NormQuery, err)
+			}
+		}
+	}
+	return tx.Commit()
+}
+
 // SaveNormqueryBids saves current bid snapshot per (advert_id, nm_id, normquery).
 func (r *SQLiteSalesRepository) SaveNormqueryBids(ctx context.Context, items []wb.NormqueryBidItem) error {
 	if len(items) == 0 {

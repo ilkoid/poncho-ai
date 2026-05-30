@@ -116,22 +116,26 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 			To:    endDate,
 			Items: batch,
 		}
+		tAPIStart := time.Now()
 		resp, err := client.GetNormqueryStats(ctx, req, rateLimit, burst)
+		apiDur := time.Since(tAPIStart)
 		if err != nil {
-			dllog.Error("batch %d: %v", batchNum, err)
+			dllog.Error("batch %d: %v (api=%.1fs)", batchNum, err, apiDur.Seconds())
 			continue
 		}
 
-		for _, group := range resp.Stats {
-			if len(group.Stats) == 0 {
-				continue
+		tDBStart := time.Now()
+		if len(resp.Stats) > 0 {
+			if err := repo.SaveNormqueryStatsBatch(ctx, resp.Stats, beginDate); err != nil {
+				dllog.Error("batch save: %v", err)
 			}
-			if err := repo.SaveNormqueryStats(ctx, group.AdvertID, group.NmID, beginDate, group.Stats); err != nil {
-				dllog.Error("stats advert=%d nm=%d: %v", group.AdvertID, group.NmID, err)
+			for _, group := range resp.Stats {
+				totalStats += len(group.Stats)
 			}
-			totalStats += len(group.Stats)
 		}
-		dllog.Progress(batchNum, totalBatches, "normquery-stats", fmt.Sprintf("%d clusters", totalStats), t0)
+		dbDur := time.Since(tDBStart)
+		dllog.Progress(batchNum, totalBatches, "normquery-stats",
+			fmt.Sprintf("%d clusters (api=%.1fs, db=%.1fs)", totalStats, apiDur.Seconds(), dbDur.Seconds()), t0)
 	}
 
 	dllog.Done(time.Since(t0), "%d stat rows from %d products", totalStats, len(productIDs))
