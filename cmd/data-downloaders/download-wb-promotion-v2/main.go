@@ -105,7 +105,7 @@ func main() {
 		wbClient, err := wb.NewFromConfig(config.WBConfig{
 			APIKey:        apiKey,
 			Timeout:       cfg.WB.Timeout,
-			RetryAttempts: 3,
+			RetryAttempts: 5,
 		})
 		if err != nil {
 			log.Fatalf("Failed to create WB client: %v", err)

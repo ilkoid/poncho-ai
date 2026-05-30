@@ -23,14 +23,14 @@ promotion:
   #end: "2026-01-02"    # YYYY-MM-DD
 
   # Days from today (alternative to begin/end)
-  days: 14
+  days: 7
 
   # Filter by campaign status (comma-separated: 9,11 = active + paused)
   # -1 = deleted, 4 = ready, 7 = finished, 8 = canceled, 9 = active, 11 = paused
-  statuses: [7,9,11]
+  statuses: [9,11]
 
   # Resume mode: continue from last loaded date
-  resume: false # true
+  resume: true
 
   # Skip downloading campaign details (name, payment_type, placements)
   # Saves ~35s for 8800+ campaigns. Use when you only need stats numbers.

@@ -98,6 +98,7 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 	totalBatches := (len(productIDs) + batchSize - 1) / batchSize
 	t0 := time.Now()
 	totalStats := 0
+	var failedBatches []wb.NormqueryItem
 
 	for i := 0; i < len(productIDs); i += batchSize {
 		if ctx.Err() != nil {
@@ -121,6 +122,7 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 		apiDur := time.Since(tAPIStart)
 		if err != nil {
 			dllog.Error("batch %d: %v (api=%.1fs)", batchNum, err, apiDur.Seconds())
+			failedBatches = append(failedBatches, batch...)
 			continue
 		}
 
@@ -136,6 +138,54 @@ func DownloadNormqueryStats(ctx context.Context, client V2Client, repo *sqlite.S
 		dbDur := time.Since(tDBStart)
 		dllog.Progress(batchNum, totalBatches, "normquery-stats",
 			fmt.Sprintf("%d clusters (api=%.1fs, db=%.1fs)", totalStats, apiDur.Seconds(), dbDur.Seconds()), t0)
+	}
+
+	// Retry failed batches in a second pass
+	if len(failedBatches) > 0 {
+		retryTotal := (len(failedBatches) + batchSize - 1) / batchSize
+		retrySaved := 0
+		retrySkipped := 0
+		dllog.Log("retrying %d failed batches (%d items)...", retryTotal, len(failedBatches))
+		for i := 0; i < len(failedBatches); i += batchSize {
+			if ctx.Err() != nil {
+				dllog.Log("interrupted during retry")
+				return ctx.Err()
+			}
+			endIdx := i + batchSize
+			if endIdx > len(failedBatches) {
+				endIdx = len(failedBatches)
+			}
+			batch := failedBatches[i:endIdx]
+			batchNum := i/batchSize + 1
+
+			req := wb.NormqueryStatsRequest{
+				From:  beginDate,
+				To:    endDate,
+				Items: batch,
+			}
+			resp, err := client.GetNormqueryStats(ctx, req, rateLimit, burst)
+			if err != nil {
+				retrySkipped += len(batch)
+				dllog.Error("retry batch %d/%d: %v — skipped %d items", batchNum, retryTotal, err, len(batch))
+				continue
+			}
+			if len(resp.Stats) > 0 {
+				if err := repo.SaveNormqueryStatsBatch(ctx, resp.Stats, beginDate); err != nil {
+					dllog.Error("retry batch save: %v", err)
+				}
+				for _, group := range resp.Stats {
+					totalStats += len(group.Stats)
+				}
+			}
+			retrySaved += len(batch)
+			dllog.Log("retry batch %d/%d ok", batchNum, retryTotal)
+		}
+		if retrySaved > 0 {
+			dllog.Log("retry recovered %d items", retrySaved)
+		}
+		if retrySkipped > 0 {
+			dllog.Error("%d items skipped (failed all retries)", retrySkipped)
+		}
 	}
 
 	dllog.Done(time.Since(t0), "%d stat rows from %d products", totalStats, len(productIDs))

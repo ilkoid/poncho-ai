@@ -13,16 +13,16 @@ wb:
 # Promotion V2 Settings
 promotion_v2:
   db_path: "/mnt/d/db/wb-promo.db"
-  days: 14
-  statuses: [7, 9, 11]  # active + paused only
+  days: 7
+  statuses: [9, 11]  # active + paused only
 
   skip_bids: false
   skip_normquery: false
   skip_recommendations: false
-  skip_finance: false
-  skip_calendar: false
-  skip_budgets: false
-  skip_min_bids: false
+  skip_finance: true
+  skip_calendar: true
+  skip_budgets: true
+  skip_min_bids: true
 
   # Calendar date range (independent from main 'days' parameter)
   calendar_days_past: 30    # look back N days from today
@@ -30,25 +30,25 @@ promotion_v2:
 
   rate_limits:
     # Normquery endpoints (POST /adv/v0/normquery/*)
-    # Swagger: 5 req/sec = 300/min for list/bids/minus
+    # Swagger: 5 req/sec = 300/min for list/bids/minus, burst 10
     normquery: 300
-    normquery_burst: 5
+    normquery_burst: 10
     normquery_api: 300
-    normquery_api_burst: 5
+    normquery_api_burst: 10
 
     # Normquery stats (POST /adv/v0/normquery/stats) — much stricter!
-    # Swagger: 10 req/min
+    # Swagger: 10 req/min, burst 20 — was burst 1 (20x underutilized)
     normquery_stats: 10
-    normquery_stats_burst: 1
+    normquery_stats_burst: 10
     normquery_stats_api: 10
-    normquery_stats_api_burst: 1
+    normquery_stats_api_burst: 10
 
     # Bid recommendations (GET /api/advert/v0/bids/recommendations)
-    # Swagger: 5 req/min — VERY SLOW
+    # Swagger: 5 req/min, burst 5 — was burst 1
     bid_rec: 5
-    bid_rec_burst: 1
+    bid_rec_burst: 3
     bid_rec_api: 5
-    bid_rec_api_burst: 1
+    bid_rec_api_burst: 3
 
     # Finance (balance, payments, expenses)
     # Swagger: 1 req/sec = 60/min
@@ -65,11 +65,11 @@ promotion_v2:
     calendar_api_burst: 5
 
     # Min bids (POST /api/advert/v1/bids/min)
-    # Swagger: 20 req/min
+    # Swagger: 20 req/min, burst 5 — was burst 3
     min_bids: 20
-    min_bids_burst: 3
+    min_bids_burst: 5
     min_bids_api: 20
-    min_bids_api_burst: 3
+    min_bids_api_burst: 5
 
   adaptive_probe_after: 15
   max_backoff_seconds: 60
