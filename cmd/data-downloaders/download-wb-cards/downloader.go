@@ -27,39 +27,25 @@ type CardsDownloadResult struct {
 // DownloadCards downloads all product cards using cursor-based pagination.
 //
 // Cursor loop:
-// 1. If --resume: load saved cursor from cards_download_meta
-// 2. Start with cursor.Limit = limit (default 100), ascending sort, withPhoto: -1
-// 3. Loop: call GetCardsList → SaveCards → SaveCardsCursor
-// 4. Break when cursor.Total < limit or cursor == nil or len(cards) == 0
-// 5. Continue-on-error for individual pages (log + continue, don't abort)
+// 1. Start with cursor.Limit = limit (default 100), ascending sort, withPhoto: -1
+// 2. Loop: call GetCardsList → SaveCards
+// 3. Break when cursor.Total < limit or cursor == nil or len(cards) == 0
+// 4. Continue-on-error for individual pages (log + continue, don't abort)
+//
+// Note: Resume mode removed — cards is a "light" domain (~30k rows, 3-5 min).
+// Full download + INSERT OR REPLACE upsert is safer than cursor persistence.
+// See dev_v2_postgres.md §2.2 for rationale.
 //
 // Returns summary with total cards, pages, requests, and duration.
 func DownloadCards(
 	ctx context.Context,
 	client CardsClient,
 	repo *sqlite.SQLiteSalesRepository,
-	resume bool,
 	rateLimit, burst int,
 	limit int,
 ) (*CardsDownloadResult, error) {
 	start := time.Now()
 	result := &CardsDownloadResult{}
-
-	// Load cursor for resume mode
-	var updatedAt string
-	var nmID int
-	if resume {
-		var err error
-		updatedAt, nmID, err = repo.GetCardsLastCursor(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("get last cursor: %w", err)
-		}
-		if updatedAt != "" || nmID != 0 {
-			fmt.Printf("📍 Resuming from cursor: updatedAt=%s, nmID=%d\n", updatedAt, nmID)
-		} else {
-			fmt.Println("📍 No saved cursor found, starting from beginning")
-		}
-	}
 
 	// Initial cursor settings
 	settings := wb.CardsSettings{
@@ -73,12 +59,6 @@ func DownloadCards(
 	// Apply user limit (if specified)
 	if limit > 0 && limit < 100 {
 		settings.Cursor.Limit = limit
-	}
-
-	// Apply resume cursor
-	if updatedAt != "" || nmID != 0 {
-		settings.Cursor.UpdatedAt = updatedAt
-		settings.Cursor.NmID = nmID
 	}
 
 	// Progress tracking
@@ -104,7 +84,6 @@ func DownloadCards(
 		if err != nil {
 			fmt.Printf(" ❌ Error: %v\n", err)
 			// Continue-on-error: log and continue to next page
-			// In production, you might want to break or retry
 			if len(cards) == 0 {
 				// No cards to save, can't continue
 				return result, fmt.Errorf("failed to fetch page %d: %w", pageCount, err)
@@ -135,12 +114,6 @@ func DownloadCards(
 		totalCards += n
 		fmt.Printf(" ✅ %d cards (%s)\n", n, elapsed)
 
-		// Save cursor for resume
-		lastCard := cardsToSave[len(cardsToSave)-1]
-		if err := repo.SaveCardsCursor(ctx, lastCard.UpdatedAt, lastCard.NmID); err != nil {
-			fmt.Printf("  ⚠️  Failed to save cursor: %v\n", err)
-		}
-
 		// Check for user limit
 		if limit > 0 && totalCards >= limit {
 			fmt.Printf("  🎯 Reached user limit of %d cards\n", limit)
@@ -159,10 +132,11 @@ func DownloadCards(
 		}
 
 		// Update cursor for next page
+		lastCard := cardsToSave[len(cardsToSave)-1]
 		settings.Cursor = wb.CardsCursor{
-			Limit:    settings.Cursor.Limit,
+			Limit:     settings.Cursor.Limit,
 			UpdatedAt: lastCard.UpdatedAt,
-			NmID:     lastCard.NmID,
+			NmID:      lastCard.NmID,
 		}
 	}
 

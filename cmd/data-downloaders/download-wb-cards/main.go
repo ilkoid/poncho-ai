@@ -28,7 +28,6 @@ func main() {
 	// 1. Parse flags
 	configPath := flag.String("config", "config.yaml", "путь к конфигу")
 	dbPath := flag.String("db", "", "путь к базе (overrides config)")
-	resume := flag.Bool("resume", false, "resume from last cursor")
 	limit := flag.Int("limit", 0, "max cards to download (0 = unlimited)")
 	clean := flag.Bool("clean", false, "clean database before download")
 	mockMode := flag.Bool("mock", false, "mock mode (no API calls)")
@@ -68,9 +67,6 @@ func main() {
 	// 6. Print header
 	headerFields := []dllog.HeaderField{
 		{Key: "Database", Value: cfg.Cards.DbPath},
-	}
-	if *resume {
-		headerFields = append(headerFields, dllog.HeaderField{Key: "Mode", Value: "Resume"})
 	}
 	if *mockMode {
 		headerFields = append(headerFields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
@@ -116,7 +112,7 @@ func main() {
 	}
 
 	// 10. Download data
-	result, err := DownloadCards(ctx, client, repo, *resume, rl.CardsList, rl.CardsListBurst, *limit)
+	result, err := DownloadCards(ctx, client, repo, rl.CardsList, rl.CardsListBurst, *limit)
 	if err != nil {
 		log.Fatalf("❌ Failed to download cards: %v", err)
 	}
@@ -166,7 +162,6 @@ Usage:
 Options:
   --config PATH     Путь к конфигу (default: config.yaml)
   --db PATH         Путь к базе (overrides config)
-  --resume          Resume from last cursor
   --limit N         Max cards to download (0 = unlimited)
   --clean           Clean database before download
   --mock            Mock mode (no API calls)
@@ -179,8 +174,6 @@ Examples:
   # Download with limit
   WB_API_KEY=xxx go run . --limit 1000
 
-  # Resume after interruption
-  WB_API_KEY=xxx go run . --resume
 
   # Clean and restart
   WB_API_KEY=xxx go run . --clean

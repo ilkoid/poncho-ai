@@ -27,7 +27,7 @@ func TestE2ECardsDownload(t *testing.T) {
 		mockClient := NewMockCardsClient()
 		PopulateMockCards(mockClient, 50) // 50 cards
 
-		result, err := DownloadCards(ctx, mockClient, repo, false, 100, 5, 0)
+		result, err := DownloadCards(ctx, mockClient, repo, 100, 5, 0)
 		if err != nil {
 			t.Fatalf("DownloadCards failed: %v", err)
 		}
@@ -60,7 +60,7 @@ func TestE2ECardsDownload(t *testing.T) {
 		mockClient := NewMockCardsClient()
 		PopulateMockCards(mockClient, 250) // 250 cards = 3 pages with limit 100
 
-		result, err := DownloadCards(ctx, mockClient, repo2, false, 100, 5, 0)
+		result, err := DownloadCards(ctx, mockClient, repo2, 100, 5, 0)
 		if err != nil {
 			t.Fatalf("DownloadCards failed: %v", err)
 		}
@@ -81,44 +81,6 @@ func TestE2ECardsDownload(t *testing.T) {
 		}
 	})
 
-	t.Run("Resume", func(t *testing.T) {
-		// New database for resume test
-		dbPath3 := filepath.Join(tmpDir, "test-cards-resume.db")
-		repo3, err := sqlite.NewSQLiteSalesRepository(dbPath3)
-		if err != nil {
-			t.Fatalf("Failed to create repository: %v", err)
-		}
-		defer repo3.Close()
-
-		mockClient := NewMockCardsClient()
-		PopulateMockCards(mockClient, 200)
-
-		// First run: download all
-		result1, err := DownloadCards(ctx, mockClient, repo3, false, 100, 5, 0)
-		if err != nil {
-			t.Fatalf("First run failed: %v", err)
-		}
-		if result1.TotalCards != 200 {
-			t.Errorf("Expected 200 cards in first run, got %d", result1.TotalCards)
-		}
-
-		// Second run: resume from cursor at end (should return 0 new cards)
-		// Resume logic loads cursor and continues from there
-		// Since first run loaded all 200 cards, cursor is at the end
-		// Resume should return 0 (no more cards available)
-		result2, err := DownloadCards(ctx, mockClient, repo3, true, 100, 5, 0)
-		if err != nil {
-			t.Fatalf("Resume run failed: %v", err)
-		}
-		if result2.TotalCards != 0 {
-			t.Errorf("Expected 0 cards in resume run (already complete), got %d", result2.TotalCards)
-		}
-
-		count, _ := repo3.CountCards(ctx)
-		if count != 200 { // Should still be 200 (INSERT OR REPLACE)
-			t.Errorf("Expected 200 in DB after resume, got %d", count)
-		}
-	})
 
 	t.Run("Limit", func(t *testing.T) {
 		dbPath4 := filepath.Join(tmpDir, "test-cards-limit.db")
@@ -131,7 +93,7 @@ func TestE2ECardsDownload(t *testing.T) {
 		mockClient := NewMockCardsClient()
 		PopulateMockCards(mockClient, 500)
 
-		result, err := DownloadCards(ctx, mockClient, repo4, false, 100, 5, 150)
+		result, err := DownloadCards(ctx, mockClient, repo4, 100, 5, 150)
 		if err != nil {
 			t.Fatalf("DownloadCards with limit failed: %v", err)
 		}
@@ -157,7 +119,7 @@ func TestE2ECardsDownload(t *testing.T) {
 		mockClient := NewMockCardsClient()
 		PopulateMockCards(mockClient, 10) // 10 cards with nested data
 
-		_, err = DownloadCards(ctx, mockClient, repo5, false, 100, 5, 0)
+		_, err = DownloadCards(ctx, mockClient, repo5, 100, 5, 0)
 		if err != nil {
 			t.Fatalf("DownloadCards failed: %v", err)
 		}
@@ -186,7 +148,7 @@ func TestE2ECardsDownload(t *testing.T) {
 		mockClient1 := NewMockCardsClient()
 		PopulateMockCards(mockClient1, 30)
 
-		result1, err := DownloadCards(ctx, mockClient1, repo6, false, 100, 5, 0)
+		result1, err := DownloadCards(ctx, mockClient1, repo6, 100, 5, 0)
 		if err != nil {
 			t.Fatalf("First run failed: %v", err)
 		}
@@ -194,7 +156,7 @@ func TestE2ECardsDownload(t *testing.T) {
 		mockClient2 := NewMockCardsClient()
 		PopulateMockCards(mockClient2, 30)
 
-		result2, err := DownloadCards(ctx, mockClient2, repo6, false, 100, 5, 0)
+		result2, err := DownloadCards(ctx, mockClient2, repo6, 100, 5, 0)
 		if err != nil {
 			t.Fatalf("Second run failed: %v", err)
 		}
