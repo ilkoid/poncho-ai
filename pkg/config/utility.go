@@ -123,10 +123,11 @@ func (c *PromotionConfig) GetDefaults() PromotionConfig {
 // DownloadConfig — конфигурация для download-wb-sales утилиты.
 //
 // Используется для загрузки данных о продажах с WB API.
+// Приоритет дат: CLI --begin/--end > config from/to > config days.
 type DownloadConfig struct {
-	Days        int    `yaml:"days"`         // Дней от сегодня (альтернатива from/to, default: 7)
-	From        string `yaml:"from"`         // Начальная дата (YYYY-MM-DD)
-	To          string `yaml:"to"`           // Конечная дата (YYYY-MM-DD)
+	Days        int    `yaml:"days"`         // Дней от вчерашнего дня (альтернатива from/to, default: 7)
+	From        string `yaml:"from"`         // Начальная дата (YYYY-MM-DD, приоритет над days)
+	To          string `yaml:"to"`           // Конечная дата (YYYY-MM-DD, приоритет над days)
 	DbPath      string `yaml:"db_path"`      // Путь к SQLite базе данных
 	FBWOnly     bool   `yaml:"fbw_only"`     // Только FBW продажи
 	Resume      bool   `yaml:"resume"`       // Продолжить с последней даты

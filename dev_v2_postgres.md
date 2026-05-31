@@ -441,6 +441,7 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 - [ ] `main.go` ~100-120 строк: flags → config → backend switch → DI → Run
 - [ ] `config.yaml` с `V2StorageConfig` для выбора бэкенда
 - [ ] Флаги: `--config`, `--db`, `--backend`, `--pg-database`, `--mock`, `--dry-run`, `--limit`
+- [ ] Date-based домены: `--days`, `--begin`, `--end` + `resolveDateRange()` (days от вчерашнего дня)
 - [ ] Нет `--resume` для лёгких доменов
 - [ ] `SetRateLimit()` вызывается явно после `wb.New()`
 - [ ] `resolveAPIKey()` использует `os.Getenv()`, не возвращает имя переменной
@@ -494,4 +495,4 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 ---
 
 **Last Updated:** 2026-05-31
-**Version:** 1.1 (cards v2 + sales v2 experience, expression indexes gotcha)
+**Version:** 1.2 (sales v2 production config, from/to date support, days-from-yesterday)

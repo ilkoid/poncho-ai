@@ -36,6 +36,8 @@ func main() {
 	resume := flag.Bool("resume", false, "Resume mode")
 	mockMode := flag.Bool("mock", false, "Use mock client (no API calls)")
 	dryRun := flag.Bool("dry-run", false, "Show what would be saved without writing to DB")
+	beginFlag := flag.String("begin", "", "Start date YYYY-MM-DD (overrides config from)")
+	endFlag := flag.String("end", "", "End date YYYY-MM-DD (overrides config to)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -67,11 +69,23 @@ func main() {
 	if *resume {
 		cfg.Download.Resume = true
 	}
+	if *beginFlag != "" {
+		cfg.Download.From = *beginFlag
+	}
+	if *endFlag != "" {
+		cfg.Download.To = *endFlag
+	}
+
+	// Resolve date range BEFORE PrintHeader (needs begin/end for display)
+	begin, end, err := resolveDateRange(cfg.Download)
+	if err != nil {
+		log.Fatalf("date range: %v", err)
+	}
 
 	dllog.PrintHeader("WB Sales Downloader v2",
 		dllog.HeaderField{Key: "Config", Value: *configPath},
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
-		dllog.HeaderField{Key: "Days", Value: fmt.Sprintf("%d", cfg.Download.Days)},
+		dllog.HeaderField{Key: "Period", Value: fmt.Sprintf("%s → %s", begin.Format("2006-01-02"), end.Format("2006-01-02"))},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
@@ -107,9 +121,6 @@ func main() {
 	}
 
 	dl := sales.NewDownloader(source, writer, opts)
-
-	end := time.Now()
-	begin := end.AddDate(0, 0, -cfg.Download.Days)
 	ranges := wb.SplitPeriod(begin, end)
 
 	result, err := dl.Run(ctx, ranges, cfg.Download.Resume, cfg.Download.Rewrite)
@@ -118,6 +129,46 @@ func main() {
 	}
 
 	dllog.Done(result.Duration, "%d rows, %d periods", result.TotalRows, result.PeriodsCount)
+}
+
+// resolveDateRange determines the download period with priority:
+//
+//	CLI --begin/--end > config from/to > config days
+//
+// In days mode, "end" is yesterday (today's sales are still incomplete).
+// In from/to mode, exact dates are used as-is.
+func resolveDateRange(cfg config.DownloadConfig) (time.Time, time.Time, error) {
+	// Priority 1: explicit from/to dates (config or CLI --begin/--end)
+	if cfg.From != "" && cfg.To != "" {
+		from, err := parseFlexDate(cfg.From)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("parse 'from': %w", err)
+		}
+		to, err := parseFlexDate(cfg.To)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("parse 'to': %w", err)
+		}
+		return from, to, nil
+	}
+
+	// Priority 2: days-based — N days of data ending at YESTERDAY
+	// days=1 → yesterday only, days=5 → 5 days ending yesterday
+	if cfg.Days <= 0 {
+		cfg.Days = 7
+	}
+	yesterday := time.Now().AddDate(0, 0, -1)
+	end := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 23, 59, 59, 0, yesterday.Location())
+	beginDay := yesterday.AddDate(0, 0, -(cfg.Days - 1))
+	begin := time.Date(beginDay.Year(), beginDay.Month(), beginDay.Day(), 0, 0, 0, 0, beginDay.Location())
+	return begin, end, nil
+}
+
+// parseFlexDate parses both YYYY-MM-DD and RFC3339 formats.
+func parseFlexDate(s string) (time.Time, error) {
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, s)
 }
 
 // createSalesWriter creates the appropriate SalesWriter based on backend config.

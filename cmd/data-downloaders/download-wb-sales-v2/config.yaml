@@ -1,27 +1,36 @@
-# config.yaml for download-wb-sales-v2 (uses new pkg/sales library)
-# Этот файл критически важен для тестирования v2.
+# WB Sales Downloader v2 — полная конфигурация
+# Используется pkg/config/types: WBClientConfig, DownloadConfig, V2StorageConfig
 
 wb:
-  api_key: ${WB_STAT}
-  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
-  rate_limit: 100
-  burst_limit: 5
-  endpoint: https://statistics-api.wildberries.ru
-  timeout: 30m
+  api_key: ""                # Прямой API ключ (не рекомендуется — лучше через env)
+  analytics_api_key: ""      # Альтернативный ключ (Statistics + Analytics)
+  rate_limit: 100            # Запросов в минуту (swagger: 100/min)
+  burst_limit: 5             # Burst для rate limiter
+  endpoint: "https://statistics-api.wildberries.ru"
+  timeout: "30m"
 
-# Sales download settings
+# Загрузка продаж — приоритет дат:
+#   CLI --begin/--end > CLI --days > config from/to > config days
+# Дни отсчитываются ОТ ВЧЕРАШНЕГО ДНЯ (сегодняшние продажи ещё неполные)
 download:
-  days: 1                        # Quick v2 validation
-  resume: false
-  rewrite: false
-  skip_service_records: false
+  days: 5                    # Дней назад от вчерашнего дня (default при отсутствии from/to)
+#  from: "2026-05-25"        # YYYY-MM-DD — точная дата начала (приоритет над days)
+#  to:   "2026-05-30"        # YYYY-MM-DD — точная дата конца (приоритет над days)
+  rewrite: true              # Удалить данные за период перед загрузкой (idempotent)
+  resume: false              # Продолжить с последней даты (для больших диапазонов)
+  skip_service_records: false # Пропускать служебные записи (логистика, штрафы)
+  interval_days: 30          # Дней на один API запрос (WB limit: 30 дней)
 
-  adaptive_recover_after: 5
-  adaptive_probe_after: 10
-  max_backoff_seconds: 60
+  adaptive_recover_after: 5  # OK ответов до восстановления rate после 429
+  adaptive_probe_after: 10   # OK ответов на api floor перед probe desired
+  max_backoff_seconds: 60    # Максимальный backoff при 429
 
+# Хранение — выбор бэкенда
 storage:
-  db_path: "/tmp/wb-sales-v2-test.db"
-  backend: "sqlite"             # "sqlite" | "postgres"
-  pg_database: "wb_data_prod"   # PostgreSQL database name
-  pg_password_env: "PG_PWD"     # env var with PG password
+  backend: "sqlite"          # "sqlite" | "postgres"
+  db_path: "/var/db/wb-sales.db"  # Путь к SQLite (при backend=sqlite)
+
+  # PostgreSQL настройки (при backend=postgres)
+  pg_dsn: ""                 # Полный DSN (пусто = собрать из env vars)
+  pg_database: "wb_data_prod"  # Имя базы (wb_data_prod | wb_data_test)
+  pg_password_env: "PG_PWD"  # Env var с паролем PostgreSQL
