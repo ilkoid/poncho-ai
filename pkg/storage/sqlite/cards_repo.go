@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ilkoid/poncho-ai/pkg/cards"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// Compile-time assertion: SQLiteSalesRepository satisfies cards.CardsWriter.
+var _ cards.CardsWriter = (*SQLiteSalesRepository)(nil)
 
 const (
 	// Main card insert

@@ -1,0 +1,16 @@
+wb:
+  api_key: ""
+  timeout: "60s"
+
+cards:
+  api_key_env: "WB_API_KEY"
+  rate_limit: 100
+  burst_limit: 5
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
+  # pg_database: "wb_data_prod"
+  # pg_password_env: "PG_PWD"
