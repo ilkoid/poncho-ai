@@ -30,9 +30,10 @@ import (
 
 // Config holds YAML configuration for the cards v2 downloader.
 type Config struct {
-	WB     config.WBClientConfig   `yaml:"wb"`
-	Cards  cardsConfig             `yaml:"cards"`
-	Storage config.V2StorageConfig `yaml:"storage"`
+	WB      config.WBClientConfig    `yaml:"wb"`
+	Cards   cardsConfig              `yaml:"cards"`
+	Storage config.V2StorageConfig   `yaml:"storage"`
+	Filter  config.FunnelFilterConfig `yaml:"filter"`
 }
 
 // cardsConfig holds cards-specific settings.
@@ -48,6 +49,7 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config.yaml")
 	dbPath := flag.String("db", "", "Database path (overrides config)")
 	backend := flag.String("backend", "", "Storage backend: sqlite|postgres (overrides config)")
+	pgDatabase := flag.String("pg-database", "", "PostgreSQL database name (overrides config)")
 	mockMode := flag.Bool("mock", false, "Use mock source (no API calls)")
 	dryRun := flag.Bool("dry-run", false, "Skip DB writes, show what would be saved")
 	resume := flag.Bool("resume", false, "Resume from last saved cursor")
@@ -69,6 +71,9 @@ func main() {
 	}
 	if *dbPath != "" {
 		cfg.Storage.DbPath = *dbPath
+	}
+	if *pgDatabase != "" {
+		cfg.Storage.PgDatabase = *pgDatabase
 	}
 
 	dllog.PrintHeader("WB Cards Downloader v2",

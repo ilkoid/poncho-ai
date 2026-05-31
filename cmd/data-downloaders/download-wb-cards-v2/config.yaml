@@ -1,16 +1,36 @@
+# WB Cards Downloader v2 — полная конфигурация
+# Используется pkg/config/types: WBClientConfig, cardsConfig, V2StorageConfig, FunnelFilterConfig
+
 wb:
-  api_key: ""
-  timeout: "60s"
+  api_key: ""                # Прямой API ключ (не рекомендуется — лучше через env)
+  analytics_api_key: ""      # Альтернативный ключ (Analytics + Promo)
+  calendar_api_key: ""       # Calendar API ключ (dp-calendar-api)
+  base_url: ""               # Переопределение Content API URL (пусто = дефолт)
+  rate_limit: 100            # Базовый rate limit (не используется cards — см. cards.rate_limit)
+  burst: 5                   # Базовый burst
+  timeout: "60s"             # HTTP timeout
+  endpoint: ""               # Альтернативный endpoint (пусто = дефолт)
 
 cards:
-  api_key_env: "WB_API_KEY"
-  rate_limit: 100
-  burst_limit: 5
-  adaptive_probe_after: 10
-  max_backoff_seconds: 60
+  api_key_env: "WB_API_KEY"  # Env var с API ключом Content API
+  rate_limit: 100            # Запросов в минуту (swagger: 100/min)
+  burst_limit: 5             # Burst для rate limiter
+  adaptive_probe_after: 10   # OKs перед probe desired rate после 429
+  max_backoff_seconds: 60    # Максимальный backoff при 429
 
+# Хранение — выбор бэкенда
 storage:
-  backend: "sqlite"
-  db_path: "/var/db/wb-sales.db"
-  # pg_database: "wb_data_prod"
-  # pg_password_env: "PG_PWD"
+  backend: "postgres"        # "sqlite" | "postgres"
+  db_path: "/var/db/wb-sales.db"  # Путь к SQLite (используется при backend=sqlite)
+
+  # PostgreSQL настройки (используются при backend=postgres)
+  pg_dsn: ""                 # Полный DSN (пусто = собрать из env vars)
+  pg_database: "wb_data_prod"  # Имя базы (wb_data_prod | wb_data_test)
+  pg_password_env: "PG_PWD"  # Env var с паролем PostgreSQL
+
+# Фильтрация товаров по артикулу
+# Фильтры применяются in-memory к каждой странице карточек
+filter:
+  exclude_lengths: []        # Исключить артикулы определённой длины (например: [6])
+  allowed_years: [24, 25, 26]  # Только товары года производства 2024-2026 (из 2-3 цифры артикула)
+  active_days: 0             # Только товары с продажами за последние N дней (0 = без фильтра)
