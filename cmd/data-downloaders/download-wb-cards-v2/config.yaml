@@ -12,7 +12,7 @@ wb:
   endpoint: ""               # Альтернативный endpoint (пусто = дефолт)
 
 cards:
-  api_key_env: "WB_API_KEY"  # Env var с API ключом Content API
+  api_key_env: "WB_API_CONTENT_KEY"  # Env var с API ключом Content API
   rate_limit: 100            # Запросов в минуту (swagger: 100/min)
   burst_limit: 5             # Burst для rate limiter
   adaptive_probe_after: 10   # OKs перед probe desired rate после 429
@@ -32,5 +32,5 @@ storage:
 # Фильтры применяются in-memory к каждой странице карточек
 filter:
   exclude_lengths: []        # Исключить артикулы определённой длины (например: [6])
-  allowed_years: [24, 25, 26]  # Только товары года производства 2024-2026 (из 2-3 цифры артикула)
+  allowed_years: []  # Только товары года производства 2024-2026 (из 2-3 цифры артикула)
   active_days: 0             # Только товары с продажами за последние N дней (0 = без фильтра)

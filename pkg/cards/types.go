@@ -27,7 +27,8 @@ type CardsSource interface {
 // CardsWriter is the persistence interface for card data.
 // Declared here (consumer, Rule 6), implemented by storage adapters.
 //
-// ISP: 4 methods — exactly what the Downloader needs.
+// ISP: 2 methods — exactly what the Downloader needs.
+// No cursor/resume — cards are always fully re-downloaded (ON CONFLICT upsert is safe).
 // No query/analytics methods; those belong in a separate CardsReader interface.
 type CardsWriter interface {
 	// SaveCards saves a batch of cards with all nested data (photos, sizes, chars, tags).
@@ -35,14 +36,7 @@ type CardsWriter interface {
 	// Returns count of saved cards.
 	SaveCards(ctx context.Context, cards []wb.ProductCard) (int, error)
 
-	// GetCardsLastCursor retrieves the last saved cursor for resume.
-	// Returns ("", 0, nil) if no cursor saved (first run).
-	GetCardsLastCursor(ctx context.Context) (updatedAt string, nmID int, err error)
-
-	// SaveCardsCursor persists the cursor position for resume.
-	SaveCardsCursor(ctx context.Context, updatedAt string, nmID int) error
-
-	// CountCards returns total card count (for progress reporting).
+	// CountCards returns total card count (for verification).
 	CountCards(ctx context.Context) (int, error)
 }
 
@@ -54,10 +48,7 @@ type DownloadOptions struct {
 	// Limit is the max total cards to download (0 = unlimited).
 	Limit int
 
-	// Resume from last saved cursor.
-	Resume bool
-
-	// DryRun skips all DB writes (SaveCards, SaveCardsCursor).
+	// DryRun skips all DB writes (SaveCards).
 	DryRun bool
 
 	// OnProgress callback for status messages (nil = silent, ideal for Tools).

@@ -49,10 +49,6 @@ VALUES (?,?,?,?)`
 	deleteSizesSQL = `DELETE FROM card_sizes WHERE nm_id = ?`
 	deleteCharacteristicsSQL = `DELETE FROM card_characteristics WHERE nm_id = ?`
 	deleteTagsSQL = `DELETE FROM card_tags WHERE nm_id = ?`
-
-	// Cursor persistence
-	insertMetaSQL = `INSERT OR REPLACE INTO cards_download_meta (key, value) VALUES (?,?)`
-	getMetaSQL = `SELECT value FROM cards_download_meta WHERE key = ?`
 )
 
 const cardsChunkSize = 500 // Conservative: each card has many child records
@@ -259,47 +255,4 @@ func (r *SQLiteSalesRepository) CountCards(ctx context.Context) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, "SELECT count(*) FROM cards").Scan(&count)
 	return count, err
-}
-
-// GetCardsLastCursor retrieves the last saved cursor for resume functionality.
-// Returns updatedAt timestamp and nmID from the last page.
-// Returns zero values if no cursor is saved (database is empty or first run).
-func (r *SQLiteSalesRepository) GetCardsLastCursor(ctx context.Context) (updatedAt string, nmID int, err error) {
-	var value string
-	err = r.db.QueryRowContext(ctx, getMetaSQL, "last_cursor").Scan(&value)
-	if err != nil {
-		// No cursor saved yet (first run)
-		return "", 0, nil
-	}
-
-	// Parse JSON: {"updated_at":"2024-01-01T00:00:00Z","nm_id":123456}
-	var cursor struct {
-		UpdatedAt string `json:"updated_at"`
-		NmID      int    `json:"nm_id"`
-	}
-	if err := json.Unmarshal([]byte(value), &cursor); err != nil {
-		return "", 0, fmt.Errorf("parse cursor JSON: %w", err)
-	}
-
-	return cursor.UpdatedAt, cursor.NmID, nil
-}
-
-// SaveCardsCursor saves the current cursor position for resume functionality.
-// Stores updatedAt timestamp and nmID in metadata table.
-func (r *SQLiteSalesRepository) SaveCardsCursor(ctx context.Context, updatedAt string, nmID int) error {
-	cursor := struct {
-		UpdatedAt string `json:"updated_at"`
-		NmID      int    `json:"nm_id"`
-	}{
-		UpdatedAt: updatedAt,
-		NmID:      nmID,
-	}
-
-	valueJSON, err := json.Marshal(cursor)
-	if err != nil {
-		return fmt.Errorf("marshal cursor: %w", err)
-	}
-
-	_, err = r.db.ExecContext(ctx, insertMetaSQL, "last_cursor", string(valueJSON))
-	return err
 }

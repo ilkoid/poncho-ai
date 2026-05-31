@@ -11,10 +11,8 @@ import (
 
 // mockWriter implements CardsWriter in-memory for testing.
 type mockWriter struct {
-	mu         sync.Mutex
-	cards      []wb.ProductCard
-	cursorJSON string
-	cursorNmID int
+	mu    sync.Mutex
+	cards []wb.ProductCard
 }
 
 func newMockWriter() *mockWriter {
@@ -26,20 +24,6 @@ func (w *mockWriter) SaveCards(_ context.Context, cards []wb.ProductCard) (int, 
 	defer w.mu.Unlock()
 	w.cards = append(w.cards, cards...)
 	return len(cards), nil
-}
-
-func (w *mockWriter) GetCardsLastCursor(_ context.Context) (string, int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.cursorJSON, w.cursorNmID, nil
-}
-
-func (w *mockWriter) SaveCardsCursor(_ context.Context, updatedAt string, nmID int) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.cursorJSON = updatedAt
-	w.cursorNmID = nmID
-	return nil
 }
 
 func (w *mockWriter) CountCards(_ context.Context) (int, error) {
@@ -89,47 +73,6 @@ func TestDownloader_DryRun(t *testing.T) {
 	count, _ := writer.CountCards(context.Background())
 	if count != 0 {
 		t.Errorf("saved count = %d, want 0 (dry-run)", count)
-	}
-
-	// Cursor should NOT be saved (dry-run skips SaveCardsCursor)
-	updatedAt, nmID, _ := writer.GetCardsLastCursor(context.Background())
-	if updatedAt != "" || nmID != 0 {
-		t.Errorf("cursor should be empty (dry-run), got updatedAt=%s nmID=%d", updatedAt, nmID)
-	}
-}
-
-func TestDownloader_Resume(t *testing.T) {
-	source := NewMockCardsSource(250)
-	writer := newMockWriter()
-
-	// First run: download all 250 cards
-	dl1 := NewDownloader(source, writer, DownloadOptions{})
-	result1, err := dl1.Run(context.Background())
-	if err != nil {
-		t.Fatalf("first Run() error: %v", err)
-	}
-	if result1.TotalCards != 250 {
-		t.Fatalf("first run TotalCards = %d, want 250", result1.TotalCards)
-	}
-
-	// Check cursor was saved
-	updatedAt, nmID, _ := writer.GetCardsLastCursor(context.Background())
-	if updatedAt == "" && nmID == 0 {
-		t.Fatal("cursor not saved after first run")
-	}
-
-	// Second run with Resume=true: mock source has same data,
-	// so it will resume from cursor and download remaining cards.
-	// Since the mock doesn't actually filter by cursor in GetCardsPage
-	// (it always returns from the cursor position), this tests the wiring.
-	writer2 := newMockWriter()
-	// Pre-set cursor as if previous run saved it
-	writer2.SaveCardsCursor(context.Background(), updatedAt, nmID)
-
-	dl2 := NewDownloader(source, writer2, DownloadOptions{Resume: true})
-	_, err = dl2.Run(context.Background())
-	if err != nil {
-		t.Fatalf("resume Run() error: %v", err)
 	}
 }
 

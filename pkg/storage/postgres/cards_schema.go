@@ -108,12 +108,6 @@ CREATE TABLE IF NOT EXISTS card_tags (
     FOREIGN KEY (nm_id) REFERENCES cards(nm_id) ON DELETE CASCADE
 );
 
--- Download metadata table (key-value for cursor persistence)
-CREATE TABLE IF NOT EXISTS cards_download_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_cards_vendor_code ON cards(vendor_code);
 CREATE INDEX IF NOT EXISTS idx_cards_brand ON cards(brand);

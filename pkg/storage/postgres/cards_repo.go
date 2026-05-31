@@ -56,46 +56,6 @@ func (r *PgCardsRepo) SaveCards(ctx context.Context, cards []wb.ProductCard) (in
 	return total, nil
 }
 
-// GetCardsLastCursor retrieves the last saved cursor for resume.
-// Returns ("", 0, nil) if no cursor saved (first run).
-func (r *PgCardsRepo) GetCardsLastCursor(ctx context.Context) (string, int, error) {
-	var value string
-	err := r.pool.QueryRow(ctx, getMetaSQL, "last_cursor").Scan(&value)
-	if err != nil {
-		// No cursor saved yet (first run) — pgx returns pgx.ErrNoRows
-		return "", 0, nil
-	}
-
-	var cursor struct {
-		UpdatedAt string `json:"updated_at"`
-		NmID      int    `json:"nm_id"`
-	}
-	if err := json.Unmarshal([]byte(value), &cursor); err != nil {
-		return "", 0, fmt.Errorf("parse cursor JSON: %w", err)
-	}
-
-	return cursor.UpdatedAt, cursor.NmID, nil
-}
-
-// SaveCardsCursor persists the cursor position for resume.
-func (r *PgCardsRepo) SaveCardsCursor(ctx context.Context, updatedAt string, nmID int) error {
-	cursor := struct {
-		UpdatedAt string `json:"updated_at"`
-		NmID      int    `json:"nm_id"`
-	}{
-		UpdatedAt: updatedAt,
-		NmID:      nmID,
-	}
-
-	valueJSON, err := json.Marshal(cursor)
-	if err != nil {
-		return fmt.Errorf("marshal cursor: %w", err)
-	}
-
-	_, err = r.pool.Exec(ctx, insertMetaSQL, "last_cursor", string(valueJSON))
-	return err
-}
-
 // CountCards returns total number of cards in the database.
 func (r *PgCardsRepo) CountCards(ctx context.Context) (int, error) {
 	var count int
@@ -276,13 +236,6 @@ ON CONFLICT (nm_id, tag_id) DO UPDATE SET
 	deleteSizesSQL           = `DELETE FROM card_sizes WHERE nm_id = $1`
 	deleteCharacteristicsSQL = `DELETE FROM card_characteristics WHERE nm_id = $1`
 	deleteTagsSQL            = `DELETE FROM card_tags WHERE nm_id = $1`
-
-	// Cursor persistence
-	insertMetaSQL = `
-INSERT INTO cards_download_meta (key, value) VALUES ($1, $2)
-ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`
-
-	getMetaSQL = `SELECT value FROM cards_download_meta WHERE key = $1`
 )
 
 // Ensure pgx.Tx satisfies our needs (used in saveCardsChunk).

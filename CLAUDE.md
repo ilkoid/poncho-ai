@@ -129,6 +129,17 @@ Recovery cycle: `desired` → 429 triggers backoff → `api floor` (after 5 OKs)
 - This applies to all utilities: fix-utilities, data-downloaders, data-analyzers, tools
 - Reason: `POST /content/v2/cards/update` fully overwrites cards — partial updates are NOT supported. A wrong payload destroys existing data.
 
+## Production Database Safety Rules
+
+**КРИТИЧЕСКИЕ БАЗЫ В /var/db — READ-ONLY ДЛЯ CLAUDE. НИКАКИХ ЗАПИСЕЙ НИ В КАКОМ РЕЖИМЕ.**
+
+- `/var/db/wb-sales.db` и `/var/db/sku-analytics.db` — рабочие базы с реальными данными
+- Claude НЕ имеет права запускать **никакие** утилиты, которые пишут в эти базы — ни `--mock`, ни `--dry-run`, ни реальные загрузчики
+- **`--mock` НЕ является read-only режимом!** Загрузчик в `--mock` режиме с `rewrite: true` в конфиге **удаляет реальные данные и вставляет фейковые**. Это уже привело к потере ~30,900 записей продаж.
+- Для тестирования всегда перенаправлять в `/tmp` через `--db /tmp/test.db` или отдельный конфиг с `db_path: "/tmp/test.db"`
+- Если нужно проверить данные — только `SELECT` запросы через `sqlite3` или утилиту `check-db-freshness` (она открывает БД в `mode=ro`)
+- Реальные загрузчики (download-all.sh, download-wb-sales и т.д.) запускает **только пользователь вручную**
+
 ## Utility Development Rules
 
 All utilities in `cmd/` (fix-utilities, data-downloaders, data-analyzers) MUST support:
@@ -165,6 +176,43 @@ Mapping: `onec_prices(good_guid) → onec_goods(guid) → article → cards.vend
 ## Compact Instructions
 When compacting, preserve: goal, changed files, failing command, current hypothesis, test results, next exact command.
 
+## V2 Downloader Architecture (Dual-Backend: SQLite + PostgreSQL)
+
+V2 utilities support both SQLite and PostgreSQL through focused Writer interfaces. See `dev_v2_postgres.md` for full guide.
+
+**Key packages:**
+- `pkg/config/pgconfig.go` — `V2StorageConfig` (backend selection, DSN builder, password injection)
+- `pkg/storage/postgres/` — PostgreSQL adapters (`pgxpool`, per-domain repos + schemas)
+- `pkg/<domain>/` — v2 domain packages with Source/Writer interfaces (cards ✅, sales/funnel/nmreport — SQLite only)
+
+**Pattern (each domain):**
+```
+pkg/<domain>/types.go      → Writer interface (2-7 methods, ISP-focused)
+pkg/storage/postgres/       → Pg<Domain>Repo implements Writer (compile-time assertion)
+pkg/storage/sqlite/         → SQLiteSalesRepository implements Writer (compile-time assertion)
+cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI → Run
+```
+
+**Critical rules:**
+- Writer interface = only methods actually called in `Downloader.Run()`, nothing extra
+- No cursor/resume for "light" domains (<100k rows, <10 min download). ON CONFLICT upsert is safe
+- PostgreSQL: `$1,$2` placeholders, `ON CONFLICT ... DO UPDATE SET ... = EXCLUDED`, `BOOLEAN` not `INTEGER`, `pgxpool` not `database/sql`
+- `resolveAPIKey()` must call `os.Getenv()`, not return the env var name as a string
+- CLI creates Writer directly via switch — no god-object BackendFactory
+- `dllog.PrintHeader()` + `dllog.Progress()` + `dllog.Done()` — one line per page, no `fmt.Printf` in `pkg/`
+
+**PostgreSQL setup:** `192.168.10.7:15432`, user `postgres`, password from `$PG_PWD`, databases: `wb_data_prod` / `wb_data_test`
+
+**Migration status:**
+
+| Domain | pkg/ v2 | SQLite adapter | PG adapter | Resume? |
+|--------|---------|---------------|------------|---------|
+| cards | ✅ `pkg/cards/` | ✅ | ✅ | ❌ No (YAGNI) |
+| sales | ✅ `pkg/sales/` | ✅ | — | ✅ Date-level |
+| funnel | ✅ `pkg/funnel/` | ✅ | — | Partial |
+| nmreport | ✅ `pkg/nmreport/` | ✅ | — | ✅ Report-level |
+| Others (12) | — | v1 only | — | — |
+
 ## Development Guides
 
 Project root contains development documents with a clear priority hierarchy (see `dev_manifest.md` → "Карта документов разработчика"):
@@ -176,8 +224,9 @@ Project root contains development documents with a clear priority hierarchy (see
 | Code placement, common patterns | `dev_best_practices.md` | "Where do I put X?" |
 | WB API write-utilities, sandboxes | `dev_swagger_reusable_packages.md` | Write-utility work, sandbox testing |
 | Downloader migration v1→v2 | `dev_utils.md` | Creating/migrating a downloader |
+| V2 dual-backend (SQLite + PostgreSQL) | `dev_v2_postgres.md` | Adding PostgreSQL adapter to a domain |
 
-**Rule:** more specific document overrides more general. For write-utilities, `dev_swagger_reusable_packages.md` overrides `dev_solid.md`.
+**Rule:** more specific document overrides more general. For PostgreSQL migration, `dev_v2_postgres.md` overrides `dev_utils.md`.
 
 ## SQLite database placement
 production bases, **read-only**: /var/db

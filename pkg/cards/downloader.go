@@ -49,25 +49,11 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 	start := time.Now()
 	result := &DownloadResult{}
 
-	// Load cursor for resume mode
+	// Start from page 1 — always full download (ON CONFLICT upsert is safe)
 	settings := wb.CardsSettings{
 		Sort:   &wb.CardsSort{Ascending: true},
 		Filter: &wb.CardsFilter{WithPhoto: -1},
 		Cursor: wb.CardsCursor{Limit: d.opts.PageSize},
-	}
-
-	if d.opts.Resume {
-		updatedAt, nmID, err := d.writer.GetCardsLastCursor(ctx)
-		if err != nil {
-			return result, fmt.Errorf("get last cursor: %w", err)
-		}
-		if updatedAt != "" || nmID != 0 {
-			settings.Cursor.UpdatedAt = updatedAt
-			settings.Cursor.NmID = nmID
-			d.progress("📍 Resuming from cursor: updatedAt=%s, nmID=%d", updatedAt, nmID)
-		} else {
-			d.progress("📍 No saved cursor found, starting from beginning")
-		}
 	}
 
 	var totalCards int
@@ -83,25 +69,21 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 
 		result.Requests++
 		pageNum := result.Requests
-
-		d.progress("  [Page %d] Fetching cards...", pageNum)
 		tStart := time.Now()
 
 		// Fetch page from API
 		cards, cursor, err := d.source.GetCardsPage(ctx, settings)
 		if err != nil {
-			d.progress("  ❌ Page %d error: %v", pageNum, err)
 			if len(cards) == 0 {
 				result.Duration = time.Since(start)
 				return result, fmt.Errorf("failed to fetch page %d: %w", pageNum, err)
 			}
-			d.progress("  ⚠️  Continuing with partial data...")
+			d.progress("page %d: partial fetch error: %v", pageNum, err)
 		}
 
 		elapsed := time.Since(tStart).Round(time.Millisecond)
 
 		if len(cards) == 0 {
-			d.progress("  ✅ No more cards (%s)", elapsed)
 			break
 		}
 
@@ -110,7 +92,6 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 		if d.opts.Limit > 0 && totalCards+len(cards) > d.opts.Limit {
 			trim := d.opts.Limit - totalCards
 			cardsToSave = cards[:trim]
-			d.progress("  ✂️  Trimming page to %d cards (limit=%d)", trim, d.opts.Limit)
 		}
 
 		// Save to database (unless dry-run)
@@ -121,33 +102,19 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 				return result, fmt.Errorf("save cards page %d: %w", pageNum, err)
 			}
 			totalCards += n
-			d.progress("  ✅ %d cards saved (%s)", n, elapsed)
+			d.progress("%d cards saved (%s)", n, elapsed)
 		} else {
 			totalCards += len(cardsToSave)
-			d.progress("  🏜️  [DRY-RUN] %d cards skipped (%s)", len(cardsToSave), elapsed)
-		}
-
-		// Save cursor for resume
-		if !d.opts.DryRun {
-			lastCard := cardsToSave[len(cardsToSave)-1]
-			if err := d.writer.SaveCardsCursor(ctx, lastCard.UpdatedAt, lastCard.NmID); err != nil {
-				d.progress("  ⚠️  Failed to save cursor: %v", err)
-			}
+			d.progress("%d cards skipped — dry-run (%s)", len(cardsToSave), elapsed)
 		}
 
 		// Check for user limit
 		if d.opts.Limit > 0 && totalCards >= d.opts.Limit {
-			d.progress("  🎯 Reached user limit of %d cards", d.opts.Limit)
 			break
 		}
 
 		// Check for pagination end
-		if cursor == nil {
-			d.progress("  ✅ End of pagination (nil cursor)")
-			break
-		}
-		if cursor.Total < d.opts.PageSize {
-			d.progress("  ✅ End of pagination (total=%d < limit=%d)", cursor.Total, d.opts.PageSize)
+		if cursor == nil || cursor.Total < d.opts.PageSize {
 			break
 		}
 

@@ -15,6 +15,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"time"
 	"os/signal"
 	"syscall"
 
@@ -52,7 +54,6 @@ func main() {
 	pgDatabase := flag.String("pg-database", "", "PostgreSQL database name (overrides config)")
 	mockMode := flag.Bool("mock", false, "Use mock source (no API calls)")
 	dryRun := flag.Bool("dry-run", false, "Skip DB writes, show what would be saved")
-	resume := flag.Bool("resume", false, "Resume from last saved cursor")
 	limit := flag.Int("limit", 0, "Max cards to download (0 = unlimited)")
 	flag.Parse()
 
@@ -81,7 +82,6 @@ func main() {
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
-		dllog.HeaderField{Key: "Resume", Value: fmt.Sprintf("%v", *resume)},
 	)
 
 	// Create writer based on backend selection
@@ -108,10 +108,16 @@ func main() {
 	}
 
 	opts := cards.DownloadOptions{
-		Resume:     *resume,
-		DryRun:     *dryRun,
-		Limit:      *limit,
-		OnProgress: func(msg string) { fmt.Println(msg) },
+		DryRun: *dryRun,
+		Limit:  *limit,
+		OnProgress: func() func(string) {
+			var page int
+			start := time.Now()
+			return func(msg string) {
+				page++
+				dllog.Progress(page, 0, "cards", msg, start)
+			}
+		}(),
 	}
 
 	dl := cards.NewDownloader(source, writer, opts)
@@ -160,7 +166,7 @@ func resolveAPIKey(cfg *Config) string {
 		return cfg.WB.APIKey
 	}
 	if cfg.Cards.APIKeyEnv != "" {
-		return cfg.Cards.APIKeyEnv // resolved by config loader via ${VAR} syntax
+		return os.Getenv(cfg.Cards.APIKeyEnv)
 	}
 	return ""
 }
