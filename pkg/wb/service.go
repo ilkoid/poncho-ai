@@ -22,16 +22,26 @@ import (
 // - Provides transaction-like semantics for complex operations
 type ProductService interface {
 	// GetProducts retrieves products with optional filtering.
-	// Returns products from WB API, potentially with caching.
+	// Returns minimal ProductInfo (subset of full ProductCard).
 	GetProducts(ctx context.Context, filter ProductFilter) ([]ProductInfo, error)
 
 	// GetProductByID retrieves a single product by nmID.
-	// May use cache if available.
+	// Returns minimal ProductInfo.
 	GetProductByID(ctx context.Context, nmID int) (*ProductInfo, error)
 
 	// SyncProducts synchronizes products from WB API to local storage.
 	// Returns count of new/updated products.
 	SyncProducts(ctx context.Context) (int, error)
+
+	// GetCardsByVendorCodes retrieves full product cards by vendor codes.
+	// Uses TextSearch server-side filter + client-side exact match.
+	// Max 10 codes per request.
+	GetCardsByVendorCodes(ctx context.Context, codes []string) ([]ProductCard, error)
+
+	// GetCardsByNmIDs retrieves full product cards by nmIDs.
+	// Paginates through all cards with client-side filtering and early exit.
+	// Max 50 nmIDs per request.
+	GetCardsByNmIDs(ctx context.Context, nmIDs []int) ([]ProductCard, error)
 }
 
 // SalesService defines operations for sales/analytics business logic.
@@ -365,38 +375,8 @@ func (s *DefaultWbService) Attribution() AttributionService {
 	}
 }
 
-// ============================================================================
-// PRODUCT SERVICE IMPLEMENTATION
-// ============================================================================
-
-// Ensure productService implements ProductService.
-var _ ProductService = (*productService)(nil)
-
-type productService struct {
-	client *Client
-}
-
-// GetProducts retrieves products with optional filtering.
-func (s *productService) GetProducts(ctx context.Context, filter ProductFilter) ([]ProductInfo, error) {
-	// Business logic: prepare request, call API, transform response
-	// For now, delegate to client methods
-	// Future: add caching, validation, business rules
-	return nil, nil // TODO: implement
-}
-
-// GetProductByID retrieves a single product by nmID.
-func (s *productService) GetProductByID(ctx context.Context, nmID int) (*ProductInfo, error) {
-	// Future: check cache first, then API, update cache
-	return nil, nil // TODO: implement
-}
-
-// SyncProducts synchronizes products from WB API to local storage.
-func (s *productService) SyncProducts(ctx context.Context) (int, error) {
-	// Future: fetch all products, compare with storage, update changes
-	return 0, nil // TODO: implement
-}
-
-// Note: SalesService, AdvertisingService, FeedbackService, and AttributionService
+// Note: ProductService implementation is in service_products.go.
+// SalesService, AdvertisingService, FeedbackService, and AttributionService
 // implementations are in separate files:
 // - service_sales.go
 // - service_advertising.go

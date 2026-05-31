@@ -144,6 +144,13 @@ tools:
     burst: 5
     post_prompt: "agent_system.yaml"
 
+  get_card_content:
+    enabled: true
+    description: "Получает полные контент-данные карточек товаров (фото, размеры, характеристики, теги) по артикулам продавца (vendor_codes) или nmID. V2: использует ProductService через Service Layer."
+    endpoint: "https://content-api.wildberries.ru"
+    rate_limit: 100
+    burst: 5
+
   get_wb_parent_categories:
     enabled: false
     description: "Возвращает список родительских категорий Wildberries (например: Женщинам, Электроника). Используй это, чтобы найти ID категории."

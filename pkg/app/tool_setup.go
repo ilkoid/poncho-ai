@@ -136,6 +136,7 @@ func isWBTool(name string) bool {
 		"get_wb_search_positions2", "get_wb_top_search_queries2",
 		"get_wb_campaign_fullstats2", "get_wb_attribution_summary2",
 		"get_wb_feedbacks2", "get_wb_questions2",
+		"get_card_content",
 	}
 	for _, t := range wbTools {
 		if name == t {
@@ -311,6 +312,9 @@ func registerTool(
 	case "get_wb_questions2":
 		wbSvc := client.(wb.WbService)
 		tool = std.NewWbQuestions2Tool(wbSvc.Feedbacks(), toolCfg)
+	case "get_card_content":
+		wbSvc := client.(wb.WbService)
+		tool = std.NewWbCardContentTool(wbSvc.Products(), toolCfg)
 
 	// ========================================
 	// Dictionary Tools (клиент не нужен, используем state)
