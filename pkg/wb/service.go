@@ -57,10 +57,6 @@ type SalesService interface {
 	// Supports up to 365 days with appropriate subscription.
 	GetFunnelHistory(ctx context.Context, req FunnelHistoryRequest) (*FunnelHistory, error)
 
-	// GetSalesReport downloads sales data for a period.
-	// Handles pagination and resume logic internally.
-	GetSalesReport(ctx context.Context, req SalesReportRequest) (*SalesReport, error)
-
 	// GetSearchPositions retrieves search positions for products.
 	// Returns average position, visibility, and query counts.
 	GetSearchPositions(ctx context.Context, nmIDs []int, period int) (string, error)
@@ -181,26 +177,6 @@ type FunnelHistory struct {
 	StartDate time.Time
 	// EndDate of the period
 	EndDate time.Time
-}
-
-// SalesReportRequest defines parameters for sales report queries.
-type SalesReportRequest struct {
-	// DateFrom is the start of the period
-	DateFrom time.Time
-	// DateTo is the end of the period
-	DateTo time.Time
-	// Resume enables smart resume mode
-	Resume bool
-}
-
-// SalesReport represents downloaded sales data.
-type SalesReport struct {
-	// TotalRows is the total count of downloaded rows
-	TotalRows int
-	// PeriodsCount is the number of periods processed
-	PeriodsCount int
-	// Duration is the time taken to download
-	Duration time.Duration
 }
 
 // CampaignFullstatsRequest defines parameters for campaign fullstats queries.

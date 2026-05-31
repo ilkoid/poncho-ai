@@ -14,20 +14,23 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/sales"
+	"github.com/ilkoid/poncho-ai/pkg/storage/postgres"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
+// Config holds YAML configuration for the sales v2 downloader.
 type Config struct {
-	WB       config.WBClientConfig `yaml:"wb"`
-	Download config.DownloadConfig `yaml:"download"`
-	Storage  struct {
-		DBPath string `yaml:"db_path"`
-	} `yaml:"storage"`
+	WB       config.WBClientConfig  `yaml:"wb"`
+	Download config.DownloadConfig  `yaml:"download"`
+	Storage  config.V2StorageConfig `yaml:"storage"`
 }
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config.yaml")
+	dbPath := flag.String("db", "", "Database path (overrides config)")
+	backend := flag.String("backend", "", "Storage backend: sqlite|postgres (overrides config)")
+	pgDatabase := flag.String("pg-database", "", "PostgreSQL database name (overrides config)")
 	days := flag.Int("days", 0, "Number of days to download")
 	rewrite := flag.Bool("rewrite", false, "Rewrite mode")
 	resume := flag.Bool("resume", false, "Resume mode")
@@ -43,7 +46,18 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 	cfg.Download = cfg.Download.GetDefaults()
+	cfg.Storage = cfg.Storage.GetDefaults()
 
+	// CLI flag overrides
+	if *backend != "" {
+		cfg.Storage.Backend = *backend
+	}
+	if *dbPath != "" {
+		cfg.Storage.DbPath = *dbPath
+	}
+	if *pgDatabase != "" {
+		cfg.Storage.PgDatabase = *pgDatabase
+	}
 	if *days > 0 {
 		cfg.Download.Days = *days
 	}
@@ -56,17 +70,18 @@ func main() {
 
 	dllog.PrintHeader("WB Sales Downloader v2",
 		dllog.HeaderField{Key: "Config", Value: *configPath},
-		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DBPath},
+		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
 		dllog.HeaderField{Key: "Days", Value: fmt.Sprintf("%d", cfg.Download.Days)},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
 
-	repo, err := sqlite.NewSQLiteSalesRepository(cfg.Storage.DBPath)
+	// Create writer based on backend selection
+	writer, cleanup, err := createSalesWriter(ctx, cfg.Storage)
 	if err != nil {
-		log.Fatalf("repo error: %v", err)
+		log.Fatalf("storage: %v", err)
 	}
-	defer repo.Close()
+	defer cleanup()
 
 	var source sales.SalesSource
 	if *mockMode {
@@ -91,7 +106,7 @@ func main() {
 		OnProgress:         func(msg string) { fmt.Println(msg) },
 	}
 
-	dl := sales.NewDownloader(source, repo, opts)
+	dl := sales.NewDownloader(source, writer, opts)
 
 	end := time.Now()
 	begin := end.AddDate(0, 0, -cfg.Download.Days)
@@ -103,6 +118,37 @@ func main() {
 	}
 
 	dllog.Done(result.Duration, "%d rows, %d periods", result.TotalRows, result.PeriodsCount)
+}
+
+// createSalesWriter creates the appropriate SalesWriter based on backend config.
+// Returns the writer and a cleanup function.
+func createSalesWriter(ctx context.Context, cfg config.V2StorageConfig) (sales.SalesWriter, func(), error) {
+	switch cfg.Backend {
+	case "postgres", "postgresql":
+		dsn, err := cfg.GetEffectiveDSN()
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("postgres DSN: %w", err)
+		}
+
+		pool, err := postgres.NewPool(ctx, dsn)
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("postgres pool: %w", err)
+		}
+
+		repo := postgres.NewPgSalesRepo(pool.DB())
+		if err := repo.InitSchema(ctx); err != nil {
+			pool.Close()
+			return nil, func() {}, fmt.Errorf("postgres schema: %w", err)
+		}
+		return repo, pool.Close, nil
+
+	default: // "sqlite"
+		repo, err := sqlite.NewSQLiteSalesRepository(cfg.DbPath)
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("open SQLite: %w", err)
+		}
+		return repo, func() { repo.Close() }, nil
+	}
 }
 
 func loadConfig(path string) (*Config, error) {

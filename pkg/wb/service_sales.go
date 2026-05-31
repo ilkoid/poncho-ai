@@ -292,13 +292,6 @@ func (s *salesService) getMockFunnelHistory(nmIDs []int, dateFrom, dateTo time.T
 	return history, nil
 }
 
-// GetSalesReport downloads sales data for a period.
-// Handles pagination and resume logic internally.
-func (s *salesService) GetSalesReport(ctx context.Context, req SalesReportRequest) (*SalesReport, error) {
-	// TODO: Implement with ReportDetailByPeriodIterator
-	return &SalesReport{}, nil
-}
-
 // GetSearchPositions retrieves search positions for products.
 //
 // Uses Analytics API v3: POST /api/analytics/v3/search/positions

@@ -22,3 +22,6 @@ download:
 
 storage:
   db_path: "/tmp/wb-sales-v2-test.db"
+  backend: "sqlite"             # "sqlite" | "postgres"
+  pg_database: "wb_data_prod"   # PostgreSQL database name
+  pg_password_env: "PG_PWD"     # env var with PG password

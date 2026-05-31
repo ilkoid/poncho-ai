@@ -301,6 +301,55 @@ type V2StorageConfig struct { ... }
 
 **Наш опыт:** компиляция сломалась из-за дублирования имён. V2-префикс решает.
 
+### 2.8. ❌ Expression/Patial Indexes в Multi-Statement Exec
+
+```go
+// ❌ НЕ ДЕЛАТЬ: pgx.Exec() не парсит CASE/WHERE в multi-statement блоке
+const schemaSQL = `
+CREATE TABLE ... ;
+CREATE INDEX idx ON t(CASE ... END);  -- syntax error at "CASE"
+CREATE INDEX idx2 ON t(col) WHERE col IS NOT NULL;
+`
+
+// ✅ Правильно: expression и partial indexes — отдельные Exec() вызовы
+const simpleSchemaSQL = `
+CREATE TABLE ... ;
+CREATE INDEX idx_simple ON t(col);
+`
+const exprIndexSQL = `CREATE INDEX idx_expr ON t((CASE ... END))`
+const partialIndexSQL = `CREATE INDEX idx_part ON t(col) WHERE col IS NOT NULL`
+
+func initSchema(ctx, pool) {
+    pool.Exec(ctx, simpleSchemaSQL)          // table + simple indexes
+    pool.Exec(ctx, exprIndexSQL)             // expression index — отдельный вызов
+    pool.Exec(ctx, partialIndexSQL)          // partial index — отдельный вызов
+}
+```
+
+**Наш опыт (sales v2):** `pgxpool.Exec()` отправляет multi-statement SQL через simple query protocol. Простые `CREATE INDEX` работают в блоке, но выражения (`CASE...END`, `WHERE ... IS NOT NULL`) вызывают `syntax error`. Решение: выполнять каждый сложный индекс отдельным `Exec()`.
+
+**Важно:** expression indexes также требуют **двойные скобки** — `ON t((CASE...END))`, не `ON t(CASE...END)`. Внешние `()` — синтаксис CREATE INDEX, внутренние — группировка выражения. SQLite принимает оба варианта, PG — только двойные.
+
+### 2.9. ❌ Сканирование Aggregate Functions в Value Types
+
+```go
+// ❌ НЕ ДЕЛАТЬ: MAX() на пустой таблице возвращает NULL → scan в string = panic
+var lastDT string
+pool.QueryRow(ctx, "SELECT MAX(rr_dt) FROM sales").Scan(&lastDT)
+
+// ✅ Правильно: scan в *string, nil при пустой таблице
+var lastDT *string
+pool.QueryRow(ctx, "SELECT MAX(rr_dt) FROM sales").Scan(&lastDT)
+if lastDT == nil {
+    return time.Time{}, nil  // пустая таблица
+}
+t, _ := time.Parse(time.RFC3339, *lastDT)
+```
+
+**Наш опыт (sales v2):** `GetLastSaleDT()` использует `MAX(rr_dt)` для resume. На пустой таблице aggregate function возвращает NULL (не `ErrNoRows`). pgx при сканировании NULL в `string` вызывает ошибку. Решение: всегда scan в `*string` для aggregate результатов.
+
+**Общее правило:** любой `SELECT MAX(...)` / `SELECT MIN(...)` / `SELECT SUM(...)` — scan в pointer type (`*string`, `*int`, `*float64`). Не-value types сломаются на NULL.
+
 ---
 
 ## 3. PostgreSQL: SQL Translation Cheat Sheet
@@ -314,8 +363,13 @@ type V2StorageConfig struct { ... }
 | `REAL` | `DOUBLE PRECISION` | 64-bit float |
 | `INTEGER` для boolean | `BOOLEAN` | Native |
 | `CURRENT_TIMESTAMP` | `TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')` | TEXT-compatible |
+| `sql.NullFloat64{Float64: v, Valid: true}` | `*float64` (nil = NULL) | pgx native pointer handling |
+| `sql.NullString{String: s, Valid: true}` | `*string` (nil = NULL) | pgx native pointer handling |
+| `result.RowsAffected()` (database/sql) | `tag.RowsAffected()` (pgconn.CommandTag) | Delete/update count |
 | `PRAGMA synchronous = OFF` | Не нужно | MVCC |
 | `INSERT OR REPLACE INTO meta ...` | `INSERT INTO meta ... ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value` | Key-value upsert |
+| `CREATE INDEX ... ON t(expr)` | `CREATE INDEX ... ON t((expr))` | Expression indexes: **double parentheses** |
+| `CREATE INDEX ... WHERE col > 0` | `CREATE INDEX ... WHERE col IS NOT NULL` | Partial indexes (NULL-safe) |
 
 ### Важные нюансы PG-схемы:
 
@@ -427,7 +481,7 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 | Домен | Writer методов | Resume? | Pagination | PG адаптер |
 |-------|---------------|---------|------------|------------|
 | cards | 2 | ❌ Нет | Cursor (WB API) | ✅ Готов |
-| sales | 7 | ✅ Да (date-level) | Date-range iterator | — |
+| sales | 7 | ✅ Да (date-level) | Date-range iterator | ✅ Готов |
 | funnel | 5 | Partial (time-based) | Batch-by-nmIDs | — |
 | nmreport | 5 | ✅ Да (report-level) | Async CSV | — |
 | stocks | — | — | — | — |
@@ -440,4 +494,4 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 ---
 
 **Last Updated:** 2026-05-31
-**Version:** 1.0 (на основе cards v2 experience)
+**Version:** 1.1 (cards v2 + sales v2 experience, expression indexes gotcha)

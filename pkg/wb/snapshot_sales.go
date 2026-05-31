@@ -188,12 +188,6 @@ func (s *snapshotSalesService) GetFunnelHistory(ctx context.Context, req FunnelH
 	return history, rows.Err()
 }
 
-// GetSalesReport returns sales report from snapshot.
-func (s *snapshotSalesService) GetSalesReport(ctx context.Context, req SalesReportRequest) (*SalesReport, error) {
-	// TODO: Implement with sales table
-	return &SalesReport{}, nil
-}
-
 // GetSearchPositions returns search positions from snapshot.
 // Note: search positions data may not be available in all snapshots.
 func (s *snapshotSalesService) GetSearchPositions(ctx context.Context, nmIDs []int, period int) (string, error) {
