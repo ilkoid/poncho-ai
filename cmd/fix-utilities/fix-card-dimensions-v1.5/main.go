@@ -24,11 +24,12 @@ func main() {
 	apply := flag.Bool("apply", false, "Apply staged changes via WB API")
 	dryRun := flag.Bool("dry-run", false, "Show payloads without sending (use with --apply)")
 	check := flag.Bool("check", false, "Query WB error list for recent card validation errors")
+	compare := flag.Bool("compare", false, "Compare WB vs 1C dimensions, show discrepancies")
 	force := flag.Bool("force", false, "Stage cards even if dimensions already set (overwrite from 1C)")
 	dbPath := flag.String("db", "", "Override db_path from config")
 	flag.Parse()
 
-	if *importXLS == "" && !*stage && !*diff && !*apply && !*check {
+	if *importXLS == "" && !*stage && !*diff && !*apply && !*check && !*compare {
 		fmt.Println("fix-card-dimensions — update L/W/H/weight on WB cards from 1C WMS data")
 		fmt.Println()
 		fmt.Println("Usage:")
@@ -37,6 +38,7 @@ func main() {
 		fmt.Println("  fix-card-dimensions --diff --config config.yaml")
 		fmt.Println("  fix-card-dimensions --check --config config.yaml")
 		fmt.Println("  fix-card-dimensions --apply --dry-run --config config.yaml")
+		fmt.Println("  fix-card-dimensions --compare --config config.yaml")
 		fmt.Println("  fix-card-dimensions --apply --config config.yaml  (⚠ production)")
 		flag.Usage()
 		os.Exit(0)
@@ -89,6 +91,17 @@ func main() {
 			cfg.WBUpdate.APIFloorPerMin, cfg.WBUpdate.APIFloorBurst)
 		if err := runCheck(ctx, client, cfg.WBUpdate); err != nil {
 			log.Fatalf("check: %v", err)
+		}
+
+	case *compare:
+		dbConn, err := openDB(db)
+		if err != nil {
+			log.Fatalf("open db: %v", err)
+		}
+		defer dbConn.Close()
+
+		if err := runCompare(ctx, dbConn, &cfg.Filters, cfg.Compare); err != nil {
+			log.Fatalf("compare: %v", err)
 		}
 
 	case *diff:

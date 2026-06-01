@@ -15,11 +15,11 @@ db_path: "/var/db/wb-sales.db"
 filters:
   nm_ids: []             # Конкретные nm_id (для теста на 1 карточке)
   vendor_codes: []       # Раскомментируй нужные из списка ниже
-  allowed_years: [24]  # Год из позиций 2-3 артикула (307 шт, см. список ниже)
+  allowed_years: [26]  # Год из позиций 2-3 артикула (307 шт, см. список ниже)
   exclude_lengths: [5, 6]         # Исключить артикулы указанной длины
   exclude_vendor_codes: [] # Артикулы с некорректными датами (1С ≠ ФСА), WB отклоняет
   # vendor_code_prefix: "1"      # Первая цифра артикула
-  subject: "Костюмы купальные"         # Точное совпадение subject_name (case-insensitive)
+  subject: ""         # Точное совпадение subject_name (case-insensitive)
   # Туфли Шапки Кофты Термокомплекты Комбинезоны Костюмы Кроссовки Куртки Футболки  
   # subject_ids: []           # WB subject IDs
   # seasons: ["зима"]            # Сезон из card_characteristics
@@ -32,7 +32,7 @@ filters:
 # Reference date для проверки истечения сертификатов (DD.MM.YYYY или YYYY-MM-DD).
 # Сертификаты с certificate_end раньше этой даты пропускаются.
 # Default: сегодня. Можно переопределить через --date.
-reference_date: "29.05.2026"
+reference_date: "31.05.2026"
 
 # WB Content API (POST /content/v2/cards/update, swagger: 100/min burst 5)
 wb_update:

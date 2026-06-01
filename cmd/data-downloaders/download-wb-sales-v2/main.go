@@ -101,7 +101,10 @@ func main() {
 	if *mockMode {
 		source = &sales.MockSalesSource{}
 	} else {
-		wbClient := wb.New(cfg.WB.APIKey)
+		wbClient, err := wb.NewFromConfig(cfg.WB.ToWBConfig())
+			if err != nil {
+				log.Fatalf("wb client: %v", err)
+			}
 		wbClient.SetRateLimit("sales",
 			cfg.WB.RateLimit, cfg.WB.BurstLimit,
 			cfg.WB.RateLimit, cfg.WB.BurstLimit)

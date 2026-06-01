@@ -8,10 +8,16 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/filter"
 )
 
+type CompareConfig struct {
+	ToleranceCm3 float64 `yaml:"tolerance_cm3"`
+	ToleranceKg  float64 `yaml:"tolerance_kg"`
+}
+
 type Config struct {
 	DBPath   string                    `yaml:"db_path"`
 	Filters  filter.Filter             `yaml:"filters"`
 	WBUpdate cardupdate.WBUpdateConfig `yaml:"wb_update"`
+	Compare  CompareConfig             `yaml:"compare"`
 }
 
 func loadConfig(path string) (*Config, error) {
