@@ -1,0 +1,60 @@
+# WB Operational Sales Downloader v2 — Configuration
+#
+# API: GET /api/v1/supplier/sales (WB Statistics API)
+# Table: operational_sales (separate from `sales` for financial reports)
+# Rate: 1 req/min, max 80k rows/page, 90-day retention, updates every 30 min
+#
+# CLI overrides:
+#   --backend sqlite|postgres   overrides storage.backend
+#   --db /tmp/test.db           overrides storage.db_path
+#   --pg-database wb_data_test  overrides storage.pg_database
+#   --mock                      mock source + DiscardWriter (zero DB interaction)
+#   --dry-run                   real API, no DB writes
+
+wb:
+  api_key_env: "WB_STAT_API_KEY"   # env var with WB Statistics API key
+  rate_limit: 1                     # req/min (WB Statistics API limit)
+  burst_limit: 10                   # burst for rate limiter
+  endpoint: "https://statistics-api.wildberries.ru"
+
+opsales:
+  days: 90                          # дней от сегодня-N до сейчас (default: 90, retention WB API)
+  # from: "2026-03-01"              # точная начальная дата YYYY-MM-DD (приоритет над days)
+  # to: "2026-06-01"                # точная конечная дата YYYY-MM-DD (default: сейчас)
+  rewrite: true                     # удалить старые продажи за период перед загрузкой
+  adaptive_recover_after: 5         # OKs before restore to api floor after 429
+  adaptive_probe_after: 10          # OKs at api floor before probing desired rate
+  max_backoff_seconds: 60           # cap for exponential backoff на сетевых ошибках
+
+# ── Storage: SQLite or PostgreSQL ──────────────────────────────────
+#
+# backend: "sqlite" (default) or "postgres"
+#
+# SQLite options:
+#   db_path          — путь к файлу БД (default: /var/db/wb-sales.db)
+#                      Автоматически включает WAL mode, 64MB cache, 10s busy timeout
+#
+# PostgreSQL options (backend: "postgres"):
+#   pg_dsn           — полный DSN (если задан, остальные pg_* игнорируются)
+#                      Пример: "postgres://postgres@192.168.10.7:15432/wb_data_prod?sslmode=disable"
+#   pg_database      — имя базы (default: wb_data_prod, override: --pg-database)
+#                      Хост/порт берутся из PGHOST (default: 192.168.10.7) и PGPORT (default: 15432)
+#   pg_password_env  — env var с паролем (default: PG_PWD)
+#
+# ⚠️  Для тестирования ВСЕГДА используй --db /tmp/test.db или --pg-database wb_data_test
+# ⚠️  /var/db — READ-ONLY для Claude, утилиты туда пишет только пользователь вручную
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
+  # pg_dsn: ""                      # полный DSN (опционально, перекрывает pg_database)
+  # pg_database: "wb_data_prod"     # имя базы PostgreSQL
+  # pg_password_env: "PG_PWD"       # env var с паролем PostgreSQL
+
+# ── Article Filter ─────────────────────────────────────────────────
+# Фильтрация по артикулу продавца (supplier_article):
+#   exclude_lengths  — исключить артикулы указанной длины (6 = неуникальные)
+#   allowed_years    — оставить только указанные годы производства
+#                      Год = 2 и 3 символы артикула: "12500001" → год 25 (2025)
+filter:
+  exclude_lengths: [6]              # исключить 6-значные артикулы (non-unique)
+  allowed_years: [20, 21, 22, 23, 24, 25, 26]  # фильтр по году из артикула
