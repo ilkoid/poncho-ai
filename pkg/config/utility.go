@@ -1125,15 +1125,9 @@ type SupplyConfig struct {
 //   - api:           swagger-documented rate (recovery floor после 429)
 //   - api_burst:     burst для api rate
 type SupplyRateLimits struct {
-	// Список поставок (POST /api/v1/supplies) — 30 req/min
-	List      int `yaml:"list"`        // desired rate (default: 30)
-	ListBurst int `yaml:"list_burst"`  // desired burst (default: 10)
-	ListApi   int `yaml:"list_api"`    // swagger rate (default: 30)
-	ListApiBurst int `yaml:"list_api_burst"` // swagger burst (default: 10)
-
-	// Shared limiter for supply operations (goods/packages/details).
-	// These three endpoints share a global per-seller limit of 30 req/min.
-	// Uses ShareRateLimit in main.go to map get_supply_goods/get_supply_packages/get_supply_details → supply_ops.
+	// Shared limiter for ALL supply operations (list/goods/packages/details).
+	// All supply endpoints share a global per-seller limit of ~30 req/min.
+	// Uses ShareRateLimit in main.go to map all supply toolIDs → supply_ops.
 	SupplyOps      int `yaml:"supply_ops"`        // desired rate (default: 25)
 	SupplyOpsBurst int `yaml:"supply_ops_burst"`  // desired burst (default: 5)
 	SupplyOpsApi   int `yaml:"supply_ops_api"`    // swagger rate (default: 25)
@@ -1158,13 +1152,7 @@ func (c *SupplyConfig) GetDefaults() SupplyConfig {
 		result.DateFilterType = "updatedDate"
 	}
 
-	// List rate limits (two-level adaptive)
-	if result.RateLimits.ListApi == 0 { result.RateLimits.ListApi = 30 }
-	if result.RateLimits.List == 0 { result.RateLimits.List = result.RateLimits.ListApi }
-	if result.RateLimits.ListApiBurst == 0 { result.RateLimits.ListApiBurst = 10 }
-	if result.RateLimits.ListBurst == 0 { result.RateLimits.ListBurst = result.RateLimits.ListApiBurst }
-
-	// Shared supply operations rate limits (goods/packages/details share global 30 req/min)
+	// Shared supply operations rate limits (list/goods/packages/details share global ~30 req/min)
 	if result.RateLimits.SupplyOpsApi == 0 { result.RateLimits.SupplyOpsApi = 25 }
 	if result.RateLimits.SupplyOps == 0 { result.RateLimits.SupplyOps = result.RateLimits.SupplyOpsApi }
 	if result.RateLimits.SupplyOpsApiBurst == 0 { result.RateLimits.SupplyOpsApiBurst = 5 }

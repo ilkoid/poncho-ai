@@ -2,16 +2,16 @@
 # API: supplies-api.wildberries.ru (FBW Supplies)
 
 wb:
-  api_key: "WB_API_SUPPLIES"
+  api_key: ""
   timeout: "60s"
 
 supply:
   # Путь к общей базе данных
 #  db_path: "wb-sales-test.db"
-  db_path: "/mnt/d/db/wb-podsort.db"
+  db_path: "/mnt/d/db/wb-sales.db"
 
   # Период загрузки (days — альтернатива begin/end)
-  days: 29
+  days: 14
   # begin: ""
   # end: ""
 
@@ -23,34 +23,16 @@ supply:
   date_filter_type: "updatedDate"
 
   # Rate limits (two-level adaptive)
-  # Supplies API: 30 req/min, burst 10 (supply endpoints)
-  # Reference: 6 req/min, burst 6 (warehouses, tariffs)
+  # All supply endpoints share a global per-seller limit of ~30 req/min.
+  # Reference data has separate limit: 6 req/min.
   rate_limits:
-    # Список поставок (POST /api/v1/supplies)
-    list: 20
-    list_burst: 10
-    list_api: 20
-    list_api_burst: 10
+    # Shared limiter for list/goods/packages/details (global ~30 req/min per seller)
+    supply_ops: 25
+    supply_ops_burst: 5
+    supply_ops_api: 25
+    supply_ops_api_burst: 5
 
-    # Товары поставки (GET /api/v1/supplies/{ID}/goods)
-    goods: 20
-    goods_burst: 10
-    goods_api: 20
-    goods_api_burst: 10
-
-    # Детали поставки (GET /api/v1/supplies/{ID}) — warehouse info
-    details: 20
-    details_burst: 10
-    details_api: 20
-    details_api_burst: 10
-
-    # Упаковка поставки (GET /api/v1/supplies/{ID}/package)
-    package: 20
-    package_burst: 5
-    package_api: 20
-    package_api_burst: 5
-
-    # Справочники (GET /api/v1/warehouses, /api/v1/transit-tariffs)
+    # Справочники (GET /api/v1/warehouses, /api/v1/transit-tariffs) — 6 req/min
     ref: 7
     ref_burst: 5
     ref_api: 7

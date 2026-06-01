@@ -81,7 +81,7 @@ func DownloadSupplies(
 		default:
 		}
 
-		supplies, err := client.GetSupplies(ctx, rl.List, rl.ListBurst, filter, suppliesPageSize, offset)
+		supplies, err := client.GetSupplies(ctx, rl.SupplyOps, rl.SupplyOpsBurst, filter, suppliesPageSize, offset)
 		requests++
 		if err != nil {
 			return allSupplies, requests, fmt.Errorf("get supplies (offset=%d): %w", offset, err)
