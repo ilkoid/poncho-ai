@@ -1131,23 +1131,13 @@ type SupplyRateLimits struct {
 	ListApi   int `yaml:"list_api"`    // swagger rate (default: 30)
 	ListApiBurst int `yaml:"list_api_burst"` // swagger burst (default: 10)
 
-	// Товары поставки (GET /api/v1/supplies/{ID}/goods) — 30 req/min
-	Goods      int `yaml:"goods"`        // desired rate (default: 30)
-	GoodsBurst int `yaml:"goods_burst"`  // desired burst (default: 10)
-	GoodsApi   int `yaml:"goods_api"`    // swagger rate (default: 30)
-	GoodsApiBurst int `yaml:"goods_api_burst"` // swagger burst (default: 10)
-
-	// Упаковка поставки (GET /api/v1/supplies/{ID}/package) — 30 req/min
-	Package      int `yaml:"package"`        // desired rate (default: 30)
-	PackageBurst int `yaml:"package_burst"`  // desired burst (default: 10)
-	PackageApi   int `yaml:"package_api"`    // swagger rate (default: 30)
-	PackageApiBurst int `yaml:"package_api_burst"` // swagger burst (default: 10)
-
-	// Детали поставки (GET /api/v1/supplies/{ID}) — 30 req/min
-	Details      int `yaml:"details"`         // desired rate (default: 30)
-	DetailsBurst int `yaml:"details_burst"`   // desired burst (default: 10)
-	DetailsApi   int `yaml:"details_api"`     // swagger rate (default: 30)
-	DetailsApiBurst int `yaml:"details_api_burst"` // swagger burst (default: 10)
+	// Shared limiter for supply operations (goods/packages/details).
+	// These three endpoints share a global per-seller limit of 30 req/min.
+	// Uses ShareRateLimit in main.go to map get_supply_goods/get_supply_packages/get_supply_details → supply_ops.
+	SupplyOps      int `yaml:"supply_ops"`        // desired rate (default: 25)
+	SupplyOpsBurst int `yaml:"supply_ops_burst"`  // desired burst (default: 5)
+	SupplyOpsApi   int `yaml:"supply_ops_api"`    // swagger rate (default: 25)
+	SupplyOpsApiBurst int `yaml:"supply_ops_api_burst"` // swagger burst (default: 5)
 
 	// Справочники (GET warehouses, transit-tariffs) — 6 req/min
 	Ref      int `yaml:"ref"`        // desired rate (default: 6)
@@ -1174,23 +1164,11 @@ func (c *SupplyConfig) GetDefaults() SupplyConfig {
 	if result.RateLimits.ListApiBurst == 0 { result.RateLimits.ListApiBurst = 10 }
 	if result.RateLimits.ListBurst == 0 { result.RateLimits.ListBurst = result.RateLimits.ListApiBurst }
 
-	// Goods rate limits
-	if result.RateLimits.GoodsApi == 0 { result.RateLimits.GoodsApi = 30 }
-	if result.RateLimits.Goods == 0 { result.RateLimits.Goods = result.RateLimits.GoodsApi }
-	if result.RateLimits.GoodsApiBurst == 0 { result.RateLimits.GoodsApiBurst = 10 }
-	if result.RateLimits.GoodsBurst == 0 { result.RateLimits.GoodsBurst = result.RateLimits.GoodsApiBurst }
-
-	// Package rate limits
-	if result.RateLimits.PackageApi == 0 { result.RateLimits.PackageApi = 30 }
-	if result.RateLimits.Package == 0 { result.RateLimits.Package = result.RateLimits.PackageApi }
-	if result.RateLimits.PackageApiBurst == 0 { result.RateLimits.PackageApiBurst = 10 }
-	if result.RateLimits.PackageBurst == 0 { result.RateLimits.PackageBurst = result.RateLimits.PackageApiBurst }
-
-	// Details rate limits
-	if result.RateLimits.DetailsApi == 0 { result.RateLimits.DetailsApi = 30 }
-	if result.RateLimits.Details == 0 { result.RateLimits.Details = result.RateLimits.DetailsApi }
-	if result.RateLimits.DetailsApiBurst == 0 { result.RateLimits.DetailsApiBurst = 10 }
-	if result.RateLimits.DetailsBurst == 0 { result.RateLimits.DetailsBurst = result.RateLimits.DetailsApiBurst }
+	// Shared supply operations rate limits (goods/packages/details share global 30 req/min)
+	if result.RateLimits.SupplyOpsApi == 0 { result.RateLimits.SupplyOpsApi = 25 }
+	if result.RateLimits.SupplyOps == 0 { result.RateLimits.SupplyOps = result.RateLimits.SupplyOpsApi }
+	if result.RateLimits.SupplyOpsApiBurst == 0 { result.RateLimits.SupplyOpsApiBurst = 5 }
+	if result.RateLimits.SupplyOpsBurst == 0 { result.RateLimits.SupplyOpsBurst = result.RateLimits.SupplyOpsApiBurst }
 
 	// Reference data rate limits (warehouses, tariffs)
 	if result.RateLimits.RefApi == 0 { result.RateLimits.RefApi = 6 }

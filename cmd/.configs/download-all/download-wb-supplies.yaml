@@ -1,0 +1,24 @@
+wb:
+  api_key: ""
+  timeout: "60s"
+
+supply:
+  db_path: "/var/db/wb-sales.db"
+  days: 14
+  date_filter_type: "updatedDate"
+  rate_limits:
+    list: 20
+    list_burst: 10
+    list_api: 20
+    list_api_burst: 10
+    # Shared limiter for goods/packages/details (WB global per-seller limit: 30 req/min)
+    supply_ops: 25
+    supply_ops_burst: 5
+    supply_ops_api: 25
+    supply_ops_api_burst: 5
+    ref: 7
+    ref_burst: 5
+    ref_api: 7
+    ref_api_burst: 5
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60

@@ -137,7 +137,7 @@ func DownloadSupplyDetails(
 		}
 
 		// Download details (warehouse info) for this supply
-		details, err := client.GetSupplyDetails(ctx, rl.Details, rl.DetailsBurst, pair.SupplyID)
+		details, err := client.GetSupplyDetails(ctx, rl.SupplyOps, rl.SupplyOpsBurst, pair.SupplyID)
 		totalRequests++
 		if err != nil {
 			dllog.Error("details supply_id=%d: %v", pair.SupplyID, err)
@@ -152,7 +152,7 @@ func DownloadSupplyDetails(
 		var allGoods []wb.GoodInSupply
 		goodsOffset := 0
 		for {
-			goods, err := client.GetSupplyGoods(ctx, rl.Goods, rl.GoodsBurst, pair.SupplyID, goodsPageSize, goodsOffset)
+			goods, err := client.GetSupplyGoods(ctx, rl.SupplyOps, rl.SupplyOpsBurst, pair.SupplyID, goodsPageSize, goodsOffset)
 			totalRequests++
 			if err != nil {
 				dllog.Error("goods supply_id=%d: %v", pair.SupplyID, err)
@@ -175,7 +175,7 @@ func DownloadSupplyDetails(
 		}
 
 		// Download packages
-		boxes, err := client.GetSupplyPackages(ctx, rl.Package, rl.PackageBurst, pair.SupplyID)
+		boxes, err := client.GetSupplyPackages(ctx, rl.SupplyOps, rl.SupplyOpsBurst, pair.SupplyID)
 		totalRequests++
 		if err != nil {
 			dllog.Error("packages supply_id=%d: %v", pair.SupplyID, err)

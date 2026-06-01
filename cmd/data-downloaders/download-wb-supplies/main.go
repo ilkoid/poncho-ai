@@ -126,9 +126,8 @@ func main() {
 		wbClient.SetRateLimit("get_warehouses", rl.Ref, rl.RefBurst, rl.RefApi, rl.RefApiBurst)
 		wbClient.SetRateLimit("get_transit_tariffs", rl.Ref, rl.RefBurst, rl.RefApi, rl.RefApiBurst)
 		wbClient.SetRateLimit("get_supplies", rl.List, rl.ListBurst, rl.ListApi, rl.ListApiBurst)
-		wbClient.SetRateLimit("get_supply_goods", rl.Goods, rl.GoodsBurst, rl.GoodsApi, rl.GoodsApiBurst)
-		wbClient.SetRateLimit("get_supply_packages", rl.Package, rl.PackageBurst, rl.PackageApi, rl.PackageApiBurst)
-		wbClient.SetRateLimit("get_supply_details", rl.Details, rl.DetailsBurst, rl.DetailsApi, rl.DetailsApiBurst)
+		wbClient.SetRateLimit("supply_ops", rl.SupplyOps, rl.SupplyOpsBurst, rl.SupplyOpsApi, rl.SupplyOpsApiBurst)
+		wbClient.ShareRateLimit("supply_ops", "get_supply_goods", "get_supply_packages", "get_supply_details")
 		wbClient.SetAdaptiveParams(0, supplyCfg.AdaptiveProbeAfter, supplyCfg.MaxBackoffSeconds)
 
 		runDownload(ctx, wbClient, repo, supplyCfg, *skipRef)

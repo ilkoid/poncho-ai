@@ -310,8 +310,9 @@ func getAPIKey(cfg *Config) string {
 }
 
 func applyRateLimits(client *wb.Client, rl config.SearchVisibilityRateLimits) {
+	// Both search-report endpoints share a global 3 req/min limit
 	client.SetRateLimit("search_report", rl.SearchReport, rl.SearchReportBurst, rl.SearchReportApi, rl.SearchReportApiBurst)
-	client.SetRateLimit("search_texts", rl.SearchTexts, rl.SearchTextsBurst, rl.SearchTextsApi, rl.SearchTextsApiBurst)
+	client.ShareRateLimit("search_report", "search_texts")
 }
 
 func printHelp() {

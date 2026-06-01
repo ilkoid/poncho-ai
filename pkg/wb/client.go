@@ -168,6 +168,7 @@ type Client struct {
 	limiters map[string]*rate.Limiter     // tool ID → limiter
 	adaptive map[string]*rateLimitState   // tool ID → adaptive state (for 429 recovery)
 	lastRequestTime map[string]time.Time  // tool ID → last HTTP request time (for min interval check)
+	limiterAliases map[string]string      // alias tool ID → canonical tool ID (for shared rate limits)
 }
 
 // rateLimitState tracks adaptive rate limiting after 429 responses.
@@ -237,9 +238,10 @@ func New(apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
-		limiters: make(map[string]*rate.Limiter),
-		adaptive: make(map[string]*rateLimitState),
-			lastRequestTime: make(map[string]time.Time),
+		limiters:        make(map[string]*rate.Limiter),
+		adaptive:        make(map[string]*rateLimitState),
+		lastRequestTime: make(map[string]time.Time),
+		limiterAliases:  make(map[string]string),
 	}
 }
 
@@ -299,9 +301,10 @@ func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 			Timeout:   timeout,
 			Transport: transport,
 		},
-		limiters: make(map[string]*rate.Limiter),
-		adaptive: make(map[string]*rateLimitState),
-			lastRequestTime: make(map[string]time.Time),
+		limiters:        make(map[string]*rate.Limiter),
+		adaptive:        make(map[string]*rateLimitState),
+		lastRequestTime: make(map[string]time.Time),
+		limiterAliases:  make(map[string]string),
 	}, nil
 }
 
@@ -365,6 +368,9 @@ type httpRequest struct {
 // Общий метод для Get() и Post(), реализующий retry loop, rate limiting
 // и обработку 429 ответов.
 func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, burst int, req httpRequest, dest interface{}) error {
+	// Resolve alias for lastRequestTime lookups (limiter/adaptive resolved internally)
+	resolvedID := c.resolveToolID(toolID)
+
 	// Получаем или создаём limiter для этого tool
 	limiter := c.getOrCreateLimiter(toolID, rateLimit, burst)
 
@@ -381,7 +387,7 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 
 		// Additional delay: ensure minimum interval since last HTTP request
 		c.mu.RLock()
-		lastRequestTime := c.lastRequestTime[toolID]
+		lastRequestTime := c.lastRequestTime[resolvedID]
 		c.mu.RUnlock()
 
 		if !lastRequestTime.IsZero() {
@@ -479,7 +485,7 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 			if resp.StatusCode == http.StatusNoContent {
 				c.adaptiveRecoverOK(toolID)
 				c.mu.Lock()
-				c.lastRequestTime[toolID] = time.Now()
+				c.lastRequestTime[resolvedID] = time.Now()
 				c.mu.Unlock()
 				return errNoContent
 			}
@@ -509,7 +515,7 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 		// This ensures min_interval accounts for full request-response cycle,
 		// preventing 429 when API responses are slow (e.g., fullstats takes 45s).
 		c.mu.Lock()
-		c.lastRequestTime[toolID] = time.Now()
+		c.lastRequestTime[resolvedID] = time.Now()
 		c.mu.Unlock()
 
 		if err := json.Unmarshal(body, dest); err != nil {
@@ -579,6 +585,7 @@ func (c *Client) getWithKey(ctx context.Context, toolID string, baseURL string, 
 // dest должен быть указателем (как в Get), но для top-level массивов
 // json.Decoder читает срез по одному элементу.
 func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params url.Values, dest interface{}) error {
+	resolvedID := c.resolveToolID(toolID)
 	if baseURL == "" {
 		return fmt.Errorf("baseURL is required")
 	}
@@ -614,7 +621,7 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		// This is needed because limiter.Wait() measures from last limiter.Wait() call,
 		// not from last actual HTTP request. After retries/429, this matters.
 		c.mu.RLock()
-		lastRequestTime := c.lastRequestTime[toolID]
+		lastRequestTime := c.lastRequestTime[resolvedID]
 		c.mu.RUnlock()
 
 		if !lastRequestTime.IsZero() {
@@ -705,7 +712,7 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 			if resp.StatusCode == http.StatusNoContent {
 				c.adaptiveRecoverOK(toolID)
 				c.mu.Lock()
-				c.lastRequestTime[toolID] = time.Now()
+				c.lastRequestTime[resolvedID] = time.Now()
 				c.mu.Unlock()
 				return errNoContent
 			}
@@ -741,7 +748,7 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		}
 		// Update lastRequestTime AFTER response consumed.
 		c.mu.Lock()
-		c.lastRequestTime[toolID] = time.Now()
+		c.lastRequestTime[resolvedID] = time.Now()
 		c.mu.Unlock()
 		resp.Body.Close()
 		return nil
@@ -761,6 +768,13 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 func (c *Client) getOrCreateLimiter(toolID string, rateLimit int, burst int) *rate.Limiter {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Resolve alias: multiple toolIDs may share one limiter (e.g., supply goods/packages/details)
+	if c.limiterAliases != nil {
+		if canonical, ok := c.limiterAliases[toolID]; ok {
+			toolID = canonical
+		}
+	}
 
 	// Если limiter уже существует - возвращаем (игнорируем переданные rateLimit/burst)
 	if limiter, exists := c.limiters[toolID]; exists {
@@ -797,6 +811,39 @@ func (c *Client) SetRateLimit(toolID string, desiredRate, desiredBurst, apiRate,
 		apiFloor:      rate.Limit(apiPerSec),
 		apiFloorBurst: apiBurst,
 	}
+}
+
+// ShareRateLimit makes aliasIDs share the rate limiter that was set up for canonicalID
+// via SetRateLimit. All aliased toolIDs use the same rate.Limiter, adaptive state,
+// and lastRequestTime — ensuring they respect a shared global API limit.
+//
+// Must be called AFTER SetRateLimit(canonicalID, ...).
+// The canonicalID must already have a limiter registered via SetRateLimit.
+//
+// Example (WB Supplies API shares 30 req/min across goods/packages/details):
+//
+//	client.SetRateLimit("supply_ops", 25, 5, 25, 5)
+//	client.ShareRateLimit("supply_ops", "get_supply_goods", "get_supply_packages", "get_supply_details")
+func (c *Client) ShareRateLimit(canonicalID string, aliasIDs ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, id := range aliasIDs {
+		c.limiterAliases[id] = canonicalID
+	}
+}
+
+// resolveToolID returns the canonical toolID for rate limiter lookups.
+// If toolID is registered as an alias, returns the canonical ID.
+// Otherwise returns toolID unchanged. Caller must NOT hold c.mu.
+func (c *Client) resolveToolID(toolID string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.limiterAliases != nil {
+		if canonical, ok := c.limiterAliases[toolID]; ok {
+			return canonical
+		}
+	}
+	return toolID
 }
 
 // SetAdaptiveParams configures adaptive rate limiting tuning.
@@ -837,6 +884,13 @@ func (c *Client) RateLimiters() map[string]rate.Limit {
 func (c *Client) adaptiveReduce(toolID string, serverRetrySec int) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Resolve alias: 429 on any aliased endpoint should reduce the shared limiter
+	if c.limiterAliases != nil {
+		if canonical, ok := c.limiterAliases[toolID]; ok {
+			toolID = canonical
+		}
+	}
 
 	state, exists := c.adaptive[toolID]
 	if !exists {
@@ -1006,6 +1060,7 @@ func (c *Client) Ping(ctx context.Context, baseURL string, rateLimit int, burst 
 //
 // Возвращает сырой []byte тела ответа или ошибку.
 func (c *Client) GetRaw(ctx context.Context, toolID string, baseURL string, rateLimit int, burst int, path string, params map[string]string) ([]byte, error) {
+	resolvedID := c.resolveToolID(toolID)
 	if baseURL == "" {
 		return nil, fmt.Errorf("baseURL is required")
 	}
@@ -1045,7 +1100,7 @@ func (c *Client) GetRaw(ctx context.Context, toolID string, baseURL string, rate
 
 		// Minimum interval since last request
 		c.mu.RLock()
-		lastRequestTime := c.lastRequestTime[toolID]
+		lastRequestTime := c.lastRequestTime[resolvedID]
 		c.mu.RUnlock()
 
 		if !lastRequestTime.IsZero() {
@@ -1115,7 +1170,7 @@ func (c *Client) GetRaw(ctx context.Context, toolID string, baseURL string, rate
 		}
 		// Update lastRequestTime AFTER response consumed.
 		c.mu.Lock()
-		c.lastRequestTime[toolID] = time.Now()
+		c.lastRequestTime[resolvedID] = time.Now()
 		c.mu.Unlock()
 
 		return data, nil
