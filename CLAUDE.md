@@ -44,7 +44,9 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 - `pkg/app/` — DI container: `Initialize()` creates all components, wires dependencies
 - `pkg/app/tool_setup.go` — Config-driven tool registration (YAML + switch case)
 - `pkg/wb/` — WB API SDK: pagination, rate limiting, response unwrapping, service layer (Sales, Advertising, Feedbacks, Attribution)
-- `pkg/storage/sqlite/` — Repository pattern, ~55 tables across 7 `*_schema.go` files (schema, cards, supply, region_sales, prices, onec, stock_history)
+- `pkg/orders/` — Orders v2 downloader domain (Statistics API `/api/v1/supplier/orders`)
+- `pkg/opsales/` — Operational Sales v2 downloader domain (Statistics API `/api/v1/supplier/sales`)
+- `pkg/storage/sqlite/` — Repository pattern, ~57 tables across 9 `*_schema.go` files (schema, cards, supply, region_sales, prices, onec, stock_history, orders, opsales)
 - `pkg/events/` + `pkg/tui/` — Port & Adapter decoupling (tui implements events interfaces)
 - `pkg/chain/bundle_resolver.go` — Token optimization: 100 tools → 10 bundles (~98% savings)
 - `pkg/prompts/` — Source pattern with fallback: File → Default → API → Database
@@ -56,7 +58,7 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 ### cmd/ Entry Points
 - `cmd/poncho/` — Main TUI agent
 - `cmd/simple-agent/` — Headless agent CLI
-- `cmd/data-downloaders/` — 15 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, cards, prices, stocks, stock-history, region-sales, search-visibility, supplies, 1c-data, all-articles)
+- `cmd/data-downloaders/` — 17 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, cards, prices, stocks, stock-history, region-sales, search-visibility, supplies, 1c-data, all-articles, **orders-v2**, **opsales-v2**)
 - `cmd/data-analyzers/` — 6 analysis utilities (feedbacks, SKU snapshots, snapshots, price comparison, DB freshness, 1C mapping)
 - `cmd/data-dashboards/` — Web dashboards (sku-analytics)
 - `cmd/test-utils/` — API testing utilities (test-wb-raw, test-wb-search, etc.)
@@ -66,7 +68,7 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 All configs in `cmd/.configs/download-all/`, all data in single DB `/var/db/wb-sales.db`:
 1. **Catalog** — cards, prices, 1C/PIM
 2. **Feedbacks** — feedbacks & questions
-3. **Sales & Revenue** — sales, region-sales
+3. **Sales & Revenue** — orders-v2, opsales-v2, sales-v2, region-sales
 4. **Stock & Logistics** — stocks, stock-history, supplies
 5. **Advertising** — promotion, promotion-v2
 6. **Analytics** — funnel, funnel-agg, search-visibility (3 req/min shared limit)
@@ -115,9 +117,23 @@ Recovery cycle: `desired` → 429 triggers backoff → `api floor` (after 5 OKs)
 - Seller Analytics v2 (`seller-analytics-api.wildberries.ru`): search-report endpoints, 3 req/min
 - Promotion V2 normquery stats: **10 req/min** (stricter than list/bids/minus at 5/sec)
 - Date columns in `sales` table use `_dt` suffix: `order_dt`, `sale_dt`, `rr_dt` (not `sale_date`)
+- Statistics API ToolIDs: `wb_orders` (orders), `wb_opsales` (operational sales) — both use `WB_STAT_API_KEY`, 1 req/min
 - год выпуска (производства) товара определяется по 2 и 3 символам в артикуле продавца, например: 12345678 -> 2023 год
 - в API WB при обновлении карточки товара при записи нужно передавать ВСЕ ПОЛЯ! Иначе, которые не передал, они обнулятся. Это критический момент для любых проверок утилит!
 - Поле season в onec_goods — более надёжный фильтр для школьного ассортимента, чем collection
+
+### Sales Data Pipeline (три среза)
+Three separate data sources for sales, each with different timing and purpose:
+
+| Layer | API | Table | Updates | Key |
+|-------|-----|-------|---------|-----|
+| Orders | `/api/v1/supplier/orders` | `orders` | Every 30 min | `srid` |
+| OpSales | `/api/v1/supplier/sales` | `operational_sales` | Every 30 min | `sale_id` (S/R prefix) |
+| Financial | `reportDetailByPeriod` | `sales` | Daily | composite |
+
+- `orders` = earliest signal (cart/checkout), `opsales` = preliminary sales/returns, `sales` = final financial realization
+- **Do NOT confuse** `operational_sales` table (operational) with `sales` table (financial) — they come from different APIs
+- All three use `WB_STAT_API_KEY` for orders/opsales, `WB_API_ANALYTICS_AND_PROMO_KEY` for financial reports
 
 ## WB API Safety Rules
 
@@ -183,7 +199,7 @@ V2 utilities support both SQLite and PostgreSQL through focused Writer interface
 **Key packages:**
 - `pkg/config/pgconfig.go` — `V2StorageConfig` (backend selection, DSN builder, password injection)
 - `pkg/storage/postgres/` — PostgreSQL adapters (`pgxpool`, per-domain repos + schemas)
-- `pkg/<domain>/` — v2 domain packages with Source/Writer interfaces (cards ✅, sales/funnel/nmreport — SQLite only)
+- `pkg/<domain>/` — v2 domain packages with Source/Writer interfaces (cards ✅, orders ✅, opsales ✅, sales/funnel/nmreport — SQLite only)
 
 **Pattern (each domain):**
 ```
@@ -200,6 +216,7 @@ cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI →
 - `resolveAPIKey()` must call `os.Getenv()`, not return the env var name as a string
 - CLI creates Writer directly via switch — no god-object BackendFactory
 - `dllog.PrintHeader()` + `dllog.Progress()` + `dllog.Done()` — one line per page, no `fmt.Printf` in `pkg/`
+- **DiscardWriter pattern:** `--mock` mode must create DiscardWriter (zero DB interaction), NOT open a real database. Writer creation goes INSIDE the else branch — see `download-wb-orders-v2/main.go` for reference
 
 **PostgreSQL setup:** `192.168.10.7:15432`, user `postgres`, password from `$PG_PWD`, databases: `wb_data_prod` / `wb_data_test`
 
@@ -208,6 +225,8 @@ cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI →
 | Domain | pkg/ v2 | SQLite adapter | PG adapter | Resume? |
 |--------|---------|---------------|------------|---------|
 | cards | ✅ `pkg/cards/` | ✅ | ✅ | ❌ No (YAGNI) |
+| orders | ✅ `pkg/orders/` | ✅ | ✅ | ❌ No (light) |
+| opsales | ✅ `pkg/opsales/` | ✅ | ✅ | ❌ No (light) |
 | sales | ✅ `pkg/sales/` | ✅ | — | ✅ Date-level |
 | funnel | ✅ `pkg/funnel/` | ✅ | — | Partial |
 | nmreport | ✅ `pkg/nmreport/` | ✅ | — | ✅ Report-level |
