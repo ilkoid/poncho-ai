@@ -534,6 +534,85 @@ type ReportDetailByPeriodResponse struct {
 }
 
 // ============================================================================
+// Statistics API Types (for /api/v1/supplier/orders, /api/v1/supplier/sales)
+// ============================================================================
+
+// OrdersItem represents a single order from WB Statistics API.
+// Endpoint: GET /api/v1/supplier/orders
+// Response is a direct array []OrdersItem (not wrapped in an object).
+// Pagination: lastChangeDate from last row → dateFrom for next page.
+// End signals: HTTP 204 | empty array [].
+// Retention: 90 days.
+type OrdersItem struct {
+	Date            string  `json:"date"`
+	LastChangeDate  string  `json:"lastChangeDate"`
+	WarehouseName   string  `json:"warehouseName"`
+	WarehouseType   string  `json:"warehouseType"`
+	CountryName     string  `json:"countryName"`
+	OblastOkrugName string  `json:"oblastOkrugName"`
+	RegionName      string  `json:"regionName"`
+	SupplierArticle string  `json:"supplierArticle"`
+	NmID            int     `json:"nmId"`
+	Barcode         string  `json:"barcode"`
+	Category        string  `json:"category"`
+	Subject         string  `json:"subject"`
+	Brand           string  `json:"brand"`
+	TechSize        string  `json:"techSize"`
+	IncomeID        int     `json:"incomeID"`
+	IsSupply        bool    `json:"isSupply"`
+	IsRealization   bool    `json:"isRealization"`
+	TotalPrice      float64 `json:"totalPrice"`
+	DiscountPercent int     `json:"discountPercent"`
+	Spp             float64 `json:"spp"`
+	FinishedPrice   float64 `json:"finishedPrice"`
+	PriceWithDisc   float64 `json:"priceWithDisc"`
+	IsCancel        bool    `json:"isCancel"`
+	CancelDate      string  `json:"cancelDate"`
+	Sticker         string  `json:"sticker"`
+	GNumber         string  `json:"gNumber"`
+	Srid            string  `json:"srid"`
+}
+
+// SalesItem represents a single operational sale/return from WB Statistics API.
+// Endpoint: GET /api/v1/supplier/sales
+// Response is a direct array []SalesItem (not wrapped in an object).
+// Pagination: lastChangeDate from last row → dateFrom for next page.
+// End signals: empty array [].
+// Retention: 90 days. Updates every 30 minutes.
+// Key difference from OrdersItem: has paymentSaleAmount + forPay, no isCancel/cancelDate.
+// Primary key: saleID ("S***" = sale, "R***" = return).
+type SalesItem struct {
+	Date              string  `json:"date"`
+	LastChangeDate    string  `json:"lastChangeDate"`
+	WarehouseName     string  `json:"warehouseName"`
+	WarehouseType     string  `json:"warehouseType"`
+	CountryName       string  `json:"countryName"`
+	OblastOkrugName   string  `json:"oblastOkrugName"`
+	RegionName        string  `json:"regionName"`
+	SupplierArticle   string  `json:"supplierArticle"`
+	NmID              int     `json:"nmId"`
+	Barcode           string  `json:"barcode"`
+	Category          string  `json:"category"`
+	Subject           string  `json:"subject"`
+	Brand             string  `json:"brand"`
+	TechSize          string  `json:"techSize"`
+	IncomeID          int     `json:"incomeID"`
+	IsSupply          bool    `json:"isSupply"`
+	IsRealization     bool    `json:"isRealization"`
+	TotalPrice        float64 `json:"totalPrice"`
+	DiscountPercent   int     `json:"discountPercent"`
+	Spp               float64 `json:"spp"`
+	PaymentSaleAmount int     `json:"paymentSaleAmount"`
+	ForPay            float64 `json:"forPay"`
+	FinishedPrice     float64 `json:"finishedPrice"`
+	PriceWithDisc     float64 `json:"priceWithDisc"`
+	SaleID            string  `json:"saleID"`
+	Sticker           string  `json:"sticker"`
+	GNumber           string  `json:"gNumber"`
+	Srid              string  `json:"srid"`
+}
+
+// ============================================================================
 // Funnel Analytics Types (for WB Analytics API v3)
 // ============================================================================
 

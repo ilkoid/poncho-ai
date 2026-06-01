@@ -59,6 +59,10 @@ echo ""
 echo "── Phase 3: Sales & Revenue ──"
 PHASE_START=$SECONDS
 
+### wb-orders v2 (early signal — cart/checkout, updates every 30 min)
+(cd "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" && go run . --config "$CONFIGS/download-wb-orders.yaml") || exit $?
+### wb-opsales v2 (operational sales/returns — preliminary data, updates every 30 min)
+(cd "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" && go run . --config "$CONFIGS/download-wb-opsales.yaml") || exit $?
 ### wb-sales v2
 (cd "$PONCHO/cmd/data-downloaders/download-wb-sales-v2" && go run . --config "$CONFIGS/download-wb-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 (cd "$PONCHO/cmd/data-downloaders/download-wb-region-sales" && go run . --config "$CONFIGS/download-wb-region-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?

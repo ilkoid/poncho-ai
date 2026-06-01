@@ -1625,6 +1625,381 @@ func (c *Client) ReportDetailByPeriodIteratorWithTime(
 }
 
 // ============================================================================
+// Orders (Statistics API — /api/v1/supplier/orders)
+// ============================================================================
+
+// OrdersPageResult представляет результат одной страницы заказов.
+type OrdersPageResult struct {
+	Orders         []OrdersItem
+	HasMore        bool
+	LastChangeDate string // для пагинации: dateFrom следующей страницы
+	StatusCode     int
+}
+
+// OrdersPage получает одну страницу заказов из Statistics API.
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - baseURL: базовый URL Statistics API
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - dateFrom: начало периода (RFC3339: "2026-01-25T00:00:00")
+//   - flag: 0 = все заказы, 1 = только с изменениями (default: 0)
+//
+// Возвращает страницу данных или ошибку. HTTP 204 или пустой массив = конец пагинации.
+func (c *Client) OrdersPage(
+	ctx context.Context,
+	baseURL string,
+	rateLimit int,
+	burst int,
+	dateFrom string,
+	flag int,
+) (*OrdersPageResult, error) {
+	params := url.Values{}
+	params.Set("dateFrom", dateFrom)
+	if flag > 0 {
+		params.Set("flag", fmt.Sprintf("%d", flag))
+	}
+
+	// Rate limiter
+	limiter := c.getOrCreateLimiter("wb_orders", rateLimit, burst)
+	if err := limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter wait: %w", err)
+	}
+
+	reqURL, err := url.Parse(baseURL + "/api/v1/supplier/orders")
+	if err != nil {
+		return nil, fmt.Errorf("invalid url: %w", err)
+	}
+	reqURL.RawQuery = params.Encode()
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", c.apiKey)
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// HTTP 204 = конец пагинации
+	if resp.StatusCode == http.StatusNoContent {
+		return &OrdersPageResult{
+			Orders:     nil,
+			HasMore:    false,
+			StatusCode: 204,
+		}, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	// Handle 429 Too Many Requests — adaptive rate limiting
+	if resp.StatusCode == http.StatusTooManyRequests {
+		serverRetrySec := 1
+		if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
+			if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
+				serverRetrySec = sec
+			}
+		}
+		waitDur := c.adaptiveReduce("wb_orders", serverRetrySec)
+		fmt.Fprintf(os.Stderr, "⚠️  429 for wb_orders, cooling down %v (server: %ds)\n",
+			waitDur.Truncate(time.Second), serverRetrySec)
+		if len(body) > 0 {
+			fmt.Fprintf(os.Stderr, "    429 body: %s\n", string(body))
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(waitDur):
+		}
+		return nil, fmt.Errorf("wb api error: status 429, body: %s", string(body))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Response is direct []OrdersItem (not wrapped in an object)
+	var orders []OrdersItem
+	if err := json.Unmarshal(body, &orders); err != nil {
+		return nil, fmt.Errorf("unmarshal error: %w", err)
+	}
+
+	// Empty array = end of pagination
+	if len(orders) == 0 {
+		return &OrdersPageResult{
+			Orders:     nil,
+			HasMore:    false,
+			StatusCode: 200,
+		}, nil
+	}
+
+	// Extract lastChangeDate from last row for next page
+	lastChangeDate := orders[len(orders)-1].LastChangeDate
+
+	return &OrdersPageResult{
+		Orders:         orders,
+		HasMore:        true,
+		LastChangeDate: lastChangeDate,
+		StatusCode:     200,
+	}, nil
+}
+
+// OrdersIterator итерирует по всем страницам заказов.
+// Использует callback для обработки каждой порции данных (stream processing).
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - baseURL: базовый URL Statistics API
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - dateFrom: начало периода (RFC3339: "2026-01-25T00:00:00")
+//   - callback: функция для обработки каждой страницы (возвращает ошибку для прерывания)
+//
+// Возвращает общее количество обработанных заказов или ошибку.
+func (c *Client) OrdersIterator(
+	ctx context.Context,
+	baseURL string,
+	rateLimit int,
+	burst int,
+	dateFrom string,
+	callback func([]OrdersItem) error,
+) (int, error) {
+	totalCount := 0
+
+	// Retry settings for transient network errors
+	const maxRetries = 3
+	const baseBackoff = 5 * time.Second
+
+	for {
+		var page *OrdersPageResult
+		var err error
+
+		// Retry loop with exponential backoff
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			page, err = c.OrdersPage(ctx, baseURL, rateLimit, burst, dateFrom, 0)
+			if err == nil {
+				break // Success
+			}
+
+			isRetryable := isRetryableError(err)
+			if !isRetryable || attempt == maxRetries-1 {
+				return totalCount, err
+			}
+
+			backoff := baseBackoff * time.Duration(1<<attempt)
+			fmt.Printf("  ⚠️  Сетевая ошибка, повтор #%d через %v: %v\n", attempt+1, backoff, err)
+			time.Sleep(backoff)
+		}
+
+		// End of pagination
+		if !page.HasMore {
+			break
+		}
+
+		// Process rows through callback
+		if err := callback(page.Orders); err != nil {
+			return totalCount, err
+		}
+
+		totalCount += len(page.Orders)
+		dateFrom = page.LastChangeDate
+	}
+
+	return totalCount, nil
+}
+
+// SalesPageResult представляет результат одной страницы оперативных продаж.
+type SalesPageResult struct {
+	Sales          []SalesItem
+	HasMore        bool
+	LastChangeDate string // для пагинации: dateFrom следующей страницы
+	StatusCode     int
+}
+
+// SalesPage получает одну страницу оперативных продаж из Statistics API.
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - baseURL: базовый URL Statistics API
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - dateFrom: начало периода (RFC3339: "2026-01-25T00:00:00")
+//
+// Возвращает страницу данных или ошибку. Пустой массив = конец пагинации.
+func (c *Client) SalesPage(
+	ctx context.Context,
+	baseURL string,
+	rateLimit int,
+	burst int,
+	dateFrom string,
+) (*SalesPageResult, error) {
+	params := url.Values{}
+	params.Set("dateFrom", dateFrom)
+
+	// Rate limiter
+	limiter := c.getOrCreateLimiter("wb_opsales", rateLimit, burst)
+	if err := limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter wait: %w", err)
+	}
+
+	reqURL, err := url.Parse(baseURL + "/api/v1/supplier/sales")
+	if err != nil {
+		return nil, fmt.Errorf("invalid url: %w", err)
+	}
+	reqURL.RawQuery = params.Encode()
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", c.apiKey)
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// HTTP 204 = конец пагинации
+	if resp.StatusCode == http.StatusNoContent {
+		return &SalesPageResult{
+			Sales:      nil,
+			HasMore:    false,
+			StatusCode: 204,
+		}, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	// Handle 429 Too Many Requests — adaptive rate limiting
+	if resp.StatusCode == http.StatusTooManyRequests {
+		serverRetrySec := 1
+		if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
+			if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
+				serverRetrySec = sec
+			}
+		}
+		waitDur := c.adaptiveReduce("wb_opsales", serverRetrySec)
+		fmt.Fprintf(os.Stderr, "⚠️  429 for wb_opsales, cooling down %v (server: %ds)\n",
+			waitDur.Truncate(time.Second), serverRetrySec)
+		if len(body) > 0 {
+			fmt.Fprintf(os.Stderr, "    429 body: %s\n", string(body))
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(waitDur):
+		}
+		return nil, fmt.Errorf("wb api error: status 429, body: %s", string(body))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Response is direct []SalesItem (not wrapped in an object)
+	var sales []SalesItem
+	if err := json.Unmarshal(body, &sales); err != nil {
+		return nil, fmt.Errorf("unmarshal error: %w", err)
+	}
+
+	// Empty array = end of pagination
+	if len(sales) == 0 {
+		return &SalesPageResult{
+			Sales:      nil,
+			HasMore:    false,
+			StatusCode: 200,
+		}, nil
+	}
+
+	// Extract lastChangeDate from last row for next page
+	lastChangeDate := sales[len(sales)-1].LastChangeDate
+
+	return &SalesPageResult{
+		Sales:          sales,
+		HasMore:        true,
+		LastChangeDate: lastChangeDate,
+		StatusCode:     200,
+	}, nil
+}
+
+// SalesIterator итерирует по всем страницам оперативных продаж.
+// Использует callback для обработки каждой порции данных (stream processing).
+//
+// Параметры:
+//   - ctx: контекст для отмены
+//   - baseURL: базовый URL Statistics API
+//   - rateLimit: лимит запросов в минуту
+//   - burst: burst для rate limiter
+//   - dateFrom: начало периода (RFC3339: "2026-01-25T00:00:00")
+//   - callback: функция для обработки каждой страницы (возвращает ошибку для прерывания)
+//
+// Возвращает общее количество обработанных продаж или ошибку.
+func (c *Client) SalesIterator(
+	ctx context.Context,
+	baseURL string,
+	rateLimit int,
+	burst int,
+	dateFrom string,
+	callback func([]SalesItem) error,
+) (int, error) {
+	totalCount := 0
+
+	// Retry settings for transient network errors
+	const maxRetries = 3
+	const baseBackoff = 5 * time.Second
+
+	for {
+		var page *SalesPageResult
+		var err error
+
+		// Retry loop with exponential backoff
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			page, err = c.SalesPage(ctx, baseURL, rateLimit, burst, dateFrom)
+			if err == nil {
+				break // Success
+			}
+
+			isRetryable := isRetryableError(err)
+			if !isRetryable || attempt == maxRetries-1 {
+				return totalCount, err
+			}
+
+			backoff := baseBackoff * time.Duration(1<<attempt)
+			fmt.Printf("  ⚠️  Сетевая ошибка, повтор #%d через %v: %v\n", attempt+1, backoff, err)
+			time.Sleep(backoff)
+		}
+
+		// End of pagination
+		if !page.HasMore {
+			break
+		}
+
+		// Process rows through callback
+		if err := callback(page.Sales); err != nil {
+			return totalCount, err
+		}
+
+		totalCount += len(page.Sales)
+		dateFrom = page.LastChangeDate
+	}
+
+	return totalCount, nil
+}
+
+// ============================================================================
 // Product Prices (Discounts-Prices API)
 // ============================================================================
 

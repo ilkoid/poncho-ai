@@ -258,6 +258,16 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+		// Create orders table (WB Statistics API — /api/v1/supplier/orders)
+		_, err = r.db.Exec(GetOrdersSchemaSQL())
+		if err != nil {
+			return err
+		}
+		// Create operational sales table (WB Statistics API — /api/v1/supplier/sales)
+		_, err = r.db.Exec(GetOpsalesSchemaSQL())
+		if err != nil {
+			return err
+		}
 		// Create product prices table (WB Discounts-Prices API — /api/v2/list/goods/filter)
 		_, err = r.db.Exec(GetPricesSchemaSQL())
 		if err != nil {

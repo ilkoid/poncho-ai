@@ -1,7 +1,7 @@
 # dev_v2_postgres.md — V2 Downloader Migration Guide (Dual-Backend: SQLite + PostgreSQL)
 
-**Дата**: 2026-05-31
-**Статус**: Актуальный (на основе опыта cards v2 migration)
+**Дата**: 2026-06-02
+**Статус**: Актуальный (на основе опыта cards v2, sales v2, orders v2)
 **Приоритет**: Доменный — побеждает `dev_utils.md` при конфликте по вопросам dual-backend и PostgreSQL
 
 **Связанные документы:**
@@ -189,6 +189,72 @@ type Config struct {
 
 Если resume не нужен — не добавляй. Writer interface без cursor-методов = проще.
 
+### 1.8. Mock Safety: DiscardWriter
+
+**`--mock` режим НИКОГДА не должен обращаться к базе данных.** Mock подменяет источник данных (API), но Writer должен быть безопасным.
+
+```go
+// pkg/<domain>/mock.go — DiscardWriter: считает, но не пишет
+type DiscardWriter struct {
+    mu    sync.Mutex
+    saved int
+}
+func (w *DiscardWriter) SaveOrders(_ context.Context, items []wb.OrdersItem) (int, error) {
+    w.mu.Lock()
+    w.saved += len(items)
+    w.mu.Unlock()
+    return len(items), nil
+}
+func (w *DiscardWriter) DeleteOrdersOlderThan(_ context.Context, _ time.Time) (int64, error) {
+    return 0, nil
+}
+```
+
+**CLI wiring — mock mode НЕ создаёт DB writer:**
+```go
+var writer domain.Writer
+var cleanup func()
+
+if *mockMode {
+    writer = &domain.DiscardWriter{}  // ← no DB at all
+    cleanup = func() {}
+} else {
+    writer, cleanup, err = createWriter(ctx, cfg.Storage)
+}
+defer cleanup()
+```
+
+**Почему:** предыдущие v2 загрузчики (cards, sales) в `--mock` режиме открывают реальную БД и пишут в неё. Это уже привело к потере ~30,900 записей продаж (`--mock` + `rewrite: true` = удалил реальные данные и вставил фейковые).
+
+**Правило:** `--mock` = mock source + DiscardWriter → ноль DB-взаимодействий.
+
+### 1.9. Mandatory README
+
+Каждый v2 загрузчик **обязан** иметь `README.md` с минимальной структурой:
+
+```markdown
+# WB <Domain> Downloader v2
+
+Downloads <domain> data from WB <API> API.
+
+## Usage
+go run . --mock                                    # mock mode, no DB
+go run . --mock --db /tmp/test.db                  # mock + test SQLite
+go run . --dry-run --db /tmp/test.db --config ...  # real API, no writes
+go run . --config config.yaml                      # production (user only!)
+
+## Configuration
+(see config.yaml)
+
+## Database Schema
+Table: <table> (...)
+
+## Rate Limiting
+<rate> req/min, burst <burst> (WB <API> API)
+```
+
+**Цель:** каждый загрузчик самодокументируем. Пользователь видит безопасные примеры запуска без чтения кода.
+
 ---
 
 ## 2. Антипаттерны (чего избегать)
@@ -350,6 +416,49 @@ t, _ := time.Parse(time.RFC3339, *lastDT)
 
 **Общее правило:** любой `SELECT MAX(...)` / `SELECT MIN(...)` / `SELECT SUM(...)` — scan в pointer type (`*string`, `*int`, `*float64`). Не-value types сломаются на NULL.
 
+### 2.10. ❌ Mock Mode Writing to Production DB
+
+```go
+// ❌ НЕ ДЕЛАТЬ: createWriter вызывается ВНЕ зависимости от mockMode
+writer, cleanup, err := createCardsWriter(ctx, cfg.Storage)  // открывает реальную БД!
+// ...
+if *mockMode {
+    source = cards.NewMockCardsSource(250)  // mock source, но writer — реальный!
+}
+dl := cards.NewDownloader(source, writer, opts)  // ← пишет в /var/db/wb-sales.db!
+```
+
+**Наш опыт:** `--mock` + `rewrite: true` в конфиге → загрузчик удалил ~30,900 реальных записей продаж и вставил 250 фейковых. CLAUDE.md уже предупреждает: "`--mock` НЕ является read-only режимом!"
+
+```go
+// ✅ Правильно: mock mode не создаёт DB writer
+if *mockMode {
+    writer = &domain.DiscardWriter{}
+    cleanup = func() {}
+} else {
+    writer, cleanup, err = createWriter(ctx, cfg.Storage)
+}
+```
+
+**Правило:** `--mock` = ни одного обращения к storage. Writer подменяется, не только Source.
+
+### 2.11. ❌ Test Commands Without Explicit DB Path
+
+```bash
+# ❌ НЕ ДЕЛАТЬ: без --db используется default из конфига (/var/db/wb-sales.db)
+go run . --mock
+go run . --dry-run
+
+# ✅ Правильно: ВСЕГДА явный путь к тестовой базе
+go run . --mock --db /tmp/test-<domain>.db
+go run . --dry-run --db /tmp/test-<domain>.db
+go run . --mock --backend postgres --pg-database wb_data_test
+```
+
+**Правило:** `pkg/config/utility.go` содержит hardcoded default `/var/db/wb-sales.db`. Без `--db` флага любая команда (даже `--mock`!) может попасть в production. CLI `--db` всегда перекрывает default.
+
+**Verification commands** в README и чеклистах обязаны содержать `--db /tmp/...` или `--pg-database <test>`.
+
 ---
 
 ## 3. PostgreSQL: SQL Translation Cheat Sheet
@@ -390,8 +499,8 @@ pkg/<domain>/                                    # NEW: domain package
 ├── types.go                                     # Source, Writer, Options, Result
 ├── source.go                                    # WBSource adapter (если нужен)
 ├── downloader.go                                # Downloader + Run()
-├── mock.go                                      # MockSource
-└── downloader_test.go                           # ≥4 тестов
+├── mock.go                                      # MockSource + DiscardWriter
+└── downloader_test.go                           # ≥4 тестов (in-memory mock writers)
 
 pkg/storage/postgres/                            # ADD: PG adapter
 ├── pool.go                                      # EXISTS: shared pool wrapper
@@ -399,11 +508,12 @@ pkg/storage/postgres/                            # ADD: PG adapter
 └── <domain>_repo.go                             # NEW: Pg<Domain>Repo
 
 pkg/storage/sqlite/                              # MODIFY: add assertion
-└── <domain>_repo.go                             # ADD: var _ <domain>.Writer = (*...)(nil)
+└── <domain>_repo.go                             # ADD: var _ <domain>.Writer = (*SQLiteSalesRepository)(nil)
 
 cmd/data-downloaders/download-<domain>-v2/       # NEW: CLI driver
-├── main.go                                      # ~120 строк
-└── config.yaml                                  # V2StorageConfig + domain settings
+├── main.go                                      # ~120-130 строк
+├── config.yaml                                  # V2StorageConfig + domain settings + filter
+└── README.md                                    # MANDATORY: usage, schema, safe examples
 
 pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reuse as-is)
 ```
@@ -417,8 +527,8 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 - [ ] Writer содержит **только** методы, вызываемые в `Run()` — не больше
 - [ ] Нет cursor/resume методов, если домен "лёгкий" (<100k записей, <10 мин)
 - [ ] `downloader.go` — поля: Source interface + Writer interface, не concrete types
-- [ ] `mock.go` — MockSource с детерминированными данными
-- [ ] `downloader_test.go` — ≥4 кейса (Basic, DryRun, Limit, ContextCancel)
+- [ ] `mock.go` — MockSource с детерминированными данными + **DiscardWriter** (no-op, counts only)
+- [ ] `downloader_test.go` — ≥4 кейса (Basic, DryRun, Limit/Rewrite, ContextCancel)
 - [ ] Нет `fmt.Printf` / `log.*` — только `OnProgress` callback
 - [ ] Нет `*sqlite.*` / `*wb.Client` в полях struct
 
@@ -438,8 +548,9 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 - [ ] Compile-time assertion: `var _ <domain>.Writer = (*SQLiteSalesRepository)(nil)`
 
 ### cmd/.../download-<domain>-v2/ (драйвер)
-- [ ] `main.go` ~100-120 строк: flags → config → backend switch → DI → Run
-- [ ] `config.yaml` с `V2StorageConfig` для выбора бэкенда
+- [ ] `main.go` ~120-130 строк: flags → config → backend switch → DI → Run
+- [ ] `config.yaml` с `V2StorageConfig` для выбора бэкенда + `FunnelFilterConfig` для фильтрации
+- [ ] **Mock safety:** `--mock` режим использует `DiscardWriter`, НЕ создаёт реальный DB writer
 - [ ] Флаги: `--config`, `--db`, `--backend`, `--pg-database`, `--mock`, `--dry-run`, `--limit`
 - [ ] Date-based домены: `--days`, `--begin`, `--end` + `resolveDateRange()` (days от вчерашнего дня)
 - [ ] Нет `--resume` для лёгких доменов
@@ -447,12 +558,17 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 - [ ] `resolveAPIKey()` использует `os.Getenv()`, не возвращает имя переменной
 - [ ] `dllog.PrintHeader()` + `dllog.Progress()` + `dllog.Done()`
 - [ ] Ctrl+C через `signal.NotifyContext()`
+- [ ] **`README.md` — mandatory** (usage, config, schema, rate limits, safe examples)
 
 ### Verification
+**⚠️ Safety rule:** ALL test commands use `--db /tmp/test-<domain>.db` — НИКОГДА не `/var/db/`.
+
 - [ ] `go build ./pkg/<domain>/` — компилируется
-- [ ] `go test ./pkg/<domain>/ -v` — все PASS
-- [ ] `go run ./cmd/.../download-<domain>-v2/ --mock --backend=sqlite --db=/tmp/test.db`
+- [ ] `go test ./pkg/<domain>/ -v` — все PASS (in-memory mock writers, no DB)
+- [ ] `go run ./cmd/.../download-<domain>-v2/ --mock` — DiscardWriter, **no DB file created at all**
+- [ ] `go run ./cmd/.../download-<domain>-v2/ --mock --db /tmp/test.db --backend=sqlite`
 - [ ] `go run ./cmd/.../download-<domain>-v2/ --mock --backend=postgres --pg-database=wb_data_test`
+- [ ] `go run ./cmd/.../download-<domain>-v2/ --dry-run --db /tmp/test.db --config ...`
 - [ ] `go build ./cmd/.../download-<domain>/` — v1 не сломан
 - [ ] Data parity: mock download → сравнить SQLite vs PostgreSQL
 
@@ -479,20 +595,23 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 
 ## 7. Quick Reference: Наши домены
 
-| Домен | Writer методов | Resume? | Pagination | PG адаптер |
-|-------|---------------|---------|------------|------------|
-| cards | 2 | ❌ Нет | Cursor (WB API) | ✅ Готов |
-| sales | 7 | ✅ Да (date-level) | Date-range iterator | ✅ Готов |
-| funnel | 5 | Partial (time-based) | Batch-by-nmIDs | — |
-| nmreport | 5 | ✅ Да (report-level) | Async CSV | — |
-| stocks | — | — | — | — |
-| feedbacks | — | — | — | — |
-| region-sales | — | — | — | — |
-| promotion | — | — | — | — |
+| Домен | Writer методов | Resume? | Pagination | PG адаптер | Mock Safety |
+|-------|---------------|---------|------------|------------|-------------|
+| cards | 2 | ❌ Нет | Cursor (WB API) | ✅ Готов | ⚠️ Legacy (пишет в БД) |
+| sales | 7 | ✅ Да (date-level) | Date-range iterator | ✅ Готов | ⚠️ Legacy (пишет в БД) |
+| orders | 2 | ❌ Нет | lastChangeDate iterator | 🔜 Planned | ✅ DiscardWriter |
+| funnel | 5 | Partial (time-based) | Batch-by-nmIDs | — | — |
+| nmreport | 5 | ✅ Да (report-level) | Async CSV | — | — |
+| stocks | — | — | — | — | — |
+| feedbacks | — | — | — | — | — |
+| region-sales | — | — | — | — | — |
+| promotion | — | — | — | — | — |
+
+**Примечание:** cards и sales имеют ⚠️ Legacy mock safety — `--mock` режим открывает реальную БД. Новые домены (orders+) обязаны использовать DiscardWriter. Обратная миграция cards/sales на DiscardWriter — в backlog.
 
 **Порядок миграции:** карточки ✅ → stocks → feedbacks → region-sales → promotion. Следуй правилу из dev_utils.md: мигрируй когда нужен фикс или фича, не массово.
 
 ---
 
-**Last Updated:** 2026-05-31
-**Version:** 1.2 (sales v2 production config, from/to date support, days-from-yesterday)
+**Last Updated:** 2026-06-02
+**Version:** 1.3 (mock safety: DiscardWriter, mandatory README, test DB safety, orders domain, article filtering)
