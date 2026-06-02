@@ -175,8 +175,8 @@ func resolveAPIKey(cfg *Config) string {
 	if cfg.WB.APIKey != "" {
 		return cfg.WB.APIKey
 	}
-	// Default: WB_STAT_API_KEY (Statistics API uses a separate key)
-	return os.Getenv("WB_STAT_API_KEY")
+	// Default: WB_STAT (Statistics API uses a separate key)
+	return os.Getenv("WB_STAT")
 }
 
 func loadConfig(path string) (*Config, error) {

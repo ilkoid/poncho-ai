@@ -1,11 +1,11 @@
 wb:
-  api_key_env: "WB_STAT_API_KEY"
+  api_key_env: "WB_STAT"           # env var with WB Statistics API key
   rate_limit: 1
   burst_limit: 10
   endpoint: "https://statistics-api.wildberries.ru"
 
 orders:
-  days: 90                     # дней от вчерашнего (default: 90, retention WB API)
+  days: 89                     # дней от вчерашнего (default: 90, retention WB API)
   # from: "2026-03-01"         # точная начальная дата (приоритет над days)
   # to: "2026-06-01"           # точная конечная дата (приоритет над days)
   rewrite: true                # удалить старые данные за период перед загрузкой
@@ -14,7 +14,7 @@ orders:
   max_backoff_seconds: 60      # cap for exponential backoff
 
 storage:
-  backend: "sqlite"
+  backend: "postgres"
   db_path: "/var/db/wb-sales.db"
 
 filter:
