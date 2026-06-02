@@ -116,6 +116,22 @@ func createCardsWriter(ctx, cfg config.V2StorageConfig) (cards.CardsWriter, func
 
 **Почему не BackendFactory:** factory — god-interface, нарушающий ISP. CLI знает какой Writer ему нужен — пусть сам создаёт.
 
+**DSN construction fallback** (`pgconfig.go: GetEffectiveDSN()`):
+```
+pg_dsn field non-empty → used as-is (full DSN override)
+pg_dsn field empty     → BuildPgDSN() assembles from:
+    host:     PGHOST env || "192.168.10.7"
+    port:     PGPORT env || "15432"
+    user:     "postgres"
+    password: os.Getenv(pg_password_env)  // e.g. PG_PWD
+    database: pg_database field            // e.g. "wb_data_prod"
+```
+
+```go
+// Example DSN produced by BuildPgDSN():
+// postgres://postgres:MySecret@192.168.10.7:15432/wb_data_prod?sslmode=disable
+```
+
 ### 1.4. pgxpool — Native PostgreSQL Driver
 
 ```go
@@ -128,6 +144,8 @@ pool, err := pgxpool.New(ctx, dsn)  // connection pool из коробки
 - Native connection pooling (MaxConns=10, MinConns=2)
 - `pgx.ErrNoRows` вместо `sql.ErrNoRows`
 - Лучшую производительность (binary protocol)
+
+**⚠️ Dual-backend error handling:** при наличии Reader-интерфейсов (не Writer), `sql.ErrNoRows` (SQLite) и `pgx.ErrNoRows` (PostgreSQL) — разные типы. Используйте `errors.Is()` для portable проверок. Для текущих Writer-интерфейсов (Save/Count) это не актуально — они не делают single-row lookups.
 
 ### 1.5. dllog для единого вывода
 
@@ -179,7 +197,7 @@ type Config struct {
 }
 ```
 
-### 1.6a. Config YAML: Полный и Прокомментированный
+### 1.7. Config YAML: Полный и Прокомментированный
 
 Каждый v2 загрузчик **обязан** иметь `config.yaml` с **комментариями на каждый параметр** — без «полупустых» yaml-файлов. Пользователь должен понимать назначение, допустимые значения и дефолты без чтения Go-кода.
 
@@ -252,7 +270,7 @@ storage:
   backend: "postgres"
 ```
 
-### 1.7. YAGNI: Не добавлять Resume без необходимости
+### 1.8. YAGNI: Не добавлять Resume без необходимости
 
 **Опыт cards:** cursor persistence добавил ~100 строк кода, JSON-сериализацию курсора, отдельную таблицу meta, 2 лишних метода в интерфейсе — и привёл к потере 391 карточки при `--resume`.
 
@@ -262,7 +280,7 @@ storage:
 
 Если resume не нужен — не добавляй. Writer interface без cursor-методов = проще.
 
-### 1.8. Mock Safety: DiscardWriter
+### 1.9. Mock Safety: DiscardWriter
 
 **`--mock` режим НИКОГДА не должен обращаться к базе данных.** Mock подменяет источник данных (API), но Writer должен быть безопасным.
 
@@ -301,7 +319,7 @@ defer cleanup()
 
 **Правило:** `--mock` = mock source + DiscardWriter → ноль DB-взаимодействий.
 
-### 1.9. Mandatory README
+### 1.10. Mandatory README
 
 Каждый v2 загрузчик **обязан** иметь `README.md` с минимальной структурой:
 
@@ -491,29 +509,30 @@ t, _ := time.Parse(time.RFC3339, *lastDT)
 
 ### 2.10. ❌ Mock Mode Writing to Production DB
 
-```go
-// ❌ НЕ ДЕЛАТЬ: createWriter вызывается ВНЕ зависимости от mockMode
-writer, cleanup, err := createCardsWriter(ctx, cfg.Storage)  // открывает реальную БД!
-// ...
-if *mockMode {
-    source = cards.NewMockCardsSource(250)  // mock source, но writer — реальный!
-}
-dl := cards.NewDownloader(source, writer, opts)  // ← пишет в /var/db/wb-sales.db!
-```
-
 **Наш опыт:** `--mock` + `rewrite: true` в конфиге → загрузчик удалил ~30,900 реальных записей продаж и вставил 250 фейковых. CLAUDE.md уже предупреждает: "`--mock` НЕ является read-only режимом!"
 
-```go
-// ✅ Правильно: mock mode не создаёт DB writer
-if *mockMode {
-    writer = &domain.DiscardWriter{}
-    cleanup = func() {}
-} else {
-    writer, cleanup, err = createWriter(ctx, cfg.Storage)
-}
+Root cause: cards/sales загрузчики открывают реальную БД **до** проверки `--mock`. Writer создаётся unconditional — mock подменяет только Source, не Writer.
+
+**Решение:** см. §1.9 (Mock Safety: DiscardWriter) — полный шаблон безопасного wiring. `--mock` = mock source + DiscardWriter → ноль DB-взаимодействий.
+
+**⚠️ Known tech debt:** cards и sales v2 до сих пор используют legacy mock safety (открывают БД в `--mock`). Обратная миграция на DiscardWriter — в backlog.
+
+### 2.11. ❌ Test Commands Without Explicit DB Path
+
+```bash
+# ❌ НЕ ДЕЛАТЬ: без --db используется default из конфига (/var/db/wb-sales.db)
+go run . --mock
+go run . --dry-run
+
+# ✅ Правильно: ВСЕГДА явный путь к тестовой базе
+go run . --mock --db /tmp/test-<domain>.db
+go run . --dry-run --db /tmp/test-<domain>.db
+go run . --mock --backend postgres --pg-database wb_data_test
 ```
 
-**Правило:** `--mock` = ни одного обращения к storage. Writer подменяется, не только Source.
+**Правило:** `pkg/config/utility.go` содержит hardcoded default `/var/db/wb-sales.db`. Без `--db` флага любая команда (даже `--mock`!) может попасть в production. CLI `--db` всегда перекрывает default.
+
+**Verification commands** в README и чеклистах обязаны содержать `--db /tmp/...` или `--pg-database <test>`.
 
 ### 2.12. ❌ Placeholder Count Mismatch (Mock не ловит)
 
@@ -555,23 +574,6 @@ func TestInsertPlaceholdersMatch(t *testing.T) {
     assert.Equal(t, colCount, qCount+1)  // +1 для CURRENT_TIMESTAMP
 }
 ```
-
-### 2.11. ❌ Test Commands Without Explicit DB Path
-
-```bash
-# ❌ НЕ ДЕЛАТЬ: без --db используется default из конфига (/var/db/wb-sales.db)
-go run . --mock
-go run . --dry-run
-
-# ✅ Правильно: ВСЕГДА явный путь к тестовой базе
-go run . --mock --db /tmp/test-<domain>.db
-go run . --dry-run --db /tmp/test-<domain>.db
-go run . --mock --backend postgres --pg-database wb_data_test
-```
-
-**Правило:** `pkg/config/utility.go` содержит hardcoded default `/var/db/wb-sales.db`. Без `--db` флага любая команда (даже `--mock`!) может попасть в production. CLI `--db` всегда перекрывает default.
-
-**Verification commands** в README и чеклистах обязаны содержать `--db /tmp/...` или `--pg-database <test>`.
 
 ---
 
@@ -664,7 +666,7 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 ### cmd/.../download-<domain>-v2/ (драйвер)
 - [ ] `main.go` ~120-130 строк: flags → config → backend switch → DI → Run
 - [ ] `config.yaml` с `V2StorageConfig` для выбора бэкенда + `FunnelFilterConfig` для фильтрации
-- [ ] `config.yaml` — **полный и прокомментированный** (§1.6a): каждый параметр с комментарием, секции с `====` заголовками, swagger-источник для rate limits, приоритет env vars
+- [ ] `config.yaml` — **полный и прокомментированный** (§1.7): каждый параметр с комментарием, секции с `====` заголовками, swagger-источник для rate limits, приоритет env vars
 - [ ] **Mock safety:** `--mock` режим использует `DiscardWriter`, НЕ создаёт реальный DB writer
 - [ ] Флаги: `--config`, `--db`, `--backend`, `--pg-database`, `--mock`, `--dry-run`, `--limit`
 - [ ] Date-based домены: `--days`, `--begin`, `--end` + `resolveDateRange()` (days от вчерашнего дня)
@@ -715,7 +717,8 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 |-------|---------------|---------|------------|------------|-------------|
 | cards | 2 | ❌ Нет | Cursor (WB API) | ✅ Готов | ⚠️ Legacy (пишет в БД) |
 | sales | 7 | ✅ Да (date-level) | Date-range iterator | ✅ Готов | ⚠️ Legacy (пишет в БД) |
-| orders | 2 | ❌ Нет | lastChangeDate iterator | 🔜 Planned | ✅ DiscardWriter |
+| orders | 2 | ❌ Нет | lastChangeDate iterator | ✅ Готов | ✅ DiscardWriter |
+| prices | 2 | ❌ Нет | Offset (limit/offset) | ✅ Готов | ✅ DiscardWriter |
 | funnel | 5 | Partial (time-based) | Batch-by-nmIDs | — | — |
 | nmreport | 5 | ✅ Да (report-level) | Async CSV | — | — |
 | stocks | — | — | — | — | — |
@@ -730,4 +733,4 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 ---
 
 **Last Updated:** 2026-06-03
-**Version:** 1.5 (§1.6a: config.yaml must be fully commented with swagger sources, env var priorities, and section headers)
+**Version:** 1.6 (review fixes: renumber §1.6a→§1.7, deduplicate §2.10/§1.9, swap §2.11/§2.12, add DSN construction, ErrNoRows note, update domain table)
