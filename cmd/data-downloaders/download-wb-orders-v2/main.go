@@ -175,10 +175,6 @@ func resolveAPIKey(cfg *Config) string {
 	if cfg.WB.APIKey != "" {
 		return cfg.WB.APIKey
 	}
-	if cfg.WB.Endpoint != "" {
-		// Endpoint field is used as api_key_env in cards config pattern
-		return ""
-	}
 	// Default: WB_STAT_API_KEY (Statistics API uses a separate key)
 	return os.Getenv("WB_STAT_API_KEY")
 }
