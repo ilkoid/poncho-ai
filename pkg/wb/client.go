@@ -117,6 +117,7 @@ func isRetryableError(err error) bool {
 		"broken pipe",
 		"EOF",
 		"timeout",
+		"deadline exceeded", // context.DeadlineExceeded from http.Client.Timeout
 		"temporary failure",
 		"stream error",       // HTTP/2 INTERNAL_ERROR from peer (large responses)
 		"status 429",         // Rate limited â adaptive limiter handles cooldown
