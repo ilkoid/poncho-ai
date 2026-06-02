@@ -12,7 +12,7 @@
 #   --dry-run                   real API, no DB writes
 
 wb:
-  api_key_env: "WB_STAT_API_KEY"   # env var with WB Statistics API key
+  api_key_env: "WB_STAT"              # env var with WB Statistics API key
   rate_limit: 1                     # req/min (WB Statistics API limit)
   burst_limit: 10                   # burst for rate limiter
   endpoint: "https://statistics-api.wildberries.ru"
@@ -44,7 +44,7 @@ opsales:
 # ⚠️  Для тестирования ВСЕГДА используй --db /tmp/test.db или --pg-database wb_data_test
 # ⚠️  /var/db — READ-ONLY для Claude, утилиты туда пишет только пользователь вручную
 storage:
-  backend: "sqlite"
+  backend: "postgres"
   db_path: "/var/db/wb-sales.db"
   # pg_dsn: ""                      # полный DSN (опционально, перекрывает pg_database)
   # pg_database: "wb_data_prod"     # имя базы PostgreSQL
