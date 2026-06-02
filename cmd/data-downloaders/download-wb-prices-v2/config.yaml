@@ -1,0 +1,57 @@
+# ============================================================================
+# WB Prices Downloader v2 — полная конфигурация
+# ============================================================================
+# Используется pkg/config: WBClientConfig, V2StorageConfig + локальная pricesConfig
+#
+# API:    WB Discounts-Prices API (discounts-prices-api.wildberries.ru)
+# Метод:  GET /api/v2/list/goods/filter
+# Тип:    Offset-пагинация, max 1000 товаров на страницу
+# Snapshot: одна загрузка = срез цен на текущую дату (YYYY-MM-DD)
+#
+# Rate limits (swagger): 10 req/6sec (~100 req/min), burst 5
+
+# ============================================================================
+# WB API клиент — общий для всех WB-утилит
+# ============================================================================
+wb:
+  api_key: ""                  # Прямой API ключ (не рекомендуется — лучше через env)
+  base_url: ""                 # Переопределение Discounts-Prices API URL (пусто = дефолт)
+  rate_limit: 100              # Базовый rate limit (req/min) — переопределяется в prices.rate_limit
+  burst: 5                     # Базовый burst — переопределяется в prices.burst_limit
+  timeout: "30s"               # HTTP timeout на один запрос
+
+# ============================================================================
+# Цены — доменная конфигурация
+# ============================================================================
+prices:
+  api_key_env: "WB_API_KEY"    # Env var с API ключом (Content/Analytics/Ad key)
+                                # Приоритет: wb.api_key > prices.api_key_env > WB_API_KEY
+
+  # --- Двухуровневый adaptive rate limiting ---
+  # Swagger: 10 req/6sec (~100 req/min), burst 5
+  #
+  # desired rate — целевая скорость (можно превышать swagger — limiter обработает 429)
+  # api rate — swagger-documented floor (recovery после 429)
+  #
+  # Цикл: desired → 429 backoff → api floor (после 5 OKs) → probe desired (после probe_after OKs)
+  rate_limit: 100               # Desired: запросов в минуту
+  burst_limit: 5                # Desired: burst размер
+  api_rate_limit: 100           # API floor: запросов в минуту (swagger)
+  api_burst_limit: 5            # API floor: burst (swagger)
+
+  # --- Adaptive recovery ---
+  adaptive_probe_after: 10     # OKs на api floor перед probe desired rate
+  max_backoff_seconds: 60      # Максимальный backoff при 429 (секунды)
+
+# ============================================================================
+# Хранение — выбор бэкенда (SQLite или PostgreSQL)
+# ============================================================================
+storage:
+  backend: "postgres"          # "sqlite" (default) | "postgres"
+  db_path: "/var/db/wb-sales.db"  # Путь к SQLite файлу (при backend=sqlite)
+
+  # --- PostgreSQL (используется при backend=postgres) ---
+  pg_dsn: ""                   # Полный DSN (пусто = собрать из env vars через BuildPgDSN)
+  pg_database: "wb_data_prod"  # Имя базы (wb_data_prod | wb_data_test)
+  pg_password_env: "PG_PWD"   # Env var с паролем PostgreSQL
+                                # Host/port: 192.168.10.7:15432 (default, override через PGHOST/PGPORT)

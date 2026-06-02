@@ -179,6 +179,79 @@ type Config struct {
 }
 ```
 
+### 1.6a. Config YAML: Полный и Прокомментированный
+
+Каждый v2 загрузчик **обязан** иметь `config.yaml` с **комментариями на каждый параметр** — без «полупустых» yaml-файлов. Пользователь должен понимать назначение, допустимые значения и дефолты без чтения Go-кода.
+
+**Требования:**
+- Каждый параметр — с комментарием (`# ...`) на той же или предыдущей строке
+- Для rate limits — указать swagger-источник и двухуровневую логику (desired vs api floor)
+- Для env vars — указать имя переменной и что она содержит
+- Для storage — описать оба бэкенда и когда какой используется
+- Секции разделены `====` заголовками для сканируемости
+- Домен-специфичные параметры (например, `days` для orders, `api_key_env` для cards) — с объяснением что и зачем
+
+**Минимальная структура:**
+```yaml
+# <Domain> Downloader v2 — полная конфигурация
+# Используется: <список pkg/config типов>
+#
+# API: <API name> (<base URL>)
+# Endpoint: <method> <path>
+# Pagination: <тип>, <max per page>
+# Rate: <swagger rate> (swagger)
+
+# ============================================================================
+# WB API клиент — общий для всех WB-утилит
+# ============================================================================
+wb:
+  api_key: ""                  # Прямой API ключ (не рекомендуется — лучше через env)
+  base_url: ""                 # Переопределение API URL (пусто = дефолт)
+  rate_limit: 100              # Базовый rate limit (req/min)
+  burst: 5                     # Базовый burst
+  timeout: "30s"               # HTTP timeout
+
+# ============================================================================
+# <Домен> — доменная конфигурация
+# ============================================================================
+<domain>:
+  api_key_env: "WB_API_KEY"   # Env var с API ключом
+                                # Приоритет: api_key > api_key_env > WB_API_KEY
+
+  # Двухуровневый adaptive rate limiting
+  rate_limit: 100              # Desired: запросов в минуту
+  burst_limit: 5               # Desired: burst
+  api_rate_limit: 100          # API floor: запросов в минуту (swagger)
+  api_burst_limit: 5           # API floor: burst (swagger)
+  adaptive_probe_after: 10    # OKs на api floor перед probe desired
+  max_backoff_seconds: 60     # Максимальный backoff при 429
+
+# ============================================================================
+# Хранение — выбор бэкенда
+# ============================================================================
+storage:
+  backend: "postgres"          # "sqlite" (default) | "postgres"
+  db_path: "/var/db/wb-sales.db"  # Путь к SQLite (при backend=sqlite)
+  pg_dsn: ""                   # Полный DSN (пусто = собрать из env vars)
+  pg_database: "wb_data_prod"  # Имя PG базы (wb_data_prod | wb_data_test)
+  pg_password_env: "PG_PWD"   # Env var с паролем PG
+```
+
+**Контрпример (❌ НЕ делать):**
+```yaml
+# ❌ Полупустой конфиг без комментариев — пользователь не понимает параметры
+wb:
+  api_key: ""
+  timeout: 30s
+
+prices:
+  api_key_env: "WB_API_KEY"
+  rate_limit: 100
+
+storage:
+  backend: "postgres"
+```
+
 ### 1.7. YAGNI: Не добавлять Resume без необходимости
 
 **Опыт cards:** cursor persistence добавил ~100 строк кода, JSON-сериализацию курсора, отдельную таблицу meta, 2 лишних метода в интерфейсе — и привёл к потере 391 карточки при `--resume`.
@@ -442,6 +515,47 @@ if *mockMode {
 
 **Правило:** `--mock` = ни одного обращения к storage. Writer подменяется, не только Source.
 
+### 2.12. ❌ Placeholder Count Mismatch (Mock не ловит)
+
+```go
+// ❌ БАГ: 28 колонок, но 26 '?' — sqlite3.PrepareContext падает в runtime
+INSERT OR REPLACE INTO orders (
+    srid, order_date, last_change_date, ...  -- 28 columns
+) VALUES (?,?,?,?,...,?)  -- только 26 '?' + CURRENT_TIMESTAMP = 27 ≠ 28
+```
+
+**Mock-тесты НЕ ловят этот баг**, потому что:
+1. `DiscardWriter` не выполняет SQL — он просто считает записи
+2. Compile-time assertion (`var _ Writer = (*Repo)(nil)`) проверяет только интерфейс, не содержимое SQL
+3. In-memory тесты с `sql.Open("sqlite3", ":memory:")` проходят — Prepare не вызывается, если тест мокает Writer
+
+**Наш опыт (orders v2):** `--mock` прошёл успешно, но реальный запуск упал с `27 values for 28 columns`. Тот же баг повторился дважды: сначала в PostgreSQL-адаптере (commit `ccf5fdd`), потом в SQLite.
+
+**✅ Правило: после написания INSERT/UPSERT — сверить count:**
+
+```bash
+# Быстрая проверка: подсчитать '?' в VALUES и сравнить с числом колонок
+# SQLite
+sed -n '/VALUES/,/)/p' pkg/storage/sqlite/<domain>_repo.go | tr -cd '?' | wc -c
+# Должно быть: (число колонок) - (число CURRENT_TIMESTAMP/функций)
+
+# PostgreSQL
+sed -n '/VALUES/,/)/p' pkg/storage/postgres/<domain>_repo.go | grep -oP '\$\d+' | sort -t'$' -k1 -n | tail -1
+# Должно быть: $N где N = (число колонок) - (число SQL-функций)
+```
+
+**Или программно — добавить sanity-тест:**
+```go
+func TestInsertPlaceholdersMatch(t *testing.T) {
+    // Считаем колонки в INSERT
+    colCount := strings.Count(insertOrderSQL[:strings.Index(insertOrderSQL, "VALUES")], ",") + 1
+    // Считаем '?' плейсхолдеры
+    qCount := strings.Count(insertOrderSQL[strings.Index(insertOrderSQL, "VALUES"):], "?")
+    // CURRENT_TIMESTAMP / TO_CHAR не считаются
+    assert.Equal(t, colCount, qCount+1)  // +1 для CURRENT_TIMESTAMP
+}
+```
+
 ### 2.11. ❌ Test Commands Without Explicit DB Path
 
 ```bash
@@ -550,6 +664,7 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 ### cmd/.../download-<domain>-v2/ (драйвер)
 - [ ] `main.go` ~120-130 строк: flags → config → backend switch → DI → Run
 - [ ] `config.yaml` с `V2StorageConfig` для выбора бэкенда + `FunnelFilterConfig` для фильтрации
+- [ ] `config.yaml` — **полный и прокомментированный** (§1.6a): каждый параметр с комментарием, секции с `====` заголовками, swagger-источник для rate limits, приоритет env vars
 - [ ] **Mock safety:** `--mock` режим использует `DiscardWriter`, НЕ создаёт реальный DB writer
 - [ ] Флаги: `--config`, `--db`, `--backend`, `--pg-database`, `--mock`, `--dry-run`, `--limit`
 - [ ] Date-based домены: `--days`, `--begin`, `--end` + `resolveDateRange()` (days от вчерашнего дня)
@@ -565,6 +680,7 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 
 - [ ] `go build ./pkg/<domain>/` — компилируется
 - [ ] `go test ./pkg/<domain>/ -v` — все PASS (in-memory mock writers, no DB)
+- [ ] **Placeholder count check:** число `?` (SQLite) / `$N` (PostgreSQL) в VALUES = число колонок минус SQL-функции. Mock-тесты это **не ловят**!
 - [ ] `go run ./cmd/.../download-<domain>-v2/ --mock` — DiscardWriter, **no DB file created at all**
 - [ ] `go run ./cmd/.../download-<domain>-v2/ --mock --db /tmp/test.db --backend=sqlite`
 - [ ] `go run ./cmd/.../download-<domain>-v2/ --mock --backend=postgres --pg-database=wb_data_test`
@@ -613,5 +729,5 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 
 ---
 
-**Last Updated:** 2026-06-02
-**Version:** 1.3 (mock safety: DiscardWriter, mandatory README, test DB safety, orders domain, article filtering)
+**Last Updated:** 2026-06-03
+**Version:** 1.5 (§1.6a: config.yaml must be fully commented with swagger sources, env var priorities, and section headers)

@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ilkoid/poncho-ai/pkg/prices"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// Compile-time assertion: SQLiteSalesRepository implements prices.PricesWriter.
+var _ prices.PricesWriter = (*SQLiteSalesRepository)(nil)
 
 // SavePrices saves a batch of product prices using INSERT OR REPLACE.
 // snapshotDate is applied to all rows (YYYY-MM-DD, set by caller).
