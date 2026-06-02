@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
@@ -62,7 +63,8 @@ func (c *OneCRestsClient) FetchRests(ctx context.Context, apiURL string, filter 
 				continue
 			}
 
-			for skuGUID, storageRaw := range skuMap {
+			for rawGUID, storageRaw := range skuMap {
+				skuGUID := normalizeGUID(rawGUID)
 				var storages []OneCStorageRow
 				if err := json.Unmarshal(storageRaw, &storages); err != nil {
 					continue
@@ -151,4 +153,14 @@ func expectDelim(dec *json.Decoder, expected json.Delim) error {
 		return fmt.Errorf("expected '%c', got %v", expected, t)
 	}
 	return nil
+}
+
+// normalizeGUID converts 1C RESTs API GUID format to standard UUID format.
+// API returns keys like "_13209c78_1651_11e4_9401_2c768a56a25b",
+// standard UUID is "13209c78-1651-11e4-9401-2c768a56a25b".
+func normalizeGUID(guid string) string {
+	if len(guid) > 0 && guid[0] == '_' {
+		guid = guid[1:]
+	}
+	return strings.ReplaceAll(guid, "_", "-")
 }

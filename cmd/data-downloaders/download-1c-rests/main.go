@@ -110,7 +110,7 @@ func main() {
 	if filteredOut > 0 {
 		msg += fmt.Sprintf(" (filtered: %d)", filteredOut)
 	}
-	dllog.Done(time.Since(start), msg)
+	dllog.Done(time.Since(start), "%s", msg)
 
 	// Retention: purge old snapshots
 	if defaults.RetentionDays > 0 && !*clean {
