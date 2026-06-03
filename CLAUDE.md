@@ -46,6 +46,7 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 - `pkg/wb/` — WB API SDK: pagination, rate limiting, response unwrapping, service layer (Sales, Advertising, Feedbacks, Attribution)
 - `pkg/orders/` — Orders v2 downloader domain (Statistics API `/api/v1/supplier/orders`)
 - `pkg/opsales/` — Operational Sales v2 downloader domain (Statistics API `/api/v1/supplier/sales`)
+- `pkg/feedbacks/` — Feedbacks v2 downloader domain (Feedbacks API `/api/v1/feedbacks`, `/api/v1/questions`)
 - `pkg/storage/sqlite/` — Repository pattern, ~57 tables across 9 `*_schema.go` files (schema, cards, supply, region_sales, prices, onec, stock_history, orders, opsales)
 - `pkg/events/` + `pkg/tui/` — Port & Adapter decoupling (tui implements events interfaces)
 - `pkg/chain/bundle_resolver.go` — Token optimization: 100 tools → 10 bundles (~98% savings)
@@ -58,7 +59,7 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 ### cmd/ Entry Points
 - `cmd/poncho/` — Main TUI agent
 - `cmd/simple-agent/` — Headless agent CLI
-- `cmd/data-downloaders/` — 17 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, cards, prices, stocks, stock-history, region-sales, search-visibility, supplies, 1c-data, all-articles, **orders-v2**, **opsales-v2**)
+- `cmd/data-downloaders/` — 18 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, **feedbacks-v2**, cards, prices, stocks, stock-history, region-sales, search-visibility, supplies, 1c-data, all-articles, orders-v2, opsales-v2)
 - `cmd/data-analyzers/` — 6 analysis utilities (feedbacks, SKU snapshots, snapshots, price comparison, DB freshness, 1C mapping)
 - `cmd/data-dashboards/` — Web dashboards (sku-analytics)
 - `cmd/test-utils/` — API testing utilities (test-wb-raw, test-wb-search, etc.)
@@ -231,6 +232,8 @@ cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI →
 | opsales | ✅ `pkg/opsales/` | ✅ | ✅ | ❌ No (light) |
 | sales | ✅ `pkg/sales/` | ✅ | ✅ | ✅ Date-level |
 | funnel | ✅ `pkg/funnel/` | ✅ | ✅ | Partial |
+| stocks | ✅ `pkg/stocks/` | ✅ | ✅ | ❌ No (snapshot) |
+| feedbacks | ✅ `pkg/feedbacks/` | ✅ | ✅ | ❌ No (light) |
 | nmreport | ✅ `pkg/nmreport/` | ✅ | — | ✅ Report-level |
 | Others (12) | — | v1 only | — | — |
 

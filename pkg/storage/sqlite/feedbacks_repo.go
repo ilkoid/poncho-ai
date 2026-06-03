@@ -9,8 +9,12 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ilkoid/poncho-ai/pkg/feedbacks"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// Compile-time assertion: SQLiteSalesRepository implements feedbacks.Writer.
+var _ feedbacks.Writer = (*SQLiteSalesRepository)(nil)
 
 const insertFeedbackSQL = `
 INSERT OR REPLACE INTO feedbacks (

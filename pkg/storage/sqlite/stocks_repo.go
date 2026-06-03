@@ -8,8 +8,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ilkoid/poncho-ai/pkg/stocks"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// Compile-time assertion: SQLiteSalesRepository implements stocks.StocksWriter.
+var _ stocks.StocksWriter = (*SQLiteSalesRepository)(nil)
 
 const insertStockSQL = `
 INSERT OR REPLACE INTO stocks_daily_warehouses (

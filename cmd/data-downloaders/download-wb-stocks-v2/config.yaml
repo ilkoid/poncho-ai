@@ -1,0 +1,29 @@
+# ============================================================================
+# WB API клиент
+# ============================================================================
+wb:
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+  timeout: 60s
+
+# ============================================================================
+# Stocks — доменная конфигурация (WB Analytics API)
+# ============================================================================
+stocks:
+  first_date: "2024-01-01"          # Начало отсчёта для gap detection (YYYY-MM-DD)
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"  # Env var с API ключом
+  rate_limits:
+    warehouse: 3                     # Desired rate (req/min)
+    warehouse_burst: 1               # Desired burst
+    warehouse_api: 3                 # Swagger rate floor (req/min)
+    warehouse_api_burst: 1           # Swagger burst floor
+  adaptive_probe_after: 10          # OKs at api floor before probing desired
+  max_backoff_seconds: 60           # Cap for exponential backoff
+
+# ============================================================================
+# Хранение — выбор бэкенда (SQLite / PostgreSQL)
+# ============================================================================
+storage:
+  backend: "sqlite"                 # "sqlite" (default) | "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_database: "wb_data_prod"       # PostgreSQL database name
+  pg_password_env: "PG_PWD"         # Env var с паролем PostgreSQL

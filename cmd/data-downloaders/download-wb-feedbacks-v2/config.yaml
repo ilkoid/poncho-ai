@@ -1,0 +1,33 @@
+# WB Feedbacks Downloader v2 Configuration
+#
+# Dual-backend: SQLite (default) or PostgreSQL.
+
+wb:
+  api_key: ""
+  timeout: "30s"
+
+feedbacks:
+  db_path: "/var/db/wb-sales.db"
+  feedbacks: true
+  questions: true
+  days: 7
+  rate_limits:
+    download_feedbacks: 180           # 3 req/sec * 60
+    download_feedbacks_burst: 6
+    download_feedbacks_api: 180       # swagger rate
+    download_feedbacks_api_burst: 6
+    download_questions: 180           # 3 req/sec * 60
+    download_questions_burst: 6
+    download_questions_api: 180       # swagger rate
+    download_questions_api_burst: 6
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
+  pg_host: "192.168.10.7"
+  pg_port: 15432
+  pg_user: "postgres"
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
