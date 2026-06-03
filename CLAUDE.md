@@ -47,6 +47,7 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 - `pkg/orders/` — Orders v2 downloader domain (Statistics API `/api/v1/supplier/orders`)
 - `pkg/opsales/` — Operational Sales v2 downloader domain (Statistics API `/api/v1/supplier/sales`)
 - `pkg/feedbacks/` — Feedbacks v2 downloader domain (Feedbacks API `/api/v1/feedbacks`, `/api/v1/questions`)
+- `pkg/campaigns/` — Campaigns v2 downloader domain (Promotion API `/adv/v1/count`, `/api/advert/v2/adverts`, `/adv/v3/fullstats`)
 - `pkg/storage/sqlite/` — Repository pattern, ~57 tables across 9 `*_schema.go` files (schema, cards, supply, region_sales, prices, onec, stock_history, orders, opsales)
 - `pkg/events/` + `pkg/tui/` — Port & Adapter decoupling (tui implements events interfaces)
 - `pkg/chain/bundle_resolver.go` — Token optimization: 100 tools → 10 bundles (~98% savings)
@@ -59,7 +60,7 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 ### cmd/ Entry Points
 - `cmd/poncho/` — Main TUI agent
 - `cmd/simple-agent/` — Headless agent CLI
-- `cmd/data-downloaders/` — 18 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, **feedbacks-v2**, cards, prices, stocks, stock-history, region-sales, search-visibility, supplies, 1c-data, all-articles, orders-v2, opsales-v2)
+- `cmd/data-downloaders/` — 20 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, **feedbacks-v2**, cards, prices, stocks, stock-history, region-sales, **region-sales-v2**, search-visibility, supplies, 1c-data, all-articles, orders-v2, opsales-v2, **campaigns-v2**)
 - `cmd/data-analyzers/` — 6 analysis utilities (feedbacks, SKU snapshots, snapshots, price comparison, DB freshness, 1C mapping)
 - `cmd/data-dashboards/` — Web dashboards (sku-analytics)
 - `cmd/test-utils/` — API testing utilities (test-wb-raw, test-wb-search, etc.)
@@ -201,7 +202,7 @@ V2 utilities support both SQLite and PostgreSQL through focused Writer interface
 **Key packages:**
 - `pkg/config/pgconfig.go` — `V2StorageConfig` (backend selection, DSN builder, password injection)
 - `pkg/storage/postgres/` — PostgreSQL adapters (`pgxpool`, per-domain repos + schemas)
-- `pkg/<domain>/` — v2 domain packages with Source/Writer interfaces (cards ✅, orders ✅, opsales ✅, sales/funnel/nmreport — SQLite only)
+- `pkg/<domain>/` — v2 domain packages with Source/Writer interfaces (cards ✅, orders ✅, opsales ✅, campaigns ✅, sales/funnel/nmreport — SQLite only)
 
 **Pattern (each domain):**
 ```
@@ -234,8 +235,10 @@ cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI →
 | funnel | ✅ `pkg/funnel/` | ✅ | ✅ | Partial |
 | stocks | ✅ `pkg/stocks/` | ✅ | ✅ | ❌ No (snapshot) |
 | feedbacks | ✅ `pkg/feedbacks/` | ✅ | ✅ | ❌ No (light) |
+| region-sales | ✅ `pkg/regionsales/` | ✅ | ✅ | ❌ No (light) |
+| campaigns | ✅ `pkg/campaigns/` | ✅ | ✅ | ✅ Date-level |
 | nmreport | ✅ `pkg/nmreport/` | ✅ | — | ✅ Report-level |
-| Others (12) | — | v1 only | — | — |
+| Others (11) | — | v1 only | — | — |
 
 ## Development Guides
 

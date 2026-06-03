@@ -1,0 +1,19 @@
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  timeout: "60s"
+
+region_sales:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  rate_limits:
+    region_sale: 6
+    region_sale_burst: 5
+    region_sale_api: 6
+    region_sale_api_burst: 5
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
+  # pg_database: "wb_data_prod"
+  # pg_password_env: "PG_PWD"

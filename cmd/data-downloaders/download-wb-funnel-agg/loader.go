@@ -54,6 +54,16 @@ func LoadAggregatedFunnel(ctx context.Context, cfg AggregatedLoaderConfig) (*Agg
 	}
 	fmt.Println()
 
+	// Offset resume: skip already-downloaded pages
+	existingCount, resumeErr := cfg.Repo.GetFunnelAggregatedCount(ctx, cfg.Config.SelectedStart, cfg.Config.SelectedEnd)
+	if resumeErr == nil && existingCount > 0 {
+		// Overlap by one page for safety (INSERT OR REPLACE handles duplicates)
+		offset = max(0, existingCount-pageSize)
+		totalLoaded = offset
+		fmt.Printf("📎 Resume: %d товаров уже в БД за период %s→%s, начинаем с offset=%d\n\n",
+			existingCount, cfg.Config.SelectedStart, cfg.Config.SelectedEnd, offset)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -106,17 +116,35 @@ func LoadAggregatedFunnel(ctx context.Context, cfg AggregatedLoaderConfig) (*Agg
 		}
 		fmt.Printf("🔄 Страница %d (offset=%d, %s)... ", pageNum, offset, progressInfo)
 
-		// Make API call
-		var response wb.FunnelAggregatedResponse
-		rl := cfg.Config.RateLimits
-		err := cfg.Client.Post(ctx, "get_wb_funnel_aggregated",
-			"https://seller-analytics-api.wildberries.ru",
-			rl.FunnelAggregated, rl.FunnelAggregatedBurst,
-			"/api/analytics/v3/sales-funnel/products",
-			req, &response)
+		// Make API call with page-level retry for global limiter recovery
+		const maxPageRetries = 3
+		const pageRetryBaseSleep = 2 * time.Minute
 
-		if err != nil {
-			fmt.Printf("❌ Ошибка API: %v\n", err)
+		var response wb.FunnelAggregatedResponse
+		var apiErr error
+		rl := cfg.Config.RateLimits
+
+		for retry := range maxPageRetries {
+			response = wb.FunnelAggregatedResponse{}
+			apiErr = cfg.Client.Post(ctx, "get_wb_funnel_aggregated",
+				"https://seller-analytics-api.wildberries.ru",
+				rl.FunnelAggregated, rl.FunnelAggregatedBurst,
+				"/api/analytics/v3/sales-funnel/products",
+				req, &response)
+
+			if apiErr == nil {
+				break
+			}
+			if retry < maxPageRetries-1 {
+				sleepDur := pageRetryBaseSleep * time.Duration(retry+1)
+				fmt.Printf("\n⏳ Глобальный лимитер, ожидание %v (попытка страницы %d/%d)...",
+					sleepDur, retry+2, maxPageRetries)
+				time.Sleep(sleepDur)
+			}
+		}
+
+		if apiErr != nil {
+			fmt.Printf("❌ Ошибка API после %d попыток страницы: %v\n", maxPageRetries, apiErr)
 			break
 		}
 

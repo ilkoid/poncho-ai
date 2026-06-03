@@ -8,8 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/campaigns"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// Compile-time assertion: SQLiteSalesRepository implements campaigns.CampaignsWriter.
+var _ campaigns.CampaignsWriter = (*SQLiteSalesRepository)(nil)
 
 // ============================================================================
 // Campaign Repository Methods
@@ -464,6 +468,24 @@ func (r *SQLiteSalesRepository) SaveCampaignBoosterStats(ctx context.Context, ro
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
+}
+
+// SaveFullstats saves all 4 stat tables from a flattened fullstats result.
+// Aggregate method implementing campaigns.CampaignsWriter.
+func (r *SQLiteSalesRepository) SaveFullstats(ctx context.Context, flat wb.FlattenAllResult) error {
+	if err := r.SaveCampaignStats(ctx, flat.Daily); err != nil {
+		return fmt.Errorf("save daily stats: %w", err)
+	}
+	if err := r.SaveCampaignAppStats(ctx, flat.App); err != nil {
+		return fmt.Errorf("save app stats: %w", err)
+	}
+	if err := r.SaveCampaignNmStats(ctx, flat.Nm); err != nil {
+		return fmt.Errorf("save nm stats: %w", err)
+	}
+	if err := r.SaveCampaignBoosterStats(ctx, flat.Booster); err != nil {
+		return fmt.Errorf("save booster stats: %w", err)
 	}
 	return nil
 }

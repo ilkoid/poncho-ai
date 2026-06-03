@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ilkoid/poncho-ai/pkg/regionsales"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// Compile-time assertion: SQLiteSalesRepository implements regionsales.RegionSalesWriter.
+var _ regionsales.RegionSalesWriter = (*SQLiteSalesRepository)(nil)
 
 const insertRegionSaleSQL = `
 INSERT OR REPLACE INTO region_sales (

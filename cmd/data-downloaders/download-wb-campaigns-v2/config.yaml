@@ -1,0 +1,61 @@
+# WB Campaigns Downloader v2 — Configuration
+# Dual-backend: SQLite (default) or PostgreSQL
+#
+# Usage:
+#   go run . --config config.yaml
+#   go run . --config config.yaml --mock
+#   go run . --config config.yaml --backend postgres
+
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  timeout: "30s"
+
+campaigns:
+  # Date range: use begin/end OR days (days is fallback)
+  days: 7
+  # begin: "2026-05-01"
+  # end: "2026-05-31"
+
+  # Filter campaigns by status for stats download (empty = all)
+  # -1=Deleted, 4=Ready, 7=Finished, 8=Canceled, 9=Active, 11=Paused
+  statuses: [9, 11]  # Active + Paused only
+
+  # Resume from last loaded date per campaign
+  resume: true
+
+  # Skip individual phases (for partial runs)
+  skip_campaigns: false
+  skip_details: false
+  skip_stats: false
+
+  # Rate limits per endpoint (req/min)
+  rate_limits:
+    # Campaign list: GET /adv/v1/promotion/count — swagger: 300/min
+    promotion_count: 300
+    promotion_count_burst: 5
+    promotion_count_api: 300
+    promotion_count_api_burst: 5
+
+    # Campaign details: GET /api/advert/v2/adverts — swagger: 300/min
+    advert_details: 300
+    advert_details_burst: 5
+    advert_details_api: 300
+    advert_details_api_burst: 5
+
+    # Fullstats: GET /adv/v3/fullstats — swagger: 3/min (MOST RESTRICTIVE)
+    fullstats: 3
+    fullstats_burst: 1
+    fullstats_api: 3
+    fullstats_api_burst: 1
+
+  # Adaptive rate limiting
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  # Backend: "sqlite" (default) or "postgres"
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
+  # pg_dsn: ""  # Optional: full DSN overrides env-based construction
+  # pg_database: "wb_data_prod"
+  # pg_password_env: "PG_PWD"
