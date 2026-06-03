@@ -36,10 +36,10 @@ echo ""
 echo "── Phase 1: Catalog (cards, prices, 1C/PIM) ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" && go run . --config "$CONFIGS/download-wb-cards.yaml") || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-prices" && go run . --config "$CONFIGS/download-wb-prices.yaml") || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-1c-data" && go run . --config "$CONFIGS/download-1c-data.yaml") || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-1c-rests" && go run . --config "$CONFIGS/download-1c-rests.yaml") || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" && go run . --config "$CONFIGS/download-wb-cards.yaml") || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-prices" && go run . --config "$CONFIGS/download-wb-prices.yaml") || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-1c-data" && go run . --config "$CONFIGS/download-1c-data.yaml") || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-1c-rests" && go run . --config "$CONFIGS/download-1c-rests.yaml") || exit $?
 
 echo "  Phase 1 done in $(( SECONDS - PHASE_START ))s"
 
@@ -49,7 +49,7 @@ echo ""
 echo "── Phase 2: Feedbacks ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-feedbacks" && go run . --config "$CONFIGS/download-wb-feedbacks.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-feedbacks" && go run . --config "$CONFIGS/download-wb-feedbacks.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 2 done in $(( SECONDS - PHASE_START ))s"
 
@@ -60,7 +60,7 @@ echo "── Phase 3: Sales & Revenue ──"
 PHASE_START=$SECONDS
 
 ### wb-orders v2 (early signal — cart/checkout, updates every 30 min)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" && go run . --config "$CONFIGS/download-wb-orders.yaml") || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" && go run . --config "$CONFIGS/download-wb-orders.yaml") || exit $?
 ### wb-opsales v2 (operational sales/returns — preliminary data, updates every 30 min)
 (cd "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" && go run . --config "$CONFIGS/download-wb-opsales.yaml") || exit $?
 ### wb-sales v2

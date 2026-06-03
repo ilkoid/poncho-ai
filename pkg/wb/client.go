@@ -463,6 +463,15 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 				}
 			}
 			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
+			// Exponential backoff on consecutive 429s: 2x, 3x, ... (capped at maxBackoff)
+			if i > 0 {
+				waitDur = waitDur * time.Duration(i+1)
+				if c.maxBackoffSeconds > 0 && waitDur > time.Duration(c.maxBackoffSeconds)*time.Second {
+					waitDur = time.Duration(c.maxBackoffSeconds) * time.Second
+				}
+			}
+
+			lastErr = fmt.Errorf("429 rate limited: %s", err429.Detail)
 
 			// Log 429 details
 			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)\n",
@@ -690,6 +699,15 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 				}
 			}
 			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
+			// Exponential backoff on consecutive 429s: 2x, 3x, ... (capped at maxBackoff)
+			if i > 0 {
+				waitDur = waitDur * time.Duration(i+1)
+				if c.maxBackoffSeconds > 0 && waitDur > time.Duration(c.maxBackoffSeconds)*time.Second {
+					waitDur = time.Duration(c.maxBackoffSeconds) * time.Second
+				}
+			}
+
+			lastErr = fmt.Errorf("429 rate limited: %s", err429.Detail)
 
 			// Log 429 details
 			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)\n",
@@ -1231,6 +1249,22 @@ func (c *Client) ReportDetailByPeriodPage(
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
 	}
 
+	// Additional delay: ensure minimum interval since last actual HTTP request.
+	// Token bucket burst allows rapid fire, but API rate limits don't.
+	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit))
+	c.mu.RLock()
+	lastReqTime := c.lastRequestTime["report_detail_by_period"]
+	c.mu.RUnlock()
+	if !lastReqTime.IsZero() {
+		if elapsed := time.Since(lastReqTime); elapsed < minInterval {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(minInterval - elapsed):
+			}
+		}
+	}
+
 	reqURL, err := url.Parse(baseURL + "/api/v5/supplier/reportDetailByPeriod")
 	if err != nil {
 		return nil, fmt.Errorf("invalid url: %w", err)
@@ -1259,6 +1293,10 @@ func (c *Client) ReportDetailByPeriodPage(
 
 	// HTTP 204 = конец пагинации
 	if resp.StatusCode == http.StatusNoContent {
+		c.adaptiveRecoverOK("report_detail_by_period")
+		c.mu.Lock()
+		c.lastRequestTime["report_detail_by_period"] = time.Now()
+		c.mu.Unlock()
 		return &ReportDetailByPeriodPageResult{
 			Rows:        nil,
 			HasMore:     false,
@@ -1302,6 +1340,12 @@ func (c *Client) ReportDetailByPeriodPage(
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
 	}
+
+	// Track successful request for adaptive recovery + timing guardrail
+	c.adaptiveRecoverOK("report_detail_by_period")
+	c.mu.Lock()
+	c.lastRequestTime["report_detail_by_period"] = time.Now()
+	c.mu.Unlock()
 
 	// Парсим JSON ответ
 	if err := json.Unmarshal(body, &rows); err != nil {
@@ -1379,6 +1423,22 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
 	}
 
+	// Additional delay: ensure minimum interval since last actual HTTP request.
+	// Token bucket burst allows rapid fire, but API rate limits don't.
+	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit))
+	c.mu.RLock()
+	lastReqTime := c.lastRequestTime["report_detail_by_period_with_time"]
+	c.mu.RUnlock()
+	if !lastReqTime.IsZero() {
+		if elapsed := time.Since(lastReqTime); elapsed < minInterval {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(minInterval - elapsed):
+			}
+		}
+	}
+
 	reqURL, err := url.Parse(baseURL + "/api/v5/supplier/reportDetailByPeriod")
 	if err != nil {
 		return nil, fmt.Errorf("invalid url: %w", err)
@@ -1404,6 +1464,10 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 
 	// HTTP 204 = конец пагинации
 	if resp.StatusCode == http.StatusNoContent {
+		c.adaptiveRecoverOK("report_detail_by_period_with_time")
+		c.mu.Lock()
+		c.lastRequestTime["report_detail_by_period_with_time"] = time.Now()
+		c.mu.Unlock()
 		return &ReportDetailByPeriodPageResult{
 			Rows:        nil,
 			HasMore:     false,
@@ -1447,6 +1511,12 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
 	}
+
+	// Track successful request for adaptive recovery + timing guardrail
+	c.adaptiveRecoverOK("report_detail_by_period_with_time")
+	c.mu.Lock()
+	c.lastRequestTime["report_detail_by_period_with_time"] = time.Now()
+	c.mu.Unlock()
 
 	// Парсим JSON ответ
 	if err := json.Unmarshal(body, &rows); err != nil {
@@ -1668,6 +1738,24 @@ func (c *Client) OrdersPage(
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
 	}
 
+	// Additional delay: ensure minimum interval since last actual HTTP request.
+	// Token bucket (burst=10) allows rapid fire, but WB Statistics API only
+	// tolerates 1 req/min. Without this guard, every page after the first
+	// immediately hits 429.
+	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit))
+	c.mu.RLock()
+	lastReqTime := c.lastRequestTime["wb_orders"]
+	c.mu.RUnlock()
+	if !lastReqTime.IsZero() {
+		if elapsed := time.Since(lastReqTime); elapsed < minInterval {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(minInterval - elapsed):
+			}
+		}
+	}
+
 	reqURL, err := url.Parse(baseURL + "/api/v1/supplier/orders")
 	if err != nil {
 		return nil, fmt.Errorf("invalid url: %w", err)
@@ -1689,6 +1777,10 @@ func (c *Client) OrdersPage(
 
 	// HTTP 204 = конец пагинации
 	if resp.StatusCode == http.StatusNoContent {
+		c.adaptiveRecoverOK("wb_orders")
+		c.mu.Lock()
+		c.lastRequestTime["wb_orders"] = time.Now()
+		c.mu.Unlock()
 		return &OrdersPageResult{
 			Orders:     nil,
 			HasMore:    false,
@@ -1726,6 +1818,12 @@ func (c *Client) OrdersPage(
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
 	}
+
+	// Track successful request for adaptive recovery + timing guardrail
+	c.adaptiveRecoverOK("wb_orders")
+	c.mu.Lock()
+	c.lastRequestTime["wb_orders"] = time.Now()
+	c.mu.Unlock()
 
 	// Response is direct []OrdersItem (not wrapped in an object)
 	var orders []OrdersItem
@@ -1851,6 +1949,24 @@ func (c *Client) SalesPage(
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
 	}
 
+	// Additional delay: ensure minimum interval since last actual HTTP request.
+	// Token bucket (burst=10) allows rapid fire, but WB Statistics API only
+	// tolerates 1 req/min. Without this guard, every page after the first
+	// immediately hits 429.
+	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit))
+	c.mu.RLock()
+	lastReqTime := c.lastRequestTime["wb_opsales"]
+	c.mu.RUnlock()
+	if !lastReqTime.IsZero() {
+		if elapsed := time.Since(lastReqTime); elapsed < minInterval {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(minInterval - elapsed):
+			}
+		}
+	}
+
 	reqURL, err := url.Parse(baseURL + "/api/v1/supplier/sales")
 	if err != nil {
 		return nil, fmt.Errorf("invalid url: %w", err)
@@ -1872,6 +1988,10 @@ func (c *Client) SalesPage(
 
 	// HTTP 204 = конец пагинации
 	if resp.StatusCode == http.StatusNoContent {
+		c.adaptiveRecoverOK("wb_opsales")
+		c.mu.Lock()
+		c.lastRequestTime["wb_opsales"] = time.Now()
+		c.mu.Unlock()
 		return &SalesPageResult{
 			Sales:      nil,
 			HasMore:    false,
@@ -1909,6 +2029,12 @@ func (c *Client) SalesPage(
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
 	}
+
+	// Track successful request for adaptive recovery + timing guardrail
+	c.adaptiveRecoverOK("wb_opsales")
+	c.mu.Lock()
+	c.lastRequestTime["wb_opsales"] = time.Now()
+	c.mu.Unlock()
 
 	// Response is direct []SalesItem (not wrapped in an object)
 	var sales []SalesItem
