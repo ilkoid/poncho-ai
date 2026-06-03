@@ -246,7 +246,8 @@ type FunnelFilterConfig struct {
 // Включает дополнительные поля, специфичные для cmd/ утилит.
 // Встраивает стандартную WBConfig для базовых настроек.
 type WBClientConfig struct {
-	APIKey          string `yaml:"api_key"`           // API ключ (WB_STAT)
+	APIKey          string `yaml:"api_key"`           // API ключ напрямую
+	APIKeyEnv       string `yaml:"api_key_env"`       // Имя env var с API ключом (приоритет: api_key > api_key_env)
 	AnalyticsAPIKey string `yaml:"analytics_api_key"` // Analytics API ключ (опционально)
 	CalendarAPIKey  string `yaml:"calendar_api_key"`  // Calendar API ключ (dp-calendar-api, опционально)
 	BaseURL         string `yaml:"base_url"`          // Базовый URL Content API

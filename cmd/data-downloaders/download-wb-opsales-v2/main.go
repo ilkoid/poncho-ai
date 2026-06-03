@@ -124,7 +124,7 @@ func main() {
 			start := time.Now()
 			return func(msg string) {
 				page++
-				dllog.Progress(page, 0, "sales", msg, start)
+				dllog.Progress(page, 0, "opsales", msg, start)
 			}
 		}(),
 	}
@@ -171,12 +171,15 @@ func createOpsalesWriter(ctx context.Context, cfg config.V2StorageConfig) (opsal
 }
 
 // resolveAPIKey resolves the WB Statistics API key from config.
+// Priority: api_key (direct) > api_key_env (env var name) > empty.
 func resolveAPIKey(cfg *Config) string {
 	if cfg.WB.APIKey != "" {
 		return cfg.WB.APIKey
 	}
-	// Default: WB_STAT (Statistics API uses a separate key)
-	return os.Getenv("WB_STAT")
+	if cfg.WB.APIKeyEnv != "" {
+		return os.Getenv(cfg.WB.APIKeyEnv)
+	}
+	return ""
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -189,7 +192,7 @@ func loadConfig(path string) (*Config, error) {
 		cfg.WB.RateLimit = 1 // 1 req/min (WB Statistics API)
 	}
 	if cfg.WB.BurstLimit == 0 {
-		cfg.WB.BurstLimit = 10
+		cfg.WB.BurstLimit = 1 // burst=1: prevents burst-fire 429 on slow APIs (Statistics: 1 req/min)
 	}
 	if cfg.Opsales.Days == 0 {
 		cfg.Opsales.Days = 90

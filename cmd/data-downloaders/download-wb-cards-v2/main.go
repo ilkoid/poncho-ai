@@ -84,17 +84,15 @@ func main() {
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
 
-	// Create writer based on backend selection
-	writer, cleanup, err := createCardsWriter(ctx, cfg.Storage)
-	if err != nil {
-		log.Fatalf("storage: %v", err)
-	}
-	defer cleanup()
-
-	// Create source (real API or mock)
+	// Create source + writer (mock mode: no DB interaction at all)
 	var source cards.CardsSource
+	var writer cards.CardsWriter
+	var cleanup func()
+
 	if *mockMode {
 		source = cards.NewMockCardsSource(250)
+		writer = cards.NewDiscardWriter()
+		cleanup = func() {}
 	} else {
 		apiKey := resolveAPIKey(cfg)
 		wbClient := wb.New(apiKey)
@@ -105,7 +103,14 @@ func main() {
 			wbClient.SetAdaptiveParams(5, cfg.Cards.AdaptiveProbeAfter, cfg.Cards.MaxBackoffSeconds)
 		}
 		source = cards.NewWBSource(wbClient, cfg.Cards.RateLimit, cfg.Cards.BurstLimit)
+
+		var err error
+		writer, cleanup, err = createCardsWriter(ctx, cfg.Storage)
+		if err != nil {
+			log.Fatalf("storage: %v", err)
+		}
 	}
+	defer cleanup()
 
 	opts := cards.DownloadOptions{
 		DryRun: *dryRun,

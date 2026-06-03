@@ -3,10 +3,70 @@ package funnel
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// DiscardWriter is a no-op FunnelWriter for --mock mode.
+// Provides realistic mock nmIDs so the prepare pipeline can run end-to-end,
+// but never touches any database.
+//
+// This is critical for safety: --mock + rewrite: true must NOT delete real data.
+// See dev_v2_downloader.md Anti-Pattern: "Mock mode writing to real DB".
+type DiscardWriter struct {
+	mu    sync.Mutex
+	saved int
+
+	// Mock data for read methods (drives prepareNmIDs pipeline)
+	mockNmIDs   []int
+	mockArticles map[int]string
+}
+
+// NewDiscardWriter creates a DiscardWriter with deterministic mock data.
+func NewDiscardWriter() *DiscardWriter {
+	return &DiscardWriter{
+		mockNmIDs:   []int{101, 102, 103, 201},
+		mockArticles: map[int]string{
+			101: "A2401",
+			102: "B2502",
+			103: "C2603",
+			201: "D2604",
+		},
+	}
+}
+
+// Saved returns the total number of products "saved" (counted, not written).
+func (w *DiscardWriter) Saved() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.saved
+}
+
+func (w *DiscardWriter) GetDistinctNmIDs(_ context.Context) ([]int, error) {
+	return w.mockNmIDs, nil
+}
+
+func (w *DiscardWriter) GetSupplierArticlesByNmIDs(_ context.Context, _ []int) (map[int]string, error) {
+	return w.mockArticles, nil
+}
+
+func (w *DiscardWriter) FilterActiveNmIDs(_ context.Context, ids []int, _ int) ([]int, error) {
+	return ids, nil // all pass
+}
+
+func (w *DiscardWriter) GetRecentlyLoadedNmIDs(_ context.Context, _ int) (map[int]bool, error) {
+	return map[int]bool{}, nil // nothing recently loaded
+}
+
+func (w *DiscardWriter) SaveFunnelHistoryWithWindow(_ context.Context, _ wb.FunnelProductMeta, rows []wb.FunnelHistoryRow, _ int) error {
+	w.mu.Lock()
+	w.saved++
+	w.mu.Unlock()
+	_ = rows
+	return nil
+}
 
 // MockFunnelSource returns deterministic funnel data for --mock mode and tests.
 type MockFunnelSource struct {

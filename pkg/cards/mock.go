@@ -178,3 +178,37 @@ func makeMockTags(cardIdx int) []wb.CardTag {
 func rawJSON(s string) json.RawMessage {
 	return json.RawMessage(s)
 }
+
+// DiscardWriter is a no-op CardsWriter for --mock mode.
+// Counts saved cards but never writes to any database.
+type DiscardWriter struct {
+	mu    sync.Mutex
+	saved int
+}
+
+// NewDiscardWriter creates a DiscardWriter for safe mock mode.
+func NewDiscardWriter() *DiscardWriter {
+	return &DiscardWriter{}
+}
+
+// SaveCards counts cards without any DB interaction.
+func (w *DiscardWriter) SaveCards(_ context.Context, cards []wb.ProductCard) (int, error) {
+	w.mu.Lock()
+	w.saved += len(cards)
+	w.mu.Unlock()
+	return len(cards), nil
+}
+
+// CountCards returns the number of cards "saved" by this writer.
+func (w *DiscardWriter) CountCards(_ context.Context) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.saved, nil
+}
+
+// Saved returns the total number of cards counted by SaveCards (test helper).
+func (w *DiscardWriter) Saved() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.saved
+}

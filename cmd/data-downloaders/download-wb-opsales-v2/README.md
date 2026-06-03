@@ -55,7 +55,7 @@ Table: `operational_sales` (separate from `sales` table used for financial repor
 
 ## Rate Limiting
 
-- **WB Statistics API:** 1 req/min, burst 10
+- **WB Statistics API:** 1 req/min, burst 1 (prevents burst-fire 429)
 - **Retention:** 90 days
 - **Pagination:** by `lastChangeDate` string, max 80,000 rows per page
 

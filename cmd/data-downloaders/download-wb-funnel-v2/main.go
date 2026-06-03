@@ -29,8 +29,9 @@ type Config struct {
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config.yaml")
+	dbPath := flag.String("db", "", "Database path (overrides config)")
 	days := flag.Int("days", 0, "Number of days (overrides config)")
-	mockMode := flag.Bool("mock", false, "Use mock source (no API calls)")
+	mockMode := flag.Bool("mock", false, "Use mock source (no API calls, no DB writes)")
 	dryRun := flag.Bool("dry-run", false, "Show what would be saved without writing to DB")
 	flag.Parse()
 
@@ -43,11 +44,13 @@ func main() {
 	}
 	cfg.Funnel = cfg.Funnel.GetDefaults()
 
+	// CLI overrides
+	if *dbPath != "" {
+		cfg.Storage.DBPath = *dbPath
+	}
 	if *days > 0 {
 		cfg.Funnel.Days = *days
 	}
-
-	apiKey := getAPIKey(cfg)
 
 	dllog.PrintHeader("WB Funnel Downloader v2",
 		dllog.HeaderField{Key: "Config", Value: *configPath},
@@ -57,16 +60,31 @@ func main() {
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
 
-	repo, err := sqlite.NewSQLiteSalesRepository(cfg.Storage.DBPath)
-	if err != nil {
-		log.Fatalf("repo error: %v", err)
-	}
-	defer repo.Close()
+	// ⚠️ Mock safety — writer creation goes INSIDE the else branch.
+	// --mock mode uses DiscardWriter (zero DB interaction).
+	// This prevents --mock + rewrite from touching real data.
+	var writer funnel.FunnelWriter
+	var cleanup func()
 
+	if *mockMode {
+		writer = funnel.NewDiscardWriter()
+		cleanup = func() {}
+	} else {
+		repo, err := sqlite.NewSQLiteSalesRepository(cfg.Storage.DBPath)
+		if err != nil {
+			log.Fatalf("repo error: %v", err)
+		}
+		writer = repo
+		cleanup = func() { repo.Close() }
+	}
+	defer cleanup()
+
+	// Create source (real API or mock)
 	var source funnel.FunnelSource
 	if *mockMode {
 		source = &funnel.MockFunnelSource{}
 	} else {
+		apiKey := getAPIKey(cfg)
 		wbClient := wb.New(apiKey)
 		wbClient.SetRateLimit(funnel.ToolID,
 			cfg.Funnel.FunnelRateLimit, cfg.Funnel.FunnelRateLimitBurst,
@@ -96,7 +114,7 @@ func main() {
 		OnProgress:       func(msg string) { fmt.Println(msg) },
 	}
 
-	dl := funnel.NewDownloader(source, repo, opts)
+	dl := funnel.NewDownloader(source, writer, opts)
 	result, err := dl.Run(ctx)
 	if err != nil {
 		log.Fatalf("download failed: %v", err)

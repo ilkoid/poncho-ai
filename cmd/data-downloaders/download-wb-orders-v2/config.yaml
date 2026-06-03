@@ -1,7 +1,7 @@
 wb:
   api_key_env: "WB_STAT"           # env var with WB Statistics API key
   rate_limit: 1
-  burst_limit: 10
+  burst_limit: 1                    # burst=1: токен-баккет стартует с 1 токеном, prevents burst-fire 429
   endpoint: "https://statistics-api.wildberries.ru"
 
 orders:

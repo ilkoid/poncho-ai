@@ -7,12 +7,12 @@
 wb:
   api_key_env: "WB_STAT"
   rate_limit: 1
-  burst_limit: 10
+  burst_limit: 1
   endpoint: "https://statistics-api.wildberries.ru"
 
 opsales:
   days: 90                          # полный retention WB API
-  rewrite: true                     # очистка перед загрузкой (upsert-safe)
+  rewrite: false                    # upsert без удаления — сохраняем историю за пределами 90 дней
   adaptive_recover_after: 5
   adaptive_probe_after: 10
   max_backoff_seconds: 60
