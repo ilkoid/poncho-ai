@@ -1,6 +1,6 @@
 # Go Best Practices & Architecture Guide
 
-> **Scope:** Go-specific patterns and best practices. Architectural rules → [dev_manifest.md](dev_manifest.md). Downloader rules → [dev_utils.md](dev_utils.md) (v2) / [dev_downloader_development.md](dev_downloader_development.md) (v1).
+> **Scope:** Go-specific patterns and best practices. Architectural rules → [dev_manifest.md](dev_manifest.md). Downloader rules → [dev_v2_downloader.md](dev_v2_downloader.md) (v2).
 
 ---
 
@@ -88,13 +88,13 @@ When in doubt about where code belongs: if it could be used by another Go projec
 
 ### Adding a New Downloader
 
-**v2 (рекомендуется):** см. [dev_utils.md](dev_utils.md) — бизнес-логика в `pkg/<domain>/`, CLI — тонкий драйвер ~100 строк.
+**v2 (рекомендуется):** см. [dev_v2_downloader.md](dev_v2_downloader.md) — бизнес-логика в `pkg/<domain>/`, CLI — тонкий драйвер ~100 строк.
 
 **v1 (legacy):**
 1. Create `cmd/data-downloaders/download-X/` with `main.go`
 2. Reuse config type from `pkg/config/utility.go` or add new one
 3. Reuse storage schemas from `pkg/storage/sqlite/` or add new file
-4. Call `client.SetRateLimit()` before API methods
+4. Call `client.SetRateLimit()` before API methods. If adding a `*Page()` method, use `client.Get()`/`Post()` — direct `c.httpClient.Do()` bypasses timing guardrails and causes 429 floods (see [dev_v2_downloader.md](dev_v2_downloader.md) Anti-Pattern #9)
 5. Use `INSERT OR REPLACE` for idempotent upserts
 6. Add to `download-all.sh` if applicable
 

@@ -118,6 +118,7 @@ Recovery cycle: `desired` → 429 triggers backoff → `api floor` (after 5 OKs)
 - Promotion V2 normquery stats: **10 req/min** (stricter than list/bids/minus at 5/sec)
 - Date columns in `sales` table use `_dt` suffix: `order_dt`, `sale_dt`, `rr_dt` (not `sale_date`)
 - Statistics API ToolIDs: `wb_orders` (orders), `wb_opsales` (operational sales) — both use `WB_STAT_API_KEY`, 1 req/min
+- **`doRequest()` bypass = 429 flood:** `SalesPage()` and `OrdersPage()` must track `lastRequestTime` + call `adaptiveRecoverOK()`. Without these, `burst=10` token bucket allows rapid fire that triggers 429 on every page after the first. Any new `*Page()` method that does direct `c.httpClient.Do()` MUST replicate the two-level guard from `doRequest()` (token bucket + min interval check)
 - год выпуска (производства) товара определяется по 2 и 3 символам в артикуле продавца, например: 12345678 -> 2023 год
 - в API WB при обновлении карточки товара при записи нужно передавать ВСЕ ПОЛЯ! Иначе, которые не передал, они обнулятся. Это критический момент для любых проверок утилит!
 - Поле season в onec_goods — более надёжный фильтр для школьного ассортимента, чем collection
@@ -242,10 +243,10 @@ Project root contains development documents with a clear priority hierarchy (see
 | Project architecture, immutable rules | `dev_manifest.md` | Any development |
 | Code placement, common patterns | `dev_best_practices.md` | "Where do I put X?" |
 | WB API write-utilities, sandboxes | `dev_swagger_reusable_packages.md` | Write-utility work, sandbox testing |
-| Downloader migration v1→v2 | `dev_utils.md` | Creating/migrating a downloader |
+| V2 downloader (architecture + anti-patterns) | `dev_v2_downloader.md` | Creating/migrating a downloader |
 | V2 dual-backend (SQLite + PostgreSQL) | `dev_v2_postgres.md` | Adding PostgreSQL adapter to a domain |
 
-**Rule:** more specific document overrides more general. For PostgreSQL migration, `dev_v2_postgres.md` overrides `dev_utils.md`.
+**Rule:** more specific document overrides more general. For PostgreSQL migration, `dev_v2_postgres.md` overrides `dev_v2_downloader.md`.
 
 ## SQLite database placement
 production bases, **read-only**: /var/db

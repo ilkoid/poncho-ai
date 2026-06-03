@@ -3,7 +3,7 @@
 **Дата**: 2026-05-25
 **Статус**: Целевая архитектура (To Be) — см. секцию «Текущий статус реализации».
 **Связанные документы**:
-- [dev_utils.md](dev_utils.md) — v2-архитектура утилит (Source/Writer, Downloader в pkg/, тонкие драйверы)
+- [dev_v2_downloader.md](dev_v2_downloader.md) — v2-архитектура утилит (Source/Writer, Downloader в pkg/, тонкие драйверы)
 - [CLAUDE.md](CLAUDE.md) — WB API Swagger Docs, safety rules
 - [dev_manifest.md](dev_manifest.md) — Port & Adapter (Rule 6), pkg/ vs cmd/
 
@@ -13,14 +13,14 @@
 
 Этот документ решает одну задачу: **сделать безопасными утилиты, которые пишут в WB API**.
 
-Read-only даунлоадеры (sales, stocks, funnel…) — низкий риск. Для их миграции достаточно [dev_utils.md](dev_utils.md).
+Read-only даунлоадеры (sales, stocks, funnel…) — низкий риск. Для их миграции достаточно [dev_v2_downloader.md](dev_v2_downloader.md).
 Write-утилиты (карточки, цены, кампании, ответы на отзывы) — **высокий риск**. Ошибка в payload для `POST /content/v2/cards/update` полностью перезаписывает карточку товара. Кривая скидка в `discounts-prices` убивает маржу. Неправильная ставка в `advert` сливает бюджет.
 
 Поэтому правила в этом документе **асимметричны**:
 
 | | Read-only утилиты | Write-утилиты |
 |---|---|---|
-| Руководство | `dev_utils.md` | `dev_utils.md` + **этот документ** |
+| Руководство | `dev_v2_downloader.md` | `dev_v2_downloader.md` + **этот документ** |
 | Swagger-комментарии | Желательно | Обязательно, строгий формат |
 | Sandbox-константы | Не нужны | Обязательно |
 | Readonly-интерфейсы | Не нужны | Обязательно |
@@ -121,7 +121,7 @@ CI не включает тэг `wb_sandbox`. Эти тесты запускаю
 
 ## Read-only утилиты: миграция
 
-Для даунлоадеров (sales, stocks, funnel, feedbacks, region-sales и т.д.) — **руководствуйся `dev_utils.md`**. Этот документ не добавляет требований.
+Для даунлоадеров (sales, stocks, funnel, feedbacks, region-sales и т.д.) — **руководствуйся `dev_v2_downloader.md`**. Этот документ не добавляет требований.
 
 Единственное, что стоит сделать попутно при миграции read-only утилиты:
 - Swagger-комментарии на методы в `pkg/wb/` — желательно, но не блокирует.
@@ -220,7 +220,7 @@ func (d *Downloader) Run(ctx context.Context, opts Options) (*Result, error) {
 - [ ] Создать `pkg/wb/interfaces.go` с readonly-интерфейсами
 - [ ] Обновить этот файл (статус реализации) + CLAUDE.md
 
-### Read-only миграция (по `dev_utils.md`)
+### Read-only миграция (по `dev_v2_downloader.md`)
 
 - [ ] `pkg/<domain>/types.go` — Source + Writer интерфейсы
 - [ ] `pkg/<domain>/downloader.go` — Downloader + Run()
@@ -238,7 +238,7 @@ func (d *Downloader) Run(ctx context.Context, opts Options) (*Result, error) {
 - [ ] Rate limits из swagger (двухуровневые)
 
 **pkg/<domain>/ (ядро):**
-- [ ] Source + Writer интерфейсы (по dev_utils.md)
+- [ ] Source + Writer интерфейсы (по dev_v2_downloader.md)
 - [ ] Payload-формирование в отдельном файле (`merge.go` / `payload.go`)
 - [ ] `--dry-run` с payload diff (не просто пропуск Save)
 - [ ] `--sandbox` режим → sandbox URL вместо prod
@@ -266,7 +266,7 @@ func (d *Downloader) Run(ctx context.Context, opts Options) (*Result, error) {
 | Шаг | Что делаем | Проверка |
 |-----|-----------|----------|
 | 0 | Фундамент: sandbox-константы + readonly-интерфейсы в `pkg/wb/` | `go build`, grep по swagger |
-| 1 | Миграция read-only утилиты по `dev_utils.md` | `go test ./pkg/<domain>/ -v` |
+| 1 | Миграция read-only утилиты по `dev_v2_downloader.md` | `go test ./pkg/<domain>/ -v` |
 | 2 | (опционально) Tool-обёртка для read-only | `go run cmd/simple-agent ...` |
 | 3 | Write-утилита: ядро + payload + dry-run + sandbox-mode | `--dry-run` показывает diff |
 | 4 | Sandbox-тесты (wb_sandbox) | Только вручную, на тест-ключе |

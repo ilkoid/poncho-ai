@@ -2,7 +2,7 @@
 
 **Дата**: 2026-05-31
 **Статус**: Актуальный (на основе опыта ProductService + WbCardContentTool)
-**Приоритет**: Доменный — побеждает `dev_utils.md` и `dev_best_practices.md` при конфликте по вопросам WB API tools
+**Приоритет**: Доменный — побеждает `dev_v2_downloader.md` и `dev_best_practices.md` при конфликте по вопросам WB API tools
 
 **Связанные документы:**
 - [dev_v2_postgres.md](dev_v2_postgres.md) — Writer-интерфейсы для downloader (dual-backend)

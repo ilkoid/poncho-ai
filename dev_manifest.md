@@ -7,8 +7,9 @@
 | [dev_solid.md](dev_solid.md) | Общие принципы Go, ревью кода | Базовый (переопределяется ниже) |
 | **dev_manifest.md** | Архитектурные правила проекта | **Высший** (immutable) |
 | [dev_best_practices.md](dev_best_practices.md) | Куда положить код, общие паттерны | Средний (отражает текущее состояние) |
+| [dev_v2_downloader.md](dev_v2_downloader.md) | Создание v2 даунлоадера (Source/Writer, антипаттерны) | Задачный (пошаговая инструкция) |
+| [dev_v2_postgres.md](dev_v2_postgres.md) | PostgreSQL адаптер (dual-backend, SQL cheat sheet) | Доменный (для PG — побеждает downloader) |
 | [dev_swagger_reusable_packages.md](dev_swagger_reusable_packages.md) | WB API write-утилиты, sandbox, песочницы | Доменный (для WB write — побеждает) |
-| [dev_utils.md](dev_utils.md) | Миграция v1→v2 конкретного даунлоадера | Задачный (пошаговая инструкция) |
 
 **Правило:** более специфичный документ побеждает более общий.
 
