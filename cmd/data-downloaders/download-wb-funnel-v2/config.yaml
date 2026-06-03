@@ -1,22 +1,41 @@
+# ============================================================================
+# WB API клиент
+# ============================================================================
 wb:
   analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
   timeout: 30m
 
+# ============================================================================
+# Funnel — доменная конфигурация (WB Analytics API v3)
+# ============================================================================
 funnel:
-  days: 3
-  batch_size: 20
-  funnel_rate_limit: 3
-  funnel_rate_limit_burst: 3
-  funnel_rate_limit_api: 3
-  funnel_rate_limit_api_burst: 3
-  adaptive_probe_after: 10
-  max_backoff_seconds: 60
-  max_batches: 0
+  days: 3                           # Дней истории (1-365)
+  batch_size: 20                    # Продуктов на запрос (max 20)
+  funnel_rate_limit: 3              # Desired rate (req/min)
+  funnel_rate_limit_burst: 3        # Desired burst
+  funnel_rate_limit_api: 3          # Swagger rate floor (req/min) — shared with search-report
+  funnel_rate_limit_api_burst: 3    # Swagger burst floor
+  adaptive_probe_after: 10          # OKs at api floor before probing desired
+  max_backoff_seconds: 60           # Cap for exponential backoff
+  max_batches: 0                    # Max batches (0 = all)
 
-storage:
-  db_path: "/var/db/wb-sales.db"
-  funnel_refresh_window: 4
-
+# ============================================================================
+# Фильтрация товаров по артикулу (supplier_article)
+# ============================================================================
 filter:
-  exclude_lengths: [6]
-  allowed_years: [24, 25, 26]
+  exclude_lengths: [6]              # Исключить 6-значные артикулы
+  allowed_years: [24, 25, 26]       # Только 2024-2026 (из 2-3 цифры артикула)
+
+# ============================================================================
+# Хранение — выбор бэкенда (SQLite / PostgreSQL)
+# ============================================================================
+storage:
+  backend: "sqlite"                 # "sqlite" (default) | "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_database: "wb_data_prod"       # PostgreSQL database name
+  pg_password_env: "PG_PWD"         # Env var с паролем PostgreSQL
+
+# ============================================================================
+# Refresh window — сколько дней обновлять (старые данные замораживаются)
+# ============================================================================
+refresh_window: 4                   # Days: within window → upsert, outside → preserve

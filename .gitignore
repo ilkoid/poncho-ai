@@ -217,3 +217,4 @@ cmd/data-analyzers/analyze-category-sales/README.md
 cmd/fix-utilities/fix-card-dimensions/conf-bak.txt
 cmd/fix-utilities/fix-card-dimensions-v1.5/*.yaml
 !cmd/fix-utilities/fix-card-dimensions-v1.5/config.yaml
+/analyze-promo-calendar

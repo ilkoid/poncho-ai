@@ -226,10 +226,11 @@ cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI →
 | Domain | pkg/ v2 | SQLite adapter | PG adapter | Resume? |
 |--------|---------|---------------|------------|---------|
 | cards | ✅ `pkg/cards/` | ✅ | ✅ | ❌ No (YAGNI) |
+| prices | ✅ `pkg/prices/` | ✅ | ✅ | ❌ No (YAGNI) |
 | orders | ✅ `pkg/orders/` | ✅ | ✅ | ❌ No (light) |
 | opsales | ✅ `pkg/opsales/` | ✅ | ✅ | ❌ No (light) |
-| sales | ✅ `pkg/sales/` | ✅ | — | ✅ Date-level |
-| funnel | ✅ `pkg/funnel/` | ✅ | — | Partial |
+| sales | ✅ `pkg/sales/` | ✅ | ✅ | ✅ Date-level |
+| funnel | ✅ `pkg/funnel/` | ✅ | ✅ | Partial |
 | nmreport | ✅ `pkg/nmreport/` | ✅ | — | ✅ Report-level |
 | Others (12) | — | v1 only | — | — |
 

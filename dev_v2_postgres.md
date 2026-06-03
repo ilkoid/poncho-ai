@@ -433,7 +433,7 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 | orders | 2 | ❌ Нет | lastChangeDate iterator | ✅ | ✅ DiscardWriter |
 | prices | 2 | ❌ Нет | Offset (limit/offset) | ✅ | ✅ DiscardWriter |
 | opsales | 2 | ❌ Нет | lastChangeDate iterator | ✅ | ✅ DiscardWriter |
-| funnel | 5 | Partial (time-based) | Batch-by-nmIDs | — | — |
+| funnel | 5 | Partial (time-based) | Batch-by-nmIDs | ✅ | ✅ DiscardWriter |
 | nmreport | 5 | ✅ Да (report-level) | Async CSV | — | — |
 | stocks | — | — | — | — | — |
 | feedbacks | — | — | — | — | — |
@@ -442,7 +442,7 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 
 **⚠️ Known tech debt:** cards и sales v2 используют legacy mock safety (открывают БД в `--mock`). Новые домены обязаны использовать DiscardWriter.
 
-**Порядок миграции:** cards ✅ → orders ✅ → prices ✅ → opsales ✅ → stocks → feedbacks → region-sales → promotion. Мигрируй когда нужен фикс или фича, не массово.
+**Порядок миграции:** cards ✅ → orders ✅ → prices ✅ → opsales ✅ → sales ✅ → funnel ✅ → stocks → feedbacks → region-sales → promotion. Мигрируй когда нужен фикс или фича, не массово.
 
 ---
 
