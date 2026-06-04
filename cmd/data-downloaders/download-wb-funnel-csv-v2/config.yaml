@@ -1,0 +1,48 @@
+# WB Funnel CSV Downloader v2 — configuration
+#
+# Async CSV pipeline: Create report → Poll status → Download ZIP → Parse → Save.
+# Supports both SQLite and PostgreSQL backends.
+#
+# Usage:
+#   go run . --config config.yaml
+#   go run . --config config.yaml --backend postgres --pg-database wb_data_test
+#   go run . --mock  # zero DB interaction
+
+wb:
+  api_key: ""
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  timeout: "30m"
+
+funnel_csv:
+  report_type: detail       # "detail" (per nmID per day) or "grouped" (per day)
+  days: 7                   # days from today (alternative: begin/end)
+  begin: ""                 # YYYY-MM-DD (overrides days)
+  end: ""                   # YYYY-MM-DD (overrides days)
+  resume: true              # skip if successful report already exists
+  poll_interval_sec: 30     # how often to check report status
+  poll_timeout_min: 30      # max wait for report completion
+  rate_limits:
+    # Create report: POST /api/v1/supplier/report/detail
+    create: 3
+    create_burst: 3
+    create_api: 3
+    create_api_burst: 3
+    # Status check: GET /api/v1/supplier/report/{id}
+    status_check: 3
+    status_check_burst: 3
+    status_check_api: 3
+    status_check_api_burst: 3
+    # Download file: GET /api/v1/supplier/report/{id}/file
+    download: 3
+    download_burst: 3
+    download_api: 3
+    download_api_burst: 3
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "sqlite"           # "sqlite" (default) or "postgres"
+  db_path: "/var/db/wb-sales.db"
+  # pg_dsn: ""                # Optional: full DSN overrides env-based construction
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
