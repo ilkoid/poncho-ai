@@ -32,10 +32,9 @@ import (
 
 // Config holds YAML configuration for the cards v2 downloader.
 type Config struct {
-	WB      config.WBClientConfig    `yaml:"wb"`
-	Cards   cardsConfig              `yaml:"cards"`
-	Storage config.V2StorageConfig   `yaml:"storage"`
-	Filter  config.FunnelFilterConfig `yaml:"filter"`
+	WB      config.WBClientConfig  `yaml:"wb"`
+	Cards   cardsConfig            `yaml:"cards"`
+	Storage config.V2StorageConfig `yaml:"storage"`
 }
 
 // cardsConfig holds cards-specific settings.

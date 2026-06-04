@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ilkoid/poncho-ai/pkg/cards"
@@ -237,6 +236,3 @@ ON CONFLICT (nm_id, tag_id) DO UPDATE SET
 	deleteCharacteristicsSQL = `DELETE FROM card_characteristics WHERE nm_id = $1`
 	deleteTagsSQL            = `DELETE FROM card_tags WHERE nm_id = $1`
 )
-
-// Ensure pgx.Tx satisfies our needs (used in saveCardsChunk).
-var _ pgx.Tx = (pgx.Tx)(nil)

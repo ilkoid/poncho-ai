@@ -1,5 +1,5 @@
 # WB Cards Downloader v2 — полная конфигурация
-# Используется pkg/config/types: WBClientConfig, cardsConfig, V2StorageConfig, FunnelFilterConfig
+# Используется pkg/config/types: WBClientConfig, cardsConfig, V2StorageConfig
 
 wb:
   api_key: ""                # Прямой API ключ (не рекомендуется — лучше через env)
@@ -27,10 +27,3 @@ storage:
   pg_dsn: ""                 # Полный DSN (пусто = собрать из env vars)
   pg_database: "wb_data_prod"  # Имя базы (wb_data_prod | wb_data_test)
   pg_password_env: "PG_PWD"  # Env var с паролем PostgreSQL
-
-# Фильтрация товаров по артикулу
-# Фильтры применяются in-memory к каждой странице карточек
-filter:
-  exclude_lengths: []        # Исключить артикулы определённой длины (например: [6])
-  allowed_years: []  # Только товары года производства 2024-2026 (из 2-3 цифры артикула)
-  active_days: 0             # Только товары с продажами за последние N дней (0 = без фильтра)

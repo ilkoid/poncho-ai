@@ -2,6 +2,7 @@ package cards
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -107,7 +108,7 @@ func TestDownloader_ContextCancel(t *testing.T) {
 	dl := NewDownloader(source, writer, DownloadOptions{})
 	_, err := dl.Run(ctx)
 
-	if err == nil {
-		t.Fatal("expected error from cancelled context")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
 	}
 }
