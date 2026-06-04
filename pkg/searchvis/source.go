@@ -25,12 +25,15 @@ const (
 // The /report API returns ONE set of aggregated values for the entire batch of nmIDs.
 // WBSource replicates those values across each nmID (same behavior as v1).
 type WBSource struct {
-	client *wb.Client
+	client    *wb.Client
+	rateLimit int
+	burst     int
 }
 
 // NewWBSource creates a Source backed by the real WB Seller Analytics API.
-func NewWBSource(client *wb.Client) *WBSource {
-	return &WBSource{client: client}
+// rateLimit and burst are passed to client.Post() — must be positive.
+func NewWBSource(client *wb.Client, rateLimit, burst int) *WBSource {
+	return &WBSource{client: client, rateLimit: rateLimit, burst: burst}
 }
 
 // FetchPositions downloads aggregated search position/visibility data.
@@ -62,7 +65,7 @@ func (s *WBSource) FetchPositions(ctx context.Context, req PositionsRequest) ([]
 
 	var response map[string]any
 	err := s.client.Post(ctx, ToolIDReport, SellerAnalyticsURL,
-		0, 0, ReportPath, reqBody, &response)
+		s.rateLimit, s.burst, ReportPath, reqBody, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +97,7 @@ func (s *WBSource) FetchSearchTexts(ctx context.Context, req TextsRequest) ([]Se
 	}
 
 	err := s.client.Post(ctx, ToolIDSearchTexts, SellerAnalyticsURL,
-		0, 0, SearchTextsPath, reqBody, &response)
+		s.rateLimit, s.burst, SearchTextsPath, reqBody, &response)
 	if err != nil {
 		return nil, err
 	}

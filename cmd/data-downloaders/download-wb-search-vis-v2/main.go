@@ -158,7 +158,7 @@ func main() {
 		wbClient.ShareRateLimit(searchvis.ToolIDReport, searchvis.ToolIDSearchTexts)
 		wbClient.SetAdaptiveParams(0, svCfg.AdaptiveProbeAfter, svCfg.MaxBackoffSeconds)
 
-		source = searchvis.NewWBSource(wbClient)
+		source = searchvis.NewWBSource(wbClient, rl.SearchReport, rl.SearchReportBurst)
 	}
 
 	opts := searchvis.DownloadOptions{
