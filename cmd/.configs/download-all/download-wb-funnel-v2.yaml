@@ -1,0 +1,28 @@
+wb:
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+  timeout: 30m
+
+funnel:
+  days: 2
+  batch_size: 20
+  funnel_rate_limit: 3
+  funnel_rate_limit_burst: 3
+  funnel_rate_limit_api: 3
+  funnel_rate_limit_api_burst: 3
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+  max_batches: 0
+  incremental_hours: 4
+
+filter:
+  exclude_lengths: [6]
+  allowed_years: [22, 23, 24, 25, 26]
+  active_days: 14
+
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
+
+refresh_window: 2

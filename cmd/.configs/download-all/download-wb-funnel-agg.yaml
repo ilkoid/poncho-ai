@@ -1,0 +1,24 @@
+wb:
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+  timeout: 30m
+
+funnel_aggregated:
+  days: 7
+  nm_ids: []
+  brand_names: []
+  subject_ids: []
+  tag_ids: []
+  skip_deleted_nm: true
+  order_by_field: ""
+  order_by_mode: "desc"
+  page_size: 1000
+  rate_limit: 3
+  burst: 1
+  rate_limits:
+    funnel_aggregated: 3
+    funnel_aggregated_burst: 1
+    funnel_aggregated_api: 3
+    funnel_aggregated_api_burst: 1
+  adaptive_probe_after: 10
+  max_backoff_seconds: 120
+  db_path: "/var/db/wb-sales.db"

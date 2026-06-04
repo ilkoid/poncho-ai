@@ -1,0 +1,28 @@
+wb:
+  api_key: ""
+  analytics_api_key: ""
+  timeout: 120s
+
+promotion:
+  db_path: "/var/db/wb-sales.db"
+  days: 7
+  statuses: [9]
+  resume: false
+  skip_details: false
+  skip_campaigns: false
+  skip_stats: false
+  rate_limits:
+    promotion_count: 300
+    promotion_count_burst: 10
+    promotion_count_api: 300
+    promotion_count_api_burst: 5
+    advert_details: 300
+    advert_details_burst: 10
+    advert_details_api: 300
+    advert_details_api_burst: 5
+    fullstats: 3
+    fullstats_burst: 1
+    fullstats_api: 3
+    fullstats_api_burst: 1
+  adaptive_probe_after: 15
+  max_backoff_seconds: 30

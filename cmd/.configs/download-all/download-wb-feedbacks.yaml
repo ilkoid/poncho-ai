@@ -1,0 +1,22 @@
+wb:
+  api_key: ""
+  timeout: 30s
+
+feedbacks:
+  db_path: "/var/db/wb-sales.db"
+  begin: ""
+  end: ""
+  days: 2
+  feedbacks: true
+  questions: true
+  rate_limits:
+    download_feedbacks: 180
+    download_feedbacks_burst: 6
+    download_feedbacks_api: 180
+    download_feedbacks_api_burst: 6
+    download_questions: 180
+    download_questions_burst: 6
+    download_questions_api: 180
+    download_questions_api_burst: 6
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
