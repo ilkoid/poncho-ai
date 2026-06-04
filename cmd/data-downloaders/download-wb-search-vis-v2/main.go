@@ -153,9 +153,9 @@ func main() {
 
 		// Set rate limits — both endpoints share 3 req/min
 		rl := svCfg.RateLimits
-		wbClient.SetRateLimit(searchvis.ToolIDReport,
+		wbClient.SetRateLimit(wb.ToolIDSearchReport,
 			rl.SearchReport, rl.SearchReportBurst, rl.SearchReportApi, rl.SearchReportApiBurst)
-		wbClient.ShareRateLimit(searchvis.ToolIDReport, searchvis.ToolIDSearchTexts)
+		wbClient.ShareRateLimit(wb.ToolIDSearchReport, wb.ToolIDSearchTexts)
 		wbClient.SetAdaptiveParams(0, svCfg.AdaptiveProbeAfter, svCfg.MaxBackoffSeconds)
 
 		source = searchvis.NewWBSource(wbClient, rl.SearchReport, rl.SearchReportBurst)

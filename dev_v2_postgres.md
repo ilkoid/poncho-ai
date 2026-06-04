@@ -436,6 +436,7 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 | funnel | 5 | Partial (time-based) | Batch-by-nmIDs | ✅ | ✅ DiscardWriter |
 | stocks | 4 | ❌ Нет (snapshot) | Offset (250K/page) | ✅ | ✅ DiscardWriter |
 | nmreport | 5 | ✅ Да (report-level) | Async CSV | — | — |
+| searchvis | 2 | ❌ Нет (light) | Batch-by-nmIDs (100/50) | ✅ | ✅ DiscardWriter + MockReader |
 | feedbacks | — | — | — | — | — |
 | region-sales | — | — | — | — | — |
 | promotion | — | — | — | — | — |

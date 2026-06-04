@@ -8,22 +8,12 @@ import (
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
-// SellerAnalyticsURL is the base URL for WB Seller Analytics API.
-const SellerAnalyticsURL = "https://seller-analytics-api.wildberries.ru"
-
-// API paths for search-report endpoints.
-const (
-	ReportPath     = "/api/v2/search-report/report"
-	SearchTextsPath = "/api/v2/search-report/product/search-texts"
-)
-
 // WBSource adapts *wb.Client to the Source interface.
-// Unlike simpler domains (campaigns, stocks), WBSource does non-trivial response parsing:
-//   - /report returns nested map[string]any → typed SearchPositionRow
-//   - /search-texts returns typed JSON → SearchQueryRow
+// Thin delegation: calls typed client methods, then converts WB API types
+// into domain-specific row types (SearchPositionRow, SearchQueryRow).
 //
-// The /report API returns ONE set of aggregated values for the entire batch of nmIDs.
-// WBSource replicates those values across each nmID (same behavior as v1).
+// Rate limit wiring: rateLimit/burst are stored here and passed as parameters
+// to client methods — matching the pattern of campaigns, stocks, and other domains.
 type WBSource struct {
 	client    *wb.Client
 	rateLimit int
@@ -31,80 +21,39 @@ type WBSource struct {
 }
 
 // NewWBSource creates a Source backed by the real WB Seller Analytics API.
-// rateLimit and burst are passed to client.Post() — must be positive.
+// rateLimit and burst are passed to client methods — must be positive.
 func NewWBSource(client *wb.Client, rateLimit, burst int) *WBSource {
 	return &WBSource{client: client, rateLimit: rateLimit, burst: burst}
 }
 
 // FetchPositions downloads aggregated search position/visibility data.
-// Calls POST /api/v2/search-report/report and parses the nested response.
-// Returns one SearchPositionRow per nmID (API returns single aggregated set).
+// Delegates to client.GetSearchReport(), then converts the semi-structured
+// response into typed SearchPositionRow per nmID.
 func (s *WBSource) FetchPositions(ctx context.Context, req PositionsRequest) ([]SearchPositionRow, error) {
 	pastStart, pastEnd := calculatePastPeriod(req.Begin, req.End)
 
-	reqBody := map[string]any{
-		"nmIds": req.NmIDs,
-		"currentPeriod": map[string]string{
-			"start": req.Begin,
-			"end":   req.End,
-		},
-		"pastPeriod": map[string]string{
-			"start": pastStart,
-			"end":   pastEnd,
-		},
-		"orderBy": map[string]string{
-			"field": "orders",
-			"mode":  "desc",
-		},
-		"positionCluster":        "all",
-		"includeSubstitutedSKUs": true,
-		"includeSearchTexts":     false,
-		"limit":                  100,
-		"offset":                 0,
-	}
-
-	var response map[string]any
-	err := s.client.Post(ctx, ToolIDReport, SellerAnalyticsURL,
-		s.rateLimit, s.burst, ReportPath, reqBody, &response)
+	resp, err := s.client.GetSearchReport(ctx, req.NmIDs, req.Begin, req.End,
+		pastStart, pastEnd, s.rateLimit, s.burst)
 	if err != nil {
 		return nil, err
 	}
 
-	return parsePositionResponse(response, req.NmIDs, req.Begin, req.End), nil
+	return parsePositionResponse(resp.Data, req.NmIDs, req.Begin, req.End), nil
 }
 
 // FetchSearchTexts downloads top search queries per product.
-// Calls POST /api/v2/search-report/product/search-texts.
+// Delegates to client.GetSearchTexts(), then converts typed WB response items
+// into domain-specific SearchQueryRow.
 func (s *WBSource) FetchSearchTexts(ctx context.Context, req TextsRequest) ([]SearchQueryRow, error) {
-	reqBody := map[string]any{
-		"nmIds": req.NmIDs,
-		"currentPeriod": map[string]string{
-			"start": req.Begin,
-			"end":   req.End,
-		},
-		"topOrderBy": "orders",
-		"orderBy": map[string]string{
-			"field": "orders",
-			"mode":  "desc",
-		},
-		"limit": req.Limit,
-	}
-
-	var response struct {
-		Data struct {
-			Items []searchTextItem `json:"items"`
-		} `json:"data"`
-	}
-
-	err := s.client.Post(ctx, ToolIDSearchTexts, SellerAnalyticsURL,
-		s.rateLimit, s.burst, SearchTextsPath, reqBody, &response)
+	resp, err := s.client.GetSearchTexts(ctx, req.NmIDs, req.Begin, req.End,
+		req.Limit, s.rateLimit, s.burst)
 	if err != nil {
 		return nil, err
 	}
 
 	snapshotDate := time.Now().Format("2006-01-02")
-	rows := make([]SearchQueryRow, 0, len(response.Data.Items))
-	for _, item := range response.Data.Items {
+	rows := make([]SearchQueryRow, 0, len(resp.Data.Items))
+	for _, item := range resp.Data.Items {
 		rows = append(rows, SearchQueryRow{
 			NmID:                item.NmID,
 			SnapshotDate:        snapshotDate,
@@ -134,34 +83,14 @@ func (s *WBSource) FetchSearchTexts(ctx context.Context, req TextsRequest) ([]Se
 }
 
 // ============================================================================
-// Response parsing types and helpers (unexported)
+// Response parsing helpers (unexported)
 // ============================================================================
-
-// searchTextItem matches the JSON structure of /search-texts response items.
-type searchTextItem struct {
-	Text           string                 `json:"text"`
-	NmID           int                    `json:"nmId"`
-	VendorCode     string                 `json:"vendorCode"`
-	BrandName      string                 `json:"brandName"`
-	SubjectName    string                 `json:"subjectName"`
-	WeekFrequency  int                    `json:"weekFrequency"`
-	Frequency      map[string]any `json:"frequency"`
-	AvgPosition    map[string]any `json:"avgPosition"`
-	MedianPosition map[string]any `json:"medianPosition"`
-	OpenCard       map[string]any `json:"openCard"`
-	AddToCart      map[string]any `json:"addToCart"`
-	Orders         map[string]any `json:"orders"`
-	OpenToCart     map[string]any `json:"openToCart"`
-	CartToOrder    map[string]any `json:"cartToOrder"`
-	Visibility     map[string]any `json:"visibility"`
-}
 
 // parsePositionResponse extracts position/visibility data from the report API response.
 // The /report API returns aggregated data for all requested nmIDs.
 // We create one row per nmID with the same aggregated values.
-func parsePositionResponse(resp map[string]any, nmIDs []int, periodStart, periodEnd string) []SearchPositionRow {
-	data, ok := resp["data"].(map[string]any)
-	if !ok {
+func parsePositionResponse(data map[string]any, nmIDs []int, periodStart, periodEnd string) []SearchPositionRow {
+	if data == nil {
 		return nil
 	}
 

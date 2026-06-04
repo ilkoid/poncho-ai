@@ -18,12 +18,10 @@ import (
 	"time"
 )
 
-// ToolID constants for SetRateLimit — must match the ToolIDs used in wb.Client calls.
-// CLI must call wbClient.SetRateLimit() for ToolIDReport, then ShareRateLimit for ToolIDSearchTexts.
-const (
-	ToolIDReport     = "search_report"  // POST /api/v2/search-report/report
-	ToolIDSearchTexts = "search_texts"  // POST /api/v2/search-report/product/search-texts
-)
+// ToolID constants relocated to pkg/wb/search_report.go:
+//   wb.ToolIDSearchReport = "search_report"
+//   wb.ToolIDSearchTexts  = "search_texts"
+// CLI imports them from the wb package.
 
 // Batch size constants from WB API limits.
 const (
