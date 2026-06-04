@@ -1,0 +1,22 @@
+wb:
+  api_key_env: "WB_API_KEY"
+  timeout: "30s"
+
+supply:
+  days: 30
+  date_filter_type: "updatedDate"
+  rate_limits:
+    supply_ops: 25
+    supply_ops_burst: 5
+    supply_ops_api: 25
+    supply_ops_api_burst: 5
+    ref: 6
+    ref_burst: 6
+    ref_api: 6
+    ref_api_burst: 6
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"

@@ -10,13 +10,16 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/supplies"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// Compile-time assertion: SQLiteSalesRepository implements supplies.Writer.
+var _ supplies.Writer = (*SQLiteSalesRepository)(nil)
 
 // ============================================================================
 // Warehouses (reference data — full rewrite)
@@ -141,8 +144,8 @@ INSERT OR REPLACE INTO supplies (
 
 // SaveSupplies saves a batch of supplies using INSERT OR REPLACE.
 // supplyID=null is stored as 0 for unplanned supplies.
-func (r *SQLiteSalesRepository) SaveSupplies(ctx context.Context, supplies []SupplyRow) (int, error) {
-	if len(supplies) == 0 {
+func (r *SQLiteSalesRepository) SaveSupplies(ctx context.Context, supplyRows []supplies.SupplyRow) (int, error) {
+	if len(supplyRows) == 0 {
 		return 0, nil
 	}
 
@@ -161,7 +164,7 @@ func (r *SQLiteSalesRepository) SaveSupplies(ctx context.Context, supplies []Sup
 	}
 	defer stmt.Close()
 
-	for _, s := range supplies {
+	for _, s := range supplyRows {
 		_, err := stmt.ExecContext(ctx,
 			s.SupplyID, s.PreorderID, s.StatusID, s.BoxTypeID, s.Phone,
 			s.CreateDate, s.SupplyDate, s.FactDate, s.UpdatedDate,
@@ -182,7 +185,7 @@ func (r *SQLiteSalesRepository) SaveSupplies(ctx context.Context, supplies []Sup
 		return 0, fmt.Errorf("commit: %w", err)
 	}
 
-	return len(supplies), nil
+	return len(supplyRows), nil
 }
 
 // CountSupplies returns total number of supplies in the database.
@@ -193,16 +196,17 @@ func (r *SQLiteSalesRepository) CountSupplies(ctx context.Context) (int, error) 
 }
 
 // GetSupplyIDs returns all (supply_id, preorder_id) pairs for downloading goods/packages.
-func (r *SQLiteSalesRepository) GetSupplyIDs(ctx context.Context) ([]SupplyIDPair, error) {
+// Not part of supplies.Writer — kept for v1 compatibility and ad-hoc queries.
+func (r *SQLiteSalesRepository) GetSupplyIDs(ctx context.Context) ([]supplies.SupplyIDPair, error) {
 	rows, err := r.db.QueryContext(ctx, "SELECT supply_id, preorder_id FROM supplies")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var pairs []SupplyIDPair
+	var pairs []supplies.SupplyIDPair
 	for rows.Next() {
-		var p SupplyIDPair
+		var p supplies.SupplyIDPair
 		if err := rows.Scan(&p.SupplyID, &p.PreorderID); err != nil {
 			return nil, err
 		}
@@ -335,162 +339,21 @@ func (r *SQLiteSalesRepository) SaveSupplyPackages(ctx context.Context, supplyID
 }
 
 // ============================================================================
-// Helper types (used by downloader)
+// Type aliases for v1 backwards compatibility
 // ============================================================================
 
-// SupplyRow is a flattened supply for DB storage.
-// Converts nullable API fields to non-nullable DB values.
-type SupplyRow struct {
-	SupplyID                   int64
-	PreorderID                 int64
-	StatusID                   int
-	BoxTypeID                  int
-	Phone                      string
-	CreateDate                 string
-	SupplyDate                 sql.NullString
-	FactDate                   sql.NullString
-	UpdatedDate                sql.NullString
-	WarehouseID                sql.NullInt64
-	WarehouseName              sql.NullString
-	ActualWarehouseID          sql.NullInt64
-	ActualWarehouseName        sql.NullString
-	TransitWarehouseID         sql.NullInt64
-	TransitWarehouseName       sql.NullString
-	AcceptanceCost             sql.NullFloat64
-	PaidAcceptanceCoefficient  sql.NullFloat64
-	RejectReason               sql.NullString
-	SupplierAssignName         sql.NullString
-	StorageCoef                sql.NullString
-	DeliveryCoef               sql.NullString
-	Quantity                   sql.NullInt64
-	AcceptedQuantity           sql.NullInt64
-	ReadyForSaleQuantity       sql.NullInt64
-	UnloadingQuantity          sql.NullInt64
-	DepersonalizedQuantity     sql.NullInt64
-	IsBoxOnPallet              sql.NullBool
-	VirtualTypeID              sql.NullInt64
-	DownloadedAt               string
-}
+// SupplyIDPair is kept as an alias for v1 compatibility.
+// New code should use supplies.SupplyIDPair directly.
+type SupplyIDPair = supplies.SupplyIDPair
 
-// SupplyIDPair is used for querying supply IDs for goods/package download.
-type SupplyIDPair struct {
-	SupplyID   int64
-	PreorderID int64
-}
+// SupplyRow is kept as an alias for v1 compatibility.
+// New code should import supplies.SupplyRow directly.
+type SupplyRow = supplies.SupplyRow
 
-// SupplyFromAPIDetail converts API SupplyDetails to a SupplyRow for DB storage.
-// This is used when supply details are fetched individually.
-func SupplyFromAPIDetail(d *wb.SupplyDetails, downloadedAt string) SupplyRow {
-	row := SupplyRow{
-		PreorderID:         0, // Details don't have preorderID, set separately
-		StatusID:           d.StatusID,
-		BoxTypeID:          d.BoxTypeID,
-		Phone:              d.Phone,
-		CreateDate:         d.CreateDate,
-		DownloadedAt:       downloadedAt,
-	}
-	// Nullable fields from *string → sql.NullString
-	row.SupplyDate = sqlNullStringPtr(d.SupplyDate)
-	row.FactDate = sqlNullStringPtr(d.FactDate)
-	row.UpdatedDate = sqlNullStringPtr(d.UpdatedDate)
-	row.WarehouseID = sqlNullInt64(intFromIntPtr(d.ActualWarehouseID))
-	row.WarehouseName = sqlNullString(d.WarehouseName)
-	row.ActualWarehouseID = sqlNullInt64(intFromIntPtr(d.ActualWarehouseID))
-	row.ActualWarehouseName = sqlNullStringPtr(d.ActualWarehouseName)
-	row.TransitWarehouseID = sqlNullInt64(intFromIntPtr(d.TransitWarehouseID))
-	row.TransitWarehouseName = sqlNullStringPtr(d.TransitWarehouseName)
-	row.AcceptanceCost = sqlNullFloat64Ptr(d.AcceptanceCost)
-	row.PaidAcceptanceCoefficient = sqlNullFloat64Ptr(d.PaidAcceptanceCoefficient)
-	row.RejectReason = sqlNullStringPtr(d.RejectReason)
-	row.SupplierAssignName = sqlNullString(d.SupplierAssignName)
-	row.StorageCoef = sqlNullStringPtr(d.StorageCoef)
-	row.DeliveryCoef = sqlNullStringPtr(d.DeliveryCoef)
-	row.VirtualTypeID = sqlNullInt64Ptr(d.VirtualTypeID)
-	row.Quantity = sqlNullInt64(d.Quantity)
-	row.AcceptedQuantity = sqlNullInt64(d.AcceptedQuantity)
-	row.ReadyForSaleQuantity = sqlNullInt64(d.ReadyForSaleQuantity)
-	row.UnloadingQuantity = sqlNullInt64(d.UnloadingQuantity)
-	row.DepersonalizedQuantity = sqlNullInt64Ptr(d.DepersonalizedQuantity)
-	if d.IsBoxOnPallet != nil {
-		row.IsBoxOnPallet = sql.NullBool{Bool: *d.IsBoxOnPallet, Valid: true}
-	}
-	return row
-}
+// SupplyFromAPIDetail delegates to supplies.SupplyFromAPIDetail.
+// Kept for v1 compatibility.
+var SupplyFromAPIDetail = supplies.SupplyFromAPIDetail
 
-// SupplyFromAPI converts API Supply (list item) to a SupplyRow for DB storage.
-func SupplyFromAPI(s *wb.Supply, downloadedAt string) SupplyRow {
-	supplyID := int64(0)
-	if s.SupplyID != nil {
-		supplyID = *s.SupplyID
-	}
-
-	row := SupplyRow{
-		SupplyID:     supplyID,
-		PreorderID:   s.PreorderID,
-		StatusID:     s.StatusID,
-		BoxTypeID:    s.BoxTypeID,
-		Phone:        s.Phone,
-		CreateDate:   s.CreateDate,
-		DownloadedAt: downloadedAt,
-	}
-	row.SupplyDate = sqlNullString(stringFromPtrP(s.SupplyDate))
-	row.FactDate = sqlNullString(stringFromPtrP(s.FactDate))
-	row.UpdatedDate = sqlNullString(stringFromPtrP(s.UpdatedDate))
-
-	if s.IsBoxOnPallet != nil {
-		row.IsBoxOnPallet = sql.NullBool{Bool: *s.IsBoxOnPallet, Valid: true}
-	}
-	return row
-}
-
-// ============================================================================
-// Null helpers
-// ============================================================================
-
-func sqlNullString(s string) sql.NullString {
-	return sql.NullString{String: s, Valid: s != ""}
-}
-
-func sqlNullStringPtr(s *string) sql.NullString {
-	if s == nil {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: *s, Valid: true}
-}
-
-func sqlNullInt64(i int) sql.NullInt64 {
-	return sql.NullInt64{Int64: int64(i), Valid: i != 0}
-}
-
-func sqlNullInt64Ptr(p *int) sql.NullInt64 {
-	if p == nil {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: int64(*p), Valid: true}
-}
-
-func sqlNullFloat64(f float64) sql.NullFloat64 {
-	return sql.NullFloat64{Float64: f, Valid: f != 0}
-}
-
-func sqlNullFloat64Ptr(p *float64) sql.NullFloat64 {
-	if p == nil {
-		return sql.NullFloat64{}
-	}
-	return sql.NullFloat64{Float64: *p, Valid: true}
-}
-
-func intFromIntPtr(p *int) int {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
-
-// stringFromPtrP converts *string (from API) to plain string for sql.NullString.
-func stringFromPtrP(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
+// SupplyFromAPI delegates to supplies.SupplyFromAPI.
+// Kept for v1 compatibility.
+var SupplyFromAPI = supplies.SupplyFromAPI

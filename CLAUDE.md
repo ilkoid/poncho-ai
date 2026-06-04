@@ -48,6 +48,7 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 - `pkg/opsales/` — Operational Sales v2 downloader domain (Statistics API `/api/v1/supplier/sales`)
 - `pkg/feedbacks/` — Feedbacks v2 downloader domain (Feedbacks API `/api/v1/feedbacks`, `/api/v1/questions`)
 - `pkg/campaigns/` — Campaigns v2 downloader domain (Promotion API `/adv/v1/count`, `/api/advert/v2/adverts`, `/adv/v3/fullstats`)
+- `pkg/supplies/` — Supplies v2 downloader domain (Supplies API `/api/v1/warehouses`, `/api/v1/transit-tariffs`, `/api/v1/supplies`). 7 Writer methods, two-phase upsert, shared rate limiter across 4 endpoints.
 - `pkg/searchvis/` — Search Visibility v2 downloader domain (Seller Analytics API `/api/v2/search-report/report`, `/api/v2/search-report/product/search-texts`). Unique: requires Reader interface for nmID resolution from DB.
 - `pkg/storage/sqlite/` — Repository pattern, ~57 tables across 9 `*_schema.go` files (schema, cards, supply, region_sales, prices, onec, stock_history, orders, opsales)
 - `pkg/events/` + `pkg/tui/` — Port & Adapter decoupling (tui implements events interfaces)
@@ -61,7 +62,7 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 ### cmd/ Entry Points
 - `cmd/poncho/` — Main TUI agent
 - `cmd/simple-agent/` — Headless agent CLI
-- `cmd/data-downloaders/` — 22 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, **feedbacks-v2**, cards, prices, stocks, stock-history, region-sales, **region-sales-v2**, search-visibility, **search-vis-v2**, supplies, 1c-data, all-articles, orders-v2, opsales-v2, **campaigns-v2**, **funnel-csv-v2**)
+- `cmd/data-downloaders/` — 23 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, **feedbacks-v2**, cards, prices, stocks, stock-history, region-sales, **region-sales-v2**, search-visibility, **search-vis-v2**, supplies, **supplies-v2**, 1c-data, all-articles, orders-v2, opsales-v2, **campaigns-v2**, **funnel-csv-v2**)
 - `cmd/data-analyzers/` — 6 analysis utilities (feedbacks, SKU snapshots, snapshots, price comparison, DB freshness, 1C mapping)
 - `cmd/data-dashboards/` — Web dashboards (sku-analytics)
 - `cmd/test-utils/` — API testing utilities (test-wb-raw, test-wb-search, etc.)
@@ -240,7 +241,8 @@ cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI →
 | campaigns | ✅ `pkg/campaigns/` | ✅ | ✅ | ✅ Date-level |
 | searchvis | ✅ `pkg/searchvis/` | ✅ | ✅ | ❌ No (light). Unique: Reader interface for nmID resolution |
 | nmreport | ✅ `pkg/nmreport/` | ✅ | ✅ | ✅ Report-level |
-| Others (11) | — | v1 only | — | — |
+| supplies | ✅ `pkg/supplies/` | ✅ | ✅ | ❌ No (YAGNI). 7 Writer methods, two-phase upsert |
+| Others (10) | — | v1 only | — | — |
 
 ## Development Guides
 
