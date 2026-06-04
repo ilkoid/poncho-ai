@@ -4,7 +4,7 @@
 # Usage: bash download-all-v2.sh [days]
 #   days  - override --days for downloaders that support it (default: from config.yaml)
 #
-# v2 downloaders (cards, prices, orders, opsales, sales, stocks, funnel, feedbacks, campaigns, searchvis) support
+# v2 downloaders (cards, prices, orders, opsales, sales, stocks, funnel, feedbacks, campaigns, searchvis, funnel-csv) support
 # --backend postgres. This script uses --backend sqlite (default) for safety.
 # To switch to PostgreSQL: change --backend sqlite → --backend postgres for each phase.
 #
@@ -43,7 +43,7 @@ echo ""
 echo "── Phase 1: Catalog (cards, prices, 1C/PIM) ──"
 PHASE_START=$SECONDS
 
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" && go run . --config "$CONFIGS/download-wb-cards.yaml") || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" && go run . --config "$CONFIGS/download-wb-cards-v2.yaml" --backend sqlite) || exit $?
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-prices-v2" && go run . --config "$CONFIGS/download-wb-prices.yaml") || exit $?
 #(cd "$PONCHO/cmd/data-downloaders/download-1c-data" && go run . --config "$CONFIGS/download-1c-data.yaml") || exit $?
 #(cd "$PONCHO/cmd/data-downloaders/download-1c-rests" && go run . --config "$CONFIGS/download-1c-rests.yaml") || exit $?
@@ -103,15 +103,15 @@ echo "── Phase 5: Advertising (campaigns, promotion-v2) ──"
 PHASE_START=$SECONDS
 
 ### wb-campaigns v2 (basic 3 phases: campaigns, details, fullstats)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" && go run . --config "$CONFIGS/download-wb-campaigns-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" && go run . --config "$CONFIGS/download-wb-campaigns-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-promotion-v2 (extended 14 phases: normquery, bids, finance, calendar — SQLite only)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" && go run . --config "$CONFIGS/download-wb-promotion-v2.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" && go run . --config "$CONFIGS/download-wb-promotion-v2.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 5 done in $(( SECONDS - PHASE_START ))s"
 
 # ── Phase 6: Analytics (slow — 3 req/min shared limit) ──────────────
-# v2 downloaders: funnel ✅, searchvis ✅
-# v1 downloaders: funnel-csv, funnel-agg (no PG adapter yet)
+# v2 downloaders: funnel ✅, searchvis ✅, funnel-csv ✅
+# v1 downloaders: funnel-agg (no PG adapter yet)
 
 echo ""
 echo "── Phase 6: Analytics (funnel, funnel-agg, search-visibility) ──"
@@ -120,6 +120,8 @@ PHASE_START=$SECONDS
 ### wb-funnel v2 (conversion funnel per product per day)
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-v2" && go run . --config "$CONFIGS/download-wb-funnel-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv" && go run . --config "$CONFIGS/download-wb-funnel-csv.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+### wb-funnel-csv v2 (async CSV funnel export — detail/grouped)
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" && go run . --config "$CONFIGS/download-wb-funnel-csv-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg" && go run . --config "$CONFIGS/download-wb-funnel-agg.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-search-visibility" && go run . --config "$CONFIGS/download-wb-search-visibility.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-search-vis v2 (search positions + queries — Seller Analytics API, 3 req/min)
@@ -139,6 +141,6 @@ echo "==========================================="
 echo "  All downloads completed in ${MINS}m ${SECS}s"
 echo "  Finished: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
-echo "  v2 downloaders (PG-ready): cards, prices, feedbacks, orders, opsales, sales, region-sales, stocks, funnel, campaigns, searchvis"
-echo "  v1 downloaders (SQLite):   1c-data, 1c-rests, stock-history, supplies, promotion-v2, funnel-csv, funnel-agg"
+echo "  v2 downloaders (PG-ready): cards, prices, feedbacks, orders, opsales, sales, region-sales, stocks, funnel, campaigns, searchvis, funnel-csv"
+echo "  v1 downloaders (SQLite):   1c-data, 1c-rests, stock-history, supplies, promotion-v2, funnel-agg"
 echo "==========================================="
