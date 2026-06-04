@@ -1,0 +1,37 @@
+# WB Funnel-Agg Downloader v2 — Pipeline Config
+# Aggregated funnel metrics from Seller Analytics API v3
+# Endpoint: POST /api/analytics/v3/sales-funnel/products
+# Rate: 3 req/min (shared with other Seller Analytics endpoints)
+
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  timeout: "30s"
+
+funnel_aggregated:
+  # Period in days (alternative to selected_start/end)
+  days: 7
+
+  # Pagination
+  page_size: 100
+
+  # Rate limiting (3 req/min, shared with funnel/search-vis)
+  rate_limits:
+    funnel_aggregated: 3
+    funnel_aggregated_burst: 3
+    funnel_aggregated_api: 3
+    funnel_aggregated_api_burst: 3
+
+  # Adaptive rate limiting
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
+
+  # PostgreSQL settings (used when backend=postgres)
+  pg_host: "192.168.10.7"
+  pg_port: 15432
+  pg_user: "postgres"
+  pg_password_env: "PG_PWD"
+  pg_database: "wb_data_prod"
