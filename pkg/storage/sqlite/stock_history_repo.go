@@ -8,7 +8,12 @@ import (
 	"fmt"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
+
+	"github.com/ilkoid/poncho-ai/pkg/stockhistory"
 )
+
+// Compile-time assertion: SQLiteSalesRepository implements stockhistory.StockHistoryWriter.
+var _ stockhistory.StockHistoryWriter = (*SQLiteSalesRepository)(nil)
 
 // StockHistoryReport represents metadata for a stock history CSV report.
 type StockHistoryReport struct {
@@ -333,4 +338,184 @@ func ParseDailyDataJSON(data *string) map[string]int64 {
 	}
 
 	return result
+}
+
+// ============================================================================
+// V2 adapter methods (stockhistory.StockHistoryWriter interface)
+// Convert domain types → SQLite DB types, delegate to existing methods.
+// ============================================================================
+
+// GetReport wraps GetStockHistoryReport, converting to domain type.
+func (r *SQLiteSalesRepository) GetReport(ctx context.Context, reportType, startDate, endDate, stockType string) (*stockhistory.ReportRecord, error) {
+	report, err := r.GetStockHistoryReport(ctx, reportType, startDate, endDate, stockType)
+	if err != nil {
+		return nil, err
+	}
+	if report == nil {
+		return nil, nil
+	}
+	return &stockhistory.ReportRecord{
+		ID:           report.ID,
+		ReportType:   report.ReportType,
+		StartDate:    report.StartDate,
+		EndDate:      report.EndDate,
+		StockType:    report.StockType,
+		Status:       report.Status,
+		FileSize:     report.FileSize,
+		RowsCount:    report.RowsCount,
+		CreatedAt:    report.CreatedAt,
+		DownloadedAt: shDerefStr(report.DownloadAt),
+	}, nil
+}
+
+// SaveReport converts domain type to DB type and delegates.
+func (r *SQLiteSalesRepository) SaveReport(ctx context.Context, record stockhistory.ReportRecord) error {
+	report := &StockHistoryReport{
+		ID:         record.ID,
+		ReportType: record.ReportType,
+		StartDate:  record.StartDate,
+		EndDate:    record.EndDate,
+		StockType:  record.StockType,
+		Status:     record.Status,
+		FileSize:   record.FileSize,
+		RowsCount:  record.RowsCount,
+		CreatedAt:  record.CreatedAt,
+	}
+	if record.DownloadedAt != "" {
+		report.DownloadAt = &record.DownloadedAt
+	}
+	return r.SaveStockHistoryReport(ctx, report)
+}
+
+// UpdateReportStatus delegates to existing method.
+func (r *SQLiteSalesRepository) UpdateReportStatus(ctx context.Context, downloadID, status string, rowsCount int) error {
+	return r.UpdateStockHistoryReportStatus(ctx, downloadID, status, rowsCount)
+}
+
+// SaveMetrics converts domain rows to DB rows and delegates.
+func (r *SQLiteSalesRepository) SaveMetrics(ctx context.Context, rows []stockhistory.MetricRow) (int, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	dbRows := make([]StockHistoryMetricRow, len(rows))
+	for i, r := range rows {
+		dbRows[i] = StockHistoryMetricRow{
+			ReportID:         r.ReportID,
+			VendorCode:       shStrPtr(r.VendorCode),
+			Name:             shStrPtr(r.Name),
+			NmID:             r.NmID,
+			SubjectName:      shStrPtr(r.SubjectName),
+			BrandName:        shStrPtr(r.BrandName),
+			SizeName:         shStrPtr(r.SizeName),
+			ChrtID:           shIntPtr(r.ChrtID),
+			RegionName:       shStrPtr(r.RegionName),
+			OfficeName:       shStrPtr(r.OfficeName),
+			Availability:     shStrPtr(r.Availability),
+			OrdersCount:      r.OrdersCount,
+			OrdersSum:        r.OrdersSum,
+			BuyoutCount:      r.BuyoutCount,
+			BuyoutSum:        r.BuyoutSum,
+			BuyoutPercent:    r.BuyoutPercent,
+			AvgOrders:        r.AvgOrders,
+			StockCount:       r.StockCount,
+			StockSum:         r.StockSum,
+			SaleRate:         r.SaleRate,
+			AvgStockTurnover: r.AvgStockTurnover,
+			ToClientCount:    r.ToClientCount,
+			FromClientCount:  r.FromClientCount,
+			Price:            r.Price,
+			OfficeMissingTime: r.OfficeMissingTime,
+			LostOrdersCount:  r.LostOrdersCount,
+			LostOrdersSum:    r.LostOrdersSum,
+			LostBuyoutsCount: r.LostBuyoutsCount,
+			LostBuyoutsSum:   r.LostBuyoutsSum,
+			MonthlyData:      shMonthlyDataToJSON(r.MonthlyData),
+			Currency:         shStrPtr(r.Currency),
+		}
+	}
+	if err := r.SaveStockHistoryMetrics(ctx, dbRows); err != nil {
+		return 0, err
+	}
+	return len(dbRows), nil
+}
+
+// SaveDaily converts domain rows to DB rows and delegates.
+func (r *SQLiteSalesRepository) SaveDaily(ctx context.Context, rows []stockhistory.DailyRow) (int, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	dbRows := make([]StockHistoryDailyRow, len(rows))
+	for i, r := range rows {
+		dbRows[i] = StockHistoryDailyRow{
+			ReportID:    r.ReportID,
+			VendorCode:  shStrPtr(r.VendorCode),
+			Name:        shStrPtr(r.Name),
+			NmID:        r.NmID,
+			SubjectName: shStrPtr(r.SubjectName),
+			BrandName:   shStrPtr(r.BrandName),
+			SizeName:    shStrPtr(r.SizeName),
+			ChrtID:      shIntPtr(r.ChrtID),
+			OfficeName:  shStrPtr(r.OfficeName),
+			DailyData:   shDailyDataToJSON(r.DailyData),
+		}
+	}
+	if err := r.SaveStockHistoryDaily(ctx, dbRows); err != nil {
+		return 0, err
+	}
+	return len(dbRows), nil
+}
+
+// ============================================================================
+// V2 adapter helpers
+// ============================================================================
+
+// shStrPtr returns *string for non-empty strings, nil otherwise.
+func shStrPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// shIntPtr returns *int for non-zero int64, nil otherwise.
+func shIntPtr(i int64) *int {
+	if i == 0 {
+		return nil
+	}
+	v := int(i)
+	return &v
+}
+
+// shDerefStr dereferences a *string, returning "" for nil.
+func shDerefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// shMonthlyDataToJSON converts map to JSON *string for DB storage.
+func shMonthlyDataToJSON(data map[string]float64) *string {
+	if len(data) == 0 {
+		return nil
+	}
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return nil
+	}
+	s := string(bytes)
+	return &s
+}
+
+// shDailyDataToJSON converts map to JSON *string for DB storage.
+func shDailyDataToJSON(data map[string]int64) *string {
+	if len(data) == 0 {
+		return nil
+	}
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return nil
+	}
+	s := string(bytes)
+	return &s
 }

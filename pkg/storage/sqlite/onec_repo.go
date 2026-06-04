@@ -4,7 +4,45 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/ilkoid/poncho-ai/pkg/onec"
 )
+
+// Compile-time assertion: SQLiteSalesRepository implements onec.Writer.
+var _ onec.Writer = (*SQLiteSalesRepository)(nil)
+
+// ---------------------------------------------------------------------------
+// onec.Writer interface — thin wrappers delegating to existing methods.
+// Existing method names preserved for v1 backward compatibility.
+// ---------------------------------------------------------------------------
+
+// SaveGoods delegates to SaveOneCGoods (onec.Writer interface).
+func (r *SQLiteSalesRepository) SaveGoods(ctx context.Context, goods []onec.Good) (int, error) {
+	return r.SaveOneCGoods(ctx, goods)
+}
+
+// SaveSKUs delegates to SaveOneCSKUs (onec.Writer interface).
+func (r *SQLiteSalesRepository) SaveSKUs(ctx context.Context, skus []onec.SKU) (int, error) {
+	return r.SaveOneCSKUs(ctx, skus)
+}
+
+// SaveDimensions delegates to ImportDimensions (onec.Writer interface).
+func (r *SQLiteSalesRepository) SaveDimensions(ctx context.Context, dims []onec.DimensionRow) (int, error) {
+	return r.ImportDimensions(ctx, dims)
+}
+
+// SaveOneCPrices is the Writer interface method.
+// The existing SaveOneCPrices method below already satisfies it (same name + type alias).
+// No wrapper needed — this comment exists to document the mapping.
+
+// SavePIMGoods is the Writer interface method.
+// The existing SavePIMGoods method below already satisfies it (same name + type alias).
+// No wrapper needed — this comment exists to document the mapping.
+
+// CleanAll delegates to CleanOneCData (onec.Writer interface).
+func (r *SQLiteSalesRepository) CleanAll(ctx context.Context) error {
+	return r.CleanOneCData(ctx)
+}
 
 // SaveOneCGoods saves a batch of 1C goods using INSERT OR REPLACE.
 // Returns number of rows inserted/replaced.
