@@ -61,7 +61,7 @@ Agent (pkg/agent) → ReActCycle (pkg/chain) → LLM (pkg/llm Provider)
 ### cmd/ Entry Points
 - `cmd/poncho/` — Main TUI agent
 - `cmd/simple-agent/` — Headless agent CLI
-- `cmd/data-downloaders/` — 21 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, **feedbacks-v2**, cards, prices, stocks, stock-history, region-sales, **region-sales-v2**, search-visibility, **search-vis-v2**, supplies, 1c-data, all-articles, orders-v2, opsales-v2, **campaigns-v2**)
+- `cmd/data-downloaders/` — 22 WB API data collectors (sales, funnel, funnel-agg, promotion, promotion-v2, feedbacks, **feedbacks-v2**, cards, prices, stocks, stock-history, region-sales, **region-sales-v2**, search-visibility, **search-vis-v2**, supplies, 1c-data, all-articles, orders-v2, opsales-v2, **campaigns-v2**, **funnel-csv-v2**)
 - `cmd/data-analyzers/` — 6 analysis utilities (feedbacks, SKU snapshots, snapshots, price comparison, DB freshness, 1C mapping)
 - `cmd/data-dashboards/` — Web dashboards (sku-analytics)
 - `cmd/test-utils/` — API testing utilities (test-wb-raw, test-wb-search, etc.)
@@ -203,7 +203,7 @@ V2 utilities support both SQLite and PostgreSQL through focused Writer interface
 **Key packages:**
 - `pkg/config/pgconfig.go` — `V2StorageConfig` (backend selection, DSN builder, password injection)
 - `pkg/storage/postgres/` — PostgreSQL adapters (`pgxpool`, per-domain repos + schemas)
-- `pkg/<domain>/` — v2 domain packages with Source/Writer interfaces (cards ✅, orders ✅, opsales ✅, campaigns ✅, sales/funnel/nmreport — SQLite only)
+- `pkg/<domain>/` — v2 domain packages with Source/Writer interfaces (cards ✅, orders ✅, opsales ✅, campaigns ✅, sales/funnel — SQLite only, nmreport ✅ dual-backend)
 
 **Pattern (each domain):**
 ```
@@ -239,7 +239,7 @@ cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI →
 | region-sales | ✅ `pkg/regionsales/` | ✅ | ✅ | ❌ No (light) |
 | campaigns | ✅ `pkg/campaigns/` | ✅ | ✅ | ✅ Date-level |
 | searchvis | ✅ `pkg/searchvis/` | ✅ | ✅ | ❌ No (light). Unique: Reader interface for nmID resolution |
-| nmreport | ✅ `pkg/nmreport/` | ✅ | — | ✅ Report-level |
+| nmreport | ✅ `pkg/nmreport/` | ✅ | ✅ | ✅ Report-level |
 | Others (11) | — | v1 only | — | — |
 
 ## Development Guides
