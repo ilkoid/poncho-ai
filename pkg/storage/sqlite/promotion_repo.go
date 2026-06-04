@@ -9,11 +9,16 @@ import (
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/campaigns"
+	"github.com/ilkoid/poncho-ai/pkg/promotion"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
-// Compile-time assertion: SQLiteSalesRepository implements campaigns.CampaignsWriter.
-var _ campaigns.CampaignsWriter = (*SQLiteSalesRepository)(nil)
+// Compile-time assertions: SQLiteSalesRepository implements all required interfaces.
+var (
+	_ campaigns.CampaignsWriter = (*SQLiteSalesRepository)(nil)
+	_ promotion.Writer          = (*SQLiteSalesRepository)(nil)
+	_ promotion.Reader          = (*SQLiteSalesRepository)(nil)
+)
 
 // ============================================================================
 // Campaign Repository Methods

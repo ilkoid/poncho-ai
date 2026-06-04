@@ -1,13 +1,20 @@
-// Package main provides a utility to download extended WB Promotion API data to SQLite.
+// download-wb-promotion-v2 downloads extended WB Promotion API data to SQLite or PostgreSQL.
 //
-// V2 extends V1 with: normquery stats/bids/minus, bid recommendations, finance, calendar.
-// Reads campaign IDs and nm_ids from V1 tables, writes to new V2 tables in the same DB.
+// V2 architecture: business logic in pkg/promotion/, this is a thin CLI driver (~150 lines).
+// Supports both SQLite and PostgreSQL backends via config.
+//
+// Covers 14 phases: campaign bids, normquery stats/bids/minus/clusters,
+// bid recommendations, expenses, balance, payments, calendar, budgets, min bids.
+//
+// ⚠️ Mock safety: --mock mode uses DiscardWriter + MockReader — ZERO database interaction.
 //
 // Usage:
 //
-//	WB_API_KEY=your_key go run main.go --days=7
-//	go run main.go --mock --days=7    # Mock mode
-//	go run main.go --help             # Show help
+//	go run . --mock                                    # mock mode, no DB
+//	go run . --mock --db /tmp/test.db                  # mock + test SQLite
+//	go run . --mock --backend postgres --pg-database wb_data_test
+//	go run . --dry-run --config config.yaml            # real API, no writes
+//	go run . --config config.yaml                      # production (user only!)
 package main
 
 import (
@@ -22,85 +29,127 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/dllog"
+	"github.com/ilkoid/poncho-ai/pkg/promotion"
+	"github.com/ilkoid/poncho-ai/pkg/storage/postgres"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/utils"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
-// Config represents the YAML configuration.
+// Config holds YAML configuration for the promotion V2 downloader.
 type Config struct {
-	WB           config.WBClientConfig `yaml:"wb"`
-	PromotionV2  config.PromotionV2Config `yaml:"promotion_v2"`
+	WB          config.WBClientConfig    `yaml:"wb"`
+	PromotionV2 config.PromotionV2Config `yaml:"promotion_v2"`
+	Storage     config.V2StorageConfig   `yaml:"storage"`
 }
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "Path to config file")
-	mock := flag.Bool("mock", false, "Use mock client (no API calls)")
-	begin := flag.String("begin", "", "Begin date (YYYY-MM-DD)")
-	end := flag.String("end", "", "End date (YYYY-MM-DD)")
-	days := flag.Int("days", 0, "Days from today (alternative to begin/end)")
-	statuses := flag.String("statuses", "", "Filter by status (comma-separated: 9,11)")
+	configPath := flag.String("config", "config.yaml", "Path to config.yaml")
 	dbPath := flag.String("db", "", "Database path (overrides config)")
-	help := flag.Bool("help", false, "Show help")
+	backend := flag.String("backend", "", "Storage backend: sqlite|postgres (overrides config)")
+	pgDatabase := flag.String("pg-database", "", "PostgreSQL database name (overrides config)")
+	mockMode := flag.Bool("mock", false, "Use mock source (no API calls)")
+	dryRun := flag.Bool("dry-run", false, "Skip DB writes, show what would be saved")
+	beginFlag := flag.String("begin", "", "Begin date YYYY-MM-DD (overrides config)")
+	endFlag := flag.String("end", "", "End date YYYY-MM-DD (overrides config)")
+	daysFlag := flag.Int("days", 0, "Days from today (alternative to begin/end)")
+	statusesFlag := flag.String("statuses", "", "Filter by status (comma-separated: 9,11)")
 	flag.Parse()
 
-	if *help {
-		printHelp()
-		return
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		log.Printf("Config not found, using defaults: %v", err)
 		cfg = defaultConfig()
 	}
+	cfg.Storage = cfg.Storage.GetDefaults()
+	pCfg := cfg.PromotionV2.GetDefaults()
 
-	// Apply CLI overrides
-	if *begin != "" {
-		cfg.PromotionV2.Begin = *begin
-	}
-	if *end != "" {
-		cfg.PromotionV2.End = *end
-	}
-	if *days > 0 {
-		cfg.PromotionV2.Days = *days
-	}
-	if *statuses != "" {
-		cfg.PromotionV2.Statuses = parseStatuses(*statuses)
+	// CLI flag overrides
+	if *backend != "" {
+		cfg.Storage.Backend = *backend
 	}
 	if *dbPath != "" {
-		cfg.PromotionV2.DbPath = *dbPath
+		cfg.Storage.DbPath = *dbPath
+	}
+	if *pgDatabase != "" {
+		cfg.Storage.PgDatabase = *pgDatabase
+	}
+	// Backward compat: if storage.db_path empty but promotion_v2.db_path set
+	if cfg.Storage.DbPath == "" && pCfg.DbPath != "" {
+		cfg.Storage.DbPath = pCfg.DbPath
+	}
+	if *beginFlag != "" {
+		pCfg.Begin = *beginFlag
+	}
+	if *endFlag != "" {
+		pCfg.End = *endFlag
+	}
+	if *daysFlag > 0 {
+		pCfg.Days = *daysFlag
+	}
+	if *statusesFlag != "" {
+		pCfg.Statuses = parseStatuses(*statusesFlag)
 	}
 
-	cfg.PromotionV2 = cfg.PromotionV2.GetDefaults()
-	beginDate, endDate := calculateDateRange(cfg)
+	beginDate, endDate := calculateDateRange(pCfg)
+	calBegin, calEnd := calculateCalendarDateRange(pCfg)
 
-	// Handle Ctrl+C
-	ctx, cancel := context.WithCancel(context.Background())
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		dllog.Log("interrupted!")
-		cancel()
-	}()
-
-	repo, err := sqlite.NewSQLiteSalesRepository(cfg.PromotionV2.DbPath)
-	if err != nil {
-		log.Fatalf("Failed to create repository: %v", err)
+	// Display DB path in header (show resolved value)
+	dbDisplay := cfg.Storage.DbPath
+	if cfg.Storage.Backend == "postgres" {
+		dbDisplay = cfg.Storage.PgDatabase + "@" + cfg.Storage.GetDefaults().PgDatabase
 	}
-	defer repo.Close()
 
-	var client V2Client
-	var apiKey string
-	if *mock {
-		client = NewMockV2Client()
+	dllog.PrintHeader("WB Promotion V2 Downloader",
+		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
+		dllog.HeaderField{Key: "DB", Value: dbDisplay},
+		dllog.HeaderField{Key: "Period", Value: beginDate + " -> " + endDate},
+		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
+		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
+	)
+
+	// ⚠️ Mock safety — writer + reader creation INSIDE if/else branches
+	var writer promotion.Writer
+	var reader promotion.Reader
+	var cleanup func()
+
+	if *mockMode {
+		writer = promotion.NewDiscardWriter()
+		reader = promotion.NewMockReader()
+		cleanup = func() {}
 	} else {
-		apiKey = getAPIKey(cfg)
+		var err error
+		writer, reader, cleanup, err = createBackend(ctx, cfg.Storage)
+		if err != nil {
+			log.Fatalf("storage: %v", err)
+		}
+	}
+	defer cleanup()
+
+	// Load (advert_id, nm_id) pairs via Reader (same backend as Writer)
+	productIDs, _, err := loadProductIDs(ctx, reader, pCfg)
+	if err != nil {
+		log.Fatalf("load product IDs: %v", err)
+	}
+	hasV1Data := len(productIDs) > 0
+	if !hasV1Data {
+		dllog.Log("no V1 campaign products — skipping V1-dependent phases, running calendar/finance only")
+	}
+
+	// Create source (real API or mock)
+	var source promotion.Source
+	if *mockMode {
+		source = promotion.NewMockSource()
+	} else {
+		apiKey := resolveAPIKey(cfg)
 		if apiKey == "" {
-			log.Fatal("No API key. Set WB_API_KEY or WB_API_ANALYTICS_AND_PROMO_KEY")
+			log.Fatal("no API key. Set WB_API_ANALYTICS_AND_PROMO_KEY or WB_API_KEY")
 		}
 		wbClient, err := wb.NewFromConfig(config.WBConfig{
 			APIKey:        apiKey,
@@ -108,43 +157,106 @@ func main() {
 			RetryAttempts: 5,
 		})
 		if err != nil {
-			log.Fatalf("Failed to create WB client: %v", err)
+			log.Fatalf("create WB client: %v", err)
 		}
-		applyRateLimits(wbClient, cfg.PromotionV2.RateLimits)
-		wbClient.SetAdaptiveParams(0, cfg.PromotionV2.AdaptiveProbeAfter, cfg.PromotionV2.MaxBackoffSeconds)
-		if calendarKey := getCalendarAPIKey(cfg); calendarKey != "" {
-			wbClient.SetCalendarKey(calendarKey)
+		applyRateLimits(wbClient, pCfg.RateLimits)
+		wbClient.SetAdaptiveParams(0, pCfg.AdaptiveProbeAfter, pCfg.MaxBackoffSeconds)
+		if calKey := resolveCalendarKey(cfg); calKey != "" {
+			wbClient.SetCalendarKey(calKey)
 		}
-		client = wbClient
+		source = promotion.NewWBSource(wbClient)
 	}
 
-	// Print startup header
-	headerFields := []dllog.HeaderField{
-		{Key: "DB", Value: cfg.PromotionV2.DbPath},
-		{Key: "Period", Value: beginDate + " -> " + endDate},
-	}
-	if apiKey != "" {
-		headerFields = append(headerFields, dllog.HeaderField{Key: "API Key", Value: utils.MaskAPIKey(apiKey)})
-	}
-	if calendarKey := getCalendarAPIKey(cfg); calendarKey != "" {
-		headerFields = append(headerFields, dllog.HeaderField{Key: "Calendar Key", Value: utils.MaskAPIKey(calendarKey)})
-	}
-	if len(cfg.PromotionV2.Statuses) > 0 {
-		headerFields = append(headerFields, dllog.HeaderField{Key: "Statuses", Value: fmt.Sprintf("%v", cfg.PromotionV2.Statuses)})
-	}
-	if *mock {
-		headerFields = append(headerFields, dllog.HeaderField{Key: "Mode", Value: "Mock"})
-	}
-	dllog.PrintHeader("WB Promotion V2 Downloader", headerFields...)
+	// Map config rate limits to promotion.RateLimits
+	rl := pCfg.RateLimits
 
-	// Load (advert_id, nm_id) pairs from V1 tables
-	rl := cfg.PromotionV2.RateLimits
+	opts := promotion.DownloadOptions{
+		ProductIDs:    productIDs,
+		BeginDate:     beginDate,
+		EndDate:       endDate,
+		CalendarBegin: calBegin,
+		CalendarEnd:   calEnd,
+		RateLimits: promotion.RateLimits{
+			Normquery:      rl.Normquery,
+			NormqueryBurst: rl.NormqueryBurst,
+			NormqueryStats:      rl.NormqueryStats,
+			NormqueryStatsBurst: rl.NormqueryStatsBurst,
+			BidRec:      rl.BidRec,
+			BidRecBurst: rl.BidRecBurst,
+			Finance:      rl.Finance,
+			FinanceBurst: rl.FinanceBurst,
+			Calendar:      rl.Calendar,
+			CalendarBurst: rl.CalendarBurst,
+			MinBids:      rl.MinBids,
+			MinBidsBurst: rl.MinBidsBurst,
+		},
+		SkipBids:            pCfg.SkipBids,
+		SkipNormquery:       pCfg.SkipNormquery,
+		SkipRecommendations: pCfg.SkipRecommendations,
+		SkipFinance:         pCfg.SkipFinance,
+		SkipCalendar:        pCfg.SkipCalendar,
+		SkipBudgets:         pCfg.SkipBudgets,
+		SkipMinBids:         pCfg.SkipMinBids,
+		DryRun:              *dryRun,
+	}
 
+	dl := promotion.NewDownloader(source, writer, reader, opts)
+	result, err := dl.Run(ctx)
+	if err != nil {
+		log.Fatalf("download: %v", err)
+	}
+
+	dllog.Done(result.Duration, "%d/%d phases completed (%d errors)",
+		result.CompletedSteps, result.TotalSteps, result.Errors)
+}
+
+// ============================================================================
+// Backend factory — Writer + Reader from the same backend
+// ============================================================================
+
+// createBackend creates Writer + Reader from the same backend.
+// One repo object implements both interfaces.
+func createBackend(ctx context.Context, cfg config.V2StorageConfig) (
+	promotion.Writer, promotion.Reader, func(), error) {
+	switch cfg.Backend {
+	case "postgres", "postgresql":
+		dsn, err := cfg.GetEffectiveDSN()
+		if err != nil {
+			return nil, nil, func() {}, fmt.Errorf("postgres DSN: %w", err)
+		}
+
+		pool, err := postgres.NewPool(ctx, dsn)
+		if err != nil {
+			return nil, nil, func() {}, fmt.Errorf("postgres pool: %w", err)
+		}
+
+		repo := postgres.NewPgPromotionRepo(pool.DB())
+		if err := repo.InitSchema(ctx); err != nil {
+			pool.Close()
+			return nil, nil, func() {}, fmt.Errorf("postgres schema: %w", err)
+		}
+		return repo, repo, pool.Close, nil // repo implements BOTH Writer + Reader
+
+	default: // "sqlite"
+		repo, err := sqlite.NewSQLiteSalesRepository(cfg.DbPath)
+		if err != nil {
+			return nil, nil, func() {}, fmt.Errorf("open SQLite: %w", err)
+		}
+		return repo, repo, func() { repo.Close() }, nil // repo implements BOTH Writer + Reader
+	}
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+// loadProductIDs resolves (advert_id, nm_id) pairs and incremental cutoff.
+func loadProductIDs(ctx context.Context, reader promotion.Reader, pCfg config.PromotionV2Config) ([]wb.NormqueryItem, string, error) {
 	cutoff := ""
-	if cfg.PromotionV2.ChangedDays > 0 {
-		cutoff = time.Now().AddDate(0, 0, -cfg.PromotionV2.ChangedDays).Format("2006-01-02T15:04:05")
+	if pCfg.ChangedDays > 0 {
+		cutoff = time.Now().AddDate(0, 0, -pCfg.ChangedDays).Format("2006-01-02T15:04:05")
 	} else {
-		lastRun, _ := repo.GetNormqueryLastRun(ctx)
+		lastRun, _ := reader.GetNormqueryLastRun(ctx)
 		if lastRun != "" {
 			cutoff = lastRun
 		}
@@ -156,155 +268,12 @@ func main() {
 		dllog.Log("full scan mode: all matching campaigns")
 	}
 
-	productIDs, err := repo.GetCampaignProductIDs(ctx, cfg.PromotionV2.Statuses, cutoff)
+	ids, err := reader.GetCampaignProductIDs(ctx, pCfg.Statuses, cutoff)
 	if err != nil {
-		log.Fatalf("Failed to load campaign product IDs: %v", err)
+		return nil, "", fmt.Errorf("get campaign product IDs: %w", err)
 	}
-	dllog.Log("loaded %d (advert_id, nm_id) pairs from V1 tables", len(productIDs))
-
-	hasV1Data := len(productIDs) > 0
-	if !hasV1Data {
-		dllog.Log("no V1 campaign products — skipping V1-dependent phases, running calendar only")
-	}
-
-	// Execute phases
-	totalSteps := 0
-	if hasV1Data && !cfg.PromotionV2.SkipBids {
-		totalSteps++
-	}
-	if hasV1Data && !cfg.PromotionV2.SkipNormquery {
-		totalSteps += 4
-	}
-	if hasV1Data && !cfg.PromotionV2.SkipRecommendations {
-		totalSteps++
-	}
-	if !cfg.PromotionV2.SkipFinance {
-		totalSteps += 3
-	}
-	if !cfg.PromotionV2.SkipCalendar {
-		totalSteps += 3 // list + details + nomenclatures
-	}
-	if hasV1Data && !cfg.PromotionV2.SkipBudgets {
-		totalSteps++
-	}
-	if hasV1Data && !cfg.PromotionV2.SkipMinBids {
-		totalSteps++
-	}
-	if totalSteps == 0 {
-		dllog.Log("nothing to do (all steps skipped)")
-		return
-	}
-
-	stepNum := 0
-	t0 := time.Now()
-
-	// Phase 1: Campaign Bids (from AdvertDetails)
-	if hasV1Data && !cfg.PromotionV2.SkipBids {
-		stepNum++
-		dllog.Log("[%d/%d] Campaign Bids...", stepNum, totalSteps)
-		if err := DownloadCampaignBids(ctx, client, repo, productIDs, rl.Normquery, rl.NormqueryBurst); err != nil {
-			dllog.Error("Campaign Bids: %v", err)
-		}
-	}
-
-	// Phase 2-5: Normquery
-	if hasV1Data && !cfg.PromotionV2.SkipNormquery {
-		stepNum++
-		dllog.Log("[%d/%d] Normquery Stats...", stepNum, totalSteps)
-		if err := DownloadNormqueryStats(ctx, client, repo, productIDs, beginDate, endDate, rl.NormqueryStats, rl.NormqueryStatsBurst); err != nil {
-			dllog.Error("Normquery Stats: %v", err)
-		}
-
-		stepNum++
-		dllog.Log("[%d/%d] Normquery Clusters...", stepNum, totalSteps)
-		if err := DownloadNormqueryClusters(ctx, client, repo, productIDs, rl.Normquery, rl.NormqueryBurst); err != nil {
-			dllog.Error("Normquery Clusters: %v", err)
-		}
-
-		stepNum++
-		dllog.Log("[%d/%d] Normquery Bids...", stepNum, totalSteps)
-		if err := DownloadNormqueryBids(ctx, client, repo, productIDs, rl.Normquery, rl.NormqueryBurst); err != nil {
-			dllog.Error("Normquery Bids: %v", err)
-		}
-
-		stepNum++
-		dllog.Log("[%d/%d] Normquery Minus...", stepNum, totalSteps)
-		if err := DownloadNormqueryMinus(ctx, client, repo, productIDs, rl.Normquery, rl.NormqueryBurst); err != nil {
-			dllog.Error("Normquery Minus: %v", err)
-		}
-	}
-
-	// Phase 6: Bid Recommendations
-	if hasV1Data && !cfg.PromotionV2.SkipRecommendations {
-		stepNum++
-		dllog.Log("[%d/%d] Bid Recommendations...", stepNum, totalSteps)
-		if err := DownloadBidRecommendations(ctx, client, repo, productIDs, rl.BidRec, rl.BidRecBurst); err != nil {
-			dllog.Error("Bid Recommendations: %v", err)
-		}
-	}
-
-	// Phase 7-9: Finance
-	if !cfg.PromotionV2.SkipFinance {
-		stepNum++
-		dllog.Log("[%d/%d] Expenses...", stepNum, totalSteps)
-		if err := DownloadExpenses(ctx, client, repo, beginDate, endDate, rl.Finance, rl.FinanceBurst); err != nil {
-			dllog.Error("Expenses: %v", err)
-		}
-
-		stepNum++
-		dllog.Log("[%d/%d] Balance...", stepNum, totalSteps)
-		if err := DownloadBalance(ctx, client, repo, rl.Finance, rl.FinanceBurst); err != nil {
-			dllog.Error("Balance: %v", err)
-		}
-
-		stepNum++
-		dllog.Log("[%d/%d] Payments...", stepNum, totalSteps)
-		if err := DownloadPayments(ctx, client, repo, beginDate, endDate, rl.Finance, rl.FinanceBurst); err != nil {
-			dllog.Error("Payments: %v", err)
-		}
-	}
-
-	// Phase 10: Calendar
-	if !cfg.PromotionV2.SkipCalendar {
-		calBegin, calEnd := calculateCalendarDateRange(cfg)
-		stepNum++
-		dllog.Log("[%d/%d] Calendar Promotions (%s -> %s)...", stepNum, totalSteps, calBegin, calEnd)
-		if err := DownloadCalendarPromotions(ctx, client, repo, calBegin, calEnd, rl.Calendar, rl.CalendarBurst); err != nil {
-			dllog.Error("Calendar: %v", err)
-		}
-
-		stepNum++
-		dllog.Log("[%d/%d] Calendar Details...", stepNum, totalSteps)
-		if err := DownloadCalendarPromotionDetails(ctx, client, repo, rl.Calendar, rl.CalendarBurst); err != nil {
-			dllog.Error("Calendar Details: %v", err)
-		}
-
-		stepNum++
-		dllog.Log("[%d/%d] Calendar Nomenclatures...", stepNum, totalSteps)
-		if err := DownloadCalendarPromotionNomenclatures(ctx, client, repo, rl.Calendar, rl.CalendarBurst); err != nil {
-			dllog.Error("Calendar Nomenclatures: %v", err)
-		}
-	}
-
-	// Phase 13: Campaign Budgets
-	if hasV1Data && !cfg.PromotionV2.SkipBudgets {
-		stepNum++
-		dllog.Log("[%d/%d] Campaign Budgets...", stepNum, totalSteps)
-		if err := DownloadCampaignBudgets(ctx, client, repo, productIDs, rl.Finance, rl.FinanceBurst); err != nil {
-			dllog.Error("Campaign Budgets: %v", err)
-		}
-	}
-
-	// Phase 14: Minimum Bids
-	if hasV1Data && !cfg.PromotionV2.SkipMinBids {
-		stepNum++
-		dllog.Log("[%d/%d] Minimum Bids...", stepNum, totalSteps)
-		if err := DownloadMinBids(ctx, client, repo, productIDs, rl.MinBids, rl.MinBidsBurst); err != nil {
-			dllog.Error("Minimum Bids: %v", err)
-		}
-	}
-
-	dllog.Done(time.Since(t0), "%d/%d phases completed, DB: %s", stepNum, totalSteps, cfg.PromotionV2.DbPath)
+	dllog.Log("loaded %d (advert_id, nm_id) pairs", len(ids))
+	return ids, cutoff, nil
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -312,23 +281,28 @@ func loadConfig(path string) (*Config, error) {
 	if err := config.LoadYAML(path, &cfg); err != nil {
 		return nil, err
 	}
+	if cfg.WB.Timeout == "" {
+		cfg.WB.Timeout = "120s"
+	}
 	return &cfg, nil
 }
 
 func defaultConfig() *Config {
-	cfg := &Config{}
-	cfg.WB.Timeout = "120s"
-	cfg.PromotionV2.DbPath = "wb-sales.db"
-	cfg.PromotionV2.Days = 7
-	cfg.PromotionV2.Statuses = []int{9, 11}
-	return cfg
+	return &Config{
+		WB: config.WBClientConfig{Timeout: "120s"},
+		PromotionV2: config.PromotionV2Config{
+			DbPath:   "wb-sales.db",
+			Days:     7,
+			Statuses: []int{9, 11},
+		},
+	}
 }
 
-func calculateDateRange(cfg *Config) (string, string) {
-	if cfg.PromotionV2.Begin != "" && cfg.PromotionV2.End != "" {
-		return cfg.PromotionV2.Begin, cfg.PromotionV2.End
+func calculateDateRange(pCfg config.PromotionV2Config) (string, string) {
+	if pCfg.Begin != "" && pCfg.End != "" {
+		return pCfg.Begin, pCfg.End
 	}
-	days := cfg.PromotionV2.Days
+	days := pCfg.Days
 	if days == 0 {
 		days = 7
 	}
@@ -338,10 +312,10 @@ func calculateDateRange(cfg *Config) (string, string) {
 	return begin, end
 }
 
-func calculateCalendarDateRange(cfg *Config) (string, string) {
+func calculateCalendarDateRange(pCfg config.PromotionV2Config) (string, string) {
 	now := time.Now()
-	begin := now.AddDate(0, 0, -cfg.PromotionV2.CalendarDaysPast).Format("2006-01-02")
-	end := now.AddDate(0, 0, cfg.PromotionV2.CalendarDaysFuture).Format("2006-01-02")
+	begin := now.AddDate(0, 0, -pCfg.CalendarDaysPast).Format("2006-01-02")
+	end := now.AddDate(0, 0, pCfg.CalendarDaysFuture).Format("2006-01-02")
 	return begin, end
 }
 
@@ -360,7 +334,7 @@ func parseStatuses(s string) []int {
 	return result
 }
 
-func getAPIKey(cfg *Config) string {
+func resolveAPIKey(cfg *Config) string {
 	if key := os.Getenv("WB_API_ANALYTICS_AND_PROMO_KEY"); key != "" {
 		return key
 	}
@@ -370,7 +344,7 @@ func getAPIKey(cfg *Config) string {
 	return cfg.WB.APIKey
 }
 
-func getCalendarAPIKey(cfg *Config) string {
+func resolveCalendarKey(cfg *Config) string {
 	if key := os.Getenv("WB_API_MARKET_KEY"); key != "" {
 		return key
 	}
@@ -392,33 +366,5 @@ func applyRateLimits(client *wb.Client, rl config.PromotionV2RateLimits) {
 	client.SetRateLimit("min_bids", rl.MinBids, rl.MinBidsBurst, rl.MinBidsApi, rl.MinBidsApiBurst)
 }
 
-func printHelp() {
-	fmt.Print(`WB Promotion V2 Downloader - Extended promotion data collection
-
-Usage:
-  go run main.go [options]
-
-Options:
-  --config PATH     Config file path (default: config.yaml)
-  --mock            Use mock client (no API calls)
-  --begin DATE      Begin date (YYYY-MM-DD)
-  --end DATE        End date (YYYY-MM-DD)
-  --days N          Days from today (alternative to begin/end)
-  --statuses LIST   Filter by status (comma-separated: 9,11)
-  --db PATH         Database path (overrides config)
-  --help            Show this help
-
-Requires V1 data: run download-wb-promotion first to populate campaigns table.
-
-Examples:
-  # Download last 7 days
-  WB_API_KEY=xxx go run main.go --days=7
-
-  # Active campaigns only
-  go run main.go --statuses=9 --days=7
-
-  # Mock mode for testing
-  go run main.go --mock --days=7
-
-`)
-}
+// Suppress unused import warning for utils.
+var _ = utils.MaskAPIKey
