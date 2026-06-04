@@ -163,7 +163,7 @@ See [examples/v2_gold_standard.go](examples/v2_gold_standard.go) and [examples/v
 ### Phase 3: Checklist Execution
 
 If V1 → run **V1 Checklist** below (6 categories).
-If V2 → run **V2 Checklist** below (11 categories, superset).
+If V2 → run **V2 Full Checklist** in [docs/v2_full_checklist.md](docs/v2_full_checklist.md) (11 categories, self-contained).
 
 ### Phase 4: Anti-Pattern Scan
 
@@ -263,237 +263,9 @@ Output the structured report using the template in [examples/report_example.md](
 
 ## V2 Checklist
 
-*Superset of V1. Run for all V2 downloaders.*
+*Full V2 checklist with all items (V1 inlined) → [docs/v2_full_checklist.md](docs/v2_full_checklist.md)*
 
-### V2-1. Architecture [Rules 1-11: dev_v2_downloader.md]
-
-1. **`pkg/<domain>/` exists with Source + Writer interfaces**: Source (1-3 methods), Writer (2-7 methods, only what `Run()` calls).
-   - Check: read `types.go`, verify interface method counts
-
-2. **Downloader struct has only interface fields**: No `*wb.Client`, no `*sqlite.*`, no `*postgres.*` in struct fields. [Rule 2, Rule 3]
-   - Check: read `downloader.go` struct definition
-
-3. **Compile-time assertions in both storage packages** [Pattern 1.2: dev_v2_postgres.md]:
-   - SQLite: `var _ domain.Writer = (*SQLiteSalesRepository)(nil)` in `pkg/storage/sqlite/`
-   - PG: `var _ domain.Writer = (*PgDomainRepo)(nil)` in `pkg/storage/postgres/`
-   - Check: `grep "var _" pkg/storage/sqlite/<domain>* pkg/storage/postgres/<domain>*`
-
-4. **No `fmt.Printf` / `log.*` in `pkg/<domain>/`**: Only `OnProgress func(msg string)` callback [Rule 4]
-   - Check: `grep -r "fmt\.Printf\|log\." pkg/<domain>/` → must be empty
-   - See: [examples/anti_patterns.md MG-4](examples/anti_patterns.md)
-
-5. **`main.go` is thin driver (~100-160 lines)**: Only wiring: flags, config, DI, Ctrl+C [Rule 1]
-   - Check: count lines in main.go excluding comments/imports
-
-6. **YAGNI: no cursor/resume for light domains** [Pattern 1.8: dev_v2_postgres.md]:
-   - Light (<100k rows, <10 min): no resume methods in Writer
-   - Heavy (millions, hours): resume justified (sales, funnel)
-   - Check: compare Writer methods against domain size
-
-7. **Reader interface only when cross-domain deps exist**: e.g., nmIDs for search-vis. Reader reads from SAME backend as Writer.
-   - Check: determine if API calls require data from other tables
-
-8. **No direct `client.Post()`/`client.Get()` from domain package** [Rule 11: dev_v2_downloader.md]:
-   - WBSource delegates to typed client methods in `pkg/wb/`
-   - Check: `grep -r "client\.Post\|client\.Get\b" pkg/<domain>/` → must be empty
-   - See: [examples/anti_patterns.md](examples/anti_patterns.md) AP-9
-
-### V2-2. Configuration [Rules 6, 10: dev_v2_downloader.md] [Pattern 1.6: dev_v2_postgres.md]
-
-1-6. **Same as V1 Configuration items 1-6.**
-
-7. **`V2StorageConfig` used for backend selection**: `storage:` section with `backend`, `db_path`, `pg_database`, `pg_password_env` [AP-12: don't use `StorageConfig`]
-   - Check: grep for `V2StorageConfig` in main.go and Config struct
-
-8. **Backend switch in CLI**: `createBackend()` or `createWriter()` with `switch cfg.Backend` [Pattern 1.3]
-   - Check: find the factory function, verify both "postgres" and default "sqlite" branches
-
-9. **`GetEffectiveDSN()` used for PG connection**: Not manual DSN construction.
-   - Check: grep for `GetEffectiveDSN` in main.go
-
-### V2-3. Mock Safety (CRITICAL) [Pattern 1.8: dev_v2_postgres.md]
-
-1. **`DiscardWriter` exists in `pkg/<domain>/mock.go`**: Implements Writer with no-op methods, thread-safe (`sync.Mutex`) counters.
-   - Check: read mock.go, verify `sync.Mutex` on counters
-
-2. **Mock mode creates DiscardWriter, NOT real DB writer**: Writer creation is INSIDE `else` branch. [CRITICAL — incident: 30,900 records deleted]
-   - Check: read `if *mockMode` block in main.go — writer must NOT be created before this check
-   - See: [examples/anti_patterns.md MG-2](examples/anti_patterns.md)
-
-3. **MockReader (if Reader exists)**: Returns synthetic data, NO database interaction.
-   - Check: read mock.go for `MockReader` type
-
-4. **`--mock` never opens ANY database**: Not for Writer, not for Reader.
-   - Check: trace code path when `*mockMode == true`, verify no `sqlite.New*` or `postgres.NewPool` calls
-
-### V2-4. Rate Limiting [Rule 7: dev_v2_downloader.md]
-
-1-5. **Same as V1 Rate Limiting items 1-5.**
-
-6. **`ShareRateLimit` for endpoints sharing a global limit**: e.g., search_report and search_texts share 3 req/min.
-   - Check: grep for `ShareRateLimit` in main.go
-
-7. **WBSource receives rate limit values**: `NewWBSource(client, rateLimit, burst)`, not `NewWBSource(client)` without limits.
-   - Check: read WBSource constructor call in main.go
-
-8. **`SetRateLimit()` called explicitly after `wb.New()`**: `wb.New()` does NOT configure rate limiting.
-   - Check: find `wb.New(` call, verify `SetRateLimit` follows
-
-### V2-5. Database Operations — Dual Backend [dev_v2_postgres.md]
-
-1-5. **Same as V1 Database Operations items 1-5.**
-
-6. **PG schema in separate `_schema.go` file**: `pkg/storage/postgres/<domain>_schema.go`.
-   - Check: file exists
-
-7. **PG uses `$1,$2...` placeholders, not `?`** [CRITICAL — runtime error, mock doesn't catch]
-   - Check: `grep '\?' pkg/storage/postgres/<domain>_repo.go` in SQL strings → must be empty
-   - See: [examples/anti_patterns.md MG-5](examples/anti_patterns.md)
-
-8. **PG uses `ON CONFLICT ... DO UPDATE SET ... = EXCLUDED`**: Not `INSERT OR REPLACE` (SQLite syntax).
-   - Check: grep for `INSERT OR REPLACE` in postgres repo → must be empty
-
-9. **PG uses `BOOLEAN` not `INTEGER` for bool fields** [AP-16]
-   - Check: read schema, find boolean columns, verify type is `BOOLEAN DEFAULT FALSE`
-
-10. **PG uses `DOUBLE PRECISION` not `REAL` for float64 fields.**
-    - Check: read schema for float columns
-
-11. **PG uses `BIGSERIAL PRIMARY KEY` for auto-increment PKs.**
-    - Check: read schema for `id` column
-
-12. **PG expression indexes use double parentheses**: `ON t((expr))` not `ON t(expr)` [AP-17].
-    - Check: grep for `CREATE INDEX.*ON.*CASE` in schema file
-
-13. **PG aggregate functions scan into pointer types**: `MAX()`, `MIN()` → scan into `*string`, `*int` [AP-18].
-    - Check: find `SELECT MAX|MIN|SUM` in postgres repo, verify Scan targets
-
-14. **PG chunking: 500 records per transaction**: Not single massive INSERT.
-    - Check: read Save method for batch/chunk logic
-
-15. **Context propagation in both backends**: `ExecContext`/`QueryContext` in both SQLite and PG.
-    - Check: grep for `.Exec(` without `Context` in both adapter files
-
-16. **SQLite compile-time assertion present**.
-    - Check: `grep "var _" pkg/storage/sqlite/<domain>_repo.go`
-
-17. **PG compile-time assertion present**.
-    - Check: `grep "var _" pkg/storage/postgres/<domain>_repo.go`
-
-### V2-6. Error Handling [dev_best_practices.md]
-
-1-8. **Same as V1 Error Handling items 1-8.**
-
-9. **Error wrapping in both `pkg/<domain>/` and storage adapters**: `fmt.Errorf("operation: %w", err)`.
-   - Check: scan for bare `return err` without wrapping context
-
-10. **PG `pool.Close()` in deferred cleanup**: Connection pool properly released.
-    - Check: find cleanup function, verify `pool.Close` is included
-
-### V2-7. CLI Interface [Rule 1: dev_v2_downloader.md]
-
-1-4. **Same as V1 CLI Interface items 1-4.**
-
-5. **Backend flags**: `--backend`, `--db`, `--pg-database` for V2 backend selection.
-   - Check: read flag definitions
-
-6. **`dllog` used for all output**: `PrintHeader`, `Progress`, `Done`, `Log` — one line per page [AP-11].
-   - Check: `grep "fmt\.Printf\|log\.Printf" main.go` → only `log.Fatalf` for fatal errors
-
-7. **`signal.NotifyContext` for Ctrl+C**: Not manual signal handling.
-   - Check: grep for `signal.NotifyContext`
-
-8. **`resolveAPIKey` returns VALUE, not env var name** [AP-10]: Uses `os.Getenv()`.
-   - Check: read `resolveAPIKey` function
-
-### V2-8. Testing [Rule 8: dev_v2_downloader.md]
-
-1-3. **Same as V1 Testing items 1-3.**
-
-4. **Minimum 4 test cases in `pkg/<domain>/downloader_test.go`**: Basic download, DryRun, Rewrite/Limit, Context cancellation.
-   - Check: count test functions
-
-5. **Tests use MockSource + DiscardWriter only**: No real DB, no real API.
-   - Check: grep test files for `sqlite.New|postgres.NewPool` → must be empty
-
-6. **Context cancellation test uses `errors.Is()`**: Not direct comparison.
-   - Check: grep for `errors.Is` in test file
-
-7. **`DiscardWriter.Saved()` assertions in tests**: Tests verify row counts via counters.
-   - Check: read test assertions for `.Saved()` calls
-
-### V2-9. Code Reuse / Duplication [Rule 0: dev_best_practices.md] [dev_swagger_reusable_packages.md]
-
-1. **Config types reused from `pkg/config/`**: Not local Config structs in `cmd/` duplicating shared types.
-   - Check: compare Config struct in main.go against types in `pkg/config/utility.go`
-
-2. **Storage operations in storage packages**: Not ad-hoc SQL in `cmd/`.
-   - Check: verify SQL operations are in `pkg/storage/sqlite/` and `pkg/storage/postgres/`
-
-3. **Typed WB client methods used**: Not raw HTTP (`http.NewRequest`, `http.DefaultClient`).
-   - Check: `grep -r "http\.DefaultClient\|http\.NewRequest" pkg/<domain>/ cmd/<name>/` → must be empty
-
-4. **No duplicate constants between V1 and V2**: If V2 replaces V1, constants in `pkg/<domain>/` or `pkg/wb/`, not duplicated.
-   - Check: compare constants between V1 cmd/ and V2 pkg/
-
-### V2-10. Hardcode Audit [Rule 10: dev_v2_downloader.md]
-
-Detect hardcoded values that should be constants, config fields, or named variables.
-Full grep patterns and WRONG/RIGHT examples: [examples/anti_patterns.md HC-1..HC-8](examples/anti_patterns.md)
-
-1. **API URLs are constants, not string literals** [HC-1]: In `pkg/wb/` or `pkg/<domain>/`.
-   - Check: `grep -rn "wildberries\.ru\|https://.*api.*wb" pkg/<domain>/ cmd/<name>/`
-
-2. **Rate limit values from config, not hardcoded** [HC-2]: Not magic numbers in `SetRateLimit` calls.
-   - Check: `grep -n "SetRateLimit.*[0-9].*[0-9]" cmd/<name>/main.go`
-
-3. **Database paths from config, not hardcoded** [HC-3]: Not `/var/db/wb-sales.db` in code.
-   - Check: grep for `/var/db` in main.go → should be in config.yaml only
-
-4. **Timeouts configurable** [HC-4]: Not `time.Sleep(5 * time.Second)` or hardcoded HTTP timeouts.
-   - Check: `grep -rn "time\.Sleep\|time\.Second\|time\.Minute" pkg/<domain>/ cmd/<name>/main.go`
-
-5. **Table names consistent** [HC-6]: SQL table names same between schema and queries.
-   - Check: `grep -oh "INTO [a-z_]*" pkg/storage/sqlite/<domain>* pkg/storage/postgres/<domain>* | sort | uniq -c`
-
-6. **Error messages include context**: Not bare `return nil, err` without operation description.
-   - Check: scan for `return nil, err` and `return 0, err` without `fmt.Errorf`
-
-7. **Batch/chunk sizes are named constants** [HC-5]: Not `i += 500` without explanation.
-   - Check: `grep -rn "i += [0-9]\|chunk.*[0-9]\|batch.*[0-9]" pkg/<domain>/`
-
-8. **Date formats not repeated** [HC-7]: `"2006-01-02"` more than twice → extract constant (or use `time.DateOnly`).
-   - Check: `grep -rn '"2006-01-02"' pkg/<domain>/ cmd/<name>/`
-
-9. **Default days from config or named constant** [HC-8]: Not `days = 7` without explanation.
-   - Check: `grep -rn "days.*=.*[0-9]\|Days.*=.*[0-9]" cmd/<name>/main.go`
-
-### V2-11. YAML Config Completeness [Pattern 1.7: dev_v2_postgres.md]
-
-1. **Every parameter has a comment explaining its purpose**: Including type hints and valid ranges.
-   - Check: read config.yaml, verify every key has a `#` comment
-   - See: [examples/config_complete.yaml](examples/config_complete.yaml) for gold standard
-
-2. **Config struct matches YAML 1:1**: No dead YAML fields [AP-13], no missing YAML keys.
-   - Check: compare YAML keys against Go struct `yaml:"..."` tags field-by-field
-
-3. **Domain-specific section with rate limits and API key env var**:
-   - Check: verify `<domain>:` section exists with `rate_limits` and `api_key_env`
-
-4. **Storage section with V2StorageConfig fields**: `backend`, `db_path`, `pg_database`, `pg_password_env`.
-   - Check: verify `storage:` section present with all fields
-
-5. **Rate limits have comments citing Swagger rates**: e.g., `# swagger: 3 req/min shared`.
-   - Check: read rate_limits comments
-
-6. **Example values show typical production settings**: Not empty strings for required fields.
-   - Check: verify `api_key_env`, `days`, `limit` have sensible example values
-
-7. **Config file exists in `cmd/.configs/download-all/`**:
-   - Check: `ls cmd/.configs/download-all/download-<domain>*.yaml`
-
-8. **Config key matches CLI struct domain name**: YAML key matches struct field name.
-   - Check: compare YAML top-level key against Go struct tag
+*11 categories, 92 checks, self-contained. No cross-referencing needed during audit.*
 
 ---
 
@@ -564,22 +336,22 @@ Applied during Phase 3 for both V1 and V2.
 1. **SRP: Methods ≤ 30 lines, functions ≤ 50 lines** [dev_solid.md].
    - Check: scan longest functions in `pkg/<domain>/` and main.go
 
-2. **ISP: Interfaces have 1-7 methods** [dev_solid.md]: Source (1-3), Writer (2-7). If >7, flag as god-interface.
+2. **ISP: Interfaces have 1-7 methods** [dev_solid.md] (→ V2-1.1): Source (1-3), Writer (2-7). If >7, flag as god-interface.
    - Check: count interface methods in types.go
 
 3. **DIP: Dependencies injected via interfaces**: Not created inside constructors via `NewX()`.
    - Check: read `NewDownloader()` — parameters should be interfaces
 
-4. **Error wrapping with context**: `fmt.Errorf("op: %w", err)`, not bare `return err`.
+4. **Error wrapping with context** (→ V2-6.9): `fmt.Errorf("op: %w", err)`, not bare `return err`.
    - Check: scan for `return.*err\b` patterns without `fmt.Errorf`
 
 5. **No `panic()` in business logic**: Only `log.Fatalf` in `cmd/` main().
    - Check: `grep -r "panic(" pkg/<domain>/` → must be empty
 
-6. **`context.Context` propagated everywhere**: All public methods accept ctx.
+6. **`context.Context` propagated everywhere** (→ V2-5.15): All public methods accept ctx.
    - Check: scan method signatures in types.go and repo files
 
-7. **Thread-safe by default**: Shared state uses `sync.RWMutex` (DiscardWriter, MockSource).
+7. **Thread-safe by default** (→ V2-3.1): Shared state uses `sync.RWMutex` (DiscardWriter, MockSource).
    - Check: verify `sync.Mutex` or `sync.RWMutex` in mock.go
 
 8. **Package structure: no `internal/` imports from `pkg/`**: `pkg/` is pure library.
@@ -589,55 +361,23 @@ Applied during Phase 3 for both V1 and V2.
 
 ## Report Template
 
-See [examples/report_example.md](examples/report_example.md) for a complete sample report.
+See [examples/report_example.md](examples/report_example.md) for a complete filled sample report.
 
-```
-## Downloader Audit: <name>
+### Required Sections
 
-**Date**: <today>
-**Classification**: V1 | V2 (full) | V2 (partial)
-**Domain**: <domain>
-**Files reviewed**: <list of all files read>
-**Compared against**: <gold standard reference>
-**Backend status**: SQLite only | SQLite + PostgreSQL (dual-backend)
-**pkg/<domain>/ exists**: YES (Source: N, Writer: N, Reader: N) | NO
+1. **Header**: Date, Classification, Domain, Files reviewed, Backend status, pkg/ status
+2. **Summary**: 1-2 paragraphs. Production-ready? Biggest risk? Dual-backend parity?
+3. **Findings table**: `| # | Category | Severity | Backend | Finding | Location | Fix |`
+4. **Anti-Patterns table**: `| AP# | Name | Severity | Status | Evidence |`
+5. **Statistics**: `CRITICAL: X  WARNING: Y  INFO: Z  GOOD: W`
+6. **V2 Architecture Score** (V2 only): 10-row table — see report_example.md for columns
+7. **Recommendations**: Ordered by impact. Each CRITICAL finding includes a ready-to-use Go code snippet.
 
-### Summary
-<1-2 paragraphs. Production-ready? Biggest risk? Dual-backend parity?>
+Status markers: ✅ Compliant | ❌ Violation (include severity) | ⚠️ Partial | N/A
 
-### Findings
-| # | Category | Severity | Backend | Finding | Location | Fix |
-|---|----------|----------|---------|---------|----------|-----|
-| 1 | ... | ... | SQLite/PG/Both/N/A | ... | ... | ... |
+### Report Persistence
 
-### Anti-Patterns Detected
-| AP# | Name | Severity | Status | Evidence |
-|-----|------|----------|--------|----------|
-| AP-N | ... | ... | FOUND/NOT FOUND | ... |
-
-### Statistics
-- CRITICAL: X  WARNING: Y  INFO: Z  GOOD: W
-
-### V2 Architecture Score (V2 only)
-| Criterion | Status |
-|-----------|--------|
-| pkg/<domain>/ with Source/Writer | YES/NO |
-| Compile-time assertions (SQLite + PG) | YES/NO/PARTIAL |
-| DiscardWriter mock safety | YES/NO |
-| Dual-backend parity (schema + upsert) | YES/NO |
-| OnProgress callback (no fmt.Printf) | YES/NO |
-| main.go < 200 lines | YES/NO |
-| README.md present | YES/NO |
-| config.yaml fully commented | YES/NO/PARTIAL |
-| Minimum 4 tests | YES/NO |
-| download-all-v2.sh integration | YES/NO |
-
-### Recommendations
-1. <Most impactful fix first>
-2. ...
-
-For each CRITICAL finding, include a ready-to-use Go code snippet showing the fix.
-```
+Save to `reports/YYYY-MM-DD_<downloader-name>.md` in the project root.
 
 ---
 
