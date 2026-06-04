@@ -95,8 +95,8 @@ PHASE_START=$SECONDS
 echo "  Phase 4 done in $(( SECONDS - PHASE_START ))s"
 
 # ── Phase 5: Advertising (moderate rate limits) ─────────────────────
-# v2 downloader: campaigns ✅
-# v1 downloader: promotion-v2 (14-phase extended — SQLite only)
+# v2 downloader: campaigns ✅, promotion-v2 ✅
+# promotion-v2: 14-phase extended (normquery, bids, finance, calendar — dual-backend)
 
 echo ""
 echo "── Phase 5: Advertising (campaigns, promotion-v2) ──"
@@ -104,8 +104,8 @@ PHASE_START=$SECONDS
 
 ### wb-campaigns v2 (basic 3 phases: campaigns, details, fullstats)
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" && go run . --config "$CONFIGS/download-wb-campaigns-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
-### wb-promotion-v2 (extended 14 phases: normquery, bids, finance, calendar — SQLite only)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" && go run . --config "$CONFIGS/download-wb-promotion-v2.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+### wb-promotion-v2 (extended 14 phases: normquery, bids, finance, calendar — dual-backend)
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" && go run . --config "$CONFIGS/download-wb-promotion-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 5 done in $(( SECONDS - PHASE_START ))s"
 
@@ -142,5 +142,5 @@ echo "  All downloads completed in ${MINS}m ${SECS}s"
 echo "  Finished: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
 echo "  v2 downloaders (PG-ready): cards, prices, feedbacks, orders, opsales, sales, region-sales, stocks, funnel, campaigns, searchvis, funnel-csv"
-echo "  v1 downloaders (SQLite):   1c-data, 1c-rests, stock-history, supplies, promotion-v2, funnel-agg"
+echo "  v1 downloaders (SQLite):   1c-data, 1c-rests, stock-history, supplies, funnel-agg"
 echo "==========================================="

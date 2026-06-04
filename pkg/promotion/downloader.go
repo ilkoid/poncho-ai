@@ -214,20 +214,29 @@ func (d *Downloader) countSteps(hasV1Data bool) int {
 }
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+// extractAdvertIDs returns unique advert IDs from product pairs.
+func extractAdvertIDs(productIDs []wb.NormqueryItem) []int {
+	seen := make(map[int]bool)
+	ids := make([]int, 0, len(productIDs))
+	for _, p := range productIDs {
+		if !seen[p.AdvertID] {
+			seen[p.AdvertID] = true
+			ids = append(ids, p.AdvertID)
+		}
+	}
+	return ids
+}
+
+// ============================================================================
 // Phase 1: Campaign Bids
 // ============================================================================
 
 func (d *Downloader) downloadCampaignBids(ctx context.Context) error {
 	productIDs := d.opts.ProductIDs
-
-	seen := make(map[int]bool)
-	var advertIDs []int
-	for _, p := range productIDs {
-		if !seen[p.AdvertID] {
-			seen[p.AdvertID] = true
-			advertIDs = append(advertIDs, p.AdvertID)
-		}
-	}
+	advertIDs := extractAdvertIDs(productIDs)
 
 	const batchSize = 50
 	totalBatches := (len(advertIDs) + batchSize - 1) / batchSize
@@ -715,16 +724,7 @@ func (d *Downloader) downloadCalendarPromotionNomenclatures(ctx context.Context,
 // ============================================================================
 
 func (d *Downloader) downloadCampaignBudgets(ctx context.Context, rateLimit, burst int) error {
-	productIDs := d.opts.ProductIDs
-
-	seen := make(map[int]bool)
-	var advertIDs []int
-	for _, p := range productIDs {
-		if !seen[p.AdvertID] {
-			seen[p.AdvertID] = true
-			advertIDs = append(advertIDs, p.AdvertID)
-		}
-	}
+	advertIDs := extractAdvertIDs(d.opts.ProductIDs)
 
 	t0 := time.Now()
 	snapshotDate := time.Now().Format("2006-01-02")

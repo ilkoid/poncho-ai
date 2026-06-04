@@ -88,7 +88,7 @@ echo "── Phase 5: Advertising ──"
 PHASE_START=$SECONDS
 
 (cd "$PONCHO/cmd/data-downloaders/download-wb-promotion" && go run . --config "$CONFIGS/download-wb-promotion.yaml" ${DAYS:+--days=$DAYS}) || exit $?
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" && go run . --config "$CONFIGS/download-wb-promotion-v2.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" && go run . --config "$CONFIGS/download-wb-promotion-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 5 done in $(( SECONDS - PHASE_START ))s"
 

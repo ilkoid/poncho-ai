@@ -1,6 +1,6 @@
 ---
 name: downloader-audit
-description: Audit the quality of WB API data downloaders. Use this skill whenever the user asks to audit a downloader, review downloader code, check downloader quality, verify a new downloader, or mentions downloaders in the context of quality, correctness, bugs, or best practices. Also trigger for rate limiting issues, JSON tag mismatches, SQL placeholder bugs, error handling gaps, mock safety, DiscardWriter, PG adapter correctness, dual-backend consistency, compile-time assertions, or anti-patterns. Covers 29 downloaders. V2 (dual-backend): cards-v2, prices-v2, orders-v2, opsales-v2, sales-v2, stocks-v2, funnel-v2, feedbacks-v2, campaigns-v2, region-sales-v2, search-vis-v2, funnel-csv-v2. V1 (SQLite-only): cards, prices, feedbacks, funnel, funnel-agg, funnel-csv, stocks, stock-history, sales, region-sales, search-visibility, promotion, promotion-v2, supplies, 1c-data, 1c-rests, all-articles.
+description: Audit the quality of WB API data downloaders. Use this skill whenever the user asks to audit a downloader, review downloader code, check downloader quality, verify a new downloader, or mentions downloaders in the context of quality, correctness, bugs, or best practices. Also trigger for rate limiting issues, JSON tag mismatches, SQL placeholder bugs, error handling gaps, mock safety, DiscardWriter, PG adapter correctness, dual-backend consistency, compile-time assertions, or anti-patterns. Covers 29 downloaders. V2 (dual-backend): cards-v2, prices-v2, orders-v2, opsales-v2, sales-v2, stocks-v2, funnel-v2, feedbacks-v2, campaigns-v2, region-sales-v2, search-vis-v2, funnel-csv-v2, promotion-v2. V1 (SQLite-only): cards, prices, feedbacks, funnel, funnel-agg, funnel-csv, stocks, stock-history, sales, region-sales, search-visibility, promotion, supplies, 1c-data, 1c-rests, all-articles.
 ---
 
 # Downloader Audit
@@ -119,7 +119,7 @@ Determines V1 vs V2 routing. This is the core routing mechanism.
 2. **Secondary signal (V2 confirmation):** Does `pkg/<domain>/` exist with `types.go` containing Source/Writer interfaces?
 
 3. **Special cases:**
-   - `download-wb-promotion-v2` — V1 architecture despite `-v2` suffix (no `V2StorageConfig`, no `pkg/promotion/`)
+   - `download-wb-promotion-v2` — V2 (full) with dual-backend since 2026-05 (has `V2StorageConfig`, `pkg/promotion/` with Source/Writer/Reader, PG adapter)
    - `download-1c-data`, `download-1c-rests`, `download-all-articles` — non-WB (skip Swagger verification, no rate limiting checks)
 
 **Output of Phase 0:**

@@ -73,3 +73,14 @@ promotion_v2:
 
   adaptive_probe_after: 15
   max_backoff_seconds: 60
+
+# Storage backend (V2 dual-backend)
+storage:
+  backend: sqlite          # sqlite | postgres
+  # db_path is inherited from promotion_v2.db_path for backward compat
+  # For PostgreSQL:
+  # backend: postgres
+  # pg_host: "192.168.10.7"
+  # pg_port: 15432
+  # pg_user: "postgres"
+  # pg_database: "wb_data_prod"

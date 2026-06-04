@@ -45,3 +45,8 @@ promotion_v2:
     min_bids_api_burst: 3
   adaptive_probe_after: 15
   max_backoff_seconds: 60
+
+# Storage backend (V2 dual-backend)
+storage:
+  backend: sqlite
+  db_path: "/var/db/wb-sales.db"
