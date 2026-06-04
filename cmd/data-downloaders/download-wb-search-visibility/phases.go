@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/dllog"
+	"github.com/ilkoid/poncho-ai/pkg/searchvis"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 )
 
@@ -30,7 +31,7 @@ func DownloadSearchPositions(
 	snapshotDate string,
 	rateLimit, burst int,
 ) error {
-	var allRows []sqlite.SearchPositionRow
+	var allRows []searchvis.SearchPositionRow
 
 	totalBatches := (len(nmIDs) + batchSize - 1) / batchSize
 	startTime := time.Now()
@@ -85,7 +86,7 @@ func DownloadSearchPositions(
 	}
 
 	if len(allRows) > 0 {
-		if err := repo.SaveSearchPositions(ctx, allRows); err != nil {
+		if _, err := repo.SaveSearchPositions(ctx, allRows); err != nil {
 			return fmt.Errorf("save positions: %w", err)
 		}
 	}
@@ -105,7 +106,7 @@ func DownloadSearchQueries(
 	limit int,
 	rateLimit, burst int,
 ) error {
-	var allRows []sqlite.SearchQueryRow
+	var allRows []searchvis.SearchQueryRow
 	startTime := time.Now()
 	totalBatches := (len(nmIDs) + queryBatchSize - 1) / queryBatchSize
 
@@ -150,7 +151,7 @@ func DownloadSearchQueries(
 		}
 
 		for _, item := range response.Data.Items {
-			allRows = append(allRows, sqlite.SearchQueryRow{
+			allRows = append(allRows, searchvis.SearchQueryRow{
 				NmID:                item.NmID,
 				SnapshotDate:        snapshotDate,
 				SearchText:          item.Text,
@@ -179,7 +180,7 @@ func DownloadSearchQueries(
 	}
 
 	if len(allRows) > 0 {
-		if err := repo.SaveSearchQueries(ctx, allRows); err != nil {
+		if _, err := repo.SaveSearchQueries(ctx, allRows); err != nil {
 			return fmt.Errorf("save queries: %w", err)
 		}
 	}
@@ -209,7 +210,7 @@ type searchTextItem struct {
 }
 
 // parsePositionResponse extracts position/visibility data from the report API response.
-func parsePositionResponse(resp map[string]interface{}, nmIDs []int, snapshotDate, periodStart, periodEnd string) []sqlite.SearchPositionRow {
+func parsePositionResponse(resp map[string]interface{}, nmIDs []int, snapshotDate, periodStart, periodEnd string) []searchvis.SearchPositionRow {
 	data, ok := resp["data"].(map[string]interface{})
 	if !ok {
 		return nil
@@ -234,9 +235,9 @@ func parsePositionResponse(resp map[string]interface{}, nmIDs []int, snapshotDat
 
 	// The report API returns aggregated data for all requested nmIDs.
 	// We create one row per nmID with the same aggregated values.
-	rows := make([]sqlite.SearchPositionRow, 0, len(nmIDs))
+	rows := make([]searchvis.SearchPositionRow, 0, len(nmIDs))
 	for _, nmID := range nmIDs {
-		rows = append(rows, sqlite.SearchPositionRow{
+		rows = append(rows, searchvis.SearchPositionRow{
 			NmID:                 nmID,
 			SnapshotDate:         snapshotDate,
 			AvgPosition:          avgPos,

@@ -11,7 +11,7 @@ wb:
   endpoint: "https://statistics-api.wildberries.ru"
 
 opsales:
-  days: 90                          # полный retention WB API
+  days: 7                          # полный retention WB API
   rewrite: false                    # upsert без удаления — сохраняем историю за пределами 90 дней
   adaptive_recover_after: 5
   adaptive_probe_after: 10
@@ -25,4 +25,4 @@ storage:
 
 filter:
   exclude_lengths: [6]
-  allowed_years: [20, 21, 22, 23, 24, 25, 26]
+  allowed_years: []

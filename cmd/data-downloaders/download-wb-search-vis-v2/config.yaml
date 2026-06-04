@@ -1,0 +1,45 @@
+# WB Search Visibility Downloader v2 — Configuration
+#
+# Downloads organic search positions and top queries from WB Seller Analytics API.
+# Supports both SQLite and PostgreSQL backends.
+#
+# Usage:
+#   go run . --mock                              # mock mode
+#   go run . --config config.yaml                # production
+#   go run . --backend postgres --config config.yaml  # PostgreSQL
+
+wb:
+  timeout: "120s"
+
+search_visibility:
+  days: 7
+  limit: 30                    # max queries per product (default: 30, max: 100)
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+
+  rate_limits:
+    search_report: 3           # desired rate (req/min)
+    search_report_burst: 3
+    search_report_api: 3       # swagger floor (recovery after 429)
+    search_report_api_burst: 3
+    search_texts: 3
+    search_texts_burst: 3
+    search_texts_api: 3
+    search_texts_api_burst: 3
+
+  adaptive_probe_after: 10     # probes after N consecutive OK responses
+  max_backoff_seconds: 60
+
+  filter:
+    exclude_lengths: [6]       # exclude 6-digit articles
+    allowed_years: [24, 25, 26]  # only 2024-2026 products
+    active_days: 90            # only products with sales in last 90 days
+
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
+  # PostgreSQL settings (when backend: postgres)
+  # pg_host: "192.168.10.7"
+  # pg_port: 15432
+  # pg_user: "postgres"
+  # pg_password_env: "PG_PWD"
+  # pg_database: "wb_data_prod"

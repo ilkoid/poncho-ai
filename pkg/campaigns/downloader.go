@@ -11,7 +11,7 @@ import (
 
 // Batch sizes and API limits
 const (
-	batchSize        = 50  // Max IDs per /adverts and /fullstats request
+	batchSize        = 50  // Max IDs per /fullstats request
 	maxStatsWindow   = 31  // Max days per /fullstats request (WB API limit)
 )
 
@@ -40,7 +40,7 @@ func NewDownloader(source CampaignsSource, writer CampaignsWriter, opts Download
 // Run executes the 3-phase campaign download:
 //
 //	Phase 1: campaigns — GET /adv/v1/promotion/count → SaveCampaigns
-//	Phase 2: details — GET /api/advert/v2/adverts (batch 50) → SaveCampaignDetails
+//	Phase 2: details — GET /api/advert/v2/adverts → SaveCampaignDetails
 //	Phase 3: fullstats — GET /adv/v3/fullstats (batch 50, window 31d) → SaveFullstats
 //
 // Post-run: PopulateCampaignProducts
@@ -129,47 +129,30 @@ func (d *Downloader) runCampaignsPhase(ctx context.Context, result *DownloadResu
 	return allIDs, filteredIDs, nil
 }
 
-// runDetailsPhase downloads campaign details in batches of 50.
+// runDetailsPhase downloads campaign details via single API call.
+// NOTE: WB API /api/advert/v2/adverts ignores the id parameter and returns ALL campaigns,
+// so batching is pointless — one call fetches everything.
 func (d *Downloader) runDetailsPhase(ctx context.Context, allIDs []int, result *DownloadResult) error {
 	if d.opts.SkipDetails || len(allIDs) == 0 {
 		d.progress("skipping campaign details")
 		return nil
 	}
 
-	d.progress("downloading campaign details (%d batches)...", (len(allIDs)+batchSize-1)/batchSize)
+	d.progress("downloading campaign details...")
 
-	totalLoaded := 0
-	for i := 0; i < len(allIDs); i += batchSize {
-		// Check context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		end := min(i+batchSize, len(allIDs))
-		batch := allIDs[i:end]
-
-		details, err := d.source.GetAdvertDetails(ctx, batch)
-		if err != nil {
-			return fmt.Errorf("get advert details batch %d-%d: %w", i+1, end, err)
-		}
-
-		if len(details) == 0 {
-			continue // v2 may not return details for all campaign types
-		}
-
-		if !d.opts.DryRun {
-			if err := d.writer.SaveCampaignDetails(ctx, details); err != nil {
-				return fmt.Errorf("save campaign details: %w", err)
-			}
-		}
-
-		totalLoaded += len(details)
-		d.progress("details: %d/%d campaigns updated", totalLoaded, len(allIDs))
+	details, err := d.source.GetAdvertDetails(ctx, allIDs)
+	if err != nil {
+		return fmt.Errorf("get advert details: %w", err)
 	}
 
-	result.DetailsLoaded = totalLoaded
+	if len(details) > 0 && !d.opts.DryRun {
+		if err := d.writer.SaveCampaignDetails(ctx, details); err != nil {
+			return fmt.Errorf("save campaign details: %w", err)
+		}
+	}
+
+	d.progress("details: %d/%d campaigns updated", len(details), len(allIDs))
+	result.DetailsLoaded = len(details)
 	return nil
 }
 

@@ -3,55 +3,20 @@ package sqlite
 import (
 	"context"
 	"fmt"
+
+	"github.com/ilkoid/poncho-ai/pkg/searchvis"
 )
 
-// SearchPositionRow represents one row in search_positions_daily.
-type SearchPositionRow struct {
-	NmID                 int
-	SnapshotDate         string
-	AvgPosition          float64
-	AvgPositionDynamics  float64
-	MedianPosition       float64
-	Visibility           float64
-	VisibilityDynamics   float64
-	OpenCard             int
-	OpenCardDynamics     float64
-	ClusterFirstHundred  int
-	ClusterSecondHundred int
-	ClusterBelow         int
-	PeriodStart          string
-	PeriodEnd            string
-}
-
-// SearchQueryRow represents one row in search_queries_daily.
-type SearchQueryRow struct {
-	NmID                int
-	SnapshotDate        string
-	SearchText          string
-	Frequency           int
-	FrequencyDynamics   float64
-	WeekFrequency       int
-	AvgPosition         float64
-	AvgPositionDynamics float64
-	MedianPosition      float64
-	MedianPosDynamics   float64
-	Visibility          float64
-	OpenCard            int
-	AddToCart           int
-	Orders              int
-	OpenToCart          float64
-	CartToOrder         float64
-	VendorCode          string
-	BrandName           string
-	SubjectName         string
-	PeriodStart         string
-	PeriodEnd           string
-}
+// Compile-time assertions: SQLiteSalesRepository implements searchvis interfaces.
+var (
+	_ searchvis.Writer = (*SQLiteSalesRepository)(nil)
+	_ searchvis.Reader = (*SQLiteSalesRepository)(nil) // methods in funnel.go
+)
 
 // SaveSearchPositions saves batch of search position snapshots.
-func (r *SQLiteSalesRepository) SaveSearchPositions(ctx context.Context, rows []SearchPositionRow) error {
+func (r *SQLiteSalesRepository) SaveSearchPositions(ctx context.Context, rows []searchvis.SearchPositionRow) (int, error) {
 	if len(rows) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	r.db.Exec("PRAGMA synchronous = OFF")
@@ -59,7 +24,7 @@ func (r *SQLiteSalesRepository) SaveSearchPositions(ctx context.Context, rows []
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -85,7 +50,7 @@ func (r *SQLiteSalesRepository) SaveSearchPositions(ctx context.Context, rows []
 			period_end = excluded.period_end
 	`)
 	if err != nil {
-		return fmt.Errorf("prepare statement: %w", err)
+		return 0, fmt.Errorf("prepare statement: %w", err)
 	}
 	defer stmt.Close()
 
@@ -98,20 +63,20 @@ func (r *SQLiteSalesRepository) SaveSearchPositions(ctx context.Context, rows []
 			row.PeriodStart, row.PeriodEnd,
 		)
 		if err != nil {
-			return fmt.Errorf("insert position nm_id=%d date=%s: %w", row.NmID, row.SnapshotDate, err)
+			return 0, fmt.Errorf("insert position nm_id=%d date=%s: %w", row.NmID, row.SnapshotDate, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+		return 0, fmt.Errorf("commit transaction: %w", err)
 	}
-	return nil
+	return len(rows), nil
 }
 
 // SaveSearchQueries saves batch of search query snapshots.
-func (r *SQLiteSalesRepository) SaveSearchQueries(ctx context.Context, rows []SearchQueryRow) error {
+func (r *SQLiteSalesRepository) SaveSearchQueries(ctx context.Context, rows []searchvis.SearchQueryRow) (int, error) {
 	if len(rows) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	r.db.Exec("PRAGMA synchronous = OFF")
@@ -119,7 +84,7 @@ func (r *SQLiteSalesRepository) SaveSearchQueries(ctx context.Context, rows []Se
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -152,7 +117,7 @@ func (r *SQLiteSalesRepository) SaveSearchQueries(ctx context.Context, rows []Se
 			period_end = excluded.period_end
 	`)
 	if err != nil {
-		return fmt.Errorf("prepare statement: %w", err)
+		return 0, fmt.Errorf("prepare statement: %w", err)
 	}
 	defer stmt.Close()
 
@@ -166,14 +131,14 @@ func (r *SQLiteSalesRepository) SaveSearchQueries(ctx context.Context, rows []Se
 			row.PeriodStart, row.PeriodEnd,
 		)
 		if err != nil {
-			return fmt.Errorf("insert query nm_id=%d text=%q: %w", row.NmID, row.SearchText, err)
+			return 0, fmt.Errorf("insert query nm_id=%d text=%q: %w", row.NmID, row.SearchText, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+		return 0, fmt.Errorf("commit transaction: %w", err)
 	}
-	return nil
+	return len(rows), nil
 }
 
 // CountSearchPositions returns the number of rows in search_positions_daily.

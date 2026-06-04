@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/wb"
@@ -107,6 +108,68 @@ func (m *MockWriter) SaveFunnelMetricsDetail(ctx context.Context, rows []FunnelD
 func (m *MockWriter) SaveFunnelMetricsGrouped(ctx context.Context, rows []FunnelGroupedRow) error {
 	m.GroupedRows = append(m.GroupedRows, rows...)
 	return nil
+}
+
+// DiscardWriter implements NmReportWriter with no-op persistence.
+// Used in --mock mode to guarantee zero DB interaction.
+type DiscardWriter struct {
+	mu           sync.Mutex
+	savedDetail  int
+	savedGrouped int
+	savedReports int
+}
+
+// NewDiscardWriter creates a no-op writer for mock mode.
+func NewDiscardWriter() *DiscardWriter {
+	return &DiscardWriter{}
+}
+
+// GetNmReport returns nil — no resume in mock mode.
+func (w *DiscardWriter) GetNmReport(_ context.Context, _, _, _ string) (*NmReportRecord, error) {
+	return nil, nil
+}
+
+// SaveNmReport counts reports but never writes to any database.
+func (w *DiscardWriter) SaveNmReport(_ context.Context, record NmReportRecord) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.savedReports++
+	return nil
+}
+
+// UpdateNmReportStatus is a no-op in mock mode.
+func (w *DiscardWriter) UpdateNmReportStatus(_ context.Context, _, _ string, _ int) error {
+	return nil
+}
+
+// SaveFunnelMetricsDetail counts rows but never writes to any database.
+func (w *DiscardWriter) SaveFunnelMetricsDetail(_ context.Context, rows []FunnelDetailRow, _ int) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.savedDetail += len(rows)
+	return nil
+}
+
+// SaveFunnelMetricsGrouped counts rows but never writes to any database.
+func (w *DiscardWriter) SaveFunnelMetricsGrouped(_ context.Context, rows []FunnelGroupedRow) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.savedGrouped += len(rows)
+	return nil
+}
+
+// SavedDetail returns count of detail rows "saved" (counted).
+func (w *DiscardWriter) SavedDetail() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.savedDetail
+}
+
+// SavedGrouped returns count of grouped rows "saved" (counted).
+func (w *DiscardWriter) SavedGrouped() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.savedGrouped
 }
 
 // makeZipWithCSV creates a ZIP archive containing a single CSV file.
