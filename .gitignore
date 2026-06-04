@@ -191,6 +191,7 @@ cmd/check-db-freshness
 download-wb-*
 !download-wb-*/
 !cmd/.configs/download-wb-*
+!cmd/.configs/download-all/download-wb-*
 
 # Root-level fix/analyzer binaries
 /analyze-category-sales

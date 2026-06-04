@@ -1,0 +1,27 @@
+wb:
+  timeout: "120s"
+
+search_visibility:
+  days: 7
+  limit: 50
+  skip_positions: false
+  skip_queries: false
+  rate_limits:
+    search_report: 3
+    search_report_burst: 1
+    search_report_api: 2
+    search_report_api_burst: 1
+    search_texts: 3
+    search_texts_burst: 1
+    search_texts_api: 2
+    search_texts_api_burst: 1
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+  filter:
+    exclude_lengths: [6]
+    allowed_years: [25, 26]
+    active_days: 14
+
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
