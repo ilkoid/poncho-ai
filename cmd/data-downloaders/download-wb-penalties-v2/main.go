@@ -36,9 +36,10 @@ import (
 
 // Config holds YAML configuration for the penalties v2 downloader.
 type Config struct {
-	WB        config.WBClientConfig  `yaml:"wb"`
-	Penalties config.DownloadConfig  `yaml:"penalties"`
-	Storage   config.V2StorageConfig `yaml:"storage"`
+	WB        config.WBClientConfig        `yaml:"wb"`
+	Penalties config.DownloadConfig        `yaml:"penalties"`
+	Storage   config.V2StorageConfig       `yaml:"storage"`
+	Filter    config.PenaltiesFilterConfig `yaml:"filter"`
 }
 
 func main() {
@@ -117,6 +118,7 @@ func main() {
 		To:      cfg.Penalties.To,
 		Rewrite: cfg.Penalties.Rewrite,
 		DryRun:  *dryRun,
+		Filter:  cfg.Filter,
 		OnProgress: func() func(string) {
 			var page int
 			start := time.Now()

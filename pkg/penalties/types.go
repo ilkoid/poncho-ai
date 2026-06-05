@@ -10,6 +10,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -43,6 +44,7 @@ type DownloadOptions struct {
 	To         string // точная конечная дата (приоритет над Days)
 	Rewrite    bool   // удалить старые данные за период перед загрузкой
 	DryRun     bool   // skip DB writes, show what would be saved
+	Filter     config.PenaltiesFilterConfig // клиентская фильтрация
 	OnProgress func(msg string) // nil = silent (Tool mode)
 }
 

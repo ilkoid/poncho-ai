@@ -3,6 +3,7 @@ package penalties
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/wb"
@@ -66,13 +67,21 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 			return nil
 		}
 
-		if d.opts.DryRun {
-			d.progress("page %d: %d penalties skipped — dry-run (total: %d)", result.TotalPages, len(items), total)
-			result.TotalPenalties += len(items)
+		// Apply client-side filter
+		filtered := d.applyFilter(items)
+
+		if len(filtered) == 0 {
+			d.progress("page %d: 0 penalties after filter (from %d)", result.TotalPages, len(items))
 			return nil
 		}
 
-		n, err := d.writer.SavePenalties(ctx, items)
+		if d.opts.DryRun {
+			d.progress("page %d: %d penalties skipped — dry-run (total: %d)", result.TotalPages, len(filtered), total)
+			result.TotalPenalties += len(filtered)
+			return nil
+		}
+
+		n, err := d.writer.SavePenalties(ctx, filtered)
 		if err != nil {
 			return fmt.Errorf("save penalties page %d: %w", result.TotalPages, err)
 		}
@@ -111,6 +120,44 @@ func (d *Downloader) resolveDateRange() (string, string) {
 	}
 
 	return dateFrom, dateTo
+}
+
+// applyFilter removes penalties that don't match PenaltiesFilterConfig.
+// Filters by nm_ids (set lookup), subject (case-insensitive contains), is_valid (exact match).
+func (d *Downloader) applyFilter(items []wb.MeasurementPenaltyItem) []wb.MeasurementPenaltyItem {
+	f := d.opts.Filter
+	if len(f.NmIds) == 0 && f.Subject == "" && f.IsValid == nil {
+		return items
+	}
+
+	// Build nm_id lookup set
+	nmSet := make(map[int]bool, len(f.NmIds))
+	for _, id := range f.NmIds {
+		nmSet[id] = true
+	}
+
+	subjectLower := strings.ToLower(f.Subject)
+
+	filtered := make([]wb.MeasurementPenaltyItem, 0, len(items))
+	for _, p := range items {
+		// Filter by nm_ids
+		if len(nmSet) > 0 && !nmSet[p.NmId] {
+			continue
+		}
+
+		// Filter by subject (case-insensitive contains)
+		if subjectLower != "" && !strings.Contains(strings.ToLower(p.SubjectName), subjectLower) {
+			continue
+		}
+
+		// Filter by is_valid
+		if f.IsValid != nil && p.IsValid != *f.IsValid {
+			continue
+		}
+
+		filtered = append(filtered, p)
+	}
+	return filtered
 }
 
 // progress calls the OnProgress callback if set.

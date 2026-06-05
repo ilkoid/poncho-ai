@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -46,7 +47,6 @@ func TestDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// DryRun: penalties are counted but NOT saved
 	if result.TotalPenalties != 50 {
 		t.Errorf("expected 50 penalties counted, got %d", result.TotalPenalties)
 	}
@@ -108,7 +108,6 @@ func TestExplicitDateRange(t *testing.T) {
 	if result.TotalPenalties != 10 {
 		t.Errorf("expected 10 penalties, got %d", result.TotalPenalties)
 	}
-	// Verify date range is passed to progress
 	if len(progressMsgs) == 0 {
 		t.Error("expected progress messages")
 	}
@@ -132,7 +131,6 @@ func TestDefaultDays(t *testing.T) {
 func TestDiscardWriterConcurrency(t *testing.T) {
 	writer := NewDiscardWriter()
 
-	// Simulate concurrent saves
 	var done atomic.Int32
 	for i := 0; i < 10; i++ {
 		go func() {
@@ -148,5 +146,120 @@ func TestDiscardWriterConcurrency(t *testing.T) {
 
 	if writer.Saved() != 100 {
 		t.Errorf("expected 100 total, got %d", writer.Saved())
+	}
+}
+
+// ============================================================================
+// Filter tests
+// ============================================================================
+
+func TestFilterByNmIds(t *testing.T) {
+	src := NewMockPenaltiesSource(100) // nm_id = 100000 + i
+	writer := NewDiscardWriter()
+
+	dl := NewDownloader(src, writer, DownloadOptions{
+		Days: 90,
+		Filter: config.PenaltiesFilterConfig{
+			NmIds: []int{100005, 100010, 100050}, // only 3 of 100
+		},
+		OnProgress: func(msg string) {},
+	})
+	result, err := dl.Run(context.Background())
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.TotalPenalties != 3 {
+		t.Errorf("expected 3 penalties after nm_ids filter, got %d", result.TotalPenalties)
+	}
+}
+
+func TestFilterBySubject(t *testing.T) {
+	src := NewMockPenaltiesSource(100) // subjects: "Кроссовки", "Футболка", "Джинсы", "Куртка", "Шорты"
+	writer := NewDiscardWriter()
+
+	dl := NewDownloader(src, writer, DownloadOptions{
+		Days: 90,
+		Filter: config.PenaltiesFilterConfig{
+			Subject: "кроссов", // case-insensitive contains
+		},
+		OnProgress: func(msg string) {},
+	})
+	result, err := dl.Run(context.Background())
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// "Кроссовки" appears at i%5==0 → 20 of 100
+	if result.TotalPenalties != 20 {
+		t.Errorf("expected 20 penalties after subject filter, got %d", result.TotalPenalties)
+	}
+}
+
+func TestFilterByIsValid(t *testing.T) {
+	src := NewMockPenaltiesSource(50) // IsValid: i%5 != 0 → 80% true, 20% false
+	writer := NewDiscardWriter()
+
+	valid := true
+	dl := NewDownloader(src, writer, DownloadOptions{
+		Days: 90,
+		Filter: config.PenaltiesFilterConfig{
+			IsValid: &valid,
+		},
+		OnProgress: func(msg string) {},
+	})
+	result, err := dl.Run(context.Background())
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 50 items, i%5==0 are invalid (10 items), so 40 are valid
+	if result.TotalPenalties != 40 {
+		t.Errorf("expected 40 confirmed penalties, got %d", result.TotalPenalties)
+	}
+}
+
+func TestFilterCombined(t *testing.T) {
+	src := NewMockPenaltiesSource(100) // subjects cycle: "Кроссовки"(i%5==0), "Футболка"(i%5==1), ...
+	writer := NewDiscardWriter()
+
+	// "Футболка" = i%5==1 → 20 items, IsValid: 1%5!=0 = true → all 20 confirmed
+	valid := true
+	dl := NewDownloader(src, writer, DownloadOptions{
+		Days: 90,
+		Filter: config.PenaltiesFilterConfig{
+			Subject: "футболк", // case-insensitive contains → "Футболка"
+			IsValid: &valid,    // all "Футболка" items have IsValid=true
+		},
+		OnProgress: func(msg string) {},
+	})
+	result, err := dl.Run(context.Background())
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.TotalPenalties != 20 {
+		t.Errorf("expected 20 confirmed футболка penalties, got %d", result.TotalPenalties)
+	}
+}
+
+func TestFilterEmptyMatches(t *testing.T) {
+	src := NewMockPenaltiesSource(50)
+	writer := NewDiscardWriter()
+
+	dl := NewDownloader(src, writer, DownloadOptions{
+		Days: 90,
+		Filter: config.PenaltiesFilterConfig{
+			NmIds: []int{99999999}, // no match
+		},
+		OnProgress: func(msg string) {},
+	})
+	result, err := dl.Run(context.Background())
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.TotalPenalties != 0 {
+		t.Errorf("expected 0 penalties with no-match filter, got %d", result.TotalPenalties)
 	}
 }

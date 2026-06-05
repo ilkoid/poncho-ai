@@ -12,6 +12,12 @@ penalties:
   adaptive_probe_after: 10     # OKs at api floor before probing desired rate
   max_backoff_seconds: 60      # cap for exponential backoff
 
+# Фильтрация штрафов (клиентская). Все поля опциональны, AND между полями.
+filter:
+  nm_ids: []                   # Конкретные nm_id (для фокуса на конкретных товарах)
+  subject: ""                  # Категория товара, case-insensitive contains (напр. "Кроссовки")
+  # is_valid: true             # true = только подтверждённые, false = только отменённые
+
 storage:
   backend: "postgres"
   db_path: "/var/db/wb-sales.db"
