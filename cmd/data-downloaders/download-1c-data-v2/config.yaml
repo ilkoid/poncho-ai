@@ -1,0 +1,20 @@
+# ============================================================================
+# 1C Data Downloader v2 — Configuration
+# ============================================================================
+# Downloads product catalog, prices, and PIM attributes from 1C/PIM APIs.
+# Supports both SQLite and PostgreSQL backends.
+
+# 1C/PIM API endpoints (basic auth embedded in URL: user:pass@host/path)
+onec:
+  api_url: ${ONEC_API_URL}      # Base URL for Goods+Prices APIs
+  pim_url: ${ONEC_PIM_URL}      # PIM Goods API URL
+
+# ============================================================================
+# Storage — dual-backend selection
+# ============================================================================
+storage:
+  backend: "sqlite"              # "sqlite" (default) | "postgres"
+  db_path: "/var/db/wb-sales.db"
+  # pg_dsn: ""                   # Full PG DSN (optional, overrides fields below)
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"     # Env var with PG password

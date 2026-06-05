@@ -36,8 +36,8 @@ echo "==========================================="
 START=$SECONDS
 
 # ── Phase 1: Catalog (fast, high rate limits ~100 req/min) ──────────
-# v2 downloaders: cards ✅, prices ✅
-# v1 downloaders: 1c-data, 1c-rests (no v2 — internal APIs, not WB)
+# v2 downloaders: cards ✅, prices ✅, 1c-data ✅
+# v1 downloaders: 1c-rests (no v2 — internal API, not WB)
 
 echo ""
 echo "── Phase 1: Catalog (cards, prices, 1C/PIM) ──"
@@ -45,7 +45,7 @@ PHASE_START=$SECONDS
 
 (cd "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" && go run . --config "$CONFIGS/download-wb-cards-v2.yaml" --backend sqlite) || exit $?
 (cd "$PONCHO/cmd/data-downloaders/download-wb-prices-v2" && go run . --config "$CONFIGS/download-wb-prices.yaml" --backend sqlite) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-1c-data" && go run . --config "$CONFIGS/download-1c-data.yaml") || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-1c-data-v2" && go run . --config "$CONFIGS/download-1c-data-v2.yaml" --backend sqlite) || exit $?
 (cd "$PONCHO/cmd/data-downloaders/download-1c-rests" && go run . --config "$CONFIGS/download-1c-rests.yaml") || exit $?
 
 echo "  Phase 1 done in $(( SECONDS - PHASE_START ))s"
@@ -138,8 +138,8 @@ echo "==========================================="
 echo "  All downloads completed in ${MINS}m ${SECS}s"
 echo "  Finished: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
-echo "  v2 downloaders (PG-ready, 16): cards, prices, feedbacks, orders, opsales, sales,"
+echo "  v2 downloaders (PG-ready, 17): cards, prices, feedbacks, orders, opsales, sales,"
 echo "    region-sales, stocks, stock-history, supplies, campaigns, promotion,"
-echo "    funnel, funnel-agg, funnel-csv, search-vis"
-echo "  v1 downloaders (SQLite, 2):    1c-data, 1c-rests"
+echo "    funnel, funnel-agg, funnel-csv, search-vis, 1c-data"
+echo "  v1 downloaders (SQLite, 1):    1c-rests"
 echo "==========================================="

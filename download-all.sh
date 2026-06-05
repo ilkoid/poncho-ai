@@ -60,12 +60,12 @@ echo "── Phase 3: Sales & Revenue ──"
 PHASE_START=$SECONDS
 
 ### wb-orders v2 (early signal — cart/checkout, updates every 30 min)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" && go run . --config "$CONFIGS/download-wb-orders.yaml") || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" && go run . --config "$CONFIGS/download-wb-orders.yaml") || exit $?
 ### wb-opsales v2 (operational sales/returns — preliminary data, updates every 30 min)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" && go run . --config "$CONFIGS/download-wb-opsales.yaml") || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" && go run . --config "$CONFIGS/download-wb-opsales.yaml") || exit $?
 ### wb-sales v2
-(cd "$PONCHO/cmd/data-downloaders/download-wb-sales-v2" && go run . --config "$CONFIGS/download-wb-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-region-sales" && go run . --config "$CONFIGS/download-wb-region-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-sales-v2" && go run . --config "$CONFIGS/download-wb-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-region-sales" && go run . --config "$CONFIGS/download-wb-region-sales.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 3 done in $(( SECONDS - PHASE_START ))s"
 
@@ -75,9 +75,9 @@ echo ""
 echo "── Phase 4: Stock & Logistics ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-stocks" && go run . --config "$CONFIGS/download-wb-stocks.yaml" --date $(date +%Y-%m-%d)) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-stock-history" && go run . --config "$CONFIGS/download-wb-stock-history.yaml" ${DAYS:+--days=$DAYS}) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-supplies" && go run . --config "$CONFIGS/download-wb-supplies.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-stocks" && go run . --config "$CONFIGS/download-wb-stocks.yaml" --date $(date +%Y-%m-%d)) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-stock-history" && go run . --config "$CONFIGS/download-wb-stock-history.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-supplies" && go run . --config "$CONFIGS/download-wb-supplies.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 4 done in $(( SECONDS - PHASE_START ))s"
 
@@ -87,8 +87,8 @@ echo ""
 echo "── Phase 5: Advertising ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion" && go run . --config "$CONFIGS/download-wb-promotion.yaml" ${DAYS:+--days=$DAYS}) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" && go run . --config "$CONFIGS/download-wb-promotion-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion" && go run . --config "$CONFIGS/download-wb-promotion.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" && go run . --config "$CONFIGS/download-wb-promotion-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 5 done in $(( SECONDS - PHASE_START ))s"
 
@@ -99,9 +99,9 @@ echo "── Phase 6: Analytics (funnel, funnel-agg, search-visibility) ──"
 PHASE_START=$SECONDS
 
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel" && go run . --config "$CONFIGS/download-wb-funnel.yaml" ${DAYS:+--days=$DAYS}) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv" && go run . --config "$CONFIGS/download-wb-funnel-csv.yaml" ${DAYS:+--days=$DAYS}) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg" && go run . --config "$CONFIGS/download-wb-funnel-agg.yaml" ${DAYS:+--days=$DAYS}) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-search-visibility" && go run . --config "$CONFIGS/download-wb-search-visibility.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv" && go run . --config "$CONFIGS/download-wb-funnel-csv.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg" && go run . --config "$CONFIGS/download-wb-funnel-agg.yaml" ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" && go run . --config "$CONFIGS/download-wb-search-visibility.yaml" ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 6 done in $(( SECONDS - PHASE_START ))s"
 

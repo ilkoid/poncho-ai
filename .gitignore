@@ -196,6 +196,8 @@ download-wb-*
 # Root-level fix/analyzer binaries
 /analyze-category-sales
 /download-1c-data
+/download-1c-rests
+/download-1c-rests-v2
 /fix-card-dimensions
 /fix-card-dimensions-v1.5
 /fix-certificates
