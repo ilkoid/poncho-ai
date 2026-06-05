@@ -1,0 +1,20 @@
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"  # env var with WB API key
+  rate_limit: 1
+  burst_limit: 1                    # burst=1: prevents burst-fire 429 on slow APIs
+
+penalties:
+  days: 90                     # дней от сегодня (default: 90)
+  # from: "2026-03-01"         # точная начальная дата (приоритет над days)
+  # to: "2026-06-01"           # точная конечная дата (приоритет над days)
+  rewrite: true                # удалить старые данные за период перед загрузкой
+  adaptive_recover_after: 5    # OKs before restore to api floor after 429
+  adaptive_probe_after: 10     # OKs at api floor before probing desired rate
+  max_backoff_seconds: 60      # cap for exponential backoff
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

@@ -1194,3 +1194,53 @@ const (
 	WrStatusPurged     = "purged"
 	WrStatusCanceled   = "canceled"
 )
+
+// ============================================================================
+// Measurement Penalties Types (Seller Analytics API — /api/analytics/v1/measurement-penalties)
+// ============================================================================
+
+// MeasurementPenaltyItem — одна запись штрафа за неверные габариты упаковки.
+// GET /api/analytics/v1/measurement-penalties
+//
+// WB физически измеряет товары на складе. Если реальные габариты больше заявленных в карточке
+// (volume > volumeSup), продавец платит штраф за "занижение габаритов".
+// Штраф может быть отменён (isValid=false) — тогда появляется reversalAmount.
+type MeasurementPenaltyItem struct {
+	NmId        int     `json:"nmId"`        // Артикул WB (товар)
+	SubjectName string  `json:"subjectName"` // Категория товара ("Кроссовки")
+	DimId       int     `json:"dimId"`       // ID замера — natural key
+	PrcOver     float64 `json:"prcOver"`     // На сколько % реальный объём > заявленного
+
+	// Фактические замеры (склад WB)
+	Volume float64 `json:"volume"` // Объём, литры
+	Width  int     `json:"width"`  // Ширина, см
+	Length int     `json:"length"` // Длина, см
+	Height int     `json:"height"` // Высота, см
+
+	// Заявленные габариты (карточка продавца) — Sup = Supplier
+	VolumeSup float64 `json:"volumeSup"` // Объём, литры
+	WidthSup  int     `json:"widthSup"`  // Ширина, см
+	LengthSup int     `json:"lengthSup"` // Длина, см
+	HeightSup int     `json:"heightSup"` // Высота, см
+
+	// Доказательства и дата
+	PhotoUrls []string `json:"photoUrls"` // Ссылки на фото замера
+	DtBonus   string   `json:"dtBonus"`   // Дата начисления штрафа (YYYY-MM-DDTHH:MM:SS)
+
+	// Статус: confirmed / cancelled
+	IsValid   bool    `json:"isValid"`     // true = штраф подтверждён, false = отменён
+	IsValidDt string  `json:"isValidDt"`   // Дата подтверждения/отмены
+
+	// Деньги
+	ReversalAmount float64 `json:"reversalAmount"` // Сумма возврата (если штраф отменён)
+	PenaltyAmount  float64 `json:"penaltyAmount"`  // Сумма штрафа, ₽
+}
+
+// MeasurementPenaltiesResponse — ответ API measurement-penalties.
+// Offset-пагинация: limit/offset/total.
+type MeasurementPenaltiesResponse struct {
+	Data struct {
+		Reports []MeasurementPenaltyItem `json:"reports"`
+		Total   int                      `json:"total"`
+	} `json:"data"`
+}

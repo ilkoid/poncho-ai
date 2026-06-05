@@ -383,6 +383,12 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+
+		// Create measurement penalties table (WB Seller Analytics API — measurement-penalties)
+		_, err = r.db.Exec(GetPenaltiesSchemaSQL())
+		if err != nil {
+			return err
+		}
 	return nil
 }
 
