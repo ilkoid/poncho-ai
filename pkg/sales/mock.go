@@ -3,6 +3,8 @@ package sales
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -66,4 +68,54 @@ func (m *MockSalesSource) generateRows() []wb.RealizationReportRow {
 		}
 	}
 	return rows
+}
+
+// DiscardWriter implements SalesWriter with no-op persistence.
+// Used in --mock mode to guarantee zero DB interaction.
+type DiscardWriter struct {
+	mu    sync.Mutex
+	saved int
+}
+
+// NewDiscardWriter creates a no-op writer for mock mode.
+func NewDiscardWriter() *DiscardWriter {
+	return &DiscardWriter{}
+}
+
+// GetLastSaleDT returns a zero time — no data in mock mode.
+func (w *DiscardWriter) GetLastSaleDT(_ context.Context) (time.Time, error) {
+	return time.Time{}, nil
+}
+
+// GetFirstSaleDT returns a zero time — no data in mock mode.
+func (w *DiscardWriter) GetFirstSaleDT(_ context.Context) (time.Time, error) {
+	return time.Time{}, nil
+}
+
+// DeleteSalesByDateRange is a no-op for mock mode.
+func (w *DiscardWriter) DeleteSalesByDateRange(_ context.Context, _, _ string) (int64, error) {
+	return 0, nil
+}
+
+// DeleteServiceRecordsByDateRange is a no-op for mock mode.
+func (w *DiscardWriter) DeleteServiceRecordsByDateRange(_ context.Context, _, _ string) (int64, error) {
+	return 0, nil
+}
+
+// Save counts rows but never writes to any database.
+func (w *DiscardWriter) Save(_ context.Context, rows []wb.RealizationReportRow) error {
+	w.mu.Lock()
+	w.saved += len(rows)
+	w.mu.Unlock()
+	return nil
+}
+
+// SaveServiceRecords is a no-op for mock mode.
+func (w *DiscardWriter) SaveServiceRecords(_ context.Context, _ []wb.RealizationReportRow) error {
+	return nil
+}
+
+// Exists always returns false — no data in mock mode.
+func (w *DiscardWriter) Exists(_ context.Context, _ int) (bool, error) {
+	return false, nil
 }

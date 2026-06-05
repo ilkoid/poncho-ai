@@ -90,10 +90,21 @@ func main() {
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
 
-	// Create writer based on backend selection
-	writer, cleanup, err := createSalesWriter(ctx, cfg.Storage)
-	if err != nil {
-		log.Fatalf("storage: %v", err)
+	// ⚠️ Mock safety — КРИТИЧЕСКОЕ ОТЛИЧИЕ:
+	// --mock mode creates DiscardWriter (zero DB interaction).
+	// Writer creation is INSIDE the else branch — never opened when mocking.
+	var writer sales.SalesWriter
+	var cleanup func()
+
+	if *mockMode {
+		writer = sales.NewDiscardWriter()
+		cleanup = func() {}
+	} else {
+		var err error
+		writer, cleanup, err = createSalesWriter(ctx, cfg.Storage)
+		if err != nil {
+			log.Fatalf("storage: %v", err)
+		}
 	}
 	defer cleanup()
 

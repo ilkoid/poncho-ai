@@ -27,9 +27,6 @@ stock_history:
 storage:
   backend: sqlite
   db_path: /var/db/wb-sales.db
-  # postgres:
-  #   host: 192.168.10.7
-  #   port: 15432
-  #   user: postgres
-  #   password_env: PG_PWD
-  #   database: wb_data_prod
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

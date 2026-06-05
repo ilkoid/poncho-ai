@@ -31,3 +31,6 @@ campaigns:
 storage:
   backend: "sqlite"
   db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
