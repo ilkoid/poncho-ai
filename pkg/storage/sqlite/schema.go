@@ -1286,3 +1286,39 @@ CREATE INDEX IF NOT EXISTS idx_grouped_funnel_date
 	func GetNmReportSchemaSQL() string {
 		return NmReportSchemaSQL
 	}
+	// WarehouseRemainsSchemaSQL defines the warehouse remains snapshots table.
+	// WB API: GET /api/v1/warehouse_remains (async report, Seller Analytics API)
+	// Grain: one row per (snapshot_date, nm_id, tech_size, warehouse_name)
+	const WarehouseRemainsSchemaSQL = `
+	-- ============================================================================
+	-- WAREHOUSE REMAINS SNAPSHOTS (Seller Analytics API — warehouse_remains)
+	-- Grain: one row per (snapshot_date, nm_id, tech_size, warehouse_name)
+	-- ============================================================================
+
+	CREATE TABLE IF NOT EXISTS warehouse_remains (
+	    id INTEGER PRIMARY KEY AUTOINCREMENT,
+	    snapshot_date TEXT NOT NULL,
+	    nm_id INTEGER NOT NULL,
+	    barcode TEXT NOT NULL DEFAULT '',
+	    tech_size TEXT NOT NULL DEFAULT '0',
+	    warehouse_name TEXT NOT NULL DEFAULT '',
+	    brand TEXT NOT NULL DEFAULT '',
+	    subject_name TEXT NOT NULL DEFAULT '',
+	    vendor_code TEXT NOT NULL DEFAULT '',
+	    volume REAL NOT NULL DEFAULT 0,
+	    quantity INTEGER NOT NULL DEFAULT 0,
+	    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+	    UNIQUE(snapshot_date, nm_id, tech_size, warehouse_name)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_wr_nm_date
+	    ON warehouse_remains(nm_id, snapshot_date);
+
+	CREATE INDEX IF NOT EXISTS idx_wr_warehouse_date
+	    ON warehouse_remains(warehouse_name, snapshot_date);
+	`
+
+	// GetWarehouseRemainsSchemaSQL returns the warehouse remains table schema.
+	func GetWarehouseRemainsSchemaSQL() string {
+		return WarehouseRemainsSchemaSQL
+	}

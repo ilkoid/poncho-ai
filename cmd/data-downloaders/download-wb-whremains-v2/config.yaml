@@ -1,0 +1,35 @@
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+
+wh_remains:
+  db_path: "/var/db/wb-sales.db"
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  poll_interval_sec: 30
+  poll_timeout_min: 30
+  group_by_nm: true
+  group_by_size: true
+  rate_limits:
+    # Create report: GET /api/v1/warehouse_remains (1/min, burst 5)
+    create: 1
+    create_burst: 5
+    create_api: 1
+    create_api_burst: 5
+    # Poll status: GET /api/v1/warehouse_remains/tasks/{id}/status (12/min, burst 5)
+    status: 12
+    status_burst: 5
+    status_api: 12
+    status_api_burst: 5
+    # Download data: GET /api/v1/warehouse_remains/tasks/{id}/download (1/min, burst 1)
+    download: 1
+    download_burst: 1
+    download_api: 1
+    download_api_burst: 1
+
+storage:
+  backend: "sqlite"
+  db_path: "/var/db/wb-sales.db"
+  # postgres:
+  #   host: "192.168.10.7"
+  #   port: 15432
+  #   user: "postgres"
+  #   password_env: "PG_PWD"

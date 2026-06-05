@@ -1143,3 +1143,54 @@ type PriceSize struct {
 	ClubDiscountedPrice float64 `json:"clubDiscountedPrice"`
 	TechSizeName        string  `json:"techSizeName"`
 }
+
+// ============================================================================
+// Warehouse Remains Report Types (Seller Analytics API — async report)
+// ============================================================================
+
+// WarehouseRemainsCreateResponse — GET /api/v1/warehouse_remains
+// Returns task ID for the async warehouse remains report.
+type WarehouseRemainsCreateResponse struct {
+	Data struct {
+		TaskID string `json:"taskId"`
+	} `json:"data"`
+}
+
+// WarehouseRemainsStatusResponse — GET /api/v1/warehouse_remains/tasks/{id}/status
+// Returns current status of the report generation task.
+type WarehouseRemainsStatusResponse struct {
+	Data struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	} `json:"data"`
+}
+
+// WarehouseRemainsItem — one product from the download response.
+// GET /api/v1/warehouse_remains/tasks/{id}/download returns bare JSON array of these.
+// Each item contains nested Warehouses[] that must be flattened for storage.
+type WarehouseRemainsItem struct {
+	Brand       string                   `json:"brand"`
+	SubjectName string                   `json:"subjectName"`
+	VendorCode  string                   `json:"vendorCode"`
+	NmID        int64                    `json:"nmId"`
+	Barcode     string                   `json:"barcode"`
+	TechSize    string                   `json:"techSize"`
+	Volume      float64                  `json:"volume"`
+	Warehouses  []WarehouseRemainsEntry  `json:"warehouses"`
+}
+
+// WarehouseRemainsEntry — nested warehouse entry inside WarehouseRemainsItem.
+// One item may have multiple warehouses → flattened to one row per (item × warehouse).
+type WarehouseRemainsEntry struct {
+	WarehouseName string `json:"warehouseName"`
+	Quantity      int64  `json:"quantity"`
+}
+
+// Warehouse Remains report task statuses.
+const (
+	WrStatusNew        = "new"
+	WrStatusProcessing = "processing"
+	WrStatusDone       = "done"
+	WrStatusPurged     = "purged"
+	WrStatusCanceled   = "canceled"
+)

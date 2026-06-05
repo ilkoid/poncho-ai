@@ -1367,3 +1367,115 @@ func (c *FreshnessConfig) GetDefaults() FreshnessConfig {
 	}
 	return result
 }
+
+// ============================================================================
+// Warehouse Remains V2 Downloader (Seller Analytics API — async report)
+// ============================================================================
+
+// WhRemainsConfig — конфигурация для download-wb-whremains-v2 утилиты.
+//
+// Async 3-step API: create → poll → download (all GET).
+// Base URL: https://seller-analytics-api.wildberries.ru
+type WhRemainsConfig struct {
+	DbPath          string              `yaml:"db_path"`
+	APIKeyEnv       string              `yaml:"api_key_env"`
+	RateLimits      WhRemainsRateLimits `yaml:"rate_limits"`
+	PollIntervalSec int                 `yaml:"poll_interval_sec"`
+	PollTimeoutMin  int                 `yaml:"poll_timeout_min"`
+	GroupByNm       bool                `yaml:"group_by_nm"`
+	GroupBySize     bool                `yaml:"group_by_size"`
+}
+
+// WhRemainsRateLimits — rate limits для 3 warehouse remains endpoints.
+//
+// Каждый endpoint имеет свой swagger-documented лимит:
+//   - Create:   1/min, burst 5
+//   - Status:   12/min (1/5sec), burst 5
+//   - Download: 1/min, burst 1
+//
+// Два уровня rate: desired (можно превышать swagger) и api (recovery floor).
+type WhRemainsRateLimits struct {
+	Create         int `yaml:"create"`
+	CreateBurst    int `yaml:"create_burst"`
+	CreateApi      int `yaml:"create_api"`
+	CreateApiBurst int `yaml:"create_api_burst"`
+
+	Status         int `yaml:"status"`
+	StatusBurst    int `yaml:"status_burst"`
+	StatusApi      int `yaml:"status_api"`
+	StatusApiBurst int `yaml:"status_api_burst"`
+
+	Download         int `yaml:"download"`
+	DownloadBurst    int `yaml:"download_burst"`
+	DownloadApi      int `yaml:"download_api"`
+	DownloadApiBurst int `yaml:"download_api_burst"`
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c *WhRemainsConfig) GetDefaults() WhRemainsConfig {
+	result := *c
+	if result.DbPath == "" {
+		result.DbPath = "/var/db/wb-sales.db"
+	}
+	if result.APIKeyEnv == "" {
+		result.APIKeyEnv = "WB_API_ANALYTICS_AND_PROMO_KEY"
+	}
+	if result.PollIntervalSec == 0 {
+		result.PollIntervalSec = 30
+	}
+	if result.PollTimeoutMin == 0 {
+		result.PollTimeoutMin = 30
+	}
+	if !result.GroupByNm {
+		result.GroupByNm = true
+	}
+	if !result.GroupBySize {
+		result.GroupBySize = true
+	}
+
+	rl := &result.RateLimits
+
+	// Create: 1/min, burst 5
+	if rl.CreateApi == 0 {
+		rl.CreateApi = 1
+	}
+	if rl.Create == 0 {
+		rl.Create = rl.CreateApi
+	}
+	if rl.CreateApiBurst == 0 {
+		rl.CreateApiBurst = 5
+	}
+	if rl.CreateBurst == 0 {
+		rl.CreateBurst = rl.CreateApiBurst
+	}
+
+	// Status: 12/min (1/5sec), burst 5
+	if rl.StatusApi == 0 {
+		rl.StatusApi = 12
+	}
+	if rl.Status == 0 {
+		rl.Status = rl.StatusApi
+	}
+	if rl.StatusApiBurst == 0 {
+		rl.StatusApiBurst = 5
+	}
+	if rl.StatusBurst == 0 {
+		rl.StatusBurst = rl.StatusApiBurst
+	}
+
+	// Download: 1/min, burst 1
+	if rl.DownloadApi == 0 {
+		rl.DownloadApi = 1
+	}
+	if rl.Download == 0 {
+		rl.Download = rl.DownloadApi
+	}
+	if rl.DownloadApiBurst == 0 {
+		rl.DownloadApiBurst = 1
+	}
+	if rl.DownloadBurst == 0 {
+		rl.DownloadBurst = rl.DownloadApiBurst
+	}
+
+	return result
+}

@@ -377,6 +377,12 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		for _, m := range funnelMigrations {
 			_, _ = r.db.Exec(m)
 		}
+
+		// Create warehouse remains snapshots table (WB Seller Analytics API — warehouse_remains)
+		_, err = r.db.Exec(GetWarehouseRemainsSchemaSQL())
+		if err != nil {
+			return err
+		}
 	return nil
 }
 
