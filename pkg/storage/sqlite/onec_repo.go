@@ -11,6 +11,9 @@ import (
 // Compile-time assertion: SQLiteSalesRepository implements onec.Writer.
 var _ onec.Writer = (*SQLiteSalesRepository)(nil)
 
+// Compile-time assertion: SQLiteSalesRepository implements onec.RestsWriter.
+var _ onec.RestsWriter = (*SQLiteSalesRepository)(nil)
+
 // ---------------------------------------------------------------------------
 // onec.Writer interface — thin wrappers delegating to existing methods.
 // Existing method names preserved for v1 backward compatibility.
@@ -43,6 +46,28 @@ func (r *SQLiteSalesRepository) SaveDimensions(ctx context.Context, dims []onec.
 func (r *SQLiteSalesRepository) CleanAll(ctx context.Context) error {
 	return r.CleanOneCData(ctx)
 }
+
+// ---------------------------------------------------------------------------
+// onec.RestsWriter interface — thin wrappers delegating to existing methods.
+// ---------------------------------------------------------------------------
+
+// SaveRests delegates to SaveOneCRests (onec.RestsWriter interface).
+func (r *SQLiteSalesRepository) SaveRests(ctx context.Context, rows []onec.RestsRow, snapshotDate string) (int, error) {
+	return r.SaveOneCRests(ctx, rows, snapshotDate)
+}
+
+// CountRests delegates to CountOneCRests (onec.RestsWriter interface).
+func (r *SQLiteSalesRepository) CountRests(ctx context.Context) (int, error) {
+	return r.CountOneCRests(ctx)
+}
+
+// CleanRests delegates to CleanOneCRests (onec.RestsWriter interface).
+func (r *SQLiteSalesRepository) CleanRests(ctx context.Context) error {
+	return r.CleanOneCRests(ctx)
+}
+
+// PurgeOldRestsSnapshots already matches the onec.RestsWriter interface name.
+// No wrapper needed — this comment exists to document the mapping.
 
 // SaveOneCGoods saves a batch of 1C goods using INSERT OR REPLACE.
 // Returns number of rows inserted/replaced.

@@ -12,16 +12,7 @@ type OneCPriceRow     = onec.PriceRow
 type PIMGoodsRow      = onec.PIMGoods
 type OneCDimensionRow = onec.DimensionRow
 
-// OneCRestsRow — lightweight input struct for batch save.
+// OneCRestsRow — type alias for onec.RestsRow (v2 migration).
 // Maps to onec_rests table. snapshot_date set by caller.
-// Local to sqlite (rests domain not yet in v2).
-type OneCRestsRow struct {
-	GoodGUID    string
-	SKUGUID     string
-	StorageGUID string
-	StorageName string
-	Stock       int
-	Reserv      int
-	Free        int
-	FirstStage  bool
-}
+// Backward-compatible: v1 CLI code using sqlite.OneCRestsRow compiles unchanged.
+type OneCRestsRow = onec.RestsRow

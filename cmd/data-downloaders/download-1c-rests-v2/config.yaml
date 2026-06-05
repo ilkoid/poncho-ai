@@ -1,0 +1,20 @@
+# 1C Rests Downloader v2 — configuration
+# Downloads warehouse stock levels from 1C ERP RESTs API.
+#
+# Environment variables:
+#   ONEC_API_REST_URL  — 1C RESTs API URL (with basic auth: user:pass@host)
+#   PG_PWD             — PostgreSQL password (for backend=postgres)
+
+onec_rests:
+  rest_url: ${ONEC_API_REST_URL}
+  retention_days: 7
+  storage_filter:
+    guids: []
+    name_patterns: []  # e.g. ["Вологда", "Москва"] to keep only matching storages
+
+storage:
+  backend: sqlite
+  db_path: "/var/db/wb-sales.db"
+  # pg_dsn: "postgres://postgres@192.168.10.7:15432/wb_data_prod?sslmode=disable"
+  # pg_password_env: "PG_PWD"
+  # pg_database: "wb_data_prod"

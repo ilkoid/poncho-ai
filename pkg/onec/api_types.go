@@ -1,5 +1,7 @@
 package onec
 
+import "encoding/json"
+
 // API response structs with JSON tags.
 // Unexported — used only by HTTPSource for JSON decoding.
 // Source of truth: cmd/data-downloaders/download-1c-data/models.go (v1).
@@ -142,4 +144,23 @@ type apiValue struct {
 	Locale *string `json:"locale"`
 	Scope  *string `json:"scope"`
 	Data   any     `json:"data"`
+}
+
+// --- 1C RESTs API (warehouse stock levels) ---
+
+// apiRestItem represents one product's rests from 1C RESTs API.
+// SKU entries are dynamic JSON objects keyed by GUID — decoded as RawMessage.
+type apiRestItem struct {
+	GoodGUID string            `json:"good_guid"`
+	SKU      []json.RawMessage `json:"sku"`
+}
+
+// apiStorageRow represents one warehouse stock entry within a SKU.
+type apiStorageRow struct {
+	StorageGUID string `json:"storage_guid"`
+	StorageName string `json:"storage_name"`
+	Stock       int    `json:"stock"`
+	Reserv      int    `json:"reserv"`
+	Free        int    `json:"free"`
+	FirstStage  bool   `json:"first_stage"`
 }
