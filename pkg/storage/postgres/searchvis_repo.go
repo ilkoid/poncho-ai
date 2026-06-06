@@ -207,7 +207,7 @@ func (r *PgSearchVisRepo) FilterActiveNmIDs(ctx context.Context, nmIDs []int, ac
 
 	// Interval is a literal (from config, not user input) — safe to inline.
 	query := fmt.Sprintf(
-		"SELECT DISTINCT nm_id FROM operational_sales WHERE nm_id IN (%s) AND sale_dt >= NOW() - INTERVAL '%d days'",
+		"SELECT DISTINCT nm_id FROM operational_sales WHERE nm_id IN (%s) AND sale_date >= NOW() - INTERVAL '%d days'",
 		strings.Join(placeholders, ","),
 		activeDays,
 	)
