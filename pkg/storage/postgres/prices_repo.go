@@ -33,7 +33,7 @@ func (r *PgPricesRepo) InitSchema(ctx context.Context) error {
 // Chunk size: 500 prices per transaction.
 // Returns count of saved rows.
 //
-// Placeholder count: 9 ($1–$9) + 1 SQL function (TO_CHAR) = 10 columns total.
+// Placeholder count: 10 ($1–$10). downloaded_at uses TO_CHAR (not a placeholder).
 func (r *PgPricesRepo) SavePrices(ctx context.Context, prices []wb.ProductPrice, snapshotDate string) (int, error) {
 	if len(prices) == 0 {
 		return 0, nil
@@ -62,7 +62,7 @@ func (r *PgPricesRepo) CountPrices(ctx context.Context) (int, error) {
 
 const pgPricesChunkSize = 500
 
-// savePricesChunk saves up to 500 prices in a single transaction.
+// savePricesChunk saves up to 500 prices using a single multi-row INSERT.
 func (r *PgPricesRepo) savePricesChunk(ctx context.Context, chunk []wb.ProductPrice, snapshotDate string) (int, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -70,8 +70,9 @@ func (r *PgPricesRepo) savePricesChunk(ctx context.Context, chunk []wb.ProductPr
 	}
 	defer tx.Rollback(ctx)
 
+	args := make([]any, 0, len(chunk)*insertProductPriceCols)
 	for _, p := range chunk {
-		_, err := tx.Exec(ctx, pgUpsertPriceSQL,
+		args = append(args,
 			p.NmID,
 			snapshotDate,
 			p.Price,
@@ -83,36 +84,43 @@ func (r *PgPricesRepo) savePricesChunk(ctx context.Context, chunk []wb.ProductPr
 			p.Currency,
 			p.EditableSizePrice,
 		)
-		if err != nil {
-			return 0, fmt.Errorf("upsert price nm_id=%d: %w", p.NmID, err)
-		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
+	query := insertProductPriceFullChunkSQL
+	if len(chunk) < pgPricesChunkSize {
+		query = BuildMultiRowInsert(insertProductPricePrefixSQL, insertProductPriceOnConflictSQL, len(chunk), insertProductPriceCols)
 	}
 
-	return len(chunk), nil
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save prices batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
-var (
-	// PostgreSQL upsert — update all fields on conflict (nm_id, snapshot_date).
-	// $1-$9 + TO_CHAR function = 10 columns.
-	pgUpsertPriceSQL = `
-INSERT INTO product_prices (
-    nm_id, snapshot_date,
-    price, discounted_price, club_discounted_price, discount, club_discount,
-    vendor_code, currency, editable_size_price,
-    downloaded_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
-ON CONFLICT (nm_id, snapshot_date) DO UPDATE SET
-    price = EXCLUDED.price,
-    discounted_price = EXCLUDED.discounted_price,
-    club_discounted_price = EXCLUDED.club_discounted_price,
-    discount = EXCLUDED.discount,
-    club_discount = EXCLUDED.club_discount,
-    vendor_code = EXCLUDED.vendor_code,
-    currency = EXCLUDED.currency,
-    editable_size_price = EXCLUDED.editable_size_price,
-    downloaded_at = EXCLUDED.downloaded_at`
+// Multi-row INSERT SQL fragments for product_prices.
+const (
+	insertProductPriceCols = 10 // $1-$10 (downloaded_at uses TO_CHAR, not a placeholder)
+
+	insertProductPricePrefixSQL = `INSERT INTO product_prices (
+	    nm_id, snapshot_date,
+	    price, discounted_price, club_discounted_price, discount, club_discount,
+	    vendor_code, currency, editable_size_price,
+	    downloaded_at
+	) VALUES `
+
+	insertProductPriceOnConflictSQL = `
+	ON CONFLICT (nm_id, snapshot_date) DO UPDATE SET
+	    price = EXCLUDED.price,
+	    discounted_price = EXCLUDED.discounted_price,
+	    club_discounted_price = EXCLUDED.club_discounted_price,
+	    discount = EXCLUDED.discount,
+	    club_discount = EXCLUDED.club_discount,
+	    vendor_code = EXCLUDED.vendor_code,
+	    currency = EXCLUDED.currency,
+	    editable_size_price = EXCLUDED.editable_size_price,
+	    downloaded_at = EXCLUDED.downloaded_at`
 )
+
+// Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.
+var insertProductPriceFullChunkSQL = BuildMultiRowInsert(insertProductPricePrefixSQL, insertProductPriceOnConflictSQL, pgPricesChunkSize, insertProductPriceCols)

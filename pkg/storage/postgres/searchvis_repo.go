@@ -36,7 +36,55 @@ func (r *PgSearchVisRepo) InitSchema(ctx context.Context) error {
 // Writer methods
 // ============================================================================
 
-const pgSearchvisChunkSize = 500
+const pgSearchVisChunkSize = 500
+
+const (
+	// Multi-row INSERT SQL fragments for search_positions_daily (14 columns).
+	insertSearchPosPrefixSQL = `INSERT INTO search_positions_daily (nm_id, snapshot_date, avg_position, avg_position_dynamics, median_position, visibility, visibility_dynamics, open_card, open_card_dynamics, cluster_first_hundred, cluster_second_hundred, cluster_below, period_start, period_end) VALUES `
+	insertSearchPosOnConflictSQL = `
+ON CONFLICT (nm_id, snapshot_date, period_start) DO UPDATE SET
+    avg_position = EXCLUDED.avg_position,
+    avg_position_dynamics = EXCLUDED.avg_position_dynamics,
+    median_position = EXCLUDED.median_position,
+    visibility = EXCLUDED.visibility,
+    visibility_dynamics = EXCLUDED.visibility_dynamics,
+    open_card = EXCLUDED.open_card,
+    open_card_dynamics = EXCLUDED.open_card_dynamics,
+    cluster_first_hundred = EXCLUDED.cluster_first_hundred,
+    cluster_second_hundred = EXCLUDED.cluster_second_hundred,
+    cluster_below = EXCLUDED.cluster_below,
+    period_end = EXCLUDED.period_end`
+	insertSearchPosCols = 14
+
+	// Multi-row INSERT SQL fragments for search_queries_daily (21 columns).
+	insertSearchQueryPrefixSQL = `INSERT INTO search_queries_daily (nm_id, snapshot_date, search_text, frequency, frequency_dynamics, week_frequency, avg_position, avg_position_dynamics, median_position, median_position_dynamics, visibility, open_card, add_to_cart, orders, open_to_cart, cart_to_order, vendor_code, brand_name, subject_name, period_start, period_end) VALUES `
+	insertSearchQueryOnConflictSQL = `
+ON CONFLICT (nm_id, search_text, snapshot_date) DO UPDATE SET
+    frequency = EXCLUDED.frequency,
+    frequency_dynamics = EXCLUDED.frequency_dynamics,
+    week_frequency = EXCLUDED.week_frequency,
+    avg_position = EXCLUDED.avg_position,
+    avg_position_dynamics = EXCLUDED.avg_position_dynamics,
+    median_position = EXCLUDED.median_position,
+    median_position_dynamics = EXCLUDED.median_position_dynamics,
+    visibility = EXCLUDED.visibility,
+    open_card = EXCLUDED.open_card,
+    add_to_cart = EXCLUDED.add_to_cart,
+    orders = EXCLUDED.orders,
+    open_to_cart = EXCLUDED.open_to_cart,
+    cart_to_order = EXCLUDED.cart_to_order,
+    vendor_code = EXCLUDED.vendor_code,
+    brand_name = EXCLUDED.brand_name,
+    subject_name = EXCLUDED.subject_name,
+    period_end = EXCLUDED.period_end`
+	insertSearchQueryCols = 21
+)
+
+// Pre-built queries for full chunks (500 rows).
+var (
+	insertSearchPosFullChunkSQL   = BuildMultiRowInsert(insertSearchPosPrefixSQL, insertSearchPosOnConflictSQL, pgSearchVisChunkSize, insertSearchPosCols)
+	insertSearchQueryFullChunkSQL = BuildMultiRowInsert(insertSearchQueryPrefixSQL, insertSearchQueryOnConflictSQL, pgSearchVisChunkSize, insertSearchQueryCols)
+)
 
 // SaveSearchPositions saves batch of position snapshots using ON CONFLICT upsert.
 func (r *PgSearchVisRepo) SaveSearchPositions(ctx context.Context, rows []searchvis.SearchPositionRow) (int, error) {
@@ -44,35 +92,49 @@ func (r *PgSearchVisRepo) SaveSearchPositions(ctx context.Context, rows []search
 		return 0, nil
 	}
 
-	for i := 0; i < len(rows); i += pgSearchvisChunkSize {
-		end := min(i+pgSearchvisChunkSize, len(rows))
+	for i := 0; i < len(rows); i += pgSearchVisChunkSize {
+		end := min(i+pgSearchVisChunkSize, len(rows))
 		chunk := rows[i:end]
 
-		tx, err := r.pool.Begin(ctx)
+		n, err := r.saveSearchPosChunk(ctx, chunk)
 		if err != nil {
-			return 0, fmt.Errorf("begin transaction: %w", err)
+			return 0, fmt.Errorf("save positions chunk at offset %d: %w", i, err)
 		}
-
-		for _, row := range chunk {
-			_, err := tx.Exec(ctx, pgUpsertPositionSQL,
-				row.NmID, row.SnapshotDate,
-				row.AvgPosition, row.AvgPositionDynamics, row.MedianPosition,
-				row.Visibility, row.VisibilityDynamics, row.OpenCard, row.OpenCardDynamics,
-				row.ClusterFirstHundred, row.ClusterSecondHundred, row.ClusterBelow,
-				row.PeriodStart, row.PeriodEnd,
-			)
-			if err != nil {
-				tx.Rollback(ctx)
-				return 0, fmt.Errorf("upsert position nm_id=%d date=%s: %w", row.NmID, row.SnapshotDate, err)
-			}
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return 0, fmt.Errorf("commit positions: %w", err)
-		}
+		_ = n
 	}
 
 	return len(rows), nil
+}
+
+// saveSearchPosChunk saves up to 500 position rows using a single multi-row INSERT statement.
+func (r *PgSearchVisRepo) saveSearchPosChunk(ctx context.Context, chunk []searchvis.SearchPositionRow) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertSearchPosCols)
+	for _, row := range chunk {
+		args = append(args,
+			row.NmID, row.SnapshotDate,
+			row.AvgPosition, row.AvgPositionDynamics, row.MedianPosition,
+			row.Visibility, row.VisibilityDynamics, row.OpenCard, row.OpenCardDynamics,
+			row.ClusterFirstHundred, row.ClusterSecondHundred, row.ClusterBelow,
+			row.PeriodStart, row.PeriodEnd,
+		)
+	}
+
+	query := insertSearchPosFullChunkSQL
+	if len(chunk) < pgSearchVisChunkSize {
+		query = BuildMultiRowInsert(insertSearchPosPrefixSQL, insertSearchPosOnConflictSQL, len(chunk), insertSearchPosCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save positions batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
 // SaveSearchQueries saves batch of search query snapshots using ON CONFLICT upsert.
@@ -81,36 +143,50 @@ func (r *PgSearchVisRepo) SaveSearchQueries(ctx context.Context, rows []searchvi
 		return 0, nil
 	}
 
-	for i := 0; i < len(rows); i += pgSearchvisChunkSize {
-		end := min(i+pgSearchvisChunkSize, len(rows))
+	for i := 0; i < len(rows); i += pgSearchVisChunkSize {
+		end := min(i+pgSearchVisChunkSize, len(rows))
 		chunk := rows[i:end]
 
-		tx, err := r.pool.Begin(ctx)
+		n, err := r.saveSearchQueryChunk(ctx, chunk)
 		if err != nil {
-			return 0, fmt.Errorf("begin transaction: %w", err)
+			return 0, fmt.Errorf("save queries chunk at offset %d: %w", i, err)
 		}
-
-		for _, row := range chunk {
-			_, err := tx.Exec(ctx, pgUpsertQuerySQL,
-				row.NmID, row.SnapshotDate, row.SearchText,
-				row.Frequency, row.FrequencyDynamics, row.WeekFrequency,
-				row.AvgPosition, row.AvgPositionDynamics, row.MedianPosition, row.MedianPosDynamics,
-				row.Visibility, row.OpenCard, row.AddToCart, row.Orders, row.OpenToCart, row.CartToOrder,
-				row.VendorCode, row.BrandName, row.SubjectName,
-				row.PeriodStart, row.PeriodEnd,
-			)
-			if err != nil {
-				tx.Rollback(ctx)
-				return 0, fmt.Errorf("upsert query nm_id=%d text=%q: %w", row.NmID, row.SearchText, err)
-			}
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return 0, fmt.Errorf("commit queries: %w", err)
-		}
+		_ = n
 	}
 
 	return len(rows), nil
+}
+
+// saveSearchQueryChunk saves up to 500 query rows using a single multi-row INSERT statement.
+func (r *PgSearchVisRepo) saveSearchQueryChunk(ctx context.Context, chunk []searchvis.SearchQueryRow) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertSearchQueryCols)
+	for _, row := range chunk {
+		args = append(args,
+			row.NmID, row.SnapshotDate, row.SearchText,
+			row.Frequency, row.FrequencyDynamics, row.WeekFrequency,
+			row.AvgPosition, row.AvgPositionDynamics, row.MedianPosition, row.MedianPosDynamics,
+			row.Visibility, row.OpenCard, row.AddToCart, row.Orders, row.OpenToCart, row.CartToOrder,
+			row.VendorCode, row.BrandName, row.SubjectName,
+			row.PeriodStart, row.PeriodEnd,
+		)
+	}
+
+	query := insertSearchQueryFullChunkSQL
+	if len(chunk) < pgSearchVisChunkSize {
+		query = BuildMultiRowInsert(insertSearchQueryPrefixSQL, insertSearchQueryOnConflictSQL, len(chunk), insertSearchQueryCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save queries batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
 // CountSearchPositions returns total rows in search_positions_daily.
@@ -228,62 +304,3 @@ func (r *PgSearchVisRepo) FilterActiveNmIDs(ctx context.Context, nmIDs []int, ac
 	}
 	return result, rows.Err()
 }
-
-// ============================================================================
-// SQL statements
-// ============================================================================
-
-var (
-	// Upsert search position — 14 columns ($1-$14).
-	// PK: (nm_id, snapshot_date, period_start). All other columns in DO UPDATE SET.
-	pgUpsertPositionSQL = `
-INSERT INTO search_positions_daily (
-    nm_id, snapshot_date,
-    avg_position, avg_position_dynamics, median_position,
-    visibility, visibility_dynamics, open_card, open_card_dynamics,
-    cluster_first_hundred, cluster_second_hundred, cluster_below,
-    period_start, period_end
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-ON CONFLICT (nm_id, snapshot_date, period_start) DO UPDATE SET
-    avg_position = EXCLUDED.avg_position,
-    avg_position_dynamics = EXCLUDED.avg_position_dynamics,
-    median_position = EXCLUDED.median_position,
-    visibility = EXCLUDED.visibility,
-    visibility_dynamics = EXCLUDED.visibility_dynamics,
-    open_card = EXCLUDED.open_card,
-    open_card_dynamics = EXCLUDED.open_card_dynamics,
-    cluster_first_hundred = EXCLUDED.cluster_first_hundred,
-    cluster_second_hundred = EXCLUDED.cluster_second_hundred,
-    cluster_below = EXCLUDED.cluster_below,
-    period_end = EXCLUDED.period_end`
-
-	// Upsert search query — 21 columns ($1-$21).
-	// PK: (nm_id, search_text, snapshot_date). All other columns in DO UPDATE SET.
-	pgUpsertQuerySQL = `
-INSERT INTO search_queries_daily (
-    nm_id, snapshot_date, search_text,
-    frequency, frequency_dynamics, week_frequency,
-    avg_position, avg_position_dynamics, median_position, median_position_dynamics,
-    visibility, open_card, add_to_cart, orders, open_to_cart, cart_to_order,
-    vendor_code, brand_name, subject_name,
-    period_start, period_end
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-ON CONFLICT (nm_id, search_text, snapshot_date) DO UPDATE SET
-    frequency = EXCLUDED.frequency,
-    frequency_dynamics = EXCLUDED.frequency_dynamics,
-    week_frequency = EXCLUDED.week_frequency,
-    avg_position = EXCLUDED.avg_position,
-    avg_position_dynamics = EXCLUDED.avg_position_dynamics,
-    median_position = EXCLUDED.median_position,
-    median_position_dynamics = EXCLUDED.median_position_dynamics,
-    visibility = EXCLUDED.visibility,
-    open_card = EXCLUDED.open_card,
-    add_to_cart = EXCLUDED.add_to_cart,
-    orders = EXCLUDED.orders,
-    open_to_cart = EXCLUDED.open_to_cart,
-    cart_to_order = EXCLUDED.cart_to_order,
-    vendor_code = EXCLUDED.vendor_code,
-    brand_name = EXCLUDED.brand_name,
-    subject_name = EXCLUDED.subject_name,
-    period_end = EXCLUDED.period_end`
-)

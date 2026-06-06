@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -141,92 +140,78 @@ func (r *PgFunnelRepo) FilterActiveNmIDs(ctx context.Context, nmIDs []int, activ
 	return result, rows.Err()
 }
 
-// SaveFunnelHistoryWithWindow saves funnel metrics with refresh window logic.
-//
-// Behaves differently based on record date (mirrors SQLite logic):
-//   - Within window (today - refreshDays): ON CONFLICT DO UPDATE (refresh)
-//   - Outside window: ON CONFLICT DO NOTHING (preserve historical data)
-//
-// This handles WB retroactive updates where recent data may change but
-// historical data should be frozen.
+// ============================================================================
+// Writer methods
+// ============================================================================
+
+const pgFunnelChunkSize = 500
+
+const (
+	// Multi-row INSERT SQL fragments for funnel_metrics_daily (12 columns).
+	insertFunnelMetricPrefixSQL = `INSERT INTO funnel_metrics_daily (nm_id, metric_date, open_count, cart_count, order_count, buyout_count, add_to_wishlist, order_sum, buyout_sum, conversion_add_to_cart, conversion_cart_to_order, conversion_buyout) VALUES `
+	insertFunnelMetricOnConflictSQL = `
+ON CONFLICT (nm_id, metric_date) DO UPDATE SET
+    open_count              = EXCLUDED.open_count,
+    cart_count              = EXCLUDED.cart_count,
+    order_count             = EXCLUDED.order_count,
+    buyout_count            = EXCLUDED.buyout_count,
+    add_to_wishlist         = EXCLUDED.add_to_wishlist,
+    order_sum               = EXCLUDED.order_sum,
+    buyout_sum              = EXCLUDED.buyout_sum,
+    conversion_add_to_cart  = EXCLUDED.conversion_add_to_cart,
+    conversion_cart_to_order = EXCLUDED.conversion_cart_to_order,
+    conversion_buyout       = EXCLUDED.conversion_buyout`
+	insertFunnelMetricCols = 12
+)
+
+// Pre-built query for full chunk (500 rows).
+var insertFunnelMetricFullChunkSQL = BuildMultiRowInsert(insertFunnelMetricPrefixSQL, insertFunnelMetricOnConflictSQL, pgFunnelChunkSize, insertFunnelMetricCols)
+
+// SaveFunnelHistoryWithWindow saves funnel metrics for a single product.
+// Upserts product metadata, then batch-inserts all metric rows via BuildMultiRowInsert.
 func (r *PgFunnelRepo) SaveFunnelHistoryWithWindow(
 	ctx context.Context,
 	product wb.FunnelProductMeta,
 	rows []wb.FunnelHistoryRow,
-	refreshDays int,
+	_ int, // refreshDays — ignored; unified DO UPDATE for all dates
 ) error {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	// If refreshDays is 0 or negative, use simple upsert (always update)
-	if refreshDays <= 0 {
-		return r.saveFunnelHistory(ctx, product, rows)
-	}
-
-	cutoffDate := time.Now().AddDate(0, 0, -refreshDays)
-
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	// Upsert product metadata (always)
+	// Upsert product metadata (always single row).
 	if err := r.upsertProduct(ctx, tx, product); err != nil {
 		return err
 	}
 
-	// Save each row with appropriate strategy
-	for _, row := range rows {
-		metricDate, err := time.Parse("2006-01-02", row.MetricDate)
-		if err != nil {
-			return fmt.Errorf("parse date %s: %w", row.MetricDate, err)
+	// Batch-insert all funnel metric rows in chunks.
+	for i := 0; i < len(rows); i += pgFunnelChunkSize {
+		end := min(i+pgFunnelChunkSize, len(rows))
+		chunk := rows[i:end]
+
+		args := make([]any, 0, len(chunk)*insertFunnelMetricCols)
+		for _, row := range chunk {
+			args = append(args,
+				row.NmID, row.MetricDate,
+				row.OpenCount, row.CartCount, row.OrderCount, row.BuyoutCount, row.AddToWishlist,
+				row.OrderSum, row.BuyoutSum,
+				row.ConversionAddToCart, row.ConversionCartToOrder, row.ConversionBuyout,
+			)
 		}
 
-		sql := pgUpsertFunnelMetricSQL // ON CONFLICT DO UPDATE
-		if metricDate.Before(cutoffDate) {
-			sql = pgInsertFunnelMetricIgnoreSQL // ON CONFLICT DO NOTHING
+		query := insertFunnelMetricFullChunkSQL
+		if len(chunk) < pgFunnelChunkSize {
+			query = BuildMultiRowInsert(insertFunnelMetricPrefixSQL, insertFunnelMetricOnConflictSQL, len(chunk), insertFunnelMetricCols)
 		}
 
-		_, err = tx.Exec(ctx, sql,
-			row.NmID, row.MetricDate,
-			row.OpenCount, row.CartCount, row.OrderCount, row.BuyoutCount, row.AddToWishlist,
-			row.OrderSum, row.BuyoutSum,
-			row.ConversionAddToCart, row.ConversionCartToOrder, row.ConversionBuyout,
-		)
-		if err != nil {
-			return fmt.Errorf("save row nm_id=%d date=%s: %w", row.NmID, row.MetricDate, err)
-		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	return nil
-}
-
-// saveFunnelHistory saves all rows with upsert (no window logic — always update).
-func (r *PgFunnelRepo) saveFunnelHistory(ctx context.Context, product wb.FunnelProductMeta, rows []wb.FunnelHistoryRow) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	if err := r.upsertProduct(ctx, tx, product); err != nil {
-		return err
-	}
-
-	for _, row := range rows {
-		_, err := tx.Exec(ctx, pgUpsertFunnelMetricSQL,
-			row.NmID, row.MetricDate,
-			row.OpenCount, row.CartCount, row.OrderCount, row.BuyoutCount, row.AddToWishlist,
-			row.OrderSum, row.BuyoutSum,
-			row.ConversionAddToCart, row.ConversionCartToOrder, row.ConversionBuyout,
-		)
-		if err != nil {
-			return fmt.Errorf("save row nm_id=%d date=%s: %w", row.NmID, row.MetricDate, err)
+		if _, err := tx.Exec(ctx, query, args...); err != nil {
+			return fmt.Errorf("save funnel metrics batch (size %d): %w", len(chunk), err)
 		}
 	}
 
@@ -265,7 +250,7 @@ func (r *PgFunnelRepo) upsertProduct(ctx context.Context, tx pgx.Tx, product wb.
 var (
 	// pgUpsertProductSQL upserts product metadata.
 	// 11 placeholders ($1-$11) + 1 SQL function (TO_CHAR for updated_at) = 12 VALUES.
-	// Column count: nm_id + 10 fields + updated_at = 12. ✓
+	// Column count: nm_id + 10 fields + updated_at = 12.
 	pgUpsertProductSQL = `
 INSERT INTO products (
     nm_id, vendor_code, title, brand_name,
@@ -287,36 +272,4 @@ ON CONFLICT (nm_id) DO UPDATE SET
     stock_mp          = EXCLUDED.stock_mp,
     stock_balance_sum = EXCLUDED.stock_balance_sum,
     updated_at        = EXCLUDED.updated_at`
-
-	// pgUpsertFunnelMetricSQL upserts funnel metrics (within refresh window).
-	// 12 placeholders ($1-$12) = 12 columns. ✓
-	pgUpsertFunnelMetricSQL = `
-INSERT INTO funnel_metrics_daily (
-    nm_id, metric_date,
-    open_count, cart_count, order_count, buyout_count, add_to_wishlist,
-    order_sum, buyout_sum,
-    conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-ON CONFLICT (nm_id, metric_date) DO UPDATE SET
-    open_count            = EXCLUDED.open_count,
-    cart_count            = EXCLUDED.cart_count,
-    order_count           = EXCLUDED.order_count,
-    buyout_count          = EXCLUDED.buyout_count,
-    add_to_wishlist       = EXCLUDED.add_to_wishlist,
-    order_sum             = EXCLUDED.order_sum,
-    buyout_sum            = EXCLUDED.buyout_sum,
-    conversion_add_to_cart   = EXCLUDED.conversion_add_to_cart,
-    conversion_cart_to_order = EXCLUDED.conversion_cart_to_order,
-    conversion_buyout        = EXCLUDED.conversion_buyout`
-
-	// pgInsertFunnelMetricIgnoreSQL preserves historical data (outside refresh window).
-	// 12 placeholders ($1-$12) = 12 columns. ✓
-	pgInsertFunnelMetricIgnoreSQL = `
-INSERT INTO funnel_metrics_daily (
-    nm_id, metric_date,
-    open_count, cart_count, order_count, buyout_count, add_to_wishlist,
-    order_sum, buyout_sum,
-    conversion_add_to_cart, conversion_cart_to_order, conversion_buyout
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-ON CONFLICT (nm_id, metric_date) DO NOTHING`
 )

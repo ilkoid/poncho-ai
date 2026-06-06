@@ -34,7 +34,7 @@ func (r *PgStockHistoryRepo) InitSchema(ctx context.Context) error {
 // Writer methods
 // ============================================================================
 
-const pgStockHistoryChunkSize = 500
+const pgStockHistChunkSize = 500
 
 // GetReport looks up an existing report record by type, dates, and stock type.
 func (r *PgStockHistoryRepo) GetReport(ctx context.Context, reportType, startDate, endDate, stockType string) (*stockhistory.ReportRecord, error) {
@@ -89,7 +89,7 @@ func (r *PgStockHistoryRepo) SaveReport(ctx context.Context, record stockhistory
 		}
 	}
 
-	_, err = tx.Exec(ctx, pgUpsertSHReportSQL,
+	_, err = tx.Exec(ctx, insertSHReportSQL,
 		record.ID, record.ReportType, record.StartDate, record.EndDate, record.StockType,
 		record.Status, record.FileSize, record.CreatedAt, record.DownloadedAt, record.RowsCount,
 	)
@@ -116,108 +116,132 @@ func (r *PgStockHistoryRepo) UpdateReportStatus(ctx context.Context, downloadID,
 	return nil
 }
 
-// SaveMetrics saves metrics rows in chunks of 500 per transaction.
-// Converts domain types to DB types (pointer → nullable, map → JSON).
+// SaveMetrics saves metrics rows in chunks of 500 using multi-row INSERT.
+// Converts domain types to DB types (pointer -> nullable, map -> JSON).
 func (r *PgStockHistoryRepo) SaveMetrics(ctx context.Context, rows []stockhistory.MetricRow) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
 
 	saved := 0
-	for i := 0; i < len(rows); i += pgStockHistoryChunkSize {
-		end := min(i+pgStockHistoryChunkSize, len(rows))
+	for i := 0; i < len(rows); i += pgStockHistChunkSize {
+		end := min(i+pgStockHistChunkSize, len(rows))
 		chunk := rows[i:end]
 
-		tx, err := r.pool.Begin(ctx)
+		n, err := r.saveMetricsChunk(ctx, chunk)
 		if err != nil {
-			return saved, fmt.Errorf("begin transaction: %w", err)
+			return saved, fmt.Errorf("save metrics chunk at offset %d: %w", i, err)
 		}
-
-		for _, row := range chunk {
-			monthlyJSON, _ := json.Marshal(row.MonthlyData)
-			monthlyStr := string(monthlyJSON)
-			if len(row.MonthlyData) == 0 {
-				monthlyStr = ""
-			}
-
-			_, err := tx.Exec(ctx, pgUpsertSHMetricsSQL,
-				row.ReportID, pgStr(row.VendorCode), pgStr(row.Name), row.NmID,
-				pgStr(row.SubjectName), pgStr(row.BrandName), pgStr(row.SizeName), row.ChrtID,
-				pgStr(row.RegionName), pgStr(row.OfficeName), pgStr(row.Availability),
-				row.OrdersCount, row.OrdersSum, row.BuyoutCount, row.BuyoutSum, row.BuyoutPercent,
-				row.AvgOrders, row.StockCount, row.StockSum, row.SaleRate, row.AvgStockTurnover,
-				row.ToClientCount, row.FromClientCount, row.Price, row.OfficeMissingTime,
-				row.LostOrdersCount, row.LostOrdersSum, row.LostBuyoutsCount, row.LostBuyoutsSum,
-				monthlyStr, pgStr(row.Currency),
-			)
-			if err != nil {
-				tx.Rollback(ctx)
-				return saved, fmt.Errorf("save metrics row nm_id=%d: %w", row.NmID, err)
-			}
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return saved, fmt.Errorf("commit metrics chunk: %w", err)
-		}
-		saved += len(chunk)
+		saved += n
 	}
 
 	return saved, nil
 }
 
-// SaveDaily saves daily rows in chunks of 500 per transaction.
-// Converts domain types to DB types (map → JSON).
+// saveMetricsChunk saves up to 500 metrics rows using a single multi-row INSERT.
+func (r *PgStockHistoryRepo) saveMetricsChunk(ctx context.Context, chunk []stockhistory.MetricRow) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertSHMetricsCols)
+	for _, row := range chunk {
+		monthlyJSON, _ := json.Marshal(row.MonthlyData)
+		monthlyStr := string(monthlyJSON)
+		if len(row.MonthlyData) == 0 {
+			monthlyStr = ""
+		}
+
+		args = append(args,
+			row.ReportID, pgStr(row.VendorCode), pgStr(row.Name), row.NmID,
+			pgStr(row.SubjectName), pgStr(row.BrandName), pgStr(row.SizeName), row.ChrtID,
+			pgStr(row.RegionName), pgStr(row.OfficeName), pgStr(row.Availability),
+			row.OrdersCount, row.OrdersSum, row.BuyoutCount, row.BuyoutSum, row.BuyoutPercent,
+			row.AvgOrders, row.StockCount, row.StockSum, row.SaleRate, row.AvgStockTurnover,
+			row.ToClientCount, row.FromClientCount, row.Price, row.OfficeMissingTime,
+			row.LostOrdersCount, row.LostOrdersSum, row.LostBuyoutsCount, row.LostBuyoutsSum,
+			monthlyStr, pgStr(row.Currency),
+		)
+	}
+
+	query := insertSHMetricsFullChunkSQL
+	if len(chunk) < pgStockHistChunkSize {
+		query = BuildMultiRowInsert(insertSHMetricsPrefixSQL, insertSHMetricsOnConflictSQL, len(chunk), insertSHMetricsCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save metrics batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
+}
+
+// SaveDaily saves daily rows in chunks of 500 using multi-row INSERT.
+// Converts domain types to DB types (map -> JSON).
 func (r *PgStockHistoryRepo) SaveDaily(ctx context.Context, rows []stockhistory.DailyRow) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
 
 	saved := 0
-	for i := 0; i < len(rows); i += pgStockHistoryChunkSize {
-		end := min(i+pgStockHistoryChunkSize, len(rows))
+	for i := 0; i < len(rows); i += pgStockHistChunkSize {
+		end := min(i+pgStockHistChunkSize, len(rows))
 		chunk := rows[i:end]
 
-		tx, err := r.pool.Begin(ctx)
+		n, err := r.saveDailyChunk(ctx, chunk)
 		if err != nil {
-			return saved, fmt.Errorf("begin transaction: %w", err)
+			return saved, fmt.Errorf("save daily chunk at offset %d: %w", i, err)
 		}
-
-		for _, row := range chunk {
-			dailyJSON, _ := json.Marshal(row.DailyData)
-			dailyStr := string(dailyJSON)
-			if len(row.DailyData) == 0 {
-				dailyStr = ""
-			}
-
-			_, err := tx.Exec(ctx, pgUpsertSHDailySQL,
-				row.ReportID, pgStr(row.VendorCode), pgStr(row.Name), row.NmID,
-				pgStr(row.SubjectName), pgStr(row.BrandName), pgStr(row.SizeName), row.ChrtID,
-				pgStr(row.OfficeName),
-				dailyStr,
-			)
-			if err != nil {
-				tx.Rollback(ctx)
-				return saved, fmt.Errorf("save daily row nm_id=%d: %w", row.NmID, err)
-			}
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return saved, fmt.Errorf("commit daily chunk: %w", err)
-		}
-		saved += len(chunk)
+		saved += n
 	}
 
 	return saved, nil
+}
+
+// saveDailyChunk saves up to 500 daily rows using a single multi-row INSERT.
+func (r *PgStockHistoryRepo) saveDailyChunk(ctx context.Context, chunk []stockhistory.DailyRow) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertSHDailyCols)
+	for _, row := range chunk {
+		dailyJSON, _ := json.Marshal(row.DailyData)
+		dailyStr := string(dailyJSON)
+		if len(row.DailyData) == 0 {
+			dailyStr = ""
+		}
+
+		args = append(args,
+			row.ReportID, pgStr(row.VendorCode), pgStr(row.Name), row.NmID,
+			pgStr(row.SubjectName), pgStr(row.BrandName), pgStr(row.SizeName), row.ChrtID,
+			pgStr(row.OfficeName),
+			dailyStr,
+		)
+	}
+
+	query := insertSHDailyFullChunkSQL
+	if len(chunk) < pgStockHistChunkSize {
+		query = BuildMultiRowInsert(insertSHDailyPrefixSQL, insertSHDailyOnConflictSQL, len(chunk), insertSHDailyCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save daily batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
 // ============================================================================
 // SQL statements
 // ============================================================================
 
-var (
-	// Upsert stock_history_reports — 10 columns ($1-$10).
-	// PK: id (TEXT). UNIQUE: (report_type, start_date, end_date, stock_type).
-	pgUpsertSHReportSQL = `
+// Single-row upsert for stock_history_reports (used by SaveReport only).
+var insertSHReportSQL = `
 INSERT INTO stock_history_reports (
     id, report_type, start_date, end_date, stock_type,
     status, file_size, created_at, downloaded_at, rows_count
@@ -230,10 +254,12 @@ ON CONFLICT (report_type, start_date, end_date, stock_type) DO UPDATE SET
     downloaded_at = EXCLUDED.downloaded_at,
     rows_count = EXCLUDED.rows_count`
 
-	// Upsert stock_history_metrics — 31 columns ($1-$31).
-	// UNIQUE: (report_id, nm_id, chrt_id).
-	pgUpsertSHMetricsSQL = `
-INSERT INTO stock_history_metrics (
+// Multi-row INSERT SQL fragments for stock_history_metrics — 31 columns.
+// UNIQUE: (report_id, nm_id, chrt_id).
+const (
+	insertSHMetricsCols = 31
+
+	insertSHMetricsPrefixSQL = `INSERT INTO stock_history_metrics (
     report_id, vendor_code, name, nm_id, subject_name, brand_name, size_name, chrt_id,
     region_name, office_name, availability,
     orders_count, orders_sum, buyout_count, buyout_sum, buyout_percent,
@@ -241,7 +267,9 @@ INSERT INTO stock_history_metrics (
     to_client_count, from_client_count, price, office_missing_time,
     lost_orders_count, lost_orders_sum, lost_buyouts_count, lost_buyouts_sum,
     monthly_data, currency
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+) VALUES `
+
+	insertSHMetricsOnConflictSQL = `
 ON CONFLICT (report_id, nm_id, chrt_id) DO UPDATE SET
     vendor_code = EXCLUDED.vendor_code,
     name = EXCLUDED.name,
@@ -271,14 +299,22 @@ ON CONFLICT (report_id, nm_id, chrt_id) DO UPDATE SET
     lost_buyouts_sum = EXCLUDED.lost_buyouts_sum,
     monthly_data = EXCLUDED.monthly_data,
     currency = EXCLUDED.currency`
+)
 
-	// Upsert stock_history_daily — 11 columns ($1-$11).
-	// UNIQUE: (report_id, nm_id, chrt_id).
-	pgUpsertSHDailySQL = `
-INSERT INTO stock_history_daily (
+// Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.
+var insertSHMetricsFullChunkSQL = BuildMultiRowInsert(insertSHMetricsPrefixSQL, insertSHMetricsOnConflictSQL, pgStockHistChunkSize, insertSHMetricsCols)
+
+// Multi-row INSERT SQL fragments for stock_history_daily — 10 columns.
+// UNIQUE: (report_id, nm_id, chrt_id).
+const (
+	insertSHDailyCols = 10
+
+	insertSHDailyPrefixSQL = `INSERT INTO stock_history_daily (
     report_id, vendor_code, name, nm_id, subject_name, brand_name, size_name, chrt_id,
     office_name, daily_data
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+) VALUES `
+
+	insertSHDailyOnConflictSQL = `
 ON CONFLICT (report_id, nm_id, chrt_id) DO UPDATE SET
     vendor_code = EXCLUDED.vendor_code,
     name = EXCLUDED.name,
@@ -288,6 +324,9 @@ ON CONFLICT (report_id, nm_id, chrt_id) DO UPDATE SET
     office_name = EXCLUDED.office_name,
     daily_data = EXCLUDED.daily_data`
 )
+
+// Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.
+var insertSHDailyFullChunkSQL = BuildMultiRowInsert(insertSHDailyPrefixSQL, insertSHDailyOnConflictSQL, pgStockHistChunkSize, insertSHDailyCols)
 
 // pgStr converts a string to *string for PG nullable columns.
 // Returns nil for empty strings.

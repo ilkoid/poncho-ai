@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -33,7 +34,7 @@ func (r *PgSuppliesRepo) InitSchema(ctx context.Context) error {
 const pgSuppliesChunkSize = 500
 
 // ============================================================================
-// SaveWarehouses — full rewrite (DELETE + INSERT)
+// SaveWarehouses — full rewrite (DELETE + batch INSERT)
 // ============================================================================
 
 // SaveWarehouses replaces all warehouse data with the provided list.
@@ -52,23 +53,34 @@ func (r *PgSuppliesRepo) SaveWarehouses(ctx context.Context, warehouses []wb.War
 		return 0, fmt.Errorf("delete warehouses: %w", err)
 	}
 
+	downloadedAt := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	args := make([]any, 0, len(warehouses)*insertWarehouseCols)
 	for _, w := range warehouses {
-		_, err := tx.Exec(ctx, pgInsertWarehouseSQL,
+		args = append(args,
 			w.ID, w.Name, w.Address, w.WorkTime, w.IsActive, w.IsTransitActive,
+			downloadedAt,
 		)
-		if err != nil {
-			return 0, fmt.Errorf("insert warehouse id=%d: %w", w.ID, err)
-		}
+	}
+
+	query := insertWarehouseFullChunkSQL
+	if len(warehouses) < pgSuppliesChunkSize {
+		query = BuildMultiRowInsert(insertWarehousePrefixSQL, "", len(warehouses), insertWarehouseCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("insert warehouses batch (size %d): %w", len(warehouses), err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit: %w", err)
 	}
-	return len(warehouses), nil
+	return int(tag.RowsAffected()), nil
 }
 
 // ============================================================================
-// SaveTransitTariffs — full rewrite (DELETE + INSERT)
+// SaveTransitTariffs — full rewrite (DELETE + batch INSERT)
 // ============================================================================
 
 // SaveTransitTariffs replaces all transit tariff data with the provided list.
@@ -87,29 +99,40 @@ func (r *PgSuppliesRepo) SaveTransitTariffs(ctx context.Context, tariffs []wb.Tr
 		return 0, fmt.Errorf("delete tariffs: %w", err)
 	}
 
+	downloadedAt := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	args := make([]any, 0, len(tariffs)*insertTransitTariffCols)
 	for _, t := range tariffs {
 		var boxTariffJSON string
 		if t.BoxTariff != nil {
 			b, _ := json.Marshal(t.BoxTariff)
 			boxTariffJSON = string(b)
 		}
-		_, err := tx.Exec(ctx, pgInsertTransitTariffSQL,
+		args = append(args,
 			t.TransitWarehouseName, t.DestinationWarehouseName,
 			t.ActiveFrom, t.PalletTariff, boxTariffJSON,
+			downloadedAt,
 		)
-		if err != nil {
-			return 0, fmt.Errorf("insert tariff: %w", err)
-		}
+	}
+
+	query := insertTransitTariffFullChunkSQL
+	if len(tariffs) < pgSuppliesChunkSize {
+		query = BuildMultiRowInsert(insertTransitTariffPrefixSQL, "", len(tariffs), insertTransitTariffCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("insert tariffs batch (size %d): %w", len(tariffs), err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit: %w", err)
 	}
-	return len(tariffs), nil
+	return int(tag.RowsAffected()), nil
 }
 
 // ============================================================================
-// SaveSupplies — ON CONFLICT upsert with COALESCE
+// SaveSupplies — ON CONFLICT upsert with COALESCE (batch)
 // ============================================================================
 
 // SaveSupplies saves a batch of supplies using ON CONFLICT upsert.
@@ -125,36 +148,49 @@ func (r *PgSuppliesRepo) SaveSupplies(ctx context.Context, supplyRows []supplies
 		end := min(i+pgSuppliesChunkSize, len(supplyRows))
 		chunk := supplyRows[i:end]
 
-		tx, err := r.pool.Begin(ctx)
+		n, err := r.saveSuppliesChunk(ctx, chunk)
 		if err != nil {
-			return totalSaved, fmt.Errorf("begin transaction: %w", err)
+			return totalSaved, fmt.Errorf("save supplies chunk at offset %d: %w", i, err)
 		}
-
-		for _, s := range chunk {
-			_, err := tx.Exec(ctx, pgUpsertSupplySQL,
-				s.SupplyID, s.PreorderID, s.StatusID, s.BoxTypeID, s.Phone,
-				s.CreateDate, s.SupplyDate, s.FactDate, s.UpdatedDate,
-				s.WarehouseID, s.WarehouseName, s.ActualWarehouseID, s.ActualWarehouseName,
-				s.TransitWarehouseID, s.TransitWarehouseName,
-				s.AcceptanceCost, s.PaidAcceptanceCoefficient, s.RejectReason,
-				s.SupplierAssignName, s.StorageCoef, s.DeliveryCoef,
-				s.Quantity, s.AcceptedQuantity, s.ReadyForSaleQuantity,
-				s.UnloadingQuantity, s.DepersonalizedQuantity,
-				s.IsBoxOnPallet, s.VirtualTypeID, s.DownloadedAt,
-			)
-			if err != nil {
-				tx.Rollback(ctx)
-				return totalSaved, fmt.Errorf("upsert supply_id=%d preorder_id=%d: %w", s.SupplyID, s.PreorderID, err)
-			}
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return totalSaved, fmt.Errorf("commit: %w", err)
-		}
-		totalSaved += len(chunk)
+		totalSaved += n
 	}
 
 	return totalSaved, nil
+}
+
+// saveSuppliesChunk saves up to pgSuppliesChunkSize supplies using a single multi-row INSERT.
+func (r *PgSuppliesRepo) saveSuppliesChunk(ctx context.Context, chunk []supplies.SupplyRow) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertSupplyCols)
+	for _, s := range chunk {
+		args = append(args,
+			s.SupplyID, s.PreorderID, s.StatusID, s.BoxTypeID, s.Phone,
+			s.CreateDate, s.SupplyDate, s.FactDate, s.UpdatedDate,
+			s.WarehouseID, s.WarehouseName, s.ActualWarehouseID, s.ActualWarehouseName,
+			s.TransitWarehouseID, s.TransitWarehouseName,
+			s.AcceptanceCost, s.PaidAcceptanceCoefficient, s.RejectReason,
+			s.SupplierAssignName, s.StorageCoef, s.DeliveryCoef,
+			s.Quantity, s.AcceptedQuantity, s.ReadyForSaleQuantity,
+			s.UnloadingQuantity, s.DepersonalizedQuantity,
+			s.IsBoxOnPallet, s.VirtualTypeID, s.DownloadedAt,
+		)
+	}
+
+	query := insertSupplyFullChunkSQL
+	if len(chunk) < pgSuppliesChunkSize {
+		query = BuildMultiRowInsert(insertSupplyPrefixSQL, insertSupplyOnConflictSQL, len(chunk), insertSupplyCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save supplies batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
 // ============================================================================
@@ -257,23 +293,24 @@ func (r *PgSuppliesRepo) CountSupplyGoods(ctx context.Context) (int, error) {
 }
 
 // ============================================================================
-// SQL statements
+// Multi-row INSERT SQL fragments
 // ============================================================================
 
-var (
-	pgInsertWarehouseSQL = `
-	INSERT INTO wb_warehouses (id, name, address, work_time, is_active, is_transit_active, downloaded_at)
-	VALUES ($1, $2, $3, $4, $5, $6, TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))`
+const (
+	// --- Warehouses (7 cols, no ON CONFLICT — plain INSERT after DELETE) ---
+	insertWarehouseCols = 7
 
-	pgInsertTransitTariffSQL = `
-	INSERT INTO wb_transit_tariffs (transit_warehouse_name, destination_warehouse_name, active_from, pallet_tariff, box_tariff, downloaded_at)
-	VALUES ($1, $2, $3, $4, $5, TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))`
+	insertWarehousePrefixSQL = `INSERT INTO wb_warehouses (id, name, address, work_time, is_active, is_transit_active, downloaded_at) VALUES `
 
-	// pgUpsertSupplySQL uses COALESCE for nullable detail fields.
-	// Phase 1 (from list): basic fields set, detail fields NULL.
-	// Phase 2 (from details): detail fields set, COALESCE preserves non-null values from phase 1.
-	pgUpsertSupplySQL = `
-	INSERT INTO supplies (
+	// --- Transit Tariffs (6 cols, no ON CONFLICT — plain INSERT after DELETE) ---
+	insertTransitTariffCols = 6
+
+	insertTransitTariffPrefixSQL = `INSERT INTO wb_transit_tariffs (transit_warehouse_name, destination_warehouse_name, active_from, pallet_tariff, box_tariff, downloaded_at) VALUES `
+
+	// --- Supplies (29 cols, ON CONFLICT upsert with COALESCE) ---
+	insertSupplyCols = 29
+
+	insertSupplyPrefixSQL = `INSERT INTO supplies (
 		supply_id, preorder_id, status_id, box_type_id, phone,
 		create_date, supply_date, fact_date, updated_date,
 		warehouse_id, warehouse_name, actual_warehouse_id, actual_warehouse_name,
@@ -283,7 +320,12 @@ var (
 		quantity, accepted_quantity, ready_for_sale_quantity,
 		unloading_quantity, depersonalized_quantity,
 		is_box_on_pallet, virtual_type_id, downloaded_at
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+	) VALUES `
+
+	// insertSupplyOnConflictSQL uses COALESCE for nullable detail fields.
+	// Phase 1 (from list): basic fields set, detail fields NULL.
+	// Phase 2 (from details): detail fields set, COALESCE preserves non-null values from phase 1.
+	insertSupplyOnConflictSQL = `
 	ON CONFLICT (supply_id, preorder_id) DO UPDATE SET
 		status_id = EXCLUDED.status_id,
 		box_type_id = EXCLUDED.box_type_id,
@@ -312,7 +354,17 @@ var (
 		is_box_on_pallet = COALESCE(EXCLUDED.is_box_on_pallet, supplies.is_box_on_pallet),
 		virtual_type_id = COALESCE(EXCLUDED.virtual_type_id, supplies.virtual_type_id),
 		downloaded_at = EXCLUDED.downloaded_at`
+)
 
+// Pre-built queries for full chunks (500 rows). Last chunk rebuilt with actual size.
+var (
+	insertWarehouseFullChunkSQL    = BuildMultiRowInsert(insertWarehousePrefixSQL, "", pgSuppliesChunkSize, insertWarehouseCols)
+	insertTransitTariffFullChunkSQL = BuildMultiRowInsert(insertTransitTariffPrefixSQL, "", pgSuppliesChunkSize, insertTransitTariffCols)
+	insertSupplyFullChunkSQL       = BuildMultiRowInsert(insertSupplyPrefixSQL, insertSupplyOnConflictSQL, pgSuppliesChunkSize, insertSupplyCols)
+)
+
+// Per-parent INSERT statements (not batched — small per-supply datasets).
+var (
 	pgInsertSupplyGoodsSQL = `
 	INSERT INTO supply_goods (
 		supply_id, preorder_id, barcode, vendor_code, nm_id,

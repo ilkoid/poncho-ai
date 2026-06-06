@@ -66,7 +66,7 @@ func (r *PgOpsalesRepo) DeleteSalesOlderThan(ctx context.Context, before time.Ti
 
 const pgOpsalesChunkSize = 500
 
-// saveSalesChunk saves up to 500 sales in a single transaction.
+// saveSalesChunk saves up to 500 sales using a single multi-row INSERT.
 func (r *PgOpsalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.SalesItem) (int, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -74,8 +74,9 @@ func (r *PgOpsalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.SalesItem
 	}
 	defer tx.Rollback(ctx)
 
+	args := make([]any, 0, len(chunk)*insertOpsaleCols)
 	for _, s := range chunk {
-		_, err := tx.Exec(ctx, pgInsertSaleSQL,
+		args = append(args,
 			s.SaleID,
 			s.Date, s.LastChangeDate,
 			s.WarehouseName, s.WarehouseType, s.CountryName, s.OblastOkrugName, s.RegionName,
@@ -84,60 +85,68 @@ func (r *PgOpsalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.SalesItem
 			s.TotalPrice, s.DiscountPercent, s.Spp, s.PaymentSaleAmount, s.ForPay, s.FinishedPrice, s.PriceWithDisc,
 			s.Sticker, s.GNumber, s.Srid,
 		)
-		if err != nil {
-			return 0, fmt.Errorf("upsert sale sale_id=%s: %w", s.SaleID, err)
-		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
+	query := insertOpsaleFullChunkSQL
+	if len(chunk) < pgOpsalesChunkSize {
+		query = BuildMultiRowInsert(insertOpsalePrefixSQL, insertOpsaleOnConflictSQL, len(chunk), insertOpsaleCols)
 	}
 
-	return len(chunk), nil
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save opsales batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
-var (
-	// PostgreSQL upsert — update all fields on conflict (sale_id).
-	pgInsertSaleSQL = `
-INSERT INTO operational_sales (
-    sale_id,
-    sale_date, last_change_date,
-    warehouse_name, warehouse_type, country_name, oblast_okrug_name, region_name,
-    supplier_article, nm_id, barcode, category, subject, brand, tech_size,
-    income_id, is_supply, is_realization,
-    total_price, discount_percent, spp, payment_sale_amount, for_pay, finished_price, price_with_disc,
-    sticker, g_number, srid,
-    downloaded_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
-ON CONFLICT (sale_id) DO UPDATE SET
-    sale_date = EXCLUDED.sale_date,
-    last_change_date = EXCLUDED.last_change_date,
-    warehouse_name = EXCLUDED.warehouse_name,
-    warehouse_type = EXCLUDED.warehouse_type,
-    country_name = EXCLUDED.country_name,
-    oblast_okrug_name = EXCLUDED.oblast_okrug_name,
-    region_name = EXCLUDED.region_name,
-    supplier_article = EXCLUDED.supplier_article,
-    nm_id = EXCLUDED.nm_id,
-    barcode = EXCLUDED.barcode,
-    category = EXCLUDED.category,
-    subject = EXCLUDED.subject,
-    brand = EXCLUDED.brand,
-    tech_size = EXCLUDED.tech_size,
-    income_id = EXCLUDED.income_id,
-    is_supply = EXCLUDED.is_supply,
-    is_realization = EXCLUDED.is_realization,
-    total_price = EXCLUDED.total_price,
-    discount_percent = EXCLUDED.discount_percent,
-    spp = EXCLUDED.spp,
-    payment_sale_amount = EXCLUDED.payment_sale_amount,
-    for_pay = EXCLUDED.for_pay,
-    finished_price = EXCLUDED.finished_price,
-    price_with_disc = EXCLUDED.price_with_disc,
-    sticker = EXCLUDED.sticker,
-    g_number = EXCLUDED.g_number,
-    srid = EXCLUDED.srid,
-    downloaded_at = EXCLUDED.downloaded_at`
+// Multi-row INSERT SQL fragments for operational_sales.
+const (
+	insertOpsaleCols = 28 // $1-$28 (downloaded_at uses TO_CHAR, not a placeholder)
 
-	pgDeleteSalesOlderThanSQL = `DELETE FROM operational_sales WHERE sale_date < $1`
+	insertOpsalePrefixSQL = `INSERT INTO operational_sales (
+	    sale_id,
+	    sale_date, last_change_date,
+	    warehouse_name, warehouse_type, country_name, oblast_okrug_name, region_name,
+	    supplier_article, nm_id, barcode, category, subject, brand, tech_size,
+	    income_id, is_supply, is_realization,
+	    total_price, discount_percent, spp, payment_sale_amount, for_pay, finished_price, price_with_disc,
+	    sticker, g_number, srid,
+	    downloaded_at
+	) VALUES `
+
+	insertOpsaleOnConflictSQL = `
+	ON CONFLICT (sale_id) DO UPDATE SET
+	    sale_date = EXCLUDED.sale_date,
+	    last_change_date = EXCLUDED.last_change_date,
+	    warehouse_name = EXCLUDED.warehouse_name,
+	    warehouse_type = EXCLUDED.warehouse_type,
+	    country_name = EXCLUDED.country_name,
+	    oblast_okrug_name = EXCLUDED.oblast_okrug_name,
+	    region_name = EXCLUDED.region_name,
+	    supplier_article = EXCLUDED.supplier_article,
+	    nm_id = EXCLUDED.nm_id,
+	    barcode = EXCLUDED.barcode,
+	    category = EXCLUDED.category,
+	    subject = EXCLUDED.subject,
+	    brand = EXCLUDED.brand,
+	    tech_size = EXCLUDED.tech_size,
+	    income_id = EXCLUDED.income_id,
+	    is_supply = EXCLUDED.is_supply,
+	    is_realization = EXCLUDED.is_realization,
+	    total_price = EXCLUDED.total_price,
+	    discount_percent = EXCLUDED.discount_percent,
+	    spp = EXCLUDED.spp,
+	    payment_sale_amount = EXCLUDED.payment_sale_amount,
+	    for_pay = EXCLUDED.for_pay,
+	    finished_price = EXCLUDED.finished_price,
+	    price_with_disc = EXCLUDED.price_with_disc,
+	    sticker = EXCLUDED.sticker,
+	    g_number = EXCLUDED.g_number,
+	    srid = EXCLUDED.srid,
+	    downloaded_at = EXCLUDED.downloaded_at`
 )
+
+// Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.
+var insertOpsaleFullChunkSQL = BuildMultiRowInsert(insertOpsalePrefixSQL, insertOpsaleOnConflictSQL, pgOpsalesChunkSize, insertOpsaleCols)
+
+var pgDeleteSalesOlderThanSQL = `DELETE FROM operational_sales WHERE sale_date < $1`

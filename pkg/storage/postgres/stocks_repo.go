@@ -30,25 +30,29 @@ func (r *PgStocksRepo) InitSchema(ctx context.Context) error {
 	return initStocksSchema(ctx, r.pool)
 }
 
-const (
-	// pgUpsertStockSQL upserts a stock warehouse row.
-	// 9 placeholders ($1-$9) = 9 data columns. created_at uses column DEFAULT.
-	pgUpsertStockSQL = `
-INSERT INTO stocks_daily_warehouses (
-    snapshot_date, nm_id, chrt_id, warehouse_id,
-    warehouse_name, region_name,
-    quantity, in_way_to_client, in_way_from_client
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-ON CONFLICT (snapshot_date, nm_id, chrt_id, warehouse_id) DO UPDATE SET
-    warehouse_name      = EXCLUDED.warehouse_name,
-    region_name         = EXCLUDED.region_name,
-    quantity            = EXCLUDED.quantity,
-    in_way_to_client    = EXCLUDED.in_way_to_client,
-    in_way_from_client  = EXCLUDED.in_way_from_client`
+const pgStocksChunkSize = 500
 
-	// pgChunkSize is the number of rows per transaction for bulk inserts.
-	pgChunkSize = 500
+// Multi-row INSERT SQL fragments for stocks_daily_warehouses.
+const (
+	insertStockCols = 9 // $1-$9 (created_at uses column DEFAULT)
+
+	insertStockPrefixSQL = `INSERT INTO stocks_daily_warehouses (
+	    snapshot_date, nm_id, chrt_id, warehouse_id,
+	    warehouse_name, region_name,
+	    quantity, in_way_to_client, in_way_from_client
+	) VALUES `
+
+	insertStockOnConflictSQL = `
+	ON CONFLICT (snapshot_date, nm_id, chrt_id, warehouse_id) DO UPDATE SET
+	    warehouse_name      = EXCLUDED.warehouse_name,
+	    region_name         = EXCLUDED.region_name,
+	    quantity            = EXCLUDED.quantity,
+	    in_way_to_client    = EXCLUDED.in_way_to_client,
+	    in_way_from_client  = EXCLUDED.in_way_from_client`
 )
+
+// Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.
+var insertStockFullChunkSQL = BuildMultiRowInsert(insertStockPrefixSQL, insertStockOnConflictSQL, pgStocksChunkSize, insertStockCols)
 
 // SaveStocks saves a batch of warehouse stock items for a given snapshot date.
 // Returns count of inserted rows. Splits into 500-row transactions.
@@ -58,8 +62,8 @@ func (r *PgStocksRepo) SaveStocks(ctx context.Context, snapshotDate string, item
 	}
 
 	total := 0
-	for i := 0; i < len(items); i += pgChunkSize {
-		end := min(i+pgChunkSize, len(items))
+	for i := 0; i < len(items); i += pgStocksChunkSize {
+		end := min(i+pgStocksChunkSize, len(items))
 		chunk := items[i:end]
 
 		n, err := r.saveStocksChunk(ctx, chunk, snapshotDate)
@@ -71,7 +75,7 @@ func (r *PgStocksRepo) SaveStocks(ctx context.Context, snapshotDate string, item
 	return total, nil
 }
 
-// saveStocksChunk saves up to pgChunkSize items in a single transaction.
+// saveStocksChunk saves up to pgStocksChunkSize items using a single multi-row INSERT.
 func (r *PgStocksRepo) saveStocksChunk(ctx context.Context, chunk []wb.StockWarehouseItem, snapshotDate string) (int, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -79,24 +83,27 @@ func (r *PgStocksRepo) saveStocksChunk(ctx context.Context, chunk []wb.StockWare
 	}
 	defer tx.Rollback(ctx)
 
+	args := make([]any, 0, len(chunk)*insertStockCols)
 	for _, item := range chunk {
-		_, err := tx.Exec(ctx, pgUpsertStockSQL,
+		args = append(args,
 			snapshotDate,
 			item.NmID, item.ChrtID, item.WarehouseID,
 			item.WarehouseName, item.RegionName,
 			item.Quantity,
 			item.InWayToClient, item.InWayFromClient,
 		)
-		if err != nil {
-			return 0, fmt.Errorf("upsert stock nm_id=%d chrt_id=%d warehouse_id=%d: %w",
-				item.NmID, item.ChrtID, item.WarehouseID, err)
-		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
+	query := insertStockFullChunkSQL
+	if len(chunk) < pgStocksChunkSize {
+		query = BuildMultiRowInsert(insertStockPrefixSQL, insertStockOnConflictSQL, len(chunk), insertStockCols)
 	}
-	return len(chunk), nil
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save stocks batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
 // CountStocks returns total number of stock rows in the database.
@@ -134,6 +141,5 @@ func (r *PgStocksRepo) GetDistinctSnapshotDates(ctx context.Context) ([]string, 
 	return dates, rows.Err()
 }
 
-// min returns the smaller of a and b. (Go 1.21+ has this in builtins.)
-// Using the builtin min from Go 1.21+.
-var _ = pgx.Tx(nil) // ensure pgx import is used
+// ensure pgx import is used
+var _ = pgx.Tx(nil)

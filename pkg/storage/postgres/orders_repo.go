@@ -66,7 +66,7 @@ func (r *PgOrdersRepo) DeleteOrdersOlderThan(ctx context.Context, before time.Ti
 
 const pgOrdersChunkSize = 500
 
-// saveOrdersChunk saves up to 500 orders in a single transaction.
+// saveOrdersChunk saves up to 500 orders using a single multi-row INSERT.
 func (r *PgOrdersRepo) saveOrdersChunk(ctx context.Context, chunk []wb.OrdersItem) (int, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -74,8 +74,9 @@ func (r *PgOrdersRepo) saveOrdersChunk(ctx context.Context, chunk []wb.OrdersIte
 	}
 	defer tx.Rollback(ctx)
 
+	args := make([]any, 0, len(chunk)*insertOrderCols)
 	for _, o := range chunk {
-		_, err := tx.Exec(ctx, pgInsertOrderSQL,
+		args = append(args,
 			o.Srid,
 			o.Date, o.LastChangeDate,
 			o.WarehouseName, o.WarehouseType, o.CountryName, o.OblastOkrugName, o.RegionName,
@@ -85,60 +86,68 @@ func (r *PgOrdersRepo) saveOrdersChunk(ctx context.Context, chunk []wb.OrdersIte
 			o.IsCancel, o.CancelDate,
 			o.Sticker, o.GNumber,
 		)
-		if err != nil {
-			return 0, fmt.Errorf("upsert order srid=%s: %w", o.Srid, err)
-		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
+	query := insertOrderFullChunkSQL
+	if len(chunk) < pgOrdersChunkSize {
+		query = BuildMultiRowInsert(insertOrderPrefixSQL, insertOrderOnConflictSQL, len(chunk), insertOrderCols)
 	}
 
-	return len(chunk), nil
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save orders batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
-var (
-	// PostgreSQL upsert — update all fields on conflict (srid).
-	pgInsertOrderSQL = `
-INSERT INTO orders (
-    srid,
-    order_date, last_change_date,
-    warehouse_name, warehouse_type, country_name, oblast_okrug_name, region_name,
-    supplier_article, nm_id, barcode, category, subject, brand, tech_size,
-    income_id, is_supply, is_realization,
-    total_price, discount_percent, spp, finished_price, price_with_disc,
-    is_cancel, cancel_date,
-    sticker, g_number,
-    downloaded_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
-ON CONFLICT (srid) DO UPDATE SET
-    order_date = EXCLUDED.order_date,
-    last_change_date = EXCLUDED.last_change_date,
-    warehouse_name = EXCLUDED.warehouse_name,
-    warehouse_type = EXCLUDED.warehouse_type,
-    country_name = EXCLUDED.country_name,
-    oblast_okrug_name = EXCLUDED.oblast_okrug_name,
-    region_name = EXCLUDED.region_name,
-    supplier_article = EXCLUDED.supplier_article,
-    nm_id = EXCLUDED.nm_id,
-    barcode = EXCLUDED.barcode,
-    category = EXCLUDED.category,
-    subject = EXCLUDED.subject,
-    brand = EXCLUDED.brand,
-    tech_size = EXCLUDED.tech_size,
-    income_id = EXCLUDED.income_id,
-    is_supply = EXCLUDED.is_supply,
-    is_realization = EXCLUDED.is_realization,
-    total_price = EXCLUDED.total_price,
-    discount_percent = EXCLUDED.discount_percent,
-    spp = EXCLUDED.spp,
-    finished_price = EXCLUDED.finished_price,
-    price_with_disc = EXCLUDED.price_with_disc,
-    is_cancel = EXCLUDED.is_cancel,
-    cancel_date = EXCLUDED.cancel_date,
-    sticker = EXCLUDED.sticker,
-    g_number = EXCLUDED.g_number,
-    downloaded_at = EXCLUDED.downloaded_at`
+// Multi-row INSERT SQL fragments for orders.
+const (
+	insertOrderCols = 27 // $1-$27 (downloaded_at uses TO_CHAR, not a placeholder)
 
-	pgDeleteOrdersOlderThanSQL = `DELETE FROM orders WHERE order_date < $1`
+	insertOrderPrefixSQL = `INSERT INTO orders (
+	    srid,
+	    order_date, last_change_date,
+	    warehouse_name, warehouse_type, country_name, oblast_okrug_name, region_name,
+	    supplier_article, nm_id, barcode, category, subject, brand, tech_size,
+	    income_id, is_supply, is_realization,
+	    total_price, discount_percent, spp, finished_price, price_with_disc,
+	    is_cancel, cancel_date,
+	    sticker, g_number,
+	    downloaded_at
+	) VALUES `
+
+	insertOrderOnConflictSQL = `
+	ON CONFLICT (srid) DO UPDATE SET
+	    order_date = EXCLUDED.order_date,
+	    last_change_date = EXCLUDED.last_change_date,
+	    warehouse_name = EXCLUDED.warehouse_name,
+	    warehouse_type = EXCLUDED.warehouse_type,
+	    country_name = EXCLUDED.country_name,
+	    oblast_okrug_name = EXCLUDED.oblast_okrug_name,
+	    region_name = EXCLUDED.region_name,
+	    supplier_article = EXCLUDED.supplier_article,
+	    nm_id = EXCLUDED.nm_id,
+	    barcode = EXCLUDED.barcode,
+	    category = EXCLUDED.category,
+	    subject = EXCLUDED.subject,
+	    brand = EXCLUDED.brand,
+	    tech_size = EXCLUDED.tech_size,
+	    income_id = EXCLUDED.income_id,
+	    is_supply = EXCLUDED.is_supply,
+	    is_realization = EXCLUDED.is_realization,
+	    total_price = EXCLUDED.total_price,
+	    discount_percent = EXCLUDED.discount_percent,
+	    spp = EXCLUDED.spp,
+	    finished_price = EXCLUDED.finished_price,
+	    price_with_disc = EXCLUDED.price_with_disc,
+	    is_cancel = EXCLUDED.is_cancel,
+	    cancel_date = EXCLUDED.cancel_date,
+	    sticker = EXCLUDED.sticker,
+	    g_number = EXCLUDED.g_number,
+	    downloaded_at = EXCLUDED.downloaded_at`
 )
+
+// Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.
+var insertOrderFullChunkSQL = BuildMultiRowInsert(insertOrderPrefixSQL, insertOrderOnConflictSQL, pgOrdersChunkSize, insertOrderCols)
+
+var pgDeleteOrdersOlderThanSQL = `DELETE FROM orders WHERE order_date < $1`

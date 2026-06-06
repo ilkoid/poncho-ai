@@ -34,36 +34,75 @@ func (r *PgCampaignsRepo) InitSchema(ctx context.Context) error {
 // SaveCampaigns — upsert from promotion/count
 // ============================================================================
 
-// SaveCampaigns saves batch of campaign metadata using ON CONFLICT upsert.
+const pgCampaignsChunkSize = 500
+
+// SaveCampaigns saves batch of campaign metadata using multi-row ON CONFLICT upsert.
 func (r *PgCampaignsRepo) SaveCampaigns(ctx context.Context, groups []wb.PromotionAdvertGroup) error {
 	if len(groups) == 0 {
 		return nil
 	}
 
+	// Flatten groups → individual adverts.
+	var adverts []struct {
+		advertID    int
+		campType    int
+		status      int
+		changeTime  string
+	}
+	for _, g := range groups {
+		for _, a := range g.AdvertList {
+			adverts = append(adverts, struct {
+				advertID    int
+				campType    int
+				status      int
+				changeTime  string
+			}{a.AdvertID, g.Type, g.Status, a.ChangeTime})
+		}
+	}
+	if len(adverts) == 0 {
+		return nil
+	}
+
+	for i := 0; i < len(adverts); i += pgCampaignsChunkSize {
+		end := min(i+pgCampaignsChunkSize, len(adverts))
+		chunk := adverts[i:end]
+
+		if err := r.saveCampaignsChunk(ctx, chunk); err != nil {
+			return fmt.Errorf("save campaigns chunk at offset %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// saveCampaignsChunk saves up to 500 campaigns using a single multi-row INSERT.
+func (r *PgCampaignsRepo) saveCampaignsChunk(ctx context.Context, chunk []struct {
+	advertID   int
+	campType   int
+	status     int
+	changeTime string
+}) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	for _, group := range groups {
-		for _, advert := range group.AdvertList {
-			_, err := tx.Exec(ctx, pgUpsertCampaignSQL,
-				advert.AdvertID,
-				group.Type,
-				group.Status,
-				advert.ChangeTime,
-			)
-			if err != nil {
-				return fmt.Errorf("upsert campaign advert_id=%d: %w", advert.AdvertID, err)
-			}
-		}
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	args := make([]any, 0, len(chunk)*insertCampaignCols)
+	for _, a := range chunk {
+		args = append(args, a.advertID, a.campType, a.status, a.changeTime, now)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
+	query := insertCampaignFullChunkSQL
+	if len(chunk) < pgCampaignsChunkSize {
+		query = BuildMultiRowInsert(insertCampaignPrefixSQL, insertCampaignOnConflictSQL, len(chunk), insertCampaignCols)
 	}
-	return nil
+
+	if _, err := tx.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("save campaigns batch (size %d): %w", len(chunk), err)
+	}
+	return tx.Commit(ctx)
 }
 
 // ============================================================================
@@ -71,7 +110,7 @@ func (r *PgCampaignsRepo) SaveCampaigns(ctx context.Context, groups []wb.Promoti
 // ============================================================================
 
 // SaveCampaignDetails updates campaign metadata from /api/advert/v2/adverts.
-// Uses UPDATE because rows already exist from SaveCampaigns().
+// Uses per-row UPDATE because rows already exist from SaveCampaigns().
 func (r *PgCampaignsRepo) SaveCampaignDetails(ctx context.Context, details []wb.AdvertDetail) error {
 	if len(details) == 0 {
 		return nil
@@ -110,8 +149,6 @@ func (r *PgCampaignsRepo) SaveCampaignDetails(ctx context.Context, details []wb.
 // SaveFullstats — aggregate method for 4 stat tables
 // ============================================================================
 
-const pgCampaignsChunkSize = 500
-
 // SaveFullstats saves all 4 stat tables from flattened fullstats data.
 // Each table is saved in chunked transactions (500 rows each).
 func (r *PgCampaignsRepo) SaveFullstats(ctx context.Context, flat wb.FlattenAllResult) error {
@@ -135,27 +172,40 @@ func (r *PgCampaignsRepo) saveDailyStats(ctx context.Context, rows []wb.Campaign
 		end := min(i+pgCampaignsChunkSize, len(rows))
 		chunk := rows[i:end]
 
-		tx, err := r.pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin transaction: %w", err)
-		}
-		for _, row := range chunk {
-			_, err := tx.Exec(ctx, pgUpsertDailySQL,
-				row.AdvertID, row.StatsDate,
-				row.Views, row.Clicks, row.CTR, row.CPC, row.CR,
-				row.Orders, row.Shks, row.Atbs, row.Canceled,
-				row.Sum, row.SumPrice,
-			)
-			if err != nil {
-				tx.Rollback(ctx)
-				return fmt.Errorf("upsert daily advert=%d date=%s: %w", row.AdvertID, row.StatsDate, err)
-			}
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit daily: %w", err)
+		if err := r.saveDailyStatsChunk(ctx, chunk); err != nil {
+			return fmt.Errorf("daily stats chunk at offset %d: %w", i, err)
 		}
 	}
 	return nil
+}
+
+// saveDailyStatsChunk saves up to 500 daily stats rows using a single multi-row INSERT.
+func (r *PgCampaignsRepo) saveDailyStatsChunk(ctx context.Context, chunk []wb.CampaignDailyStats) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertCampStatsDailyCols)
+	for _, row := range chunk {
+		args = append(args,
+			row.AdvertID, row.StatsDate,
+			row.Views, row.Clicks, row.CTR, row.CPC, row.CR,
+			row.Orders, row.Shks, row.Atbs, row.Canceled,
+			row.Sum, row.SumPrice,
+		)
+	}
+
+	query := insertCampStatsDailyFullChunkSQL
+	if len(chunk) < pgCampaignsChunkSize {
+		query = BuildMultiRowInsert(insertCampStatsDailyPrefixSQL, insertCampStatsDailyOnConflictSQL, len(chunk), insertCampStatsDailyCols)
+	}
+
+	if _, err := tx.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("save daily batch (size %d): %w", len(chunk), err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *PgCampaignsRepo) saveAppStats(ctx context.Context, rows []wb.CampaignAppStatsRow) error {
@@ -163,27 +213,40 @@ func (r *PgCampaignsRepo) saveAppStats(ctx context.Context, rows []wb.CampaignAp
 		end := min(i+pgCampaignsChunkSize, len(rows))
 		chunk := rows[i:end]
 
-		tx, err := r.pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin transaction: %w", err)
-		}
-		for _, row := range chunk {
-			_, err := tx.Exec(ctx, pgUpsertAppSQL,
-				row.AdvertID, row.StatsDate, row.AppType,
-				row.Views, row.Clicks, row.CTR, row.CPC, row.CR,
-				row.Orders, row.Shks, row.Atbs, row.Canceled,
-				row.Sum, row.SumPrice,
-			)
-			if err != nil {
-				tx.Rollback(ctx)
-				return fmt.Errorf("upsert app advert=%d date=%s app=%d: %w", row.AdvertID, row.StatsDate, row.AppType, err)
-			}
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit app: %w", err)
+		if err := r.saveAppStatsChunk(ctx, chunk); err != nil {
+			return fmt.Errorf("app stats chunk at offset %d: %w", i, err)
 		}
 	}
 	return nil
+}
+
+// saveAppStatsChunk saves up to 500 app stats rows using a single multi-row INSERT.
+func (r *PgCampaignsRepo) saveAppStatsChunk(ctx context.Context, chunk []wb.CampaignAppStatsRow) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertCampStatsAppCols)
+	for _, row := range chunk {
+		args = append(args,
+			row.AdvertID, row.StatsDate, row.AppType,
+			row.Views, row.Clicks, row.CTR, row.CPC, row.CR,
+			row.Orders, row.Shks, row.Atbs, row.Canceled,
+			row.Sum, row.SumPrice,
+		)
+	}
+
+	query := insertCampStatsAppFullChunkSQL
+	if len(chunk) < pgCampaignsChunkSize {
+		query = BuildMultiRowInsert(insertCampStatsAppPrefixSQL, insertCampStatsAppOnConflictSQL, len(chunk), insertCampStatsAppCols)
+	}
+
+	if _, err := tx.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("save app batch (size %d): %w", len(chunk), err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *PgCampaignsRepo) saveNmStats(ctx context.Context, rows []wb.CampaignNmStatsRow) error {
@@ -191,27 +254,40 @@ func (r *PgCampaignsRepo) saveNmStats(ctx context.Context, rows []wb.CampaignNmS
 		end := min(i+pgCampaignsChunkSize, len(rows))
 		chunk := rows[i:end]
 
-		tx, err := r.pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin transaction: %w", err)
-		}
-		for _, row := range chunk {
-			_, err := tx.Exec(ctx, pgUpsertNmSQL,
-				row.AdvertID, row.StatsDate, row.AppType, row.NmID, row.NmName,
-				row.Views, row.Clicks, row.CTR, row.CPC, row.CR,
-				row.Orders, row.Shks, row.Atbs, row.Canceled,
-				row.Sum, row.SumPrice,
-			)
-			if err != nil {
-				tx.Rollback(ctx)
-				return fmt.Errorf("upsert nm advert=%d date=%s app=%d nm=%d: %w", row.AdvertID, row.StatsDate, row.AppType, row.NmID, err)
-			}
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit nm: %w", err)
+		if err := r.saveNmStatsChunk(ctx, chunk); err != nil {
+			return fmt.Errorf("nm stats chunk at offset %d: %w", i, err)
 		}
 	}
 	return nil
+}
+
+// saveNmStatsChunk saves up to 500 nm stats rows using a single multi-row INSERT.
+func (r *PgCampaignsRepo) saveNmStatsChunk(ctx context.Context, chunk []wb.CampaignNmStatsRow) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertCampStatsNmCols)
+	for _, row := range chunk {
+		args = append(args,
+			row.AdvertID, row.StatsDate, row.AppType, row.NmID, row.NmName,
+			row.Views, row.Clicks, row.CTR, row.CPC, row.CR,
+			row.Orders, row.Shks, row.Atbs, row.Canceled,
+			row.Sum, row.SumPrice,
+		)
+	}
+
+	query := insertCampStatsNmFullChunkSQL
+	if len(chunk) < pgCampaignsChunkSize {
+		query = BuildMultiRowInsert(insertCampStatsNmPrefixSQL, insertCampStatsNmOnConflictSQL, len(chunk), insertCampStatsNmCols)
+	}
+
+	if _, err := tx.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("save nm batch (size %d): %w", len(chunk), err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *PgCampaignsRepo) saveBoosterStats(ctx context.Context, rows []wb.CampaignBoosterStatsRow) error {
@@ -219,24 +295,35 @@ func (r *PgCampaignsRepo) saveBoosterStats(ctx context.Context, rows []wb.Campai
 		end := min(i+pgCampaignsChunkSize, len(rows))
 		chunk := rows[i:end]
 
-		tx, err := r.pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin transaction: %w", err)
-		}
-		for _, row := range chunk {
-			_, err := tx.Exec(ctx, pgUpsertBoosterSQL,
-				row.AdvertID, row.StatsDate, row.NmID, row.AvgPosition,
-			)
-			if err != nil {
-				tx.Rollback(ctx)
-				return fmt.Errorf("upsert booster advert=%d date=%s nm=%d: %w", row.AdvertID, row.StatsDate, row.NmID, err)
-			}
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit booster: %w", err)
+		if err := r.saveBoosterStatsChunk(ctx, chunk); err != nil {
+			return fmt.Errorf("booster stats chunk at offset %d: %w", i, err)
 		}
 	}
 	return nil
+}
+
+// saveBoosterStatsChunk saves up to 500 booster stats rows using a single multi-row INSERT.
+func (r *PgCampaignsRepo) saveBoosterStatsChunk(ctx context.Context, chunk []wb.CampaignBoosterStatsRow) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertCampBoosterCols)
+	for _, row := range chunk {
+		args = append(args, row.AdvertID, row.StatsDate, row.NmID, row.AvgPosition)
+	}
+
+	query := insertCampBoosterFullChunkSQL
+	if len(chunk) < pgCampaignsChunkSize {
+		query = BuildMultiRowInsert(insertCampBoosterPrefixSQL, insertCampBoosterOnConflictSQL, len(chunk), insertCampBoosterCols)
+	}
+
+	if _, err := tx.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("save booster batch (size %d): %w", len(chunk), err)
+	}
+	return tx.Commit(ctx)
 }
 
 // ============================================================================
@@ -285,21 +372,81 @@ func (r *PgCampaignsRepo) PopulateCampaignProducts(ctx context.Context) error {
 }
 
 // ============================================================================
-// SQL statements
+// Multi-row INSERT SQL fragments
+// ============================================================================
+
+const (
+	// campaigns table: 5 columns. updated_at uses Go-formatted timestamp (not TO_CHAR).
+	insertCampaignCols = 5
+
+	insertCampaignPrefixSQL = `INSERT INTO campaigns (advert_id, campaign_type, status, change_time, updated_at) VALUES `
+
+	insertCampaignOnConflictSQL = `
+	ON CONFLICT (advert_id) DO UPDATE SET
+	    campaign_type = EXCLUDED.campaign_type,
+	    status = EXCLUDED.status,
+	    change_time = EXCLUDED.change_time,
+	    updated_at = EXCLUDED.updated_at`
+
+	// campaign_stats_daily: 13 columns.
+	insertCampStatsDailyCols = 13
+
+	insertCampStatsDailyPrefixSQL = `INSERT INTO campaign_stats_daily (advert_id, stats_date, views, clicks, ctr, cpc, cr, orders, shks, atbs, canceled, sum, sum_price) VALUES `
+
+	insertCampStatsDailyOnConflictSQL = `
+	ON CONFLICT (advert_id, stats_date) DO UPDATE SET
+	    views = EXCLUDED.views, clicks = EXCLUDED.clicks, ctr = EXCLUDED.ctr, cpc = EXCLUDED.cpc, cr = EXCLUDED.cr,
+	    orders = EXCLUDED.orders, shks = EXCLUDED.shks, atbs = EXCLUDED.atbs, canceled = EXCLUDED.canceled,
+	    sum = EXCLUDED.sum, sum_price = EXCLUDED.sum_price`
+
+	// campaign_stats_app: 14 columns.
+	insertCampStatsAppCols = 14
+
+	insertCampStatsAppPrefixSQL = `INSERT INTO campaign_stats_app (advert_id, stats_date, app_type, views, clicks, ctr, cpc, cr, orders, shks, atbs, canceled, sum, sum_price) VALUES `
+
+	insertCampStatsAppOnConflictSQL = `
+	ON CONFLICT (advert_id, stats_date, app_type) DO UPDATE SET
+	    views = EXCLUDED.views, clicks = EXCLUDED.clicks, ctr = EXCLUDED.ctr, cpc = EXCLUDED.cpc, cr = EXCLUDED.cr,
+	    orders = EXCLUDED.orders, shks = EXCLUDED.shks, atbs = EXCLUDED.atbs, canceled = EXCLUDED.canceled,
+	    sum = EXCLUDED.sum, sum_price = EXCLUDED.sum_price`
+
+	// campaign_stats_nm: 16 columns.
+	insertCampStatsNmCols = 16
+
+	insertCampStatsNmPrefixSQL = `INSERT INTO campaign_stats_nm (advert_id, stats_date, app_type, nm_id, nm_name, views, clicks, ctr, cpc, cr, orders, shks, atbs, canceled, sum, sum_price) VALUES `
+
+	insertCampStatsNmOnConflictSQL = `
+	ON CONFLICT (advert_id, stats_date, app_type, nm_id) DO UPDATE SET
+	    nm_name = EXCLUDED.nm_name,
+	    views = EXCLUDED.views, clicks = EXCLUDED.clicks, ctr = EXCLUDED.ctr, cpc = EXCLUDED.cpc, cr = EXCLUDED.cr,
+	    orders = EXCLUDED.orders, shks = EXCLUDED.shks, atbs = EXCLUDED.atbs, canceled = EXCLUDED.canceled,
+	    sum = EXCLUDED.sum, sum_price = EXCLUDED.sum_price`
+
+	// campaign_booster_stats: 4 columns.
+	insertCampBoosterCols = 4
+
+	insertCampBoosterPrefixSQL = `INSERT INTO campaign_booster_stats (advert_id, stats_date, nm_id, avg_position) VALUES `
+
+	insertCampBoosterOnConflictSQL = `
+	ON CONFLICT (advert_id, stats_date, nm_id) DO UPDATE SET
+	    avg_position = EXCLUDED.avg_position`
+)
+
+// Pre-built queries for full chunks (500 rows). Last chunk rebuilt with actual size.
+var (
+	insertCampaignFullChunkSQL        = BuildMultiRowInsert(insertCampaignPrefixSQL, insertCampaignOnConflictSQL, pgCampaignsChunkSize, insertCampaignCols)
+	insertCampStatsDailyFullChunkSQL  = BuildMultiRowInsert(insertCampStatsDailyPrefixSQL, insertCampStatsDailyOnConflictSQL, pgCampaignsChunkSize, insertCampStatsDailyCols)
+	insertCampStatsAppFullChunkSQL    = BuildMultiRowInsert(insertCampStatsAppPrefixSQL, insertCampStatsAppOnConflictSQL, pgCampaignsChunkSize, insertCampStatsAppCols)
+	insertCampStatsNmFullChunkSQL     = BuildMultiRowInsert(insertCampStatsNmPrefixSQL, insertCampStatsNmOnConflictSQL, pgCampaignsChunkSize, insertCampStatsNmCols)
+	insertCampBoosterFullChunkSQL     = BuildMultiRowInsert(insertCampBoosterPrefixSQL, insertCampBoosterOnConflictSQL, pgCampaignsChunkSize, insertCampBoosterCols)
+)
+
+// ============================================================================
+// Non-multi-row SQL statements
 // ============================================================================
 
 var (
-	// Upsert campaign from promotion/count
-	pgUpsertCampaignSQL = `
-INSERT INTO campaigns (advert_id, campaign_type, status, change_time, updated_at)
-VALUES ($1, $2, $3, $4, TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
-ON CONFLICT (advert_id) DO UPDATE SET
-    campaign_type = EXCLUDED.campaign_type,
-    status = EXCLUDED.status,
-    change_time = EXCLUDED.change_time,
-    updated_at = EXCLUDED.updated_at`
-
-	// Update campaign details from adverts endpoint
+	// Update campaign details from adverts endpoint (per-row UPDATE, not INSERT).
 	pgUpdateCampaignDetailsSQL = `
 UPDATE campaigns SET
     name = $1,
@@ -312,41 +459,6 @@ UPDATE campaigns SET
     ts_deleted = $8,
     updated_at = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
 WHERE advert_id = $9`
-
-	// Upsert daily stats
-	pgUpsertDailySQL = `
-INSERT INTO campaign_stats_daily (advert_id, stats_date, views, clicks, ctr, cpc, cr, orders, shks, atbs, canceled, sum, sum_price)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-ON CONFLICT (advert_id, stats_date) DO UPDATE SET
-    views = EXCLUDED.views, clicks = EXCLUDED.clicks, ctr = EXCLUDED.ctr, cpc = EXCLUDED.cpc, cr = EXCLUDED.cr,
-    orders = EXCLUDED.orders, shks = EXCLUDED.shks, atbs = EXCLUDED.atbs, canceled = EXCLUDED.canceled,
-    sum = EXCLUDED.sum, sum_price = EXCLUDED.sum_price`
-
-	// Upsert app stats
-	pgUpsertAppSQL = `
-INSERT INTO campaign_stats_app (advert_id, stats_date, app_type, views, clicks, ctr, cpc, cr, orders, shks, atbs, canceled, sum, sum_price)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-ON CONFLICT (advert_id, stats_date, app_type) DO UPDATE SET
-    views = EXCLUDED.views, clicks = EXCLUDED.clicks, ctr = EXCLUDED.ctr, cpc = EXCLUDED.cpc, cr = EXCLUDED.cr,
-    orders = EXCLUDED.orders, shks = EXCLUDED.shks, atbs = EXCLUDED.atbs, canceled = EXCLUDED.canceled,
-    sum = EXCLUDED.sum, sum_price = EXCLUDED.sum_price`
-
-	// Upsert nm stats
-	pgUpsertNmSQL = `
-INSERT INTO campaign_stats_nm (advert_id, stats_date, app_type, nm_id, nm_name, views, clicks, ctr, cpc, cr, orders, shks, atbs, canceled, sum, sum_price)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-ON CONFLICT (advert_id, stats_date, app_type, nm_id) DO UPDATE SET
-    nm_name = EXCLUDED.nm_name,
-    views = EXCLUDED.views, clicks = EXCLUDED.clicks, ctr = EXCLUDED.ctr, cpc = EXCLUDED.cpc, cr = EXCLUDED.cr,
-    orders = EXCLUDED.orders, shks = EXCLUDED.shks, atbs = EXCLUDED.atbs, canceled = EXCLUDED.canceled,
-    sum = EXCLUDED.sum, sum_price = EXCLUDED.sum_price`
-
-	// Upsert booster stats
-	pgUpsertBoosterSQL = `
-INSERT INTO campaign_booster_stats (advert_id, stats_date, nm_id, avg_position)
-VALUES ($1,$2,$3,$4)
-ON CONFLICT (advert_id, stats_date, nm_id) DO UPDATE SET
-    avg_position = EXCLUDED.avg_position`
 
 	// Get last stats date per campaign
 	pgGetLastStatsDateAllSQL = `SELECT advert_id, MAX(stats_date) FROM campaign_stats_daily GROUP BY advert_id`

@@ -67,7 +67,7 @@ func (r *PgPenaltiesRepo) DeletePenaltiesOlderThan(ctx context.Context, before t
 
 const pgPenaltiesChunkSize = 500
 
-// savePenaltiesChunk saves up to 500 penalties in a single transaction.
+// savePenaltiesChunk saves up to 500 penalties using a single multi-row INSERT.
 func (r *PgPenaltiesRepo) savePenaltiesChunk(ctx context.Context, chunk []wb.MeasurementPenaltyItem) (int, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -75,13 +75,14 @@ func (r *PgPenaltiesRepo) savePenaltiesChunk(ctx context.Context, chunk []wb.Mea
 	}
 	defer tx.Rollback(ctx)
 
+	args := make([]any, 0, len(chunk)*insertPenaltyCols)
 	for _, p := range chunk {
 		photoURLs, err := json.Marshal(p.PhotoUrls)
 		if err != nil {
 			photoURLs = []byte("[]")
 		}
 
-		_, err = tx.Exec(ctx, pgUpsertPenaltySQL,
+		args = append(args,
 			p.DimId, p.NmId, p.SubjectName, p.PrcOver,
 			p.Volume, p.Width, p.Length, p.Height,
 			p.VolumeSup, p.WidthSup, p.LengthSup, p.HeightSup,
@@ -89,49 +90,57 @@ func (r *PgPenaltiesRepo) savePenaltiesChunk(ctx context.Context, chunk []wb.Mea
 			p.IsValid, p.IsValidDt,
 			p.ReversalAmount, p.PenaltyAmount,
 		)
-		if err != nil {
-			return 0, fmt.Errorf("upsert penalty dim_id=%d: %w", p.DimId, err)
-		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
+	query := insertPenaltyFullChunkSQL
+	if len(chunk) < pgPenaltiesChunkSize {
+		query = BuildMultiRowInsert(insertPenaltyPrefixSQL, insertPenaltyOnConflictSQL, len(chunk), insertPenaltyCols)
 	}
 
-	return len(chunk), nil
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save penalties batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
-var (
-	// PostgreSQL upsert — update all fields on conflict (dim_id).
-	pgUpsertPenaltySQL = `
-INSERT INTO measurement_penalties (
-    dim_id, nm_id, subject_name, prc_over,
-    volume, width, length, height,
-    volume_sup, width_sup, length_sup, height_sup,
-    photo_urls, dt_bonus,
-    is_valid, is_valid_dt,
-    reversal_amount, penalty_amount,
-    downloaded_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
-ON CONFLICT (dim_id) DO UPDATE SET
-    nm_id = EXCLUDED.nm_id,
-    subject_name = EXCLUDED.subject_name,
-    prc_over = EXCLUDED.prc_over,
-    volume = EXCLUDED.volume,
-    width = EXCLUDED.width,
-    length = EXCLUDED.length,
-    height = EXCLUDED.height,
-    volume_sup = EXCLUDED.volume_sup,
-    width_sup = EXCLUDED.width_sup,
-    length_sup = EXCLUDED.length_sup,
-    height_sup = EXCLUDED.height_sup,
-    photo_urls = EXCLUDED.photo_urls,
-    dt_bonus = EXCLUDED.dt_bonus,
-    is_valid = EXCLUDED.is_valid,
-    is_valid_dt = EXCLUDED.is_valid_dt,
-    reversal_amount = EXCLUDED.reversal_amount,
-    penalty_amount = EXCLUDED.penalty_amount,
-    downloaded_at = EXCLUDED.downloaded_at`
+// Multi-row INSERT SQL fragments for measurement_penalties.
+const (
+	insertPenaltyCols = 18 // $1-$18 (downloaded_at uses TO_CHAR, not a placeholder)
 
-	pgDeletePenaltiesOlderThanSQL = `DELETE FROM measurement_penalties WHERE dt_bonus < $1`
+	insertPenaltyPrefixSQL = `INSERT INTO measurement_penalties (
+	    dim_id, nm_id, subject_name, prc_over,
+	    volume, width, length, height,
+	    volume_sup, width_sup, length_sup, height_sup,
+	    photo_urls, dt_bonus,
+	    is_valid, is_valid_dt,
+	    reversal_amount, penalty_amount,
+	    downloaded_at
+	) VALUES `
+
+	insertPenaltyOnConflictSQL = `
+	ON CONFLICT (dim_id) DO UPDATE SET
+	    nm_id = EXCLUDED.nm_id,
+	    subject_name = EXCLUDED.subject_name,
+	    prc_over = EXCLUDED.prc_over,
+	    volume = EXCLUDED.volume,
+	    width = EXCLUDED.width,
+	    length = EXCLUDED.length,
+	    height = EXCLUDED.height,
+	    volume_sup = EXCLUDED.volume_sup,
+	    width_sup = EXCLUDED.width_sup,
+	    length_sup = EXCLUDED.length_sup,
+	    height_sup = EXCLUDED.height_sup,
+	    photo_urls = EXCLUDED.photo_urls,
+	    dt_bonus = EXCLUDED.dt_bonus,
+	    is_valid = EXCLUDED.is_valid,
+	    is_valid_dt = EXCLUDED.is_valid_dt,
+	    reversal_amount = EXCLUDED.reversal_amount,
+	    penalty_amount = EXCLUDED.penalty_amount,
+	    downloaded_at = EXCLUDED.downloaded_at`
 )
+
+// Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.
+var insertPenaltyFullChunkSQL = BuildMultiRowInsert(insertPenaltyPrefixSQL, insertPenaltyOnConflictSQL, pgPenaltiesChunkSize, insertPenaltyCols)
+
+var pgDeletePenaltiesOlderThanSQL = `DELETE FROM measurement_penalties WHERE dt_bonus < $1`

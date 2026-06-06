@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -62,7 +63,21 @@ func (r *PgCardsRepo) CountCards(ctx context.Context) (int, error) {
 	return count, err
 }
 
+// preprocessedCard holds flat fields extracted from nested ProductCard structures,
+// ready for batch parent INSERT without re-extracting per row.
+type preprocessedCard struct {
+	Card              wb.ProductCard
+	WholesaleEnabled  bool
+	WholesaleQuantum  int
+	DimLength         float64
+	DimWidth          float64
+	DimHeight         float64
+	DimWeight         float64
+	DimIsValid        bool
+}
+
 // saveCardsChunk saves up to 500 cards in a single transaction.
+// Parent cards use multi-row INSERT; child records use per-card DELETE+INSERT.
 func (r *PgCardsRepo) saveCardsChunk(ctx context.Context, chunk []wb.ProductCard) (int, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -70,38 +85,49 @@ func (r *PgCardsRepo) saveCardsChunk(ctx context.Context, chunk []wb.ProductCard
 	}
 	defer tx.Rollback(ctx)
 
-	for _, card := range chunk {
-		// Extract wholesale fields
-		var wholesaleEnabled bool
-		var wholesaleQuantum int
+	// Phase 1: Pre-extract nested fields for all cards.
+	flat := make([]preprocessedCard, len(chunk))
+	for i, card := range chunk {
+		flat[i].Card = card
 		if card.Wholesale != nil {
-			wholesaleEnabled = card.Wholesale.Enabled
-			wholesaleQuantum = card.Wholesale.Quantum
+			flat[i].WholesaleEnabled = card.Wholesale.Enabled
+			flat[i].WholesaleQuantum = card.Wholesale.Quantum
 		}
-
-		// Extract dimensions fields
-		var dimLength, dimWidth, dimHeight, dimWeight float64
-		var dimIsValid bool
 		if card.Dimensions != nil {
-			dimLength = card.Dimensions.Length
-			dimWidth = card.Dimensions.Width
-			dimHeight = card.Dimensions.Height
-			dimWeight = card.Dimensions.WeightBrutto
-			dimIsValid = card.Dimensions.IsValid
+			flat[i].DimLength = card.Dimensions.Length
+			flat[i].DimWidth = card.Dimensions.Width
+			flat[i].DimHeight = card.Dimensions.Height
+			flat[i].DimWeight = card.Dimensions.WeightBrutto
+			flat[i].DimIsValid = card.Dimensions.IsValid
 		}
+	}
 
-		// Upsert main card (ON CONFLICT DO UPDATE)
-		_, err := tx.Exec(ctx, insertCardSQL,
-			card.NmID, card.ImtID, card.NmUUID, card.SubjectID, card.SubjectName,
-			card.VendorCode, card.Brand, card.Title, card.Description,
-			card.NeedKiz, card.Video,
-			wholesaleEnabled, wholesaleQuantum,
-			dimLength, dimWidth, dimHeight, dimWeight, dimIsValid,
-			card.CreatedAt, card.UpdatedAt,
+	// Phase 2: Build args and execute multi-row INSERT for parent cards.
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	args := make([]any, 0, len(chunk)*insertCardCols)
+	for _, f := range flat {
+		args = append(args,
+			f.Card.NmID, f.Card.ImtID, f.Card.NmUUID, f.Card.SubjectID, f.Card.SubjectName,
+			f.Card.VendorCode, f.Card.Brand, f.Card.Title, f.Card.Description,
+			f.Card.NeedKiz, f.Card.Video,
+			f.WholesaleEnabled, f.WholesaleQuantum,
+			f.DimLength, f.DimWidth, f.DimHeight, f.DimWeight, f.DimIsValid,
+			f.Card.CreatedAt, f.Card.UpdatedAt,
+			now,
 		)
-		if err != nil {
-			return 0, fmt.Errorf("upsert card nm_id=%d: %w", card.NmID, err)
-		}
+	}
+
+	query := insertCardFullChunkSQL
+	if len(chunk) < cardsChunkSize {
+		query = BuildMultiRowInsert(insertCardPrefixSQL, insertCardOnConflictSQL, len(chunk), insertCardCols)
+	}
+	if _, err := tx.Exec(ctx, query, args...); err != nil {
+		return 0, fmt.Errorf("upsert cards batch (size %d): %w", len(chunk), err)
+	}
+
+	// Phase 3: Per-card child DELETE+INSERT.
+	for _, f := range flat {
+		card := f.Card
 
 		// Delete old child records
 		_, _ = tx.Exec(ctx, deletePhotosSQL, card.NmID)
@@ -167,19 +193,22 @@ func (r *PgCardsRepo) saveCardsChunk(ctx context.Context, chunk []wb.ProductCard
 
 const cardsChunkSize = 500
 
-// SQL statements — PostgreSQL syntax ($1, $2, ... placeholders).
-// ON CONFLICT ... DO UPDATE replaces SQLite's INSERT OR REPLACE.
-var (
-	// Main card upsert — update all fields on conflict
-	insertCardSQL = `
-INSERT INTO cards (
+// Multi-row INSERT SQL fragments for parent cards table.
+// downloaded_at is passed as a formatted TEXT parameter ($21),
+// matching the column's TEXT type.
+const (
+	insertCardCols = 21 // $1-$21 (includes downloaded_at as $21)
+
+	insertCardPrefixSQL = `INSERT INTO cards (
     nm_id, imt_id, nm_uuid, subject_id, subject_name,
     vendor_code, brand, title, description,
     need_kiz, video,
     wholesale_enabled, wholesale_quantum,
     dim_length, dim_width, dim_height, dim_weight_brutto, dim_is_valid,
     created_at, updated_at, downloaded_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
+) VALUES `
+
+	insertCardOnConflictSQL = `
 ON CONFLICT (nm_id) DO UPDATE SET
     imt_id = EXCLUDED.imt_id,
     nm_uuid = EXCLUDED.nm_uuid,
@@ -201,8 +230,13 @@ ON CONFLICT (nm_id) DO UPDATE SET
     created_at = EXCLUDED.created_at,
     updated_at = EXCLUDED.updated_at,
     downloaded_at = EXCLUDED.downloaded_at`
+)
 
-	// Child record inserts (DELETE+INSERT pattern for atomicity)
+// Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.
+var insertCardFullChunkSQL = BuildMultiRowInsert(insertCardPrefixSQL, insertCardOnConflictSQL, cardsChunkSize, insertCardCols)
+
+// Child table SQL — per-row INSERT (unchanged).
+var (
 	insertPhotoSQL = `
 INSERT INTO card_photos (nm_id, big, c246x328, c516x688, square, tm)
 VALUES ($1,$2,$3,$4,$5,$6)`

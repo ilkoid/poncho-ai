@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ilkoid/poncho-ai/pkg/funnelagg"
@@ -49,6 +50,180 @@ func (r *PgFunnelAggRepo) GetDistinctNmIDCount(ctx context.Context) (int, error)
 	return count, err
 }
 
+const (
+	pgFunnelAggChunkSize = 500
+
+	// Products: 12 param placeholders + 1 TO_CHAR for updated_at (not a placeholder).
+	// BuildMultiRowInsert only counts $N placeholders, so cols=12.
+	insertAggProductPrefixSQL = `INSERT INTO products (
+	    nm_id, vendor_code, title, brand_name,
+	    subject_id, subject_name,
+	    product_rating, feedback_rating,
+	    stock_wb, stock_mp, stock_balance_sum,
+	    tags,
+	    updated_at
+	) VALUES `
+	insertAggProductOnConflictSQL = `
+	ON CONFLICT (nm_id) DO UPDATE SET
+	    vendor_code       = EXCLUDED.vendor_code,
+	    title             = EXCLUDED.title,
+	    brand_name        = EXCLUDED.brand_name,
+	    subject_id        = EXCLUDED.subject_id,
+	    subject_name      = EXCLUDED.subject_name,
+	    product_rating    = EXCLUDED.product_rating,
+	    feedback_rating   = EXCLUDED.feedback_rating,
+	    stock_wb          = EXCLUDED.stock_wb,
+	    stock_mp          = EXCLUDED.stock_mp,
+	    stock_balance_sum = EXCLUDED.stock_balance_sum,
+	    tags              = EXCLUDED.tags,
+	    updated_at        = EXCLUDED.updated_at`
+	insertAggProductCols = 12
+
+	// Metrics: 90 param placeholders ($1-$90).
+	insertAggMetricPrefixSQL = `INSERT INTO funnel_metrics_aggregated (
+	    nm_id, period_start, period_end,
+	    selected_open_count, selected_cart_count, selected_order_count,
+	    selected_order_sum, selected_buyout_count, selected_buyout_sum,
+	    selected_cancel_count, selected_cancel_sum, selected_avg_price,
+	    selected_avg_orders_count_per_day, selected_share_order_percent,
+	    selected_add_to_wishlist, selected_localization_percent,
+	    selected_time_to_ready_days, selected_time_to_ready_hours, selected_time_to_ready_mins,
+	    selected_wb_club_order_count, selected_wb_club_order_sum,
+	    selected_wb_club_buyout_count, selected_wb_club_buyout_sum,
+	    selected_wb_club_cancel_count, selected_wb_club_cancel_sum,
+	    selected_wb_club_avg_price, selected_wb_club_buyout_percent,
+	    selected_wb_club_avg_order_count_per_day,
+	    selected_conversion_add_to_cart, selected_conversion_cart_to_order,
+	    selected_conversion_buyout,
+	    past_period_start, past_period_end,
+	    past_open_count, past_cart_count, past_order_count,
+	    past_order_sum, past_buyout_count, past_buyout_sum,
+	    past_cancel_count, past_cancel_sum, past_avg_price,
+	    past_avg_orders_count_per_day, past_share_order_percent,
+	    past_add_to_wishlist, past_localization_percent,
+	    past_time_to_ready_days, past_time_to_ready_hours, past_time_to_ready_mins,
+	    past_wb_club_order_count, past_wb_club_order_sum,
+	    past_wb_club_buyout_count, past_wb_club_buyout_sum,
+	    past_wb_club_cancel_count, past_wb_club_cancel_sum,
+	    past_wb_club_avg_price, past_wb_club_buyout_percent,
+	    past_wb_club_avg_order_count_per_day,
+	    past_conversion_add_to_cart, past_conversion_cart_to_order,
+	    past_conversion_buyout,
+	    comparison_open_count_dynamic, comparison_cart_count_dynamic,
+	    comparison_order_count_dynamic, comparison_order_sum_dynamic,
+	    comparison_buyout_count_dynamic, comparison_buyout_sum_dynamic,
+	    comparison_cancel_count_dynamic, comparison_cancel_sum_dynamic,
+	    comparison_avg_orders_count_per_day_dynamic, comparison_avg_price_dynamic,
+	    comparison_share_order_percent_dynamic, comparison_add_to_wishlist_dynamic,
+	    comparison_localization_percent_dynamic,
+	    comparison_time_to_ready_days, comparison_time_to_ready_hours,
+	    comparison_time_to_ready_mins,
+	    comparison_wb_club_order_count, comparison_wb_club_order_sum,
+	    comparison_wb_club_buyout_count, comparison_wb_club_buyout_sum,
+	    comparison_wb_club_cancel_count, comparison_wb_club_cancel_sum,
+	    comparison_wb_club_avg_price, comparison_wb_club_buyout_percent,
+	    comparison_wb_club_avg_order_count_per_day,
+	    comparison_conversion_add_to_cart, comparison_conversion_cart_to_order,
+	    comparison_conversion_buyout,
+	    currency
+	) VALUES `
+	insertAggMetricOnConflictSQL = `
+	ON CONFLICT (nm_id, period_start, period_end) DO UPDATE SET
+	    selected_open_count                 = EXCLUDED.selected_open_count,
+	    selected_cart_count                 = EXCLUDED.selected_cart_count,
+	    selected_order_count                = EXCLUDED.selected_order_count,
+	    selected_order_sum                  = EXCLUDED.selected_order_sum,
+	    selected_buyout_count               = EXCLUDED.selected_buyout_count,
+	    selected_buyout_sum                 = EXCLUDED.selected_buyout_sum,
+	    selected_cancel_count               = EXCLUDED.selected_cancel_count,
+	    selected_cancel_sum                 = EXCLUDED.selected_cancel_sum,
+	    selected_avg_price                  = EXCLUDED.selected_avg_price,
+	    selected_avg_orders_count_per_day   = EXCLUDED.selected_avg_orders_count_per_day,
+	    selected_share_order_percent        = EXCLUDED.selected_share_order_percent,
+	    selected_add_to_wishlist            = EXCLUDED.selected_add_to_wishlist,
+	    selected_localization_percent       = EXCLUDED.selected_localization_percent,
+	    selected_time_to_ready_days         = EXCLUDED.selected_time_to_ready_days,
+	    selected_time_to_ready_hours        = EXCLUDED.selected_time_to_ready_hours,
+	    selected_time_to_ready_mins         = EXCLUDED.selected_time_to_ready_mins,
+	    selected_wb_club_order_count        = EXCLUDED.selected_wb_club_order_count,
+	    selected_wb_club_order_sum          = EXCLUDED.selected_wb_club_order_sum,
+	    selected_wb_club_buyout_count       = EXCLUDED.selected_wb_club_buyout_count,
+	    selected_wb_club_buyout_sum         = EXCLUDED.selected_wb_club_buyout_sum,
+	    selected_wb_club_cancel_count       = EXCLUDED.selected_wb_club_cancel_count,
+	    selected_wb_club_cancel_sum         = EXCLUDED.selected_wb_club_cancel_sum,
+	    selected_wb_club_avg_price          = EXCLUDED.selected_wb_club_avg_price,
+	    selected_wb_club_buyout_percent     = EXCLUDED.selected_wb_club_buyout_percent,
+	    selected_wb_club_avg_order_count_per_day = EXCLUDED.selected_wb_club_avg_order_count_per_day,
+	    selected_conversion_add_to_cart     = EXCLUDED.selected_conversion_add_to_cart,
+	    selected_conversion_cart_to_order   = EXCLUDED.selected_conversion_cart_to_order,
+	    selected_conversion_buyout          = EXCLUDED.selected_conversion_buyout,
+	    past_period_start                   = EXCLUDED.past_period_start,
+	    past_period_end                     = EXCLUDED.past_period_end,
+	    past_open_count                     = EXCLUDED.past_open_count,
+	    past_cart_count                     = EXCLUDED.past_cart_count,
+	    past_order_count                    = EXCLUDED.past_order_count,
+	    past_order_sum                      = EXCLUDED.past_order_sum,
+	    past_buyout_count                   = EXCLUDED.past_buyout_count,
+	    past_buyout_sum                     = EXCLUDED.past_buyout_sum,
+	    past_cancel_count                   = EXCLUDED.past_cancel_count,
+	    past_cancel_sum                     = EXCLUDED.past_cancel_sum,
+	    past_avg_price                      = EXCLUDED.past_avg_price,
+	    past_avg_orders_count_per_day       = EXCLUDED.past_avg_orders_count_per_day,
+	    past_share_order_percent            = EXCLUDED.past_share_order_percent,
+	    past_add_to_wishlist                = EXCLUDED.past_add_to_wishlist,
+	    past_localization_percent           = EXCLUDED.past_localization_percent,
+	    past_time_to_ready_days             = EXCLUDED.past_time_to_ready_days,
+	    past_time_to_ready_hours            = EXCLUDED.past_time_to_ready_hours,
+	    past_time_to_ready_mins             = EXCLUDED.past_time_to_ready_mins,
+	    past_wb_club_order_count            = EXCLUDED.past_wb_club_order_count,
+	    past_wb_club_order_sum              = EXCLUDED.past_wb_club_order_sum,
+	    past_wb_club_buyout_count           = EXCLUDED.past_wb_club_buyout_count,
+	    past_wb_club_buyout_sum             = EXCLUDED.past_wb_club_buyout_sum,
+	    past_wb_club_cancel_count           = EXCLUDED.past_wb_club_cancel_count,
+	    past_wb_club_cancel_sum             = EXCLUDED.past_wb_club_cancel_sum,
+	    past_wb_club_avg_price              = EXCLUDED.past_wb_club_avg_price,
+	    past_wb_club_buyout_percent         = EXCLUDED.past_wb_club_buyout_percent,
+	    past_wb_club_avg_order_count_per_day = EXCLUDED.past_wb_club_avg_order_count_per_day,
+	    past_conversion_add_to_cart         = EXCLUDED.past_conversion_add_to_cart,
+	    past_conversion_cart_to_order       = EXCLUDED.past_conversion_cart_to_order,
+	    past_conversion_buyout              = EXCLUDED.past_conversion_buyout,
+	    comparison_open_count_dynamic       = EXCLUDED.comparison_open_count_dynamic,
+	    comparison_cart_count_dynamic       = EXCLUDED.comparison_cart_count_dynamic,
+	    comparison_order_count_dynamic      = EXCLUDED.comparison_order_count_dynamic,
+	    comparison_order_sum_dynamic        = EXCLUDED.comparison_order_sum_dynamic,
+	    comparison_buyout_count_dynamic     = EXCLUDED.comparison_buyout_count_dynamic,
+	    comparison_buyout_sum_dynamic       = EXCLUDED.comparison_buyout_sum_dynamic,
+	    comparison_cancel_count_dynamic     = EXCLUDED.comparison_cancel_count_dynamic,
+	    comparison_cancel_sum_dynamic       = EXCLUDED.comparison_cancel_sum_dynamic,
+	    comparison_avg_orders_count_per_day_dynamic = EXCLUDED.comparison_avg_orders_count_per_day_dynamic,
+	    comparison_avg_price_dynamic        = EXCLUDED.comparison_avg_price_dynamic,
+	    comparison_share_order_percent_dynamic = EXCLUDED.comparison_share_order_percent_dynamic,
+	    comparison_add_to_wishlist_dynamic  = EXCLUDED.comparison_add_to_wishlist_dynamic,
+	    comparison_localization_percent_dynamic = EXCLUDED.comparison_localization_percent_dynamic,
+	    comparison_time_to_ready_days       = EXCLUDED.comparison_time_to_ready_days,
+	    comparison_time_to_ready_hours      = EXCLUDED.comparison_time_to_ready_hours,
+	    comparison_time_to_ready_mins       = EXCLUDED.comparison_time_to_ready_mins,
+	    comparison_wb_club_order_count      = EXCLUDED.comparison_wb_club_order_count,
+	    comparison_wb_club_order_sum        = EXCLUDED.comparison_wb_club_order_sum,
+	    comparison_wb_club_buyout_count     = EXCLUDED.comparison_wb_club_buyout_count,
+	    comparison_wb_club_buyout_sum       = EXCLUDED.comparison_wb_club_buyout_sum,
+	    comparison_wb_club_cancel_count     = EXCLUDED.comparison_wb_club_cancel_count,
+	    comparison_wb_club_cancel_sum       = EXCLUDED.comparison_wb_club_cancel_sum,
+	    comparison_wb_club_avg_price        = EXCLUDED.comparison_wb_club_avg_price,
+	    comparison_wb_club_buyout_percent   = EXCLUDED.comparison_wb_club_buyout_percent,
+	    comparison_wb_club_avg_order_count_per_day = EXCLUDED.comparison_wb_club_avg_order_count_per_day,
+	    comparison_conversion_add_to_cart   = EXCLUDED.comparison_conversion_add_to_cart,
+	    comparison_conversion_cart_to_order = EXCLUDED.comparison_conversion_cart_to_order,
+	    comparison_conversion_buyout        = EXCLUDED.comparison_conversion_buyout,
+	    currency                            = EXCLUDED.currency`
+	insertAggMetricCols = 90
+)
+
+// Pre-built queries for full chunks (500 rows).
+// Products: special case — each row ends with TO_CHAR(...) which is not a $N placeholder,
+// so we build the multi-row query manually with appendProductRowPlaceholders.
+var insertAggMetricFullChunkSQL = BuildMultiRowInsert(insertAggMetricPrefixSQL, insertAggMetricOnConflictSQL, pgFunnelAggChunkSize, insertAggMetricCols)
+
 // SaveFunnelAggregatedBatch saves a batch of aggregated funnel products.
 // Uses a transaction for atomicity: upserts product metadata (with tags) + metrics.
 func (r *PgFunnelAggRepo) SaveFunnelAggregatedBatch(
@@ -60,26 +235,121 @@ func (r *PgFunnelAggRepo) SaveFunnelAggregatedBatch(
 		return 0, nil
 	}
 
+	// Filter out products with invalid nmID upfront.
+	valid := make([]wb.FunnelAggregatedProduct, 0, len(products))
+	for _, p := range products {
+		if p.Product.NmID > 0 {
+			valid = append(valid, p)
+		}
+	}
+	if len(valid) == 0 {
+		return 0, nil
+	}
+
+	// Build args for products multi-row INSERT.
+	// Each row: 12 params + TO_CHAR appended as literal per row.
+	productArgs := make([]any, 0, len(valid)*insertAggProductCols)
+	for _, p := range valid {
+		tagsJSON, _ := json.Marshal(p.Product.Tags)
+		productArgs = append(productArgs,
+			p.Product.NmID,
+			p.Product.VendorCode,
+			p.Product.Title,
+			p.Product.BrandName,
+			p.Product.SubjectID,
+			p.Product.SubjectName,
+			p.Product.ProductRating,
+			p.Product.FeedbackRating,
+			p.Product.Stocks.WB,
+			p.Product.Stocks.MP,
+			p.Product.Stocks.BalanceSum,
+			string(tagsJSON),
+		)
+	}
+
+	// Build args for metrics multi-row INSERT.
+	// Each row: 90 params.
+	metricArgs := make([]any, 0, len(valid)*insertAggMetricCols)
+	rows := make([]wb.FunnelAggregatedRow, len(valid))
+	for i, p := range valid {
+		rows[i] = convertAPIResponseToRow(p, periodStart, periodEnd, currency)
+		row := rows[i]
+		metricArgs = append(metricArgs,
+			// Natural key
+			row.NmID, row.PeriodStart, row.PeriodEnd,
+			// Selected metrics (28 fields)
+			row.SelectedOpenCount, row.SelectedCartCount, row.SelectedOrderCount,
+			row.SelectedOrderSum, row.SelectedBuyoutCount, row.SelectedBuyoutSum,
+			row.SelectedCancelCount, row.SelectedCancelSum, row.SelectedAvgPrice,
+			row.SelectedAvgOrdersCountPerDay, row.SelectedShareOrderPercent,
+			row.SelectedAddToWishlist, row.SelectedLocalizationPercent,
+			row.SelectedTimeToReadyDays, row.SelectedTimeToReadyHours, row.SelectedTimeToReadyMins,
+			row.SelectedWBClubOrderCount, row.SelectedWBClubOrderSum,
+			row.SelectedWBClubBuyoutCount, row.SelectedWBClubBuyoutSum,
+			row.SelectedWBClubCancelCount, row.SelectedWBClubCancelSum,
+			row.SelectedWBClubAvgPrice, row.SelectedWBClubBuyoutPercent,
+			row.SelectedWBClubAvgOrderCountPerDay,
+			row.SelectedConversionAddToCart, row.SelectedConversionCartToOrder,
+			row.SelectedConversionBuyout,
+			// Past metrics (30 fields)
+			row.PastPeriodStart, row.PastPeriodEnd,
+			row.PastOpenCount, row.PastCartCount, row.PastOrderCount,
+			row.PastOrderSum, row.PastBuyoutCount, row.PastBuyoutSum,
+			row.PastCancelCount, row.PastCancelSum, row.PastAvgPrice,
+			row.PastAvgOrdersCountPerDay, row.PastShareOrderPercent,
+			row.PastAddToWishlist, row.PastLocalizationPercent,
+			row.PastTimeToReadyDays, row.PastTimeToReadyHours, row.PastTimeToReadyMins,
+			row.PastWBClubOrderCount, row.PastWBClubOrderSum,
+			row.PastWBClubBuyoutCount, row.PastWBClubBuyoutSum,
+			row.PastWBClubCancelCount, row.PastWBClubCancelSum,
+			row.PastWBClubAvgPrice, row.PastWBClubBuyoutPercent,
+			row.PastWBClubAvgOrderCountPerDay,
+			row.PastConversionAddToCart, row.PastConversionCartToOrder,
+			row.PastConversionBuyout,
+			// Comparison metrics (28 fields)
+			row.ComparisonOpenCountDynamic, row.ComparisonCartCountDynamic,
+			row.ComparisonOrderCountDynamic, row.ComparisonOrderSumDynamic,
+			row.ComparisonBuyoutCountDynamic, row.ComparisonBuyoutSumDynamic,
+			row.ComparisonCancelCountDynamic, row.ComparisonCancelSumDynamic,
+			row.ComparisonAvgOrdersCountPerDayDynamic, row.ComparisonAvgPriceDynamic,
+			row.ComparisonShareOrderPercentDynamic, row.ComparisonAddToWishlistDynamic,
+			row.ComparisonLocalizationPercentDynamic,
+			row.ComparisonTimeToReadyDays, row.ComparisonTimeToReadyHours,
+			row.ComparisonTimeToReadyMins,
+			row.ComparisonWBClubOrderCount, row.ComparisonWBClubOrderSum,
+			row.ComparisonWBClubBuyoutCount, row.ComparisonWBClubBuyoutSum,
+			row.ComparisonWBClubCancelCount, row.ComparisonWBClubCancelSum,
+			row.ComparisonWBClubAvgPrice, row.ComparisonWBClubBuyoutPercent,
+			row.ComparisonWBClubAvgOrderCountPerDay,
+			row.ComparisonConversionAddToCart, row.ComparisonConversionCartToOrder,
+			row.ComparisonConversionBuyout,
+			// Metadata
+			row.Currency,
+		)
+	}
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	saved := 0
-	for _, p := range products {
-		// 1. Upsert product metadata (with tags JSON).
-		if err := r.upsertProductWithTags(ctx, tx, p.Product); err != nil {
-			continue // skip on error, continue with next product
-		}
-
-		// 2. Convert API response to flat row and upsert metrics.
-		row := convertAPIResponseToRow(p, periodStart, periodEnd, currency)
-		if err := r.upsertMetricRow(ctx, tx, row); err != nil {
-			continue
-		}
-		saved++
+	// 1. Multi-row upsert products.
+	productQuery := buildAggProductQuery(len(valid))
+	if _, err := tx.Exec(ctx, productQuery, productArgs...); err != nil {
+		return 0, fmt.Errorf("upsert products batch (size %d): %w", len(valid), err)
 	}
+
+	// 2. Multi-row upsert metrics.
+	metricQuery := insertAggMetricFullChunkSQL
+	if len(valid) < pgFunnelAggChunkSize {
+		metricQuery = BuildMultiRowInsert(insertAggMetricPrefixSQL, insertAggMetricOnConflictSQL, len(valid), insertAggMetricCols)
+	}
+	tag, err := tx.Exec(ctx, metricQuery, metricArgs...)
+	if err != nil {
+		return 0, fmt.Errorf("upsert metrics batch (size %d): %w", len(valid), err)
+	}
+	saved := int(tag.RowsAffected())
 
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit: %w", err)
@@ -87,99 +357,48 @@ func (r *PgFunnelAggRepo) SaveFunnelAggregatedBatch(
 	return saved, nil
 }
 
-// upsertProductWithTags saves or updates product metadata including tags (JSON).
-// Separate from pgUpsertProductSQL in funnel_repo.go because funnel-agg includes tags.
-func (r *PgFunnelAggRepo) upsertProductWithTags(ctx context.Context, tx pgx.Tx, p wb.FunnelProductExtended) error {
-	if p.NmID <= 0 {
-		return nil
+// buildAggProductQuery builds the multi-row INSERT query for products.
+// Products have a TO_CHAR(NOW()...) literal for updated_at (not a $N placeholder),
+// so we cannot use BuildMultiRowInsert directly. Instead we build the value tuples
+// manually: ($1,$2,...,$12, TO_CHAR(...)), ($13,...,$24, TO_CHAR(...)), ...
+func buildAggProductQuery(rowCount int) string {
+	total := rowCount * insertAggProductCols
+	if total > pgMaxParams {
+		panic(fmt.Sprintf("buildAggProductQuery: %d rows x %d cols = %d params exceeds PG limit %d",
+			rowCount, insertAggProductCols, total, pgMaxParams))
 	}
 
-	// Copy nested Stocks fields into flat fields.
-	stockWB := p.Stocks.WB
-	stockMP := p.Stocks.MP
-	stockBalance := p.Stocks.BalanceSum
+	// Estimate: prefix + onConflict + per-row: "($1,$2,...,$12, TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')), "
+	const toCharLiteral = "TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')"
+	estimated := len(insertAggProductPrefixSQL) + len(insertAggProductOnConflictSQL) + rowCount*(insertAggProductCols*8+len(toCharLiteral)+8)
 
-	// Serialize tags to JSON.
-	tagsJSON, _ := json.Marshal(p.Tags)
+	var sb strings.Builder
+	sb.Grow(estimated)
+	sb.WriteString(insertAggProductPrefixSQL)
 
-	_, err := tx.Exec(ctx, pgUpsertProductWithTagsSQL,
-		p.NmID,
-		p.VendorCode,
-		p.Title,
-		p.BrandName,
-		p.SubjectID,
-		p.SubjectName,
-		p.ProductRating,
-		p.FeedbackRating,
-		stockWB,
-		stockMP,
-		stockBalance,
-		string(tagsJSON),
-	)
-	if err != nil {
-		return fmt.Errorf("upsert product nm_id=%d: %w", p.NmID, err)
+	idx := 1
+	for row := 0; row < rowCount; row++ {
+		if row > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteByte('(')
+		for col := 0; col < insertAggProductCols; col++ {
+			if col > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteByte('$')
+			sb.WriteString(strconv.Itoa(idx))
+			idx++
+		}
+		// Append TO_CHAR literal for updated_at (not a placeholder).
+		sb.WriteString(", ")
+		sb.WriteString(toCharLiteral)
+		sb.WriteByte(')')
 	}
-	return nil
-}
 
-// upsertMetricRow inserts or updates one aggregated metric row.
-func (r *PgFunnelAggRepo) upsertMetricRow(ctx context.Context, tx pgx.Tx, row wb.FunnelAggregatedRow) error {
-	_, err := tx.Exec(ctx, pgUpsertFunnelAggSQL,
-		// Natural key
-		row.NmID, row.PeriodStart, row.PeriodEnd,
-		// Selected metrics (28 fields)
-		row.SelectedOpenCount, row.SelectedCartCount, row.SelectedOrderCount,
-		row.SelectedOrderSum, row.SelectedBuyoutCount, row.SelectedBuyoutSum,
-		row.SelectedCancelCount, row.SelectedCancelSum, row.SelectedAvgPrice,
-		row.SelectedAvgOrdersCountPerDay, row.SelectedShareOrderPercent,
-		row.SelectedAddToWishlist, row.SelectedLocalizationPercent,
-		row.SelectedTimeToReadyDays, row.SelectedTimeToReadyHours, row.SelectedTimeToReadyMins,
-		row.SelectedWBClubOrderCount, row.SelectedWBClubOrderSum,
-		row.SelectedWBClubBuyoutCount, row.SelectedWBClubBuyoutSum,
-		row.SelectedWBClubCancelCount, row.SelectedWBClubCancelSum,
-		row.SelectedWBClubAvgPrice, row.SelectedWBClubBuyoutPercent,
-		row.SelectedWBClubAvgOrderCountPerDay,
-		row.SelectedConversionAddToCart, row.SelectedConversionCartToOrder,
-		row.SelectedConversionBuyout,
-		// Past metrics (30 fields — nullable pointers)
-		row.PastPeriodStart, row.PastPeriodEnd,
-		row.PastOpenCount, row.PastCartCount, row.PastOrderCount,
-		row.PastOrderSum, row.PastBuyoutCount, row.PastBuyoutSum,
-		row.PastCancelCount, row.PastCancelSum, row.PastAvgPrice,
-		row.PastAvgOrdersCountPerDay, row.PastShareOrderPercent,
-		row.PastAddToWishlist, row.PastLocalizationPercent,
-		row.PastTimeToReadyDays, row.PastTimeToReadyHours, row.PastTimeToReadyMins,
-		row.PastWBClubOrderCount, row.PastWBClubOrderSum,
-		row.PastWBClubBuyoutCount, row.PastWBClubBuyoutSum,
-		row.PastWBClubCancelCount, row.PastWBClubCancelSum,
-		row.PastWBClubAvgPrice, row.PastWBClubBuyoutPercent,
-		row.PastWBClubAvgOrderCountPerDay,
-		row.PastConversionAddToCart, row.PastConversionCartToOrder,
-		row.PastConversionBuyout,
-		// Comparison metrics (28 fields — nullable pointers)
-		row.ComparisonOpenCountDynamic, row.ComparisonCartCountDynamic,
-		row.ComparisonOrderCountDynamic, row.ComparisonOrderSumDynamic,
-		row.ComparisonBuyoutCountDynamic, row.ComparisonBuyoutSumDynamic,
-		row.ComparisonCancelCountDynamic, row.ComparisonCancelSumDynamic,
-		row.ComparisonAvgOrdersCountPerDayDynamic, row.ComparisonAvgPriceDynamic,
-		row.ComparisonShareOrderPercentDynamic, row.ComparisonAddToWishlistDynamic,
-		row.ComparisonLocalizationPercentDynamic,
-		row.ComparisonTimeToReadyDays, row.ComparisonTimeToReadyHours,
-		row.ComparisonTimeToReadyMins,
-		row.ComparisonWBClubOrderCount, row.ComparisonWBClubOrderSum,
-		row.ComparisonWBClubBuyoutCount, row.ComparisonWBClubBuyoutSum,
-		row.ComparisonWBClubCancelCount, row.ComparisonWBClubCancelSum,
-		row.ComparisonWBClubAvgPrice, row.ComparisonWBClubBuyoutPercent,
-		row.ComparisonWBClubAvgOrderCountPerDay,
-		row.ComparisonConversionAddToCart, row.ComparisonConversionCartToOrder,
-		row.ComparisonConversionBuyout,
-		// Metadata
-		row.Currency,
-	)
-	if err != nil {
-		return fmt.Errorf("upsert metric nm_id=%d: %w", row.NmID, err)
-	}
-	return nil
+	sb.WriteByte(' ')
+	sb.WriteString(insertAggProductOnConflictSQL)
+	return sb.String()
 }
 
 // convertAPIResponseToRow converts API response to a flat DB row.
@@ -299,191 +518,3 @@ func convertAPIResponseToRow(
 
 	return row
 }
-
-var (
-	// pgUpsertProductWithTagsSQL upserts product metadata with tags.
-	// 12 placeholders ($1-$12) + 1 SQL function (TO_CHAR for updated_at).
-	// Separate from pgUpsertProductSQL in funnel_repo.go because funnel-agg includes tags.
-	pgUpsertProductWithTagsSQL = `
-INSERT INTO products (
-    nm_id, vendor_code, title, brand_name,
-    subject_id, subject_name,
-    product_rating, feedback_rating,
-    stock_wb, stock_mp, stock_balance_sum,
-    tags,
-    updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-    TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
-ON CONFLICT (nm_id) DO UPDATE SET
-    vendor_code       = EXCLUDED.vendor_code,
-    title             = EXCLUDED.title,
-    brand_name        = EXCLUDED.brand_name,
-    subject_id        = EXCLUDED.subject_id,
-    subject_name      = EXCLUDED.subject_name,
-    product_rating    = EXCLUDED.product_rating,
-    feedback_rating   = EXCLUDED.feedback_rating,
-    stock_wb          = EXCLUDED.stock_wb,
-    stock_mp          = EXCLUDED.stock_mp,
-    stock_balance_sum = EXCLUDED.stock_balance_sum,
-    tags              = EXCLUDED.tags,
-    updated_at        = EXCLUDED.updated_at`
-
-	// pgUpsertFunnelAggSQL upserts aggregated funnel metrics.
-	// 90 placeholders ($1-$90) = 90 columns.
-	// ON CONFLICT (nm_id, period_start, period_end) — natural key.
-	//
-	// Column layout:
-	//   $1-$3   natural key (nm_id, period_start, period_end)
-	//   $4-$31  selected metrics (28 NOT NULL columns)
-	//   $32-$61 past metrics (30 nullable columns)
-	//   $62-$89 comparison metrics (28 nullable columns)
-	//   $90     currency
-	pgUpsertFunnelAggSQL = `
-INSERT INTO funnel_metrics_aggregated (
-    nm_id, period_start, period_end,
-    selected_open_count, selected_cart_count, selected_order_count,
-    selected_order_sum, selected_buyout_count, selected_buyout_sum,
-    selected_cancel_count, selected_cancel_sum, selected_avg_price,
-    selected_avg_orders_count_per_day, selected_share_order_percent,
-    selected_add_to_wishlist, selected_localization_percent,
-    selected_time_to_ready_days, selected_time_to_ready_hours, selected_time_to_ready_mins,
-    selected_wb_club_order_count, selected_wb_club_order_sum,
-    selected_wb_club_buyout_count, selected_wb_club_buyout_sum,
-    selected_wb_club_cancel_count, selected_wb_club_cancel_sum,
-    selected_wb_club_avg_price, selected_wb_club_buyout_percent,
-    selected_wb_club_avg_order_count_per_day,
-    selected_conversion_add_to_cart, selected_conversion_cart_to_order,
-    selected_conversion_buyout,
-    past_period_start, past_period_end,
-    past_open_count, past_cart_count, past_order_count,
-    past_order_sum, past_buyout_count, past_buyout_sum,
-    past_cancel_count, past_cancel_sum, past_avg_price,
-    past_avg_orders_count_per_day, past_share_order_percent,
-    past_add_to_wishlist, past_localization_percent,
-    past_time_to_ready_days, past_time_to_ready_hours, past_time_to_ready_mins,
-    past_wb_club_order_count, past_wb_club_order_sum,
-    past_wb_club_buyout_count, past_wb_club_buyout_sum,
-    past_wb_club_cancel_count, past_wb_club_cancel_sum,
-    past_wb_club_avg_price, past_wb_club_buyout_percent,
-    past_wb_club_avg_order_count_per_day,
-    past_conversion_add_to_cart, past_conversion_cart_to_order,
-    past_conversion_buyout,
-    comparison_open_count_dynamic, comparison_cart_count_dynamic,
-    comparison_order_count_dynamic, comparison_order_sum_dynamic,
-    comparison_buyout_count_dynamic, comparison_buyout_sum_dynamic,
-    comparison_cancel_count_dynamic, comparison_cancel_sum_dynamic,
-    comparison_avg_orders_count_per_day_dynamic, comparison_avg_price_dynamic,
-    comparison_share_order_percent_dynamic, comparison_add_to_wishlist_dynamic,
-    comparison_localization_percent_dynamic,
-    comparison_time_to_ready_days, comparison_time_to_ready_hours,
-    comparison_time_to_ready_mins,
-    comparison_wb_club_order_count, comparison_wb_club_order_sum,
-    comparison_wb_club_buyout_count, comparison_wb_club_buyout_sum,
-    comparison_wb_club_cancel_count, comparison_wb_club_cancel_sum,
-    comparison_wb_club_avg_price, comparison_wb_club_buyout_percent,
-    comparison_wb_club_avg_order_count_per_day,
-    comparison_conversion_add_to_cart, comparison_conversion_cart_to_order,
-    comparison_conversion_buyout,
-    currency
-) VALUES (
-    $1,$2,$3,
-    $4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-    $20,$21,$22,$23,$24,$25,$26,$27,$28,
-    $29,$30,$31,
-    $32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,
-    $50,$51,$52,$53,$54,$55,$56,$57,$58,
-    $59,$60,$61,
-    $62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,
-    $78,$79,$80,$81,$82,$83,$84,$85,$86,
-    $87,$88,$89,
-    $90
-)
-ON CONFLICT (nm_id, period_start, period_end) DO UPDATE SET
-    selected_open_count                 = EXCLUDED.selected_open_count,
-    selected_cart_count                 = EXCLUDED.selected_cart_count,
-    selected_order_count                = EXCLUDED.selected_order_count,
-    selected_order_sum                  = EXCLUDED.selected_order_sum,
-    selected_buyout_count               = EXCLUDED.selected_buyout_count,
-    selected_buyout_sum                 = EXCLUDED.selected_buyout_sum,
-    selected_cancel_count               = EXCLUDED.selected_cancel_count,
-    selected_cancel_sum                 = EXCLUDED.selected_cancel_sum,
-    selected_avg_price                  = EXCLUDED.selected_avg_price,
-    selected_avg_orders_count_per_day   = EXCLUDED.selected_avg_orders_count_per_day,
-    selected_share_order_percent        = EXCLUDED.selected_share_order_percent,
-    selected_add_to_wishlist            = EXCLUDED.selected_add_to_wishlist,
-    selected_localization_percent       = EXCLUDED.selected_localization_percent,
-    selected_time_to_ready_days         = EXCLUDED.selected_time_to_ready_days,
-    selected_time_to_ready_hours        = EXCLUDED.selected_time_to_ready_hours,
-    selected_time_to_ready_mins         = EXCLUDED.selected_time_to_ready_mins,
-    selected_wb_club_order_count        = EXCLUDED.selected_wb_club_order_count,
-    selected_wb_club_order_sum          = EXCLUDED.selected_wb_club_order_sum,
-    selected_wb_club_buyout_count       = EXCLUDED.selected_wb_club_buyout_count,
-    selected_wb_club_buyout_sum         = EXCLUDED.selected_wb_club_buyout_sum,
-    selected_wb_club_cancel_count       = EXCLUDED.selected_wb_club_cancel_count,
-    selected_wb_club_cancel_sum         = EXCLUDED.selected_wb_club_cancel_sum,
-    selected_wb_club_avg_price          = EXCLUDED.selected_wb_club_avg_price,
-    selected_wb_club_buyout_percent     = EXCLUDED.selected_wb_club_buyout_percent,
-    selected_wb_club_avg_order_count_per_day = EXCLUDED.selected_wb_club_avg_order_count_per_day,
-    selected_conversion_add_to_cart     = EXCLUDED.selected_conversion_add_to_cart,
-    selected_conversion_cart_to_order   = EXCLUDED.selected_conversion_cart_to_order,
-    selected_conversion_buyout          = EXCLUDED.selected_conversion_buyout,
-    past_period_start                   = EXCLUDED.past_period_start,
-    past_period_end                     = EXCLUDED.past_period_end,
-    past_open_count                     = EXCLUDED.past_open_count,
-    past_cart_count                     = EXCLUDED.past_cart_count,
-    past_order_count                    = EXCLUDED.past_order_count,
-    past_order_sum                      = EXCLUDED.past_order_sum,
-    past_buyout_count                   = EXCLUDED.past_buyout_count,
-    past_buyout_sum                     = EXCLUDED.past_buyout_sum,
-    past_cancel_count                   = EXCLUDED.past_cancel_count,
-    past_cancel_sum                     = EXCLUDED.past_cancel_sum,
-    past_avg_price                      = EXCLUDED.past_avg_price,
-    past_avg_orders_count_per_day       = EXCLUDED.past_avg_orders_count_per_day,
-    past_share_order_percent            = EXCLUDED.past_share_order_percent,
-    past_add_to_wishlist                = EXCLUDED.past_add_to_wishlist,
-    past_localization_percent           = EXCLUDED.past_localization_percent,
-    past_time_to_ready_days             = EXCLUDED.past_time_to_ready_days,
-    past_time_to_ready_hours            = EXCLUDED.past_time_to_ready_hours,
-    past_time_to_ready_mins             = EXCLUDED.past_time_to_ready_mins,
-    past_wb_club_order_count            = EXCLUDED.past_wb_club_order_count,
-    past_wb_club_order_sum              = EXCLUDED.past_wb_club_order_sum,
-    past_wb_club_buyout_count           = EXCLUDED.past_wb_club_buyout_count,
-    past_wb_club_buyout_sum             = EXCLUDED.past_wb_club_buyout_sum,
-    past_wb_club_cancel_count           = EXCLUDED.past_wb_club_cancel_count,
-    past_wb_club_cancel_sum             = EXCLUDED.past_wb_club_cancel_sum,
-    past_wb_club_avg_price              = EXCLUDED.past_wb_club_avg_price,
-    past_wb_club_buyout_percent         = EXCLUDED.past_wb_club_buyout_percent,
-    past_wb_club_avg_order_count_per_day = EXCLUDED.past_wb_club_avg_order_count_per_day,
-    past_conversion_add_to_cart         = EXCLUDED.past_conversion_add_to_cart,
-    past_conversion_cart_to_order       = EXCLUDED.past_conversion_cart_to_order,
-    past_conversion_buyout              = EXCLUDED.past_conversion_buyout,
-    comparison_open_count_dynamic       = EXCLUDED.comparison_open_count_dynamic,
-    comparison_cart_count_dynamic       = EXCLUDED.comparison_cart_count_dynamic,
-    comparison_order_count_dynamic      = EXCLUDED.comparison_order_count_dynamic,
-    comparison_order_sum_dynamic        = EXCLUDED.comparison_order_sum_dynamic,
-    comparison_buyout_count_dynamic     = EXCLUDED.comparison_buyout_count_dynamic,
-    comparison_buyout_sum_dynamic       = EXCLUDED.comparison_buyout_sum_dynamic,
-    comparison_cancel_count_dynamic     = EXCLUDED.comparison_cancel_count_dynamic,
-    comparison_cancel_sum_dynamic       = EXCLUDED.comparison_cancel_sum_dynamic,
-    comparison_avg_orders_count_per_day_dynamic = EXCLUDED.comparison_avg_orders_count_per_day_dynamic,
-    comparison_avg_price_dynamic        = EXCLUDED.comparison_avg_price_dynamic,
-    comparison_share_order_percent_dynamic = EXCLUDED.comparison_share_order_percent_dynamic,
-    comparison_add_to_wishlist_dynamic  = EXCLUDED.comparison_add_to_wishlist_dynamic,
-    comparison_localization_percent_dynamic = EXCLUDED.comparison_localization_percent_dynamic,
-    comparison_time_to_ready_days       = EXCLUDED.comparison_time_to_ready_days,
-    comparison_time_to_ready_hours      = EXCLUDED.comparison_time_to_ready_hours,
-    comparison_time_to_ready_mins       = EXCLUDED.comparison_time_to_ready_mins,
-    comparison_wb_club_order_count      = EXCLUDED.comparison_wb_club_order_count,
-    comparison_wb_club_order_sum        = EXCLUDED.comparison_wb_club_order_sum,
-    comparison_wb_club_buyout_count     = EXCLUDED.comparison_wb_club_buyout_count,
-    comparison_wb_club_buyout_sum       = EXCLUDED.comparison_wb_club_buyout_sum,
-    comparison_wb_club_cancel_count     = EXCLUDED.comparison_wb_club_cancel_count,
-    comparison_wb_club_cancel_sum       = EXCLUDED.comparison_wb_club_cancel_sum,
-    comparison_wb_club_avg_price        = EXCLUDED.comparison_wb_club_avg_price,
-    comparison_wb_club_buyout_percent   = EXCLUDED.comparison_wb_club_buyout_percent,
-    comparison_wb_club_avg_order_count_per_day = EXCLUDED.comparison_wb_club_avg_order_count_per_day,
-    comparison_conversion_add_to_cart   = EXCLUDED.comparison_conversion_add_to_cart,
-    comparison_conversion_cart_to_order = EXCLUDED.comparison_conversion_cart_to_order,
-    comparison_conversion_buyout        = EXCLUDED.comparison_conversion_buyout,
-    currency                            = EXCLUDED.currency`
-)
