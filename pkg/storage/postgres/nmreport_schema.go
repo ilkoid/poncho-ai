@@ -45,17 +45,17 @@ CREATE INDEX IF NOT EXISTS idx_nrd_type_dates ON nm_report_downloads(report_type
 
 CREATE TABLE IF NOT EXISTS funnel_metrics_daily (
     id BIGSERIAL PRIMARY KEY,
-    nm_id INTEGER NOT NULL,
+    nm_id BIGINT NOT NULL,
     metric_date TEXT NOT NULL DEFAULT '',
-    open_count INTEGER NOT NULL DEFAULT 0,
-    cart_count INTEGER NOT NULL DEFAULT 0,
-    order_count INTEGER NOT NULL DEFAULT 0,
-    buyout_count INTEGER NOT NULL DEFAULT 0,
-    add_to_wishlist INTEGER NOT NULL DEFAULT 0,
-    order_sum INTEGER NOT NULL DEFAULT 0,
-    buyout_sum INTEGER NOT NULL DEFAULT 0,
-    cancel_count INTEGER NOT NULL DEFAULT 0,
-    cancel_sum_rub INTEGER NOT NULL DEFAULT 0,
+    open_count BIGINT NOT NULL DEFAULT 0,
+    cart_count BIGINT NOT NULL DEFAULT 0,
+    order_count BIGINT NOT NULL DEFAULT 0,
+    buyout_count BIGINT NOT NULL DEFAULT 0,
+    add_to_wishlist BIGINT NOT NULL DEFAULT 0,
+    order_sum BIGINT NOT NULL DEFAULT 0,
+    buyout_sum BIGINT NOT NULL DEFAULT 0,
+    cancel_count BIGINT NOT NULL DEFAULT 0,
+    cancel_sum_rub BIGINT NOT NULL DEFAULT 0,
     conversion_add_to_cart DOUBLE PRECISION NOT NULL DEFAULT 0,
     conversion_cart_to_order DOUBLE PRECISION NOT NULL DEFAULT 0,
     conversion_buyout DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -74,28 +74,57 @@ CREATE INDEX IF NOT EXISTS idx_fmd_date ON funnel_metrics_daily(metric_date);
 CREATE TABLE IF NOT EXISTS funnel_metrics_grouped_daily (
     id BIGSERIAL PRIMARY KEY,
     metric_date TEXT NOT NULL DEFAULT '',
-    open_card_count INTEGER NOT NULL DEFAULT 0,
-    add_to_cart_count INTEGER NOT NULL DEFAULT 0,
-    orders_count INTEGER NOT NULL DEFAULT 0,
-    orders_sum_rub INTEGER NOT NULL DEFAULT 0,
-    buyouts_count INTEGER NOT NULL DEFAULT 0,
-    buyouts_sum_rub INTEGER NOT NULL DEFAULT 0,
-    cancel_count INTEGER NOT NULL DEFAULT 0,
-    cancel_sum_rub INTEGER NOT NULL DEFAULT 0,
+    open_card_count BIGINT NOT NULL DEFAULT 0,
+    add_to_cart_count BIGINT NOT NULL DEFAULT 0,
+    orders_count BIGINT NOT NULL DEFAULT 0,
+    orders_sum_rub BIGINT NOT NULL DEFAULT 0,
+    buyouts_count BIGINT NOT NULL DEFAULT 0,
+    buyouts_sum_rub BIGINT NOT NULL DEFAULT 0,
+    cancel_count BIGINT NOT NULL DEFAULT 0,
+    cancel_sum_rub BIGINT NOT NULL DEFAULT 0,
     conversion_add_to_cart DOUBLE PRECISION NOT NULL DEFAULT 0,
     conversion_cart_to_order DOUBLE PRECISION NOT NULL DEFAULT 0,
     conversion_buyout DOUBLE PRECISION NOT NULL DEFAULT 0,
-    add_to_wishlist INTEGER NOT NULL DEFAULT 0,
+    add_to_wishlist BIGINT NOT NULL DEFAULT 0,
     UNIQUE(metric_date)
 );
 `
 )
+
+// nmreportMigrations ensures cancel columns exist (funnel-v2 creates the table without them)
+// and widens INTEGER columns to BIGINT. Safe: all operations are idempotent.
+const nmreportMigrations = `
+ALTER TABLE funnel_metrics_daily ADD COLUMN IF NOT EXISTS cancel_count BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE funnel_metrics_daily ADD COLUMN IF NOT EXISTS cancel_sum_rub BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN open_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN cart_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN order_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN buyout_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN add_to_wishlist TYPE BIGINT;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN order_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN buyout_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN cancel_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_daily ALTER COLUMN cancel_sum_rub TYPE BIGINT;
+ALTER TABLE funnel_metrics_grouped_daily ALTER COLUMN open_card_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_grouped_daily ALTER COLUMN add_to_cart_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_grouped_daily ALTER COLUMN orders_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_grouped_daily ALTER COLUMN orders_sum_rub TYPE BIGINT;
+ALTER TABLE funnel_metrics_grouped_daily ALTER COLUMN buyouts_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_grouped_daily ALTER COLUMN buyouts_sum_rub TYPE BIGINT;
+ALTER TABLE funnel_metrics_grouped_daily ALTER COLUMN cancel_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_grouped_daily ALTER COLUMN cancel_sum_rub TYPE BIGINT;
+ALTER TABLE funnel_metrics_grouped_daily ALTER COLUMN add_to_wishlist TYPE BIGINT;
+`
 
 // initNmReportSchema creates nmreport tables in the PostgreSQL database.
 func initNmReportSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, nmreportSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("nmreport schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, nmreportMigrations); err != nil {
+		return fmt.Errorf("nmreport migrations (int4→bigint): %w", err)
 	}
 	return nil
 }
