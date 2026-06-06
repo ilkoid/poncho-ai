@@ -27,11 +27,11 @@ CREATE TABLE IF NOT EXISTS sales (
     id BIGSERIAL PRIMARY KEY,
 
     -- WB API identifiers (unique for pagination)
-    rrd_id INTEGER UNIQUE NOT NULL,
-    realizationreport_id INTEGER,
+    rrd_id BIGINT UNIQUE NOT NULL,
+    realizationreport_id BIGINT,
 
     -- Product identifiers
-    nm_id INTEGER NOT NULL DEFAULT 0,
+    nm_id BIGINT NOT NULL DEFAULT 0,
     supplier_article TEXT DEFAULT '',
     barcode TEXT DEFAULT '',
 
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS sales (
 
     -- Transaction details
     doc_type_name TEXT DEFAULT '',                -- "Продажа", "Возврат"
-    quantity INTEGER DEFAULT 0,
+    quantity BIGINT DEFAULT 0,
     retail_price DOUBLE PRECISION DEFAULT 0,
     retail_amount DOUBLE PRECISION DEFAULT 0,
     sale_percent DOUBLE PRECISION DEFAULT 0,
@@ -123,22 +123,22 @@ CREATE TABLE IF NOT EXISTS service_records (
     id BIGSERIAL PRIMARY KEY,
 
     -- WB API identifiers
-    rrd_id INTEGER UNIQUE NOT NULL,
-    realizationreport_id INTEGER,
+    rrd_id BIGINT UNIQUE NOT NULL,
+    realizationreport_id BIGINT,
 
     -- Operation type (KEY field for classification!)
     -- Values: "Возмещение издержек...", "Удержание", "Логистика", etc.
     supplier_oper_name TEXT DEFAULT '',
 
     -- Product info (NULL for general records)
-    nm_id INTEGER DEFAULT 0,
+    nm_id BIGINT DEFAULT 0,
     supplier_article TEXT DEFAULT '',
     brand_name TEXT DEFAULT '',
     subject_name TEXT DEFAULT '',
 
     -- Partial identifiers
     barcode TEXT DEFAULT '',
-    shk_id INTEGER DEFAULT 0,
+    shk_id BIGINT DEFAULT 0,
     srid TEXT DEFAULT '',
 
     -- Delivery info
@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS service_records (
     deduction DOUBLE PRECISION,
     storage_fee DOUBLE PRECISION,
     acceptance DOUBLE PRECISION,
-    gi_id INTEGER,
+    gi_id BIGINT,
 
     -- Financial data (always present → NOT NULL DEFAULT)
     ppvz_vw DOUBLE PRECISION DEFAULT 0,
@@ -196,11 +196,34 @@ var (
 	idxServiceDeductionSQL = `CREATE INDEX IF NOT EXISTS idx_service_deduction ON service_records(nm_id) WHERE deduction IS NOT NULL`
 )
 
+// salesMigrations widens INTEGER columns to BIGINT for ID and quantity fields.
+// Safe: INTEGER→BIGINT is a widening conversion — no data loss.
+const salesMigrations = `
+ALTER TABLE sales ALTER COLUMN rrd_id TYPE BIGINT;
+ALTER TABLE sales ALTER COLUMN realizationreport_id TYPE BIGINT;
+ALTER TABLE sales ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE sales ALTER COLUMN quantity TYPE BIGINT;
+`
+
+// serviceRecordsMigrations widens INTEGER columns to BIGINT for service_records.
+// Executed AFTER initServiceRecordsSchema() creates the table.
+// Safe: INTEGER→BIGINT is a widening conversion — no data loss.
+const serviceRecordsMigrations = `
+ALTER TABLE service_records ALTER COLUMN rrd_id TYPE BIGINT;
+ALTER TABLE service_records ALTER COLUMN realizationreport_id TYPE BIGINT;
+ALTER TABLE service_records ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE service_records ALTER COLUMN shk_id TYPE BIGINT;
+ALTER TABLE service_records ALTER COLUMN gi_id TYPE BIGINT;
+`
+
 // initSalesSchema creates sales table in the PostgreSQL database.
 func initSalesSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, salesSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("sales schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, salesMigrations); err != nil {
+		return fmt.Errorf("sales migrations (int4→bigint): %w", err)
 	}
 	return nil
 }
@@ -210,6 +233,11 @@ func initServiceRecordsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	// Table + simple indexes (multi-statement OK for simple DDL)
 	if _, err := pool.Exec(ctx, serviceRecordsSchemaSQL); err != nil {
 		return fmt.Errorf("service_records schema: %w", err)
+	}
+
+	// Widen INTEGER → BIGINT (no-op on fresh DB, needed for legacy schemas)
+	if _, err := pool.Exec(ctx, serviceRecordsMigrations); err != nil {
+		return fmt.Errorf("service_records migrations (int4→bigint): %w", err)
 	}
 
 	// Expression/partial indexes — must run as individual Exec calls
