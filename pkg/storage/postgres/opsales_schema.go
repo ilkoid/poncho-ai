@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS operational_sales (
 
     -- Product identification
     supplier_article TEXT NOT NULL DEFAULT '',
-    nm_id INTEGER NOT NULL DEFAULT 0,
+    nm_id BIGINT NOT NULL DEFAULT 0,
     barcode TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL DEFAULT '',
     subject TEXT NOT NULL DEFAULT '',
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS operational_sales (
     tech_size TEXT NOT NULL DEFAULT '',
 
     -- Supply info
-    income_id INTEGER NOT NULL DEFAULT 0,
+    income_id BIGINT NOT NULL DEFAULT 0,
     is_supply BOOLEAN NOT NULL DEFAULT FALSE,
     is_realization BOOLEAN NOT NULL DEFAULT FALSE,
 
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS operational_sales (
     total_price DOUBLE PRECISION NOT NULL DEFAULT 0,
     discount_percent INTEGER NOT NULL DEFAULT 0,
     spp DOUBLE PRECISION NOT NULL DEFAULT 0,
-    payment_sale_amount INTEGER NOT NULL DEFAULT 0,
+    payment_sale_amount BIGINT NOT NULL DEFAULT 0,
     for_pay DOUBLE PRECISION NOT NULL DEFAULT 0,
     finished_price DOUBLE PRECISION NOT NULL DEFAULT 0,
     price_with_disc DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -82,11 +82,22 @@ CREATE INDEX IF NOT EXISTS idx_opsales_last_change_date ON operational_sales(las
 `
 )
 
+// opsalesMigrations widens INTEGER columns to BIGINT for ID and amount fields.
+// Safe: INTEGER→BIGINT is a widening conversion — no data loss.
+const opsalesMigrations = `
+ALTER TABLE operational_sales ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE operational_sales ALTER COLUMN income_id TYPE BIGINT;
+ALTER TABLE operational_sales ALTER COLUMN payment_sale_amount TYPE BIGINT;
+`
+
 // initOpsalesSchema creates operational_sales table in the PostgreSQL database.
 func initOpsalesSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, opsalesSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("opsales schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, opsalesMigrations); err != nil {
+		return fmt.Errorf("opsales migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

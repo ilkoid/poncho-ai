@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS region_sales (
     id BIGSERIAL PRIMARY KEY,
 
     -- Product identification
-    nm_id INTEGER NOT NULL,
+    nm_id BIGINT NOT NULL,
     sa TEXT NOT NULL DEFAULT '',
 
     -- Geography hierarchy
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS region_sales (
     -- Sales metrics
     sale_invoice_cost_price DOUBLE PRECISION NOT NULL DEFAULT 0,
     sale_invoice_cost_price_perc DOUBLE PRECISION NOT NULL DEFAULT 0,
-    sale_item_invoice_qty INTEGER NOT NULL DEFAULT 0,
+    sale_item_invoice_qty BIGINT NOT NULL DEFAULT 0,
 
     -- Metadata
     downloaded_at TEXT DEFAULT TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
@@ -62,10 +62,18 @@ CREATE INDEX IF NOT EXISTS idx_region_sales_dates
 `
 )
 
+const regionSalesMigrations = `
+ALTER TABLE region_sales ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE region_sales ALTER COLUMN sale_item_invoice_qty TYPE BIGINT;
+`
+
 // initRegionSalesSchema creates region_sales table in PostgreSQL.
 func initRegionSalesSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, regionSalesSchemaSQL); err != nil {
 		return fmt.Errorf("region_sales schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, regionSalesMigrations); err != nil {
+		return fmt.Errorf("region_sales migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS onec_goods (
     recommendations     TEXT    DEFAULT '',
     size_on_model       TEXT    DEFAULT '',
     tag                 TEXT    DEFAULT '',
-    quantity_bar_code   INTEGER DEFAULT 0,
+    quantity_bar_code   BIGINT DEFAULT 0,
     -- Boolean flags
     is_adult            BOOLEAN NOT NULL DEFAULT FALSE,
     is_article_blocked  BOOLEAN NOT NULL DEFAULT FALSE,
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS pim_goods (
     season              TEXT    DEFAULT '',
     color               TEXT    DEFAULT '',
     filter_color        TEXT    DEFAULT '',
-    wb_nm_id            INTEGER DEFAULT 0,
+    wb_nm_id            BIGINT DEFAULT 0,
     year_collection     INTEGER DEFAULT 0,
     menu_product_type   TEXT    DEFAULT '',
     menu_age            TEXT    DEFAULT '',
@@ -207,11 +207,22 @@ CREATE INDEX IF NOT EXISTS idx_onec_dimensions_good_guid ON onec_dimensions(good
 `
 )
 
+// onecMigrations widens INTEGER columns to BIGINT for ID and quantity fields.
+// Safe: INTEGER→BIGINT is a widening conversion — no data loss.
+// nds (VAT 0-20) and year_collection (year) remain INTEGER (bounded values).
+const onecMigrations = `
+ALTER TABLE onec_goods ALTER COLUMN quantity_bar_code TYPE BIGINT;
+ALTER TABLE pim_goods ALTER COLUMN wb_nm_id TYPE BIGINT;
+`
+
 // initOneCSchema creates 1C/PIM tables in the PostgreSQL database.
 func initOneCSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, onecSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("onec schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, onecMigrations); err != nil {
+		return fmt.Errorf("onec migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

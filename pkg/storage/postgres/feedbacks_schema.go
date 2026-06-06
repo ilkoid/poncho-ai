@@ -34,10 +34,10 @@ CREATE TABLE IF NOT EXISTS feedbacks (
     is_able_return_product_orders BOOLEAN NOT NULL DEFAULT FALSE,
     return_product_orders_date TEXT,
     bables TEXT,
-    last_order_shk_id INTEGER,
+    last_order_shk_id BIGINT,
     last_order_created_at TEXT NOT NULL DEFAULT '',
     color TEXT NOT NULL DEFAULT '',
-    subject_id INTEGER,
+    subject_id BIGINT,
     subject_name TEXT NOT NULL DEFAULT '',
     parent_feedback_id TEXT,
     child_feedback_id TEXT,
@@ -48,8 +48,8 @@ CREATE TABLE IF NOT EXISTS feedbacks (
     video_preview_image TEXT,
     video_link TEXT,
     video_duration_sec INTEGER,
-    product_imt_id INTEGER,
-    product_nm_id INTEGER,
+    product_imt_id BIGINT,
+    product_nm_id BIGINT,
     product_name TEXT NOT NULL DEFAULT '',
     supplier_article TEXT,
     supplier_name TEXT,
@@ -78,8 +78,8 @@ CREATE TABLE IF NOT EXISTS questions (
     answer_text TEXT,
     answer_editable BOOLEAN,
     answer_create_date TEXT,
-    product_imt_id INTEGER,
-    product_nm_id INTEGER,
+    product_imt_id BIGINT,
+    product_nm_id BIGINT,
     product_name TEXT NOT NULL DEFAULT '',
     supplier_article TEXT NOT NULL DEFAULT '',
     supplier_name TEXT NOT NULL DEFAULT '',
@@ -90,13 +90,31 @@ CREATE INDEX IF NOT EXISTS idx_questions_created_date ON questions(created_date)
 CREATE INDEX IF NOT EXISTS idx_questions_nm_id ON questions(product_nm_id);
 `
 
+// feedbacksMigrations widens INTEGER columns to BIGINT for ID fields
+// that can exceed int4 max (2,147,483,647). Safe: INTEGER→BIGINT is a
+// widening conversion — no data loss. These statements are idempotent
+// (re-running on already-BIGINT columns is a no-op).
+const feedbacksMigrations = `
+ALTER TABLE feedbacks ALTER COLUMN last_order_shk_id TYPE BIGINT;
+ALTER TABLE feedbacks ALTER COLUMN subject_id TYPE BIGINT;
+ALTER TABLE feedbacks ALTER COLUMN product_imt_id TYPE BIGINT;
+ALTER TABLE feedbacks ALTER COLUMN product_nm_id TYPE BIGINT;
+
+ALTER TABLE questions ALTER COLUMN product_imt_id TYPE BIGINT;
+ALTER TABLE questions ALTER COLUMN product_nm_id TYPE BIGINT;
+`
+
 // initFeedbacksSchema creates feedbacks and questions tables in PostgreSQL.
+// Also runs widening migrations for columns that were originally INTEGER.
 func initFeedbacksSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, feedbacksSchemaSQL); err != nil {
 		return fmt.Errorf("feedbacks schema: %w", err)
 	}
 	if _, err := pool.Exec(ctx, questionsSchemaSQL); err != nil {
 		return fmt.Errorf("questions schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, feedbacksMigrations); err != nil {
+		return fmt.Errorf("feedbacks migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

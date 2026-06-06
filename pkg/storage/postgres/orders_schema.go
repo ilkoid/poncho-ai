@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS orders (
 
     -- Product identification
     supplier_article TEXT NOT NULL DEFAULT '',
-    nm_id INTEGER NOT NULL DEFAULT 0,
+    nm_id BIGINT NOT NULL DEFAULT 0,
     barcode TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL DEFAULT '',
     subject TEXT NOT NULL DEFAULT '',
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS orders (
     tech_size TEXT NOT NULL DEFAULT '',
 
     -- Supply info
-    income_id INTEGER NOT NULL DEFAULT 0,
+    income_id BIGINT NOT NULL DEFAULT 0,
     is_supply BOOLEAN NOT NULL DEFAULT FALSE,
     is_realization BOOLEAN NOT NULL DEFAULT FALSE,
 
@@ -81,11 +81,21 @@ CREATE INDEX IF NOT EXISTS idx_orders_is_cancel ON orders(is_cancel);
 `
 )
 
+// ordersMigrations widens INTEGER columns to BIGINT for ID fields.
+// Safe: INTEGER→BIGINT is a widening conversion — no data loss.
+const ordersMigrations = `
+ALTER TABLE orders ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE orders ALTER COLUMN income_id TYPE BIGINT;
+`
+
 // initOrdersSchema creates orders table in the PostgreSQL database.
 func initOrdersSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, ordersSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("orders schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, ordersMigrations); err != nil {
+		return fmt.Errorf("orders migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

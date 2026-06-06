@@ -21,11 +21,11 @@ const (
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS product_prices (
-    nm_id                 INTEGER NOT NULL,
+    nm_id                 BIGINT NOT NULL,
     snapshot_date         TEXT    NOT NULL,
 
     -- Pricing
-    price                 INTEGER NOT NULL DEFAULT 0,
+    price                 BIGINT NOT NULL DEFAULT 0,
     discounted_price      DOUBLE PRECISION NOT NULL DEFAULT 0,
     club_discounted_price DOUBLE PRECISION NOT NULL DEFAULT 0,
     discount              INTEGER NOT NULL DEFAULT 0,
@@ -47,11 +47,19 @@ CREATE INDEX IF NOT EXISTS idx_prices_vendor_code ON product_prices(vendor_code)
 `
 )
 
+const pricesMigrations = `
+ALTER TABLE product_prices ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE product_prices ALTER COLUMN price TYPE BIGINT;
+`
+
 // initPricesSchema creates product_prices table in the PostgreSQL database.
 func initPricesSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, pricesSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("prices schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, pricesMigrations); err != nil {
+		return fmt.Errorf("prices migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

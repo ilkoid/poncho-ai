@@ -13,7 +13,7 @@ const (
 	// CREATE TABLE IF NOT EXISTS for safety (shared table).
 	funnelAggProductsSchemaSQL = `
 CREATE TABLE IF NOT EXISTS products (
-    nm_id INTEGER PRIMARY KEY,
+    nm_id BIGINT PRIMARY KEY,
 
     -- Product identification
     vendor_code TEXT NOT NULL DEFAULT '',
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS products (
     brand_name TEXT NOT NULL DEFAULT '',
 
     -- Category hierarchy
-    subject_id INTEGER NOT NULL DEFAULT 0,
+    subject_id BIGINT NOT NULL DEFAULT 0,
     subject_name TEXT NOT NULL DEFAULT '',
 
     -- Quality metrics
@@ -29,9 +29,9 @@ CREATE TABLE IF NOT EXISTS products (
     feedback_rating DOUBLE PRECISION NOT NULL DEFAULT 0,
 
     -- Stock levels
-    stock_wb INTEGER NOT NULL DEFAULT 0,
-    stock_mp INTEGER NOT NULL DEFAULT 0,
-    stock_balance_sum INTEGER NOT NULL DEFAULT 0,
+    stock_wb BIGINT NOT NULL DEFAULT 0,
+    stock_mp BIGINT NOT NULL DEFAULT 0,
+    stock_balance_sum BIGINT NOT NULL DEFAULT 0,
 
     -- Tags (JSON array)
     tags TEXT NOT NULL DEFAULT '',
@@ -58,36 +58,36 @@ CREATE TABLE IF NOT EXISTS funnel_metrics_aggregated (
     id BIGSERIAL PRIMARY KEY,
 
     -- Natural key for upsert
-    nm_id INTEGER NOT NULL DEFAULT 0,
+    nm_id BIGINT NOT NULL DEFAULT 0,
     period_start TEXT NOT NULL DEFAULT '',
     period_end TEXT NOT NULL DEFAULT '',
 
     -- Selected period metrics (NOT NULL — always present)
-    selected_open_count INTEGER NOT NULL DEFAULT 0,
-    selected_cart_count INTEGER NOT NULL DEFAULT 0,
-    selected_order_count INTEGER NOT NULL DEFAULT 0,
-    selected_order_sum INTEGER NOT NULL DEFAULT 0,
-    selected_buyout_count INTEGER NOT NULL DEFAULT 0,
-    selected_buyout_sum INTEGER NOT NULL DEFAULT 0,
-    selected_cancel_count INTEGER NOT NULL DEFAULT 0,
-    selected_cancel_sum INTEGER NOT NULL DEFAULT 0,
-    selected_avg_price INTEGER NOT NULL DEFAULT 0,
+    selected_open_count BIGINT NOT NULL DEFAULT 0,
+    selected_cart_count BIGINT NOT NULL DEFAULT 0,
+    selected_order_count BIGINT NOT NULL DEFAULT 0,
+    selected_order_sum BIGINT NOT NULL DEFAULT 0,
+    selected_buyout_count BIGINT NOT NULL DEFAULT 0,
+    selected_buyout_sum BIGINT NOT NULL DEFAULT 0,
+    selected_cancel_count BIGINT NOT NULL DEFAULT 0,
+    selected_cancel_sum BIGINT NOT NULL DEFAULT 0,
+    selected_avg_price BIGINT NOT NULL DEFAULT 0,
     selected_avg_orders_count_per_day DOUBLE PRECISION,
     selected_share_order_percent DOUBLE PRECISION,
-    selected_add_to_wishlist INTEGER NOT NULL DEFAULT 0,
+    selected_add_to_wishlist BIGINT NOT NULL DEFAULT 0,
     selected_localization_percent DOUBLE PRECISION,
     selected_time_to_ready_days INTEGER NOT NULL DEFAULT 0,
     selected_time_to_ready_hours INTEGER NOT NULL DEFAULT 0,
     selected_time_to_ready_mins INTEGER NOT NULL DEFAULT 0,
 
     -- Selected WB Club metrics
-    selected_wb_club_order_count INTEGER NOT NULL DEFAULT 0,
-    selected_wb_club_order_sum INTEGER NOT NULL DEFAULT 0,
-    selected_wb_club_buyout_count INTEGER NOT NULL DEFAULT 0,
-    selected_wb_club_buyout_sum INTEGER NOT NULL DEFAULT 0,
-    selected_wb_club_cancel_count INTEGER NOT NULL DEFAULT 0,
-    selected_wb_club_cancel_sum INTEGER NOT NULL DEFAULT 0,
-    selected_wb_club_avg_price INTEGER NOT NULL DEFAULT 0,
+    selected_wb_club_order_count BIGINT NOT NULL DEFAULT 0,
+    selected_wb_club_order_sum BIGINT NOT NULL DEFAULT 0,
+    selected_wb_club_buyout_count BIGINT NOT NULL DEFAULT 0,
+    selected_wb_club_buyout_sum BIGINT NOT NULL DEFAULT 0,
+    selected_wb_club_cancel_count BIGINT NOT NULL DEFAULT 0,
+    selected_wb_club_cancel_sum BIGINT NOT NULL DEFAULT 0,
+    selected_wb_club_avg_price BIGINT NOT NULL DEFAULT 0,
     selected_wb_club_buyout_percent DOUBLE PRECISION,
     selected_wb_club_avg_order_count_per_day DOUBLE PRECISION,
 
@@ -99,31 +99,31 @@ CREATE TABLE IF NOT EXISTS funnel_metrics_aggregated (
     -- Past period metrics (nullable — only present when past period is requested)
     past_period_start TEXT,
     past_period_end TEXT,
-    past_open_count INTEGER,
-    past_cart_count INTEGER,
-    past_order_count INTEGER,
-    past_order_sum INTEGER,
-    past_buyout_count INTEGER,
-    past_buyout_sum INTEGER,
-    past_cancel_count INTEGER,
-    past_cancel_sum INTEGER,
-    past_avg_price INTEGER,
+    past_open_count BIGINT,
+    past_cart_count BIGINT,
+    past_order_count BIGINT,
+    past_order_sum BIGINT,
+    past_buyout_count BIGINT,
+    past_buyout_sum BIGINT,
+    past_cancel_count BIGINT,
+    past_cancel_sum BIGINT,
+    past_avg_price BIGINT,
     past_avg_orders_count_per_day DOUBLE PRECISION,
     past_share_order_percent DOUBLE PRECISION,
-    past_add_to_wishlist INTEGER,
+    past_add_to_wishlist BIGINT,
     past_localization_percent DOUBLE PRECISION,
     past_time_to_ready_days INTEGER,
     past_time_to_ready_hours INTEGER,
     past_time_to_ready_mins INTEGER,
 
     -- Past WB Club metrics
-    past_wb_club_order_count INTEGER,
-    past_wb_club_order_sum INTEGER,
-    past_wb_club_buyout_count INTEGER,
-    past_wb_club_buyout_sum INTEGER,
-    past_wb_club_cancel_count INTEGER,
-    past_wb_club_cancel_sum INTEGER,
-    past_wb_club_avg_price INTEGER,
+    past_wb_club_order_count BIGINT,
+    past_wb_club_order_sum BIGINT,
+    past_wb_club_buyout_count BIGINT,
+    past_wb_club_buyout_sum BIGINT,
+    past_wb_club_cancel_count BIGINT,
+    past_wb_club_cancel_sum BIGINT,
+    past_wb_club_avg_price BIGINT,
     past_wb_club_buyout_percent DOUBLE PRECISION,
     past_wb_club_avg_order_count_per_day DOUBLE PRECISION,
 
@@ -133,31 +133,31 @@ CREATE TABLE IF NOT EXISTS funnel_metrics_aggregated (
     past_conversion_buyout DOUBLE PRECISION,
 
     -- Comparison metrics (nullable)
-    comparison_open_count_dynamic INTEGER,
-    comparison_cart_count_dynamic INTEGER,
-    comparison_order_count_dynamic INTEGER,
-    comparison_order_sum_dynamic INTEGER,
-    comparison_buyout_count_dynamic INTEGER,
-    comparison_buyout_sum_dynamic INTEGER,
-    comparison_cancel_count_dynamic INTEGER,
-    comparison_cancel_sum_dynamic INTEGER,
+    comparison_open_count_dynamic BIGINT,
+    comparison_cart_count_dynamic BIGINT,
+    comparison_order_count_dynamic BIGINT,
+    comparison_order_sum_dynamic BIGINT,
+    comparison_buyout_count_dynamic BIGINT,
+    comparison_buyout_sum_dynamic BIGINT,
+    comparison_cancel_count_dynamic BIGINT,
+    comparison_cancel_sum_dynamic BIGINT,
     comparison_avg_orders_count_per_day_dynamic DOUBLE PRECISION,
-    comparison_avg_price_dynamic INTEGER,
+    comparison_avg_price_dynamic BIGINT,
     comparison_share_order_percent_dynamic DOUBLE PRECISION,
-    comparison_add_to_wishlist_dynamic INTEGER,
+    comparison_add_to_wishlist_dynamic BIGINT,
     comparison_localization_percent_dynamic DOUBLE PRECISION,
     comparison_time_to_ready_days INTEGER,
     comparison_time_to_ready_hours INTEGER,
     comparison_time_to_ready_mins INTEGER,
 
     -- Comparison WB Club metrics
-    comparison_wb_club_order_count INTEGER,
-    comparison_wb_club_order_sum INTEGER,
-    comparison_wb_club_buyout_count INTEGER,
-    comparison_wb_club_buyout_sum INTEGER,
-    comparison_wb_club_cancel_count INTEGER,
-    comparison_wb_club_cancel_sum INTEGER,
-    comparison_wb_club_avg_price INTEGER,
+    comparison_wb_club_order_count BIGINT,
+    comparison_wb_club_order_sum BIGINT,
+    comparison_wb_club_buyout_count BIGINT,
+    comparison_wb_club_buyout_sum BIGINT,
+    comparison_wb_club_cancel_count BIGINT,
+    comparison_wb_club_cancel_sum BIGINT,
+    comparison_wb_club_avg_price BIGINT,
     comparison_wb_club_buyout_percent DOUBLE PRECISION,
     comparison_wb_club_avg_order_count_per_day DOUBLE PRECISION,
 
@@ -184,6 +184,66 @@ CREATE INDEX IF NOT EXISTS idx_funnel_agg_conversion
 `
 )
 
+const funnelAggMigrations = `
+ALTER TABLE products ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE products ALTER COLUMN subject_id TYPE BIGINT;
+ALTER TABLE products ALTER COLUMN stock_wb TYPE BIGINT;
+ALTER TABLE products ALTER COLUMN stock_mp TYPE BIGINT;
+ALTER TABLE products ALTER COLUMN stock_balance_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_open_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_cart_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_order_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_order_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_buyout_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_buyout_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_cancel_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_cancel_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_avg_price TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_add_to_wishlist TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_wb_club_order_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_wb_club_order_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_wb_club_buyout_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_wb_club_buyout_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_wb_club_cancel_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_wb_club_cancel_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN selected_wb_club_avg_price TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_open_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_cart_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_order_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_order_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_buyout_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_buyout_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_cancel_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_cancel_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_avg_price TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_add_to_wishlist TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_wb_club_order_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_wb_club_order_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_wb_club_buyout_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_wb_club_buyout_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_wb_club_cancel_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_wb_club_cancel_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN past_wb_club_avg_price TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_open_count_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_cart_count_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_order_count_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_order_sum_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_buyout_count_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_buyout_sum_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_cancel_count_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_cancel_sum_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_avg_price_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_add_to_wishlist_dynamic TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_wb_club_order_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_wb_club_order_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_wb_club_buyout_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_wb_club_buyout_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_wb_club_cancel_count TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_wb_club_cancel_sum TYPE BIGINT;
+ALTER TABLE funnel_metrics_aggregated ALTER COLUMN comparison_wb_club_avg_price TYPE BIGINT;
+`
+
 // initFunnelAggSchema creates products and funnel_metrics_aggregated tables in PostgreSQL.
 func initFunnelAggSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, funnelAggProductsSchemaSQL); err != nil {
@@ -191,6 +251,9 @@ func initFunnelAggSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	if _, err := pool.Exec(ctx, funnelAggSchemaSQL); err != nil {
 		return fmt.Errorf("funnel-agg schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, funnelAggMigrations); err != nil {
+		return fmt.Errorf("funnel-agg migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

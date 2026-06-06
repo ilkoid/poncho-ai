@@ -24,12 +24,12 @@ const (
 
 -- Main cards table (1 row per nmID)
 CREATE TABLE IF NOT EXISTS cards (
-    nm_id INTEGER PRIMARY KEY,
+    nm_id BIGINT PRIMARY KEY,
 
     -- Category identifiers
-    imt_id INTEGER NOT NULL DEFAULT 0,
+    imt_id BIGINT NOT NULL DEFAULT 0,
     nm_uuid TEXT NOT NULL DEFAULT '',
-    subject_id INTEGER NOT NULL DEFAULT 0,
+    subject_id BIGINT NOT NULL DEFAULT 0,
     subject_name TEXT NOT NULL DEFAULT '',
 
     -- Product info
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS cards (
 
     -- Wholesale (flattened from object)
     wholesale_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    wholesale_quantum INTEGER NOT NULL DEFAULT 0,
+    wholesale_quantum BIGINT NOT NULL DEFAULT 0,
 
     -- Dimensions (flattened from object)
     dim_length DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS cards (
 -- Photos table (1 row per photo per card)
 CREATE TABLE IF NOT EXISTS card_photos (
     id BIGSERIAL PRIMARY KEY,
-    nm_id INTEGER NOT NULL,
+    nm_id BIGINT NOT NULL,
 
     big TEXT NOT NULL DEFAULT '',
     c246x328 TEXT NOT NULL DEFAULT '',
@@ -78,8 +78,8 @@ CREATE TABLE IF NOT EXISTS card_photos (
 
 -- Sizes table (1 row per size variant)
 CREATE TABLE IF NOT EXISTS card_sizes (
-    chrt_id INTEGER PRIMARY KEY,
-    nm_id INTEGER NOT NULL,
+    chrt_id BIGINT PRIMARY KEY,
+    nm_id BIGINT NOT NULL,
     tech_size TEXT NOT NULL DEFAULT '',
     wb_size TEXT NOT NULL DEFAULT '',
     skus_json TEXT NOT NULL DEFAULT '[]',
@@ -89,8 +89,8 @@ CREATE TABLE IF NOT EXISTS card_sizes (
 -- Characteristics table (1 row per characteristic per card)
 CREATE TABLE IF NOT EXISTS card_characteristics (
     id BIGSERIAL PRIMARY KEY,
-    nm_id INTEGER NOT NULL,
-    char_id INTEGER NOT NULL,
+    nm_id BIGINT NOT NULL,
+    char_id BIGINT NOT NULL,
     name TEXT NOT NULL DEFAULT '',
     json_value TEXT NOT NULL DEFAULT '[]',
     UNIQUE(nm_id, char_id),
@@ -100,8 +100,8 @@ CREATE TABLE IF NOT EXISTS card_characteristics (
 -- Tags table (1 row per tag per card)
 CREATE TABLE IF NOT EXISTS card_tags (
     id BIGSERIAL PRIMARY KEY,
-    nm_id INTEGER NOT NULL,
-    tag_id INTEGER NOT NULL,
+    nm_id BIGINT NOT NULL,
+    tag_id BIGINT NOT NULL,
     name TEXT NOT NULL DEFAULT '',
     color TEXT NOT NULL DEFAULT '',
     UNIQUE(nm_id, tag_id),
@@ -122,11 +122,28 @@ CREATE INDEX IF NOT EXISTS idx_card_characteristics_char_id ON card_characterist
 `
 )
 
+const cardsMigrations = `
+ALTER TABLE cards ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE cards ALTER COLUMN imt_id TYPE BIGINT;
+ALTER TABLE cards ALTER COLUMN subject_id TYPE BIGINT;
+ALTER TABLE cards ALTER COLUMN wholesale_quantum TYPE BIGINT;
+ALTER TABLE card_photos ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE card_sizes ALTER COLUMN chrt_id TYPE BIGINT;
+ALTER TABLE card_sizes ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE card_characteristics ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE card_characteristics ALTER COLUMN char_id TYPE BIGINT;
+ALTER TABLE card_tags ALTER COLUMN nm_id TYPE BIGINT;
+ALTER TABLE card_tags ALTER COLUMN tag_id TYPE BIGINT;
+`
+
 // initCardsSchema creates cards tables in the PostgreSQL database.
 func initCardsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, cardsSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("cards schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, cardsMigrations); err != nil {
+		return fmt.Errorf("cards migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

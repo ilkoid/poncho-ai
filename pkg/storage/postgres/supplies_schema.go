@@ -24,7 +24,7 @@ const (
 -- Grain: one row per warehouse ID
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS wb_warehouses (
-    id INTEGER PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     name TEXT NOT NULL,
     address TEXT,
     work_time TEXT,
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS wb_transit_tariffs (
     transit_warehouse_name TEXT NOT NULL,
     destination_warehouse_name TEXT NOT NULL,
     active_from TEXT,
-    pallet_tariff INTEGER,
+    pallet_tariff BIGINT,
     box_tariff TEXT,
     downloaded_at TEXT NOT NULL
 );
@@ -76,11 +76,11 @@ CREATE TABLE IF NOT EXISTS supplies (
     supplier_assign_name TEXT,
     storage_coef TEXT,
     delivery_coef TEXT,
-    quantity INTEGER,
-    accepted_quantity INTEGER,
-    ready_for_sale_quantity INTEGER,
-    unloading_quantity INTEGER,
-    depersonalized_quantity INTEGER,
+    quantity BIGINT,
+    accepted_quantity BIGINT,
+    ready_for_sale_quantity BIGINT,
+    unloading_quantity BIGINT,
+    depersonalized_quantity BIGINT,
     is_box_on_pallet BOOLEAN,
     virtual_type_id INTEGER,
     downloaded_at TEXT NOT NULL,
@@ -112,11 +112,11 @@ CREATE TABLE IF NOT EXISTS supply_goods (
     color TEXT,
     need_kiz BOOLEAN,
     tnved TEXT,
-    supplier_box_amount INTEGER,
-    quantity INTEGER,
-    accepted_quantity INTEGER,
-    ready_for_sale_quantity INTEGER,
-    unloading_quantity INTEGER,
+    supplier_box_amount BIGINT,
+    quantity BIGINT,
+    accepted_quantity BIGINT,
+    ready_for_sale_quantity BIGINT,
+    unloading_quantity BIGINT,
     UNIQUE(supply_id, preorder_id, barcode)
 );
 
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS supply_packages (
     supply_id BIGINT NOT NULL,
     preorder_id BIGINT NOT NULL,
     package_code TEXT NOT NULL,
-    quantity INTEGER,
+    quantity BIGINT,
     barcodes TEXT,
     UNIQUE(supply_id, preorder_id, package_code)
 );
@@ -149,11 +149,32 @@ CREATE INDEX IF NOT EXISTS idx_supply_packages_supply
 `
 )
 
+// suppliesMigrations widens INTEGER columns to BIGINT for ID and quantity fields.
+// Safe: INTEGER→BIGINT is a widening conversion — no data loss.
+const suppliesMigrations = `
+ALTER TABLE wb_warehouses ALTER COLUMN id TYPE BIGINT;
+ALTER TABLE wb_transit_tariffs ALTER COLUMN pallet_tariff TYPE BIGINT;
+ALTER TABLE supplies ALTER COLUMN quantity TYPE BIGINT;
+ALTER TABLE supplies ALTER COLUMN accepted_quantity TYPE BIGINT;
+ALTER TABLE supplies ALTER COLUMN ready_for_sale_quantity TYPE BIGINT;
+ALTER TABLE supplies ALTER COLUMN unloading_quantity TYPE BIGINT;
+ALTER TABLE supplies ALTER COLUMN depersonalized_quantity TYPE BIGINT;
+ALTER TABLE supply_goods ALTER COLUMN supplier_box_amount TYPE BIGINT;
+ALTER TABLE supply_goods ALTER COLUMN quantity TYPE BIGINT;
+ALTER TABLE supply_goods ALTER COLUMN accepted_quantity TYPE BIGINT;
+ALTER TABLE supply_goods ALTER COLUMN ready_for_sale_quantity TYPE BIGINT;
+ALTER TABLE supply_goods ALTER COLUMN unloading_quantity TYPE BIGINT;
+ALTER TABLE supply_packages ALTER COLUMN quantity TYPE BIGINT;
+`
+
 // initSuppliesSchema creates supply tables in the PostgreSQL database.
 func initSuppliesSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, suppliesSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("supplies schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, suppliesMigrations); err != nil {
+		return fmt.Errorf("supplies migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

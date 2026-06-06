@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -34,7 +35,6 @@ func (r *PgOneCRepo) InitSchema(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 
 // SaveGoods saves a batch of 1C goods using ON CONFLICT upsert.
-// Placeholder count: $1-$69 (data) + TO_CHAR (downloaded_at) = 70 columns.
 func (r *PgOneCRepo) SaveGoods(ctx context.Context, goods []onec.Good) (int, error) {
 	if len(goods) == 0 {
 		return 0, nil
@@ -53,7 +53,6 @@ func (r *PgOneCRepo) SaveGoods(ctx context.Context, goods []onec.Good) (int, err
 }
 
 // SaveSKUs saves a batch of 1C SKUs using ON CONFLICT upsert.
-// Placeholder count: $1-$9.
 func (r *PgOneCRepo) SaveSKUs(ctx context.Context, skus []onec.SKU) (int, error) {
 	if len(skus) == 0 {
 		return 0, nil
@@ -72,7 +71,6 @@ func (r *PgOneCRepo) SaveSKUs(ctx context.Context, skus []onec.SKU) (int, error)
 }
 
 // SaveDimensions saves a batch of dimension rows using ON CONFLICT upsert.
-// Placeholder count: $1-$10 (data) + TO_CHAR (created_at) = 11 columns.
 func (r *PgOneCRepo) SaveDimensions(ctx context.Context, dims []onec.DimensionRow) (int, error) {
 	if len(dims) == 0 {
 		return 0, nil
@@ -91,7 +89,6 @@ func (r *PgOneCRepo) SaveDimensions(ctx context.Context, dims []onec.DimensionRo
 }
 
 // SaveOneCPrices saves a batch of price rows using ON CONFLICT upsert.
-// Placeholder count: $1-$6.
 func (r *PgOneCRepo) SaveOneCPrices(ctx context.Context, prices []onec.PriceRow, snapshotDate string) (int, error) {
 	if len(prices) == 0 {
 		return 0, nil
@@ -110,7 +107,6 @@ func (r *PgOneCRepo) SaveOneCPrices(ctx context.Context, prices []onec.PriceRow,
 }
 
 // SavePIMGoods saves a batch of PIM goods using ON CONFLICT upsert.
-// Placeholder count: $1-$27 (data) + TO_CHAR (downloaded_at) = 28 columns.
 func (r *PgOneCRepo) SavePIMGoods(ctx context.Context, items []onec.PIMGoods) (int, error) {
 	if len(items) == 0 {
 		return 0, nil
@@ -146,12 +142,11 @@ func (r *PgOneCRepo) CleanAll(ctx context.Context) error {
 }
 
 // ---------------------------------------------------------------------------
-// Chunk-level save methods (per-row Exec in transaction)
+// Multi-row INSERT SQL fragments
 // ---------------------------------------------------------------------------
 
 //nolint:lll // 69-column INSERT is unavoidably long
-const insertGoodSQL = `
-INSERT INTO onec_goods (
+const insertGoodPrefixSQL = `INSERT INTO onec_goods (
     guid, article, name, name_im, description,
     brand, type, category, category_level1, category_level2,
     sex, season, composition, composition_lining, color,
@@ -173,29 +168,9 @@ INSERT INTO onec_goods (
     is_genuine_leather, is_model_cancelled, is_new_collection,
     is_not_require_ironing, is_pps, is_ya_price_list_opt,
     downloaded_at
-) VALUES (
-    $1, $2, $3, $4, $5,
-    $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15,
-    $16, $17, $18, $19,
-    $20, $21,
-    $22, $23, $24, $25,
-    $26, $27, $28, $29,
-    $30, $31, $32,
-    $33, $34, $35,
-    $36, $37, $38, $39,
-    $40, $41, $42,
-    $43, $44,
-    $45, $46,
-    $47, $48,
-    $49, $50, $51, $52,
-    $53, $54, $55, $56,
-    $57, $58, $59,
-    $60, $61, $62, $63,
-    $64, $65, $66,
-    $67, $68, $69,
-    TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
-)
+) VALUES `
+
+const insertGoodOnConflictSQL = `
 ON CONFLICT (guid) DO UPDATE SET
     article = EXCLUDED.article,
     name = EXCLUDED.name,
@@ -265,51 +240,19 @@ ON CONFLICT (guid) DO UPDATE SET
     is_not_require_ironing = EXCLUDED.is_not_require_ironing,
     is_pps = EXCLUDED.is_pps,
     is_ya_price_list_opt = EXCLUDED.is_ya_price_list_opt,
-    downloaded_at = EXCLUDED.downloaded_at
-`
+    downloaded_at = EXCLUDED.downloaded_at`
 
-func (r *PgOneCRepo) saveGoodsChunk(ctx context.Context, chunk []onec.Good) (int, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
+// insertGoodCols = 69 data columns + 1 downloaded_at (pre-computed in Go).
+const insertGoodCols = 70
 
-	total := 0
-	for _, g := range chunk {
-		tag, err := tx.Exec(ctx, insertGoodSQL,
-			g.GUID, g.Article, g.Name, g.NameIM, g.Description,       // $1-$5
-			g.Brand, g.Type, g.Category, g.CategoryLevel1, g.CategoryLevel2, // $6-$10
-			g.Sex, g.Season, g.Composition, g.CompositionLining, g.Color,     // $11-$15
-			g.Collection, g.CountryOfOrigin, g.Weight, g.SizeRange,            // $16-$19
-			g.TnvedCodes, g.BusinessLine,                                      // $20-$21
-			g.IsSale, g.IsNew, g.ModelStatus, g.Date,                          // $22-$25
-			g.Length, g.Wideness, g.Height, g.WeightSKUG,                      // $26-$29
-			g.Certificate, g.CertificateType, g.HasCertificate,                 // $30-$32
-			g.CertificateBegin, g.CertificateEnd, g.CertificateNumber,         // $33-$35
-			g.ApprovalDate, g.DateOfProduction, g.DateOfReceipt, g.PPSDate,    // $36-$39
-			g.CollectionSeason, g.CollectionYear, g.LookSeason,                // $40-$42
-			g.OptCollectionSeason, g.OptCollectionYear,                        // $43-$44
-			g.ProductionSeason, g.ProductionYear,                              // $45-$46
-			g.CategoryLevel1Name, g.CategoryLevel2Name,                        // $47-$48
-			g.Age, g.FigureFeatures, g.Licensor, g.MainCapture,               // $49-$52
-			g.Markirovka, g.ModelHeight, g.RatioHeat, g.Recommendations,       // $53-$56
-			g.SizeOnModel, g.Tag, g.QuantityBarCode,                           // $57-$59
-			g.IsAdult, g.IsArticleBlocked, g.IsExcludeFromSite, g.IsExclusive, // $60-$63
-			g.IsGenuineLeather, g.IsModelCancelled, g.IsNewCollection,         // $64-$66
-			g.IsNotRequireIroning, g.IsPPS, g.IsYaPriceListOpt,                // $67-$69
-		)
-		if err != nil {
-			return total, fmt.Errorf("save good %s: %w", g.GUID, err)
-		}
-		total += int(tag.RowsAffected())
-	}
-	return total, tx.Commit(ctx)
-}
+// insertGoodFullChunkSQL is pre-built for the common case (full 500-row chunk).
+var insertGoodFullChunkSQL = BuildMultiRowInsert(insertGoodPrefixSQL, insertGoodOnConflictSQL, pgOneCChunkSize, insertGoodCols)
 
-const insertSKUSQL = `
-INSERT INTO onec_goods_sku (sku_guid, guid, barcode, size, nds, length, wideness, height, weight_sku_g)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+// --- SKUs ---
+
+const insertSKUPrefixSQL = `INSERT INTO onec_goods_sku (sku_guid, guid, barcode, size, nds, length, wideness, height, weight_sku_g) VALUES `
+
+const insertSKUOnConflictSQL = `
 ON CONFLICT (sku_guid, guid) DO UPDATE SET
     barcode = EXCLUDED.barcode,
     size = EXCLUDED.size,
@@ -317,33 +260,17 @@ ON CONFLICT (sku_guid, guid) DO UPDATE SET
     length = EXCLUDED.length,
     wideness = EXCLUDED.wideness,
     height = EXCLUDED.height,
-    weight_sku_g = EXCLUDED.weight_sku_g
-`
+    weight_sku_g = EXCLUDED.weight_sku_g`
 
-func (r *PgOneCRepo) saveSKUsChunk(ctx context.Context, chunk []onec.SKU) (int, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
+const insertSKUCols = 9
 
-	total := 0
-	for _, s := range chunk {
-		tag, err := tx.Exec(ctx, insertSKUSQL,
-			s.SKUGUID, s.GUID, s.Barcode, s.Size, s.NDS,
-			s.Length, s.Wideness, s.Height, s.WeightSKUG,
-		)
-		if err != nil {
-			return total, fmt.Errorf("save SKU %s: %w", s.SKUGUID, err)
-		}
-		total += int(tag.RowsAffected())
-	}
-	return total, tx.Commit(ctx)
-}
+var insertSKUFullChunkSQL = BuildMultiRowInsert(insertSKUPrefixSQL, insertSKUOnConflictSQL, pgOneCChunkSize, insertSKUCols)
 
-const insertDimensionSQL = `
-INSERT INTO onec_dimensions (good_guid, sku_guid, good_name, size_name, length_dm, width_dm, height_dm, weight_kg, volume_cm3, source, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
+// --- Dimensions ---
+
+const insertDimensionPrefixSQL = `INSERT INTO onec_dimensions (good_guid, sku_guid, good_name, size_name, length_dm, width_dm, height_dm, weight_kg, volume_cm3, source, created_at) VALUES `
+
+const insertDimensionOnConflictSQL = `
 ON CONFLICT (good_guid, sku_guid) DO UPDATE SET
     good_name = EXCLUDED.good_name,
     size_name = EXCLUDED.size_name,
@@ -353,62 +280,30 @@ ON CONFLICT (good_guid, sku_guid) DO UPDATE SET
     weight_kg = EXCLUDED.weight_kg,
     volume_cm3 = EXCLUDED.volume_cm3,
     source = EXCLUDED.source,
-    created_at = EXCLUDED.created_at
-`
+    created_at = EXCLUDED.created_at`
 
-func (r *PgOneCRepo) saveDimensionsChunk(ctx context.Context, chunk []onec.DimensionRow) (int, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
+// insertDimensionCols = 10 data columns + 1 created_at (pre-computed in Go).
+const insertDimensionCols = 11
 
-	total := 0
-	for _, d := range chunk {
-		tag, err := tx.Exec(ctx, insertDimensionSQL,
-			d.GoodGUID, d.SKUGUID, d.GoodName, d.SizeName,
-			d.LengthDM, d.WidthDM, d.HeightDM, d.WeightKG,
-			d.VolumeCM3, d.Source,
-		)
-		if err != nil {
-			return total, fmt.Errorf("save dimension %s/%s: %w", d.GoodGUID, d.SKUGUID, err)
-		}
-		total += int(tag.RowsAffected())
-	}
-	return total, tx.Commit(ctx)
-}
+var insertDimensionFullChunkSQL = BuildMultiRowInsert(insertDimensionPrefixSQL, insertDimensionOnConflictSQL, pgOneCChunkSize, insertDimensionCols)
 
-const insertPriceSQL = `
-INSERT INTO onec_prices (good_guid, snapshot_date, type_guid, type_name, price, spec_price)
-VALUES ($1, $2, $3, $4, $5, $6)
+// --- Prices ---
+
+const insertPricePrefixSQL = `INSERT INTO onec_prices (good_guid, snapshot_date, type_guid, type_name, price, spec_price) VALUES `
+
+const insertPriceOnConflictSQL = `
 ON CONFLICT (good_guid, snapshot_date, type_guid) DO UPDATE SET
     type_name = EXCLUDED.type_name,
     price = EXCLUDED.price,
-    spec_price = EXCLUDED.spec_price
-`
+    spec_price = EXCLUDED.spec_price`
 
-func (r *PgOneCRepo) savePricesChunk(ctx context.Context, chunk []onec.PriceRow, snapshotDate string) (int, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
+const insertPriceCols = 6
 
-	total := 0
-	for _, p := range chunk {
-		tag, err := tx.Exec(ctx, insertPriceSQL,
-			p.GoodGUID, snapshotDate, p.TypeGUID, p.TypeName, p.Price, p.SpecPrice,
-		)
-		if err != nil {
-			return total, fmt.Errorf("save price %s/%s: %w", p.GoodGUID, p.TypeGUID, err)
-		}
-		total += int(tag.RowsAffected())
-	}
-	return total, tx.Commit(ctx)
-}
+var insertPriceFullChunkSQL = BuildMultiRowInsert(insertPricePrefixSQL, insertPriceOnConflictSQL, pgOneCChunkSize, insertPriceCols)
 
-const insertPIMGoodsSQL = `
-INSERT INTO pim_goods (
+// --- PIM Goods ---
+
+const insertPIMGoodsPrefixSQL = `INSERT INTO pim_goods (
     identifier, enabled, family, categories, product_type,
     sex, season, color, filter_color, wb_nm_id,
     year_collection, menu_product_type, menu_age, age_category,
@@ -417,16 +312,9 @@ INSERT INTO pim_goods (
     features_care, description, name, updated,
     wildberries_length, wildberries_width, wildberries_height,
     downloaded_at
-) VALUES (
-    $1, $2, $3, $4, $5,
-    $6, $7, $8, $9, $10,
-    $11, $12, $13, $14,
-    $15, $16, $17,
-    $18, $19, $20,
-    $21, $22, $23, $24,
-    $25, $26, $27,
-    TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
-)
+) VALUES `
+
+const insertPIMGoodsOnConflictSQL = `
 ON CONFLICT (identifier) DO UPDATE SET
     enabled = EXCLUDED.enabled,
     family = EXCLUDED.family,
@@ -454,8 +342,148 @@ ON CONFLICT (identifier) DO UPDATE SET
     wildberries_length = EXCLUDED.wildberries_length,
     wildberries_width = EXCLUDED.wildberries_width,
     wildberries_height = EXCLUDED.wildberries_height,
-    downloaded_at = EXCLUDED.downloaded_at
-`
+    downloaded_at = EXCLUDED.downloaded_at`
+
+// insertPIMGoodsCols = 27 data columns + 1 downloaded_at (pre-computed in Go).
+const insertPIMGoodsCols = 28
+
+var insertPIMGoodsFullChunkSQL = BuildMultiRowInsert(insertPIMGoodsPrefixSQL, insertPIMGoodsOnConflictSQL, pgOneCChunkSize, insertPIMGoodsCols)
+
+// ---------------------------------------------------------------------------
+// Chunk-level save methods (multi-row INSERT per chunk)
+// ---------------------------------------------------------------------------
+
+func (r *PgOneCRepo) saveGoodsChunk(ctx context.Context, chunk []onec.Good) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	args := make([]any, 0, len(chunk)*insertGoodCols)
+	for _, g := range chunk {
+		args = append(args,
+			g.GUID, g.Article, g.Name, g.NameIM, g.Description,        // $1-$5
+			g.Brand, g.Type, g.Category, g.CategoryLevel1, g.CategoryLevel2, // $6-$10
+			g.Sex, g.Season, g.Composition, g.CompositionLining, g.Color,     // $11-$15
+			g.Collection, g.CountryOfOrigin, g.Weight, g.SizeRange,            // $16-$19
+			g.TnvedCodes, g.BusinessLine,                                      // $20-$21
+			g.IsSale, g.IsNew, g.ModelStatus, g.Date,                          // $22-$25
+			g.Length, g.Wideness, g.Height, g.WeightSKUG,                      // $26-$29
+			g.Certificate, g.CertificateType, g.HasCertificate,                 // $30-$32
+			g.CertificateBegin, g.CertificateEnd, g.CertificateNumber,         // $33-$35
+			g.ApprovalDate, g.DateOfProduction, g.DateOfReceipt, g.PPSDate,    // $36-$39
+			g.CollectionSeason, g.CollectionYear, g.LookSeason,                // $40-$42
+			g.OptCollectionSeason, g.OptCollectionYear,                        // $43-$44
+			g.ProductionSeason, g.ProductionYear,                              // $45-$46
+			g.CategoryLevel1Name, g.CategoryLevel2Name,                        // $47-$48
+			g.Age, g.FigureFeatures, g.Licensor, g.MainCapture,               // $49-$52
+			g.Markirovka, g.ModelHeight, g.RatioHeat, g.Recommendations,       // $53-$56
+			g.SizeOnModel, g.Tag, g.QuantityBarCode,                           // $57-$59
+			g.IsAdult, g.IsArticleBlocked, g.IsExcludeFromSite, g.IsExclusive, // $60-$63
+			g.IsGenuineLeather, g.IsModelCancelled, g.IsNewCollection,         // $64-$66
+			g.IsNotRequireIroning, g.IsPPS, g.IsYaPriceListOpt,                // $67-$69
+			now, // $70 = downloaded_at
+		)
+	}
+
+	query := insertGoodFullChunkSQL
+	if len(chunk) < pgOneCChunkSize {
+		query = BuildMultiRowInsert(insertGoodPrefixSQL, insertGoodOnConflictSQL, len(chunk), insertGoodCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save goods batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
+}
+
+func (r *PgOneCRepo) saveSKUsChunk(ctx context.Context, chunk []onec.SKU) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertSKUCols)
+	for _, s := range chunk {
+		args = append(args,
+			s.SKUGUID, s.GUID, s.Barcode, s.Size, s.NDS,
+			s.Length, s.Wideness, s.Height, s.WeightSKUG,
+		)
+	}
+
+	query := insertSKUFullChunkSQL
+	if len(chunk) < pgOneCChunkSize {
+		query = BuildMultiRowInsert(insertSKUPrefixSQL, insertSKUOnConflictSQL, len(chunk), insertSKUCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save SKUs batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
+}
+
+func (r *PgOneCRepo) saveDimensionsChunk(ctx context.Context, chunk []onec.DimensionRow) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	args := make([]any, 0, len(chunk)*insertDimensionCols)
+	for _, d := range chunk {
+		args = append(args,
+			d.GoodGUID, d.SKUGUID, d.GoodName, d.SizeName,
+			d.LengthDM, d.WidthDM, d.HeightDM, d.WeightKG,
+			d.VolumeCM3, d.Source,
+			now, // created_at
+		)
+	}
+
+	query := insertDimensionFullChunkSQL
+	if len(chunk) < pgOneCChunkSize {
+		query = BuildMultiRowInsert(insertDimensionPrefixSQL, insertDimensionOnConflictSQL, len(chunk), insertDimensionCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save dimensions batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
+}
+
+func (r *PgOneCRepo) savePricesChunk(ctx context.Context, chunk []onec.PriceRow, snapshotDate string) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertPriceCols)
+	for _, p := range chunk {
+		args = append(args,
+			p.GoodGUID, snapshotDate, p.TypeGUID, p.TypeName, p.Price, p.SpecPrice,
+		)
+	}
+
+	query := insertPriceFullChunkSQL
+	if len(chunk) < pgOneCChunkSize {
+		query = BuildMultiRowInsert(insertPricePrefixSQL, insertPriceOnConflictSQL, len(chunk), insertPriceCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save prices batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
+}
 
 func (r *PgOneCRepo) savePIMGoodsChunk(ctx context.Context, chunk []onec.PIMGoods) (int, error) {
 	tx, err := r.pool.Begin(ctx)
@@ -464,9 +492,11 @@ func (r *PgOneCRepo) savePIMGoodsChunk(ctx context.Context, chunk []onec.PIMGood
 	}
 	defer tx.Rollback(ctx)
 
-	total := 0
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	args := make([]any, 0, len(chunk)*insertPIMGoodsCols)
 	for _, p := range chunk {
-		tag, err := tx.Exec(ctx, insertPIMGoodsSQL,
+		args = append(args,
 			p.Identifier, p.Enabled, p.Family, p.Categories, p.ProductType, // $1-$5
 			p.Sex, p.Season, p.Color, p.FilterColor, p.WbNmID, // $6-$10
 			p.YearCollection, p.MenuProductType, p.MenuAge, p.AgeCategory, // $11-$14
@@ -474,11 +504,18 @@ func (r *PgOneCRepo) savePIMGoodsChunk(ctx context.Context, chunk []onec.PIMGood
 			p.BrandCountry, p.CountryManufacture, p.SizeTable, // $18-$20
 			p.FeaturesCare, p.Description, p.Name, p.Updated, // $21-$24
 			p.WildberriesLength, p.WildberriesWidth, p.WildberriesHeight, // $25-$27
+			now, // $28 = downloaded_at
 		)
-		if err != nil {
-			return total, fmt.Errorf("save PIM good %s: %w", p.Identifier, err)
-		}
-		total += int(tag.RowsAffected())
 	}
-	return total, tx.Commit(ctx)
+
+	query := insertPIMGoodsFullChunkSQL
+	if len(chunk) < pgOneCChunkSize {
+		query = BuildMultiRowInsert(insertPIMGoodsPrefixSQL, insertPIMGoodsOnConflictSQL, len(chunk), insertPIMGoodsCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save PIM goods batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }

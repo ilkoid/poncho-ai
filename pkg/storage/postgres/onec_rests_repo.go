@@ -34,7 +34,6 @@ func (r *PgOneCRestsRepo) InitSchema(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 
 // SaveRests saves a batch of rests rows using ON CONFLICT upsert.
-// Placeholder count: $1-$9 (data columns).
 func (r *PgOneCRestsRepo) SaveRests(ctx context.Context, rows []onec.RestsRow, snapshotDate string) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -84,20 +83,27 @@ func (r *PgOneCRestsRepo) PurgeOldRestsSnapshots(ctx context.Context, retentionD
 }
 
 // ---------------------------------------------------------------------------
-// Chunk-level save (per-row Exec in transaction)
+// Multi-row INSERT SQL fragments
 // ---------------------------------------------------------------------------
 
-const insertRestSQL = `
-INSERT INTO onec_rests (good_guid, sku_guid, storage_guid, snapshot_date, storage_name, stock, reserv, free, first_stage)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+const insertRestPrefixSQL = `INSERT INTO onec_rests (good_guid, sku_guid, storage_guid, snapshot_date, storage_name, stock, reserv, free, first_stage) VALUES `
+
+const insertRestOnConflictSQL = `
 ON CONFLICT (good_guid, sku_guid, storage_guid, snapshot_date) DO UPDATE SET
     storage_name = EXCLUDED.storage_name,
     stock = EXCLUDED.stock,
     reserv = EXCLUDED.reserv,
     free = EXCLUDED.free,
     first_stage = EXCLUDED.first_stage,
-    downloaded_at = EXCLUDED.downloaded_at
-`
+    downloaded_at = EXCLUDED.downloaded_at`
+
+const insertRestCols = 9
+
+var insertRestFullChunkSQL = BuildMultiRowInsert(insertRestPrefixSQL, insertRestOnConflictSQL, pgRestsChunkSize, insertRestCols)
+
+// ---------------------------------------------------------------------------
+// Chunk-level save (multi-row INSERT per chunk)
+// ---------------------------------------------------------------------------
 
 func (r *PgOneCRestsRepo) saveRestsChunk(ctx context.Context, chunk []onec.RestsRow, snapshotDate string) (int, error) {
 	tx, err := r.pool.Begin(ctx)
@@ -106,16 +112,22 @@ func (r *PgOneCRestsRepo) saveRestsChunk(ctx context.Context, chunk []onec.Rests
 	}
 	defer tx.Rollback(ctx)
 
-	total := 0
+	args := make([]any, 0, len(chunk)*insertRestCols)
 	for _, row := range chunk {
-		tag, err := tx.Exec(ctx, insertRestSQL,
+		args = append(args,
 			row.GoodGUID, row.SKUGUID, row.StorageGUID, snapshotDate,
 			row.StorageName, row.Stock, row.Reserv, row.Free, row.FirstStage,
 		)
-		if err != nil {
-			return total, fmt.Errorf("save rest %s/%s/%s: %w", row.GoodGUID, row.SKUGUID, row.StorageGUID, err)
-		}
-		total += int(tag.RowsAffected())
 	}
-	return total, tx.Commit(ctx)
+
+	query := insertRestFullChunkSQL
+	if len(chunk) < pgRestsChunkSize {
+		query = BuildMultiRowInsert(insertRestPrefixSQL, insertRestOnConflictSQL, len(chunk), insertRestCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save rests batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }

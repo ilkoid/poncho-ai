@@ -25,9 +25,9 @@ CREATE TABLE IF NOT EXISTS onec_rests (
     storage_guid    TEXT    NOT NULL,
     snapshot_date   TEXT    NOT NULL,
     storage_name    TEXT    DEFAULT '',
-    stock           INTEGER DEFAULT 0,
-    reserv          INTEGER DEFAULT 0,
-    free            INTEGER DEFAULT 0,
+    stock           BIGINT DEFAULT 0,
+    reserv          BIGINT DEFAULT 0,
+    free            BIGINT DEFAULT 0,
     first_stage     BOOLEAN NOT NULL DEFAULT FALSE,
     downloaded_at   TEXT    DEFAULT TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
     PRIMARY KEY (good_guid, sku_guid, storage_guid, snapshot_date)
@@ -39,11 +39,22 @@ CREATE INDEX IF NOT EXISTS idx_onec_rests_storage_guid ON onec_rests(storage_gui
 `
 )
 
+// onecRestsMigrations widens INTEGER columns to BIGINT for stock quantity fields.
+// Safe: INTEGER→BIGINT is a widening conversion — no data loss.
+const onecRestsMigrations = `
+ALTER TABLE onec_rests ALTER COLUMN stock TYPE BIGINT;
+ALTER TABLE onec_rests ALTER COLUMN reserv TYPE BIGINT;
+ALTER TABLE onec_rests ALTER COLUMN free TYPE BIGINT;
+`
+
 // initOneCRestsSchema creates onec_rests table in the PostgreSQL database.
 func initOneCRestsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, onecRestsSchemaSQL)
 	if err != nil {
 		return fmt.Errorf("onec_rests schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, onecRestsMigrations); err != nil {
+		return fmt.Errorf("onec_rests migrations (int4→bigint): %w", err)
 	}
 	return nil
 }

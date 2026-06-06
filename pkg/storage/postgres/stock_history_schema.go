@@ -59,19 +59,19 @@ CREATE TABLE IF NOT EXISTS stock_history_metrics (
     region_name TEXT,
     office_name TEXT,
     availability TEXT,
-    orders_count INTEGER,
-    orders_sum INTEGER,
-    buyout_count INTEGER,
-    buyout_sum INTEGER,
+    orders_count BIGINT,
+    orders_sum BIGINT,
+    buyout_count BIGINT,
+    buyout_sum BIGINT,
     buyout_percent INTEGER,
     avg_orders DOUBLE PRECISION,
-    stock_count INTEGER,
-    stock_sum INTEGER,
-    sale_rate INTEGER,
-    avg_stock_turnover INTEGER,
-    to_client_count INTEGER,
-    from_client_count INTEGER,
-    price INTEGER,
+    stock_count BIGINT,
+    stock_sum BIGINT,
+    sale_rate BIGINT,
+    avg_stock_turnover BIGINT,
+    to_client_count BIGINT,
+    from_client_count BIGINT,
+    price BIGINT,
     office_missing_time INTEGER,
     lost_orders_count DOUBLE PRECISION,
     lost_orders_sum DOUBLE PRECISION,
@@ -115,11 +115,31 @@ CREATE INDEX IF NOT EXISTS idx_shd_office ON stock_history_daily(office_name);
 `
 )
 
+// stockHistoryMigrations widens INTEGER columns to BIGINT for count, sum, and price fields.
+// Safe: INTEGER→BIGINT is a widening conversion — no data loss.
+// buyout_percent and office_missing_time remain INTEGER (bounded values).
+const stockHistoryMigrations = `
+ALTER TABLE stock_history_metrics ALTER COLUMN orders_count TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN orders_sum TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN buyout_count TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN buyout_sum TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN stock_count TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN stock_sum TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN sale_rate TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN avg_stock_turnover TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN to_client_count TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN from_client_count TYPE BIGINT;
+ALTER TABLE stock_history_metrics ALTER COLUMN price TYPE BIGINT;
+`
+
 // initStockHistorySchema creates stock history tables in the PostgreSQL database.
 func initStockHistorySchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, stockHistorySchemaSQL)
 	if err != nil {
 		return fmt.Errorf("stock history schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, stockHistoryMigrations); err != nil {
+		return fmt.Errorf("stock history migrations (int4→bigint): %w", err)
 	}
 	return nil
 }
