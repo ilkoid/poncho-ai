@@ -3,7 +3,7 @@ wb:
   timeout: 30m
 
 funnel:
-  days: 2
+  days: 7
   batch_size: 20
   funnel_rate_limit: 3
   funnel_rate_limit_burst: 3

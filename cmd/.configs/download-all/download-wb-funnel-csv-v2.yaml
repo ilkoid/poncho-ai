@@ -4,7 +4,7 @@ wb:
 
 funnel_csv:
   report_type: detail
-  days: 7
+  days: 14
   resume: true
   rate_limits:
     create: 3

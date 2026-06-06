@@ -3,7 +3,7 @@ wb:
   timeout: "60s"
 
 region_sales:
-  days: 3
+  days: 5
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
   rate_limits:
     region_sale: 6
