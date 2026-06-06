@@ -199,18 +199,17 @@ func (r *PgSearchVisRepo) FilterActiveNmIDs(ctx context.Context, nmIDs []int, ac
 	}
 
 	placeholders := make([]string, len(nmIDs))
-	args := make([]any, 0, len(nmIDs)+1)
+	args := make([]any, 0, len(nmIDs))
 	for i, id := range nmIDs {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args = append(args, id)
 	}
-	// Last placeholder for the date filter
-	args = append(args, fmt.Sprintf("%d days", activeDays))
 
+	// Interval is a literal (from config, not user input) — safe to inline.
 	query := fmt.Sprintf(
-		"SELECT DISTINCT nm_id FROM operational_sales WHERE nm_id IN (%s) AND sale_dt >= NOW() - INTERVAL $%d",
+		"SELECT DISTINCT nm_id FROM operational_sales WHERE nm_id IN (%s) AND sale_dt >= NOW() - INTERVAL '%d days'",
 		strings.Join(placeholders, ","),
-		len(nmIDs)+1,
+		activeDays,
 	)
 
 	rows, err := r.pool.Query(ctx, query, args...)
