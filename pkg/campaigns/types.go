@@ -31,6 +31,10 @@ type CampaignsSource interface {
 	// Wraps GET /api/advert/v2/adverts. Max 50 IDs per request.
 	GetAdvertDetails(ctx context.Context, ids []int) ([]wb.AdvertDetail, error)
 
+	// GetAllAdvertDetails returns details for ALL campaigns (no ID filter).
+	// API ignores the id parameter anyway — single call fetches everything.
+	GetAllAdvertDetails(ctx context.Context) ([]wb.AdvertDetail, error)
+
 	// GetCampaignFullstats returns full statistics with 4-level hierarchy.
 	// Wraps GET /adv/v3/fullstats. Max 50 IDs, max 31 days per request.
 	GetCampaignFullstats(ctx context.Context, ids []int, begin, end string, rl, burst int) ([]wb.CampaignFullstatsResponse, error)

@@ -1,0 +1,21 @@
+wb:
+  api_key_env: "WB_API_KEY"
+  timeout: "60s"
+
+stocks:
+  first_date: "2026-05-10"
+  api_key_env: "WB_API_KEY"
+  rate_limits:
+    warehouse: 3
+    warehouse_burst: 1
+    warehouse_api: 3
+    warehouse_api_burst: 1
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

@@ -130,8 +130,8 @@ func (d *Downloader) runCampaignsPhase(ctx context.Context, result *DownloadResu
 }
 
 // runDetailsPhase downloads campaign details via single API call.
-// NOTE: WB API /api/advert/v2/adverts ignores the id parameter and returns ALL campaigns,
-// so batching is pointless — one call fetches everything.
+// WB API /api/advert/v2/adverts ignores the id parameter and returns ALL campaigns,
+// so one call without IDs fetches everything — no batching needed.
 func (d *Downloader) runDetailsPhase(ctx context.Context, allIDs []int, result *DownloadResult) error {
 	if d.opts.SkipDetails || len(allIDs) == 0 {
 		d.progress("skipping campaign details")
@@ -140,7 +140,7 @@ func (d *Downloader) runDetailsPhase(ctx context.Context, allIDs []int, result *
 
 	d.progress("downloading campaign details...")
 
-	details, err := d.source.GetAdvertDetails(ctx, allIDs)
+	details, err := d.source.GetAllAdvertDetails(ctx)
 	if err != nil {
 		return fmt.Errorf("get advert details: %w", err)
 	}

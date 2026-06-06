@@ -72,7 +72,9 @@ func (c *Client) GetCampaignFullstats(ctx context.Context, advertIDs []int, begi
 }
 
 // GetAdvertDetails returns campaign details from /api/advert/v2/adverts.
-// Max 50 IDs per request. Rate limit: 5 req/sec (swagger).
+// If ids is non-empty, passes them as query param (max 50 per swagger).
+// If ids is empty, calls without filter — API returns ALL campaigns.
+// Rate limit: 5 req/sec (swagger).
 // NOTE: v2 may not return details for all campaign types (e.g. type=8 legacy, type=6 booster).
 func (c *Client) GetAdvertDetails(ctx context.Context, ids []int) ([]AdvertDetail, error) {
 	// Use demo mode if configured
@@ -80,23 +82,22 @@ func (c *Client) GetAdvertDetails(ctx context.Context, ids []int) ([]AdvertDetai
 		return c.getMockAdvertDetails(ids), nil
 	}
 
-	if len(ids) == 0 {
-		return nil, nil
-	}
-
-	// Build URL with query parameters
-	// GET /api/advert/v2/adverts?id=123,456
 	endpoint := "https://advert-api.wildberries.ru"
 
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = fmt.Sprintf("%d", id)
+	var path string
+	if len(ids) > 0 {
+		// Build URL with IDs — max 50 per swagger to avoid 414 Request-URI Too Large
+		idStrs := make([]string, len(ids))
+		for i, id := range ids {
+			idStrs[i] = fmt.Sprintf("%d", id)
+		}
+		params := url.Values{}
+		params.Set("id", strings.Join(idStrs, ","))
+		path = "/api/advert/v2/adverts?" + params.Encode()
+	} else {
+		// No IDs — return all campaigns (API ignores filter anyway)
+		path = "/api/advert/v2/adverts"
 	}
-
-	params := url.Values{}
-	params.Set("id", strings.Join(idStrs, ","))
-
-	path := "/api/advert/v2/adverts?" + params.Encode()
 
 	var response AdvertsResponse
 	err := c.Get(ctx, "get_advert_details", endpoint, 300, 5, path, nil, &response)

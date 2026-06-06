@@ -1,0 +1,36 @@
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  timeout: 120s                    # Longer timeout for batch operations
+
+campaigns:
+  # Date range: days as fallback when begin/end not specified
+  days: 7
+  # Filter campaigns by status for stats download
+  # -1=Deleted, 4=Ready, 7=Finished, 8=Canceled, 9=Active, 11=Paused
+  statuses: [9]                    # Active only for stats
+  resume: true                     # Continue from last loaded date per campaign
+  rate_limits:
+    # Campaign list: GET /adv/v1/promotion/count — swagger: 300/min
+    promotion_count: 300
+    promotion_count_burst: 10
+    promotion_count_api: 300
+    promotion_count_api_burst: 5
+    # Campaign details: GET /api/advert/v2/adverts — swagger: 300/min
+    advert_details: 300
+    advert_details_burst: 10
+    advert_details_api: 300
+    advert_details_api_burst: 5
+    # Fullstats: GET /adv/v3/fullstats — swagger: 3/min (MOST RESTRICTIVE)
+    fullstats: 3
+    fullstats_burst: 1
+    fullstats_api: 3
+    fullstats_api_burst: 1
+  adaptive_probe_after: 15
+  max_backoff_seconds: 30
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

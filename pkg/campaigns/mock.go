@@ -62,6 +62,23 @@ func (m *MockCampaignsSource) GetAdvertDetails(ctx context.Context, ids []int) (
 	return result, nil
 }
 
+// GetAllAdvertDetails returns all mock campaign details (no filter).
+func (m *MockCampaignsSource) GetAllAdvertDetails(ctx context.Context) ([]wb.AdvertDetail, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Return copy of all details
+	result := make([]wb.AdvertDetail, len(m.details))
+	copy(result, m.details)
+	return result, nil
+}
+
 // GetCampaignFullstats returns mock fullstats for the requested IDs.
 func (m *MockCampaignsSource) GetCampaignFullstats(ctx context.Context, ids []int, begin, end string, rl, burst int) ([]wb.CampaignFullstatsResponse, error) {
 	select {

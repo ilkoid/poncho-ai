@@ -1,0 +1,29 @@
+# WB Operational Sales Downloader v2 — Production Config
+# Запускается через download-all.sh, Phase 3 (после orders, перед sales-v2)
+#
+# ⚠️  Этот конфиг пишет в production БД (/var/db/wb-sales.db)
+# ⚠️  Запускает ТОЛЬКО пользователь вручную: bash download-all.sh
+
+wb:
+  api_key_env: "WB_STAT"
+  rate_limit: 1
+  burst_limit: 1
+  endpoint: "https://statistics-api.wildberries.ru"
+
+opsales:
+  days: 7                          # полный retention WB API
+  rewrite: false                    # upsert без удаления — сохраняем историю за пределами 90 дней
+  adaptive_recover_after: 5
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
+
+filter:
+  exclude_lengths: [6]
+  allowed_years: []

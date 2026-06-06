@@ -36,6 +36,11 @@ func (s *WBSource) GetAdvertDetails(ctx context.Context, ids []int) ([]wb.Advert
 	return s.client.GetAdvertDetails(ctx, ids)
 }
 
+// GetAllAdvertDetails delegates to wb.Client.GetAdvertDetails with empty IDs (no filter).
+func (s *WBSource) GetAllAdvertDetails(ctx context.Context) ([]wb.AdvertDetail, error) {
+	return s.client.GetAdvertDetails(ctx, nil)
+}
+
 // GetCampaignFullstats delegates to wb.Client.GetCampaignFullstats.
 func (s *WBSource) GetCampaignFullstats(ctx context.Context, ids []int, begin, end string, rl, burst int) ([]wb.CampaignFullstatsResponse, error) {
 	return s.client.GetCampaignFullstats(ctx, ids, begin, end, rl, burst)

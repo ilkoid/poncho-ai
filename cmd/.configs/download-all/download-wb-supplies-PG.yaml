@@ -1,0 +1,28 @@
+wb:
+  api_key: ""
+  timeout: "60s"
+
+supply:
+  db_path: "/var/db/wb-sales.db"
+  days: 14
+  date_filter_type: "updatedDate"
+  rate_limits:
+    # All supply endpoints share a global per-seller limit of ~30 req/min
+    supply_ops: 25
+    supply_ops_burst: 5
+    supply_ops_api: 25
+    supply_ops_api_burst: 5
+    # Reference data (separate limit: 6 req/min)
+    ref: 7
+    ref_burst: 5
+    ref_api: 7
+    ref_api_burst: 5
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

@@ -1,0 +1,12 @@
+# ============================================================================
+# 1C Data Downloader v2 — download-all config
+# ============================================================================
+onec:
+  api_url: ${ONEC_API_URL}
+  pim_url: ${ONEC_PIM_URL}
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

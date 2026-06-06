@@ -1,0 +1,55 @@
+wb:
+  api_key: "WB_API_KEY"
+  analytics_api_key: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  calendar_api_key: "${WB_API_KEY}"
+  timeout: 120s
+
+promotion_v2:
+  db_path: "/var/db/wb-sales.db"
+  days: 7
+  statuses: [9]
+  skip_bids: false
+  skip_normquery: false
+  skip_recommendations: true
+  skip_finance: true
+  skip_calendar: true
+  skip_budgets: true
+  skip_min_bids: true
+  changed_days: 0  # 0 = auto-detect from last run, >0 = manual N-day window
+  calendar_days_past: 7
+  calendar_days_future: 7
+  rate_limits:
+    normquery: 300
+    normquery_burst: 5
+    normquery_api: 300
+    normquery_api_burst: 5
+    normquery_stats: 10
+    normquery_stats_burst: 1
+    normquery_stats_api: 10
+    normquery_stats_api_burst: 1
+    bid_rec: 5
+    bid_rec_burst: 1
+    bid_rec_api: 5
+    bid_rec_api_burst: 1
+    finance: 60
+    finance_burst: 5
+    finance_api: 60
+    finance_api_burst: 5
+    calendar: 100
+    calendar_burst: 5
+    calendar_api: 100
+    calendar_api_burst: 5
+    min_bids: 20
+    min_bids_burst: 3
+    min_bids_api: 20
+    min_bids_api_burst: 3
+  adaptive_probe_after: 15
+  max_backoff_seconds: 60
+
+# Storage backend (V2 dual-backend)
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

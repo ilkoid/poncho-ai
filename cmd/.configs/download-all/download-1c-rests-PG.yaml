@@ -1,0 +1,14 @@
+onec_rests:
+  rest_url: ${ONEC_API_REST_URL}
+  db_path: "/var/db/wb-sales.db"
+  retention_days: 7
+  storage_filter:
+    guids: []
+    name_patterns: []
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
