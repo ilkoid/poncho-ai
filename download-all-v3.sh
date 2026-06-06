@@ -116,13 +116,13 @@ PHASE_START=$SECONDS
 ### wb-funnel-agg v2 (aggregated funnel — period-level metrics, no nmID batching)
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" && go run . --config "$CONFIGS/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-funnel-csv v2 (async CSV funnel export — detail/grouped)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" && go run . --config "$CONFIGS/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
+#cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" && go run . --config "$CONFIGS/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-search-vis v2 (search positions + queries — Seller Analytics API, 3 req/min)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" && go run . --config "$CONFIGS/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" && go run . --config "$CONFIGS/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-penalties v2 (measurement penalties — Seller Analytics API, 1 req/min)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" && go run . --config "$CONFIGS/download-wb-penalties-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" && go run . --config "$CONFIGS/download-wb-penalties-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-whremains v2 (warehouse remains — async 3-step, Seller Analytics API)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-whremains-v2" && go run . --config "$CONFIGS/download-wb-whremains-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-whremains-v2" && go run . --config "$CONFIGS/download-wb-whremains-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)) || exit $?
 
 echo "  Phase 6 done in $(( SECONDS - PHASE_START ))s"
 
