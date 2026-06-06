@@ -41,9 +41,9 @@ echo ""
 echo "── Phase 1: Catalog (cards, prices, 1C/PIM) ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" && go run . --config "$CONFIGS/download-wb-cards-v2-PG.yaml" --backend postgres) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-wb-prices-v2" && go run . --config "$CONFIGS/download-wb-prices-PG.yaml" --backend postgres) || exit $?
-(cd "$PONCHO/cmd/data-downloaders/download-1c-data-v2" && go run . --config "$CONFIGS/download-1c-data-v2-PG.yaml" --backend postgres) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" && go run . --config "$CONFIGS/download-wb-cards-v2-PG.yaml" --backend postgres) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-prices-v2" && go run . --config "$CONFIGS/download-wb-prices-PG.yaml" --backend postgres) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-1c-data-v2" && go run . --config "$CONFIGS/download-1c-data-v2-PG.yaml" --backend postgres) || exit $?
 # 1c-rests — internal API (optional)
 #(cd "$PONCHO/cmd/data-downloaders/download-1c-rests-v2" && go run . --config "$CONFIGS/download-1c-rests-PG.yaml" --backend postgres) || exit $?
 
@@ -55,7 +55,7 @@ echo ""
 echo "── Phase 2: Feedbacks ──"
 PHASE_START=$SECONDS
 
-(cd "$PONCHO/cmd/data-downloaders/download-wb-feedbacks-v2" && go run . --config "$CONFIGS/download-wb-feedbacks-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-feedbacks-v2" && go run . --config "$CONFIGS/download-wb-feedbacks-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 2 done in $(( SECONDS - PHASE_START ))s"
 
@@ -66,13 +66,13 @@ echo "── Phase 3: Sales & Revenue ──"
 PHASE_START=$SECONDS
 
 ### wb-orders v2 (early signal — cart/checkout, updates every 30 min)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" && go run . --config "$CONFIGS/download-wb-orders-PG.yaml" --backend postgres) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" && go run . --config "$CONFIGS/download-wb-orders-PG.yaml" --backend postgres) || exit $?
 ### wb-opsales v2 (operational sales/returns — preliminary data, updates every 30 min)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" && go run . --config "$CONFIGS/download-wb-opsales-PG.yaml" --backend postgres) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" && go run . --config "$CONFIGS/download-wb-opsales-PG.yaml" --backend postgres) || exit $?
 ### wb-sales v2 (financial realization — daily)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-sales-v2" && go run . --config "$CONFIGS/download-wb-sales-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-sales-v2" && go run . --config "$CONFIGS/download-wb-sales-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-region-sales v2 (sales by region from Seller Analytics API)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-region-sales-v2" && go run . --config "$CONFIGS/download-wb-region-sales-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-region-sales-v2" && go run . --config "$CONFIGS/download-wb-region-sales-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 3 done in $(( SECONDS - PHASE_START ))s"
 
@@ -83,11 +83,11 @@ echo "── Phase 4: Stock & Logistics ──"
 PHASE_START=$SECONDS
 
 ### wb-stocks v2 (warehouse stock snapshot)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-stocks-v2" && go run . --config "$CONFIGS/download-wb-stocks-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-stocks-v2" && go run . --config "$CONFIGS/download-wb-stocks-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)) || exit $?
 ### wb-stock-history v2 (async CSV reports — stock dynamics per day)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" && go run . --config "$CONFIGS/download-wb-stock-history-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" && go run . --config "$CONFIGS/download-wb-stock-history-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-supplies v2 (FBW supplies: warehouses, tariffs, supply details — 7 Writer methods)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-supplies-v2" && go run . --config "$CONFIGS/download-wb-supplies-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-supplies-v2" && go run . --config "$CONFIGS/download-wb-supplies-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 4 done in $(( SECONDS - PHASE_START ))s"
 
@@ -116,7 +116,7 @@ PHASE_START=$SECONDS
 ### wb-funnel-agg v2 (aggregated funnel — period-level metrics, no nmID batching)
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" && go run . --config "$CONFIGS/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-funnel-csv v2 (async CSV funnel export — detail/grouped)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" && go run . --config "$CONFIGS/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" && go run . --config "$CONFIGS/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-search-vis v2 (search positions + queries — Seller Analytics API, 3 req/min)
 #(cd "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" && go run . --config "$CONFIGS/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-penalties v2 (measurement penalties — Seller Analytics API, 1 req/min)
