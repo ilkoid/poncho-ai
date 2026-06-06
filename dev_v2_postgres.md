@@ -322,6 +322,8 @@ t, _ := time.Parse(time.RFC3339, *lastDT)
 | `INTEGER PRIMARY KEY` (natural key) | `INTEGER PRIMARY KEY` | Без изменений |
 | `REAL` | `DOUBLE PRECISION` | 64-bit float |
 | `INTEGER` для boolean | `BOOLEAN` | Native |
+| `INTEGER` для ID, кол-во, ШК | `BIGINT` | int4 max ~2.1 млрд, WB ID давно больше |
+| `INTEGER` для rating (1-5) | `INTEGER` | Безопасно, bounded value |
 | `CURRENT_TIMESTAMP` | `TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')` | TEXT-compatible |
 | `sql.NullFloat64{Float64: v, Valid: true}` | `*float64` (nil = NULL) | pgx native pointer handling |
 | `sql.NullString{String: s, Valid: true}` | `*string` (nil = NULL) | pgx native pointer handling |
@@ -386,6 +388,8 @@ pkg/config/pgconfig.go                           # EXISTS: V2StorageConfig (reus
 - [ ] `$1, $2...` placeholders, не `?`
 - [ ] `ON CONFLICT ... DO UPDATE SET ... = EXCLUDED ...` для upsert
 - [ ] `BOOLEAN` вместо `INTEGER` для bool полей (§2.3)
+- [ ] `BIGINT` для ID-полей и количеств (nm_id, imt_id, shk_id, subject_id) — int4 max ~2.1 млрд
+- [ ] `INTEGER` только для bounded значений (rating 1-5, valuation)
 - [ ] `DOUBLE PRECISION` вместо `REAL`
 - [ ] `BIGSERIAL PRIMARY KEY` для auto-increment PK
 - [ ] Foreign Keys с `ON DELETE CASCADE`

@@ -271,7 +271,7 @@ Output the structured report using the template in [examples/report_example.md](
 
 ## Anti-Pattern Catalog
 
-18 unified anti-patterns. Each entry: Severity, Symptom, Search pattern.
+20 unified anti-patterns. Each entry: Severity, Symptom, Search pattern.
 Full WRONG/RIGHT code examples: [examples/anti_patterns.md](examples/anti_patterns.md).
 
 | AP# | Name | Severity | Source | Grep Pattern |
@@ -294,6 +294,8 @@ Full WRONG/RIGHT code examples: [examples/anti_patterns.md](examples/anti_patter
 | AP-16 | Hardcoded Boolean | WARNING | v2_postgres | `INTEGER DEFAULT 0` for boolean in PG schema |
 | AP-17 | Expression Index Multi-Stmt | CRITICAL | v2_postgres | `CREATE INDEX ... CASE` inside multi-statement Exec |
 | AP-18 | Aggregate in Value Type | CRITICAL | v2_postgres | `MAX()/MIN()/SUM()` scan into non-pointer type |
+| AP-19 | Per-Row INSERT in Chunk | WARNING | v2_postgres | `for.*range chunk.*tx.Exec` — per-row loop instead of multi-row INSERT via `BuildMultiRowInsert()` |
+| AP-20 | int4 Overflow (INTEGER for IDs) | CRITICAL | v2_postgres | `INTEGER` for nm_id/imt_id/shk_id columns in PG schema — Go `int` = int8, int4 max ~2.1B |
 
 **V1→V2 Migration Gotchas** (7 items based on real incidents): [examples/anti_patterns.md MG-1..MG-7](examples/anti_patterns.md)
 

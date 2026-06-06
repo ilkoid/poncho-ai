@@ -14,9 +14,6 @@ download:
   adaptive_probe_after: 10
   max_backoff_seconds: 60
 
-storage:
-  db_path: "/var/db/wb-sales.db"
-
 filter:
   exclude_lengths: [6]
   allowed_years: [20, 21, 22, 23, 24, 25, 26]
