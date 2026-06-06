@@ -2,6 +2,7 @@ package penalties
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -240,6 +241,63 @@ func TestFilterCombined(t *testing.T) {
 	}
 	if result.TotalPenalties != 20 {
 		t.Errorf("expected 20 confirmed футболка penalties, got %d", result.TotalPenalties)
+	}
+}
+
+func TestResolveDateRange_RFC3339(t *testing.T) {
+	src := NewMockPenaltiesSource(5)
+	writer := NewDiscardWriter()
+
+	// Default: auto-computed dates must be RFC3339
+	dl := NewDownloader(src, writer, DownloadOptions{Days: 30})
+	from, to := dl.resolveDateRange()
+
+	if !strings.Contains(from, "T") {
+		t.Errorf("dateFrom should be RFC3339, got: %s", from)
+	}
+	if !strings.HasSuffix(from, "T00:00:00Z") {
+		t.Errorf("dateFrom should start at midnight, got: %s", from)
+	}
+	if !strings.HasSuffix(to, "T23:59:59Z") {
+		t.Errorf("dateTo should end at end-of-day, got: %s", to)
+	}
+}
+
+func TestResolveDateRange_ExplicitDateOnly(t *testing.T) {
+	src := NewMockPenaltiesSource(5)
+	writer := NewDiscardWriter()
+
+	// Explicit YYYY-MM-DD should be normalized to RFC3339
+	dl := NewDownloader(src, writer, DownloadOptions{
+		From: "2026-01-15",
+		To:   "2026-03-20",
+	})
+	from, to := dl.resolveDateRange()
+
+	if from != "2026-01-15T00:00:00Z" {
+		t.Errorf("dateFrom normalization: got %s, want 2026-01-15T00:00:00Z", from)
+	}
+	if to != "2026-03-20T23:59:59Z" {
+		t.Errorf("dateTo normalization: got %s, want 2026-03-20T23:59:59Z", to)
+	}
+}
+
+func TestResolveDateRange_ExplicitRFC3339(t *testing.T) {
+	src := NewMockPenaltiesSource(5)
+	writer := NewDiscardWriter()
+
+	// Already RFC3339 — should pass through unchanged
+	dl := NewDownloader(src, writer, DownloadOptions{
+		From: "2026-01-15T10:30:00Z",
+		To:   "2026-03-20T18:00:00Z",
+	})
+	from, to := dl.resolveDateRange()
+
+	if from != "2026-01-15T10:30:00Z" {
+		t.Errorf("RFC3339 dateFrom should pass through: got %s", from)
+	}
+	if to != "2026-03-20T18:00:00Z" {
+		t.Errorf("RFC3339 dateTo should pass through: got %s", to)
 	}
 }
 

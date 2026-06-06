@@ -1213,15 +1213,15 @@ type MeasurementPenaltyItem struct {
 
 	// Фактические замеры (склад WB)
 	Volume float64 `json:"volume"` // Объём, литры
-	Width  int     `json:"width"`  // Ширина, см
-	Length int     `json:"length"` // Длина, см
-	Height int     `json:"height"` // Высота, см
+	Width  float64 `json:"width"`  // Ширина, см (WB может вернуть дробное, напр. 39.3)
+	Length float64 `json:"length"` // Длина, см
+	Height float64 `json:"height"` // Высота, см
 
 	// Заявленные габариты (карточка продавца) — Sup = Supplier
 	VolumeSup float64 `json:"volumeSup"` // Объём, литры
-	WidthSup  int     `json:"widthSup"`  // Ширина, см
-	LengthSup int     `json:"lengthSup"` // Длина, см
-	HeightSup int     `json:"heightSup"` // Высота, см
+	WidthSup  float64 `json:"widthSup"`  // Ширина, см
+	LengthSup float64 `json:"lengthSup"` // Длина, см
+	HeightSup float64 `json:"heightSup"` // Высота, см
 
 	// Доказательства и дата
 	PhotoUrls []string `json:"photoUrls"` // Ссылки на фото замера

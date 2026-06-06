@@ -102,24 +102,37 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 }
 
 // resolveDateRange computes dateFrom and dateTo from options.
-// Returns YYYY-MM-DD strings suitable for query params.
+// Returns RFC3339 date-time strings (e.g. "2026-03-08T00:00:00Z")
+// required by the measurement-penalties endpoint.
+// Swagger: format: date-time, example: '2025-02-01T15:00:00Z'.
+//
+// User-supplied From/To values in YYYY-MM-DD format are normalized to RFC3339.
 func (d *Downloader) resolveDateRange() (string, string) {
 	var dateFrom, dateTo string
 
 	if d.opts.From != "" {
-		dateFrom = d.opts.From
+		dateFrom = ensureRFC3339(d.opts.From, "T00:00:00Z")
 	} else {
 		t := time.Now().AddDate(0, 0, -d.opts.Days)
-		dateFrom = t.Format("2006-01-02")
+		dateFrom = t.Format("2006-01-02") + "T00:00:00Z"
 	}
 
 	if d.opts.To != "" {
-		dateTo = d.opts.To
+		dateTo = ensureRFC3339(d.opts.To, "T23:59:59Z")
 	} else {
-		dateTo = time.Now().Format("2006-01-02")
+		dateTo = time.Now().Format("2006-01-02") + "T23:59:59Z"
 	}
 
 	return dateFrom, dateTo
+}
+
+// ensureRFC3339 converts a date string to RFC3339 if it's in YYYY-MM-DD format.
+// If the string already contains 'T' (RFC3339), returns it unchanged.
+func ensureRFC3339(dateStr, timeSuffix string) string {
+	if !strings.Contains(dateStr, "T") {
+		return dateStr + timeSuffix
+	}
+	return dateStr
 }
 
 // applyFilter removes penalties that don't match PenaltiesFilterConfig.

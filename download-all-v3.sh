@@ -122,7 +122,7 @@ PHASE_START=$SECONDS
 ### wb-penalties v2 (measurement penalties — Seller Analytics API, 1 req/min)
 (cd "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" && go run . --config "$CONFIGS/download-wb-penalties-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-whremains v2 (warehouse remains — async 3-step, Seller Analytics API)
-(cd "$PONCHO/cmd/data-downloaders/download-wb-whremains-v2" && go run . --config "$CONFIGS/download-wb-whremains-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)) || exit $?
+#(cd "$PONCHO/cmd/data-downloaders/download-wb-whremains-v2" && go run . --config "$CONFIGS/download-wb-whremains-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)) || exit $?
 
 echo "  Phase 6 done in $(( SECONDS - PHASE_START ))s"
 

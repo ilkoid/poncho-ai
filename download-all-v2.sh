@@ -43,10 +43,10 @@ echo ""
 echo "── Phase 1: Catalog (cards, prices, 1C/PIM) ──"
 PHASE_START=$SECONDS
 
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" && go run . --config "$CONFIGS/download-wb-cards-v2.yaml" --backend sqlite) || exit $?
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-prices-v2" && go run . --config "$CONFIGS/download-wb-prices.yaml" --backend sqlite) || exit $?
-#(cd "$PONCHO/cmd/data-downloaders/download-1c-data-v2" && go run . --config "$CONFIGS/download-1c-data-v2.yaml" --backend sqlite) || exit $?
-#(cd "$PONCHO/cmd/data-downloaders/download-1c-rests-v2" && go run . --config "$CONFIGS/download-1c-rests.yaml") || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" && go run . --config "$CONFIGS/download-wb-cards-v2.yaml" --backend sqlite) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-prices-v2" && go run . --config "$CONFIGS/download-wb-prices.yaml" --backend sqlite) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-1c-data-v2" && go run . --config "$CONFIGS/download-1c-data-v2.yaml" --backend sqlite) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-1c-rests-v2" && go run . --config "$CONFIGS/download-1c-rests.yaml") || exit $?
 
 echo "  Phase 1 done in $(( SECONDS - PHASE_START ))s"
 
@@ -57,7 +57,7 @@ echo ""
 echo "── Phase 2: Feedbacks ──"
 PHASE_START=$SECONDS
 
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-feedbacks-v2" && go run . --config "$CONFIGS/download-wb-feedbacks.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-feedbacks-v2" && go run . --config "$CONFIGS/download-wb-feedbacks.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 2 done in $(( SECONDS - PHASE_START ))s"
 
@@ -69,13 +69,13 @@ echo "── Phase 3: Sales & Revenue ──"
 PHASE_START=$SECONDS
 
 ### wb-orders v2 (early signal — cart/checkout, updates every 30 min)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" && go run . --config "$CONFIGS/download-wb-orders.yaml" --backend sqlite) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" && go run . --config "$CONFIGS/download-wb-orders.yaml" --backend sqlite) || exit $?
 ### wb-opsales v2 (operational sales/returns — preliminary data, updates every 30 min)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" && go run . --config "$CONFIGS/download-wb-opsales.yaml" --backend sqlite) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" && go run . --config "$CONFIGS/download-wb-opsales.yaml" --backend sqlite) || exit $?
 ### wb-sales v2 (financial realization — daily)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-sales-v2" && go run . --config "$CONFIGS/download-wb-sales.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-sales-v2" && go run . --config "$CONFIGS/download-wb-sales.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-region-sales v2 (sales by region from Seller Analytics API)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-region-sales-v2" && go run . --config "$CONFIGS/download-wb-region-sales-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-region-sales-v2" && go run . --config "$CONFIGS/download-wb-region-sales-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 3 done in $(( SECONDS - PHASE_START ))s"
 
@@ -87,11 +87,11 @@ echo "── Phase 4: Stock & Logistics ──"
 PHASE_START=$SECONDS
 
 ### wb-stocks v2 (warehouse stock snapshot)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-stocks-v2" && go run . --config "$CONFIGS/download-wb-stocks-v2.yaml" --backend sqlite --date $(date +%Y-%m-%d)) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-stocks-v2" && go run . --config "$CONFIGS/download-wb-stocks-v2.yaml" --backend sqlite --date $(date +%Y-%m-%d)) || exit $?
 ### wb-stock-history v2 (async CSV reports — stock dynamics per day)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" && go run . --config "$CONFIGS/download-wb-stock-history.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" && go run . --config "$CONFIGS/download-wb-stock-history.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-supplies v2 (FBW supplies: warehouses, tariffs, supply details — 7 Writer methods)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-supplies-v2" && go run . --config "$CONFIGS/download-wb-supplies.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-supplies-v2" && go run . --config "$CONFIGS/download-wb-supplies.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 
 echo "  Phase 4 done in $(( SECONDS - PHASE_START ))s"
 
@@ -118,12 +118,12 @@ echo "── Phase 6: Analytics (funnel, funnel-agg, funnel-csv, search-vis, pen
 PHASE_START=$SECONDS
 
 ### wb-funnel v2 (conversion funnel per product per day)
-#(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-v2" && go run . --config "$CONFIGS/download-wb-funnel-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
+(cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-v2" && go run . --config "$CONFIGS/download-wb-funnel-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-funnel-agg v2 (aggregated funnel — period-level metrics, no nmID batching)
 (cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" && go run . --config "$CONFIGS/download-wb-funnel-agg.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-funnel-csv v2 (async CSV funnel export — detail/grouped)
 (cd "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" && go run . --config "$CONFIGS/download-wb-funnel-csv-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
-### wb-search-vis v2 (search positions + queries — Seller Analytics API, 3 req/min)
+## wb-search-vis v2 (search positions + queries — Seller Analytics API, 3 req/min)
 (cd "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" && go run . --config "$CONFIGS/download-wb-search-vis-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?
 ### wb-penalties v2 (measurement penalties — Seller Analytics API, 1 req/min)
 (cd "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" && go run . --config "$CONFIGS/download-wb-penalties-v2.yaml" --backend sqlite ${DAYS:+--days=$DAYS}) || exit $?

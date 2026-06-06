@@ -3,9 +3,11 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/whremains"
 )
 
@@ -29,13 +31,11 @@ func (r *PgWhRemainsRepo) InitSchema(ctx context.Context) error {
 }
 
 const (
-	// pgUpsertWhRemainsSQL upserts a warehouse remains row.
-	// 10 placeholders ($1-$10) = snapshot_date + 9 data columns.
-	pgUpsertWhRemainsSQL = `
-INSERT INTO warehouse_remains (
-    snapshot_date, nm_id, barcode, tech_size, warehouse_name,
-    brand, subject_name, vendor_code, volume, quantity
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	pgWhRemainsChunkSize = 500
+
+	// Multi-row INSERT SQL fragments.
+	insertWhRemainsPrefixSQL = `INSERT INTO warehouse_remains (snapshot_date, nm_id, barcode, tech_size, warehouse_name, brand, subject_name, vendor_code, volume, quantity) VALUES `
+	insertWhRemainsOnConflictSQL = `
 ON CONFLICT (snapshot_date, nm_id, tech_size, warehouse_name) DO UPDATE SET
     barcode        = EXCLUDED.barcode,
     brand          = EXCLUDED.brand,
@@ -43,9 +43,11 @@ ON CONFLICT (snapshot_date, nm_id, tech_size, warehouse_name) DO UPDATE SET
     vendor_code    = EXCLUDED.vendor_code,
     volume         = EXCLUDED.volume,
     quantity       = EXCLUDED.quantity`
-
-	pgWhRemainsChunkSize = 500
+	insertWhRemainsCols = 10
 )
+
+// Pre-built query for full chunks (500 rows).
+var insertWhRemainsFullChunkSQL = BuildMultiRowInsert(insertWhRemainsPrefixSQL, insertWhRemainsOnConflictSQL, pgWhRemainsChunkSize, insertWhRemainsCols)
 
 // SaveRemains saves a batch of flattened warehouse remains rows for a given snapshot date.
 // Returns count of upserted rows. Splits into 500-row transactions.
@@ -54,21 +56,27 @@ func (r *PgWhRemainsRepo) SaveRemains(ctx context.Context, snapshotDate string, 
 		return 0, nil
 	}
 
+	totalChunks := (len(rows) + pgWhRemainsChunkSize - 1) / pgWhRemainsChunkSize
 	total := 0
+	start := time.Now()
+
 	for i := 0; i < len(rows); i += pgWhRemainsChunkSize {
 		end := min(i+pgWhRemainsChunkSize, len(rows))
 		chunk := rows[i:end]
+		chunkNum := i/pgWhRemainsChunkSize + 1
 
 		n, err := r.saveWhRemainsChunk(ctx, chunk, snapshotDate)
 		if err != nil {
 			return 0, fmt.Errorf("save chunk at offset %d: %w", i, err)
 		}
 		total += n
+
+		dllog.Progress(chunkNum, totalChunks, "whremains", "💾 Writing rows", start)
 	}
 	return total, nil
 }
 
-// saveWhRemainsChunk saves up to 500 rows in a single transaction.
+// saveWhRemainsChunk saves up to 500 rows using a single multi-row INSERT statement.
 func (r *PgWhRemainsRepo) saveWhRemainsChunk(ctx context.Context, chunk []whremains.WhRemainsFlatRow, snapshotDate string) (int, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -76,22 +84,25 @@ func (r *PgWhRemainsRepo) saveWhRemainsChunk(ctx context.Context, chunk []whrema
 	}
 	defer tx.Rollback(ctx)
 
+	args := make([]any, 0, len(chunk)*insertWhRemainsCols)
 	for _, row := range chunk {
-		_, err := tx.Exec(ctx, pgUpsertWhRemainsSQL,
+		args = append(args,
 			snapshotDate,
 			row.NmID, row.Barcode, row.TechSize, row.WarehouseName,
 			row.Brand, row.SubjectName, row.VendorCode, row.Volume, row.Quantity,
 		)
-		if err != nil {
-			return 0, fmt.Errorf("upsert wh_remains nm_id=%d tech_size=%s warehouse=%s: %w",
-				row.NmID, row.TechSize, row.WarehouseName, err)
-		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
+	query := insertWhRemainsFullChunkSQL
+	if len(chunk) < pgWhRemainsChunkSize {
+		query = BuildMultiRowInsert(insertWhRemainsPrefixSQL, insertWhRemainsOnConflictSQL, len(chunk), insertWhRemainsCols)
 	}
-	return len(chunk), nil
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save wh_remains batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
 // CountRemainsForDate returns number of warehouse remains rows for a specific snapshot date.
