@@ -1,0 +1,11 @@
+# PG Maintenance — post-load VACUUM ANALYZE + optional REINDEX
+#
+# Usage:
+#   PG_PWD=password go run ./cmd/data-maintenance/pg-maintenance --config cmd/.configs/download-all/pg-maintenance-PG.yaml
+#   PG_PWD=password go run ./cmd/data-maintenance/pg-maintenance --config cmd/.configs/download-all/pg-maintenance-PG.yaml --dry-run
+#   PG_PWD=password go run ./cmd/data-maintenance/pg-maintenance --config cmd/.configs/download-all/pg-maintenance-PG.yaml --reindex
+
+storage:
+  backend: "postgres"
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
