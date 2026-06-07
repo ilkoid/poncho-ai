@@ -30,7 +30,7 @@ func (r *PgStocksRepo) InitSchema(ctx context.Context) error {
 	return initStocksSchema(ctx, r.pool)
 }
 
-const pgStocksChunkSize = 500
+const pgStocksChunkSize = 1000
 
 // Multi-row INSERT SQL fragments for stocks_daily_warehouses.
 const (

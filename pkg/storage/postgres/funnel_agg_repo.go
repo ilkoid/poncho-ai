@@ -51,7 +51,7 @@ func (r *PgFunnelAggRepo) GetDistinctNmIDCount(ctx context.Context) (int, error)
 }
 
 const (
-	pgFunnelAggChunkSize = 500
+	pgFunnelAggChunkSize = 200
 
 	// Products: 12 param placeholders + 1 TO_CHAR for updated_at (not a placeholder).
 	// BuildMultiRowInsert only counts $N placeholders, so cols=12.

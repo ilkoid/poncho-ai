@@ -13,7 +13,7 @@ import (
 // Compile-time assertion: PgOneCRepo implements onec.Writer.
 var _ onec.Writer = (*PgOneCRepo)(nil)
 
-const pgOneCChunkSize = 500
+const pgOneCChunkSize = 250
 
 // PgOneCRepo implements onec.Writer for PostgreSQL.
 type PgOneCRepo struct {

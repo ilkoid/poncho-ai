@@ -60,7 +60,7 @@ func (r *PgPricesRepo) CountPrices(ctx context.Context) (int, error) {
 	return count, err
 }
 
-const pgPricesChunkSize = 500
+const pgPricesChunkSize = 1000
 
 // savePricesChunk saves up to 500 prices using a single multi-row INSERT.
 func (r *PgPricesRepo) savePricesChunk(ctx context.Context, chunk []wb.ProductPrice, snapshotDate string) (int, error) {

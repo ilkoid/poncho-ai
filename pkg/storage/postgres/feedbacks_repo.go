@@ -30,7 +30,7 @@ func (r *PgFeedbacksRepo) InitSchema(ctx context.Context) error {
 	return initFeedbacksSchema(ctx, r.pool)
 }
 
-const pgFBChunkSize = 500
+const pgFBChunkSize = 400
 
 // Multi-row INSERT SQL fragments for feedbacks table.
 const (

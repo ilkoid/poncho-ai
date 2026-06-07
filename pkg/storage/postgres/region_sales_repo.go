@@ -29,7 +29,7 @@ func (r *PgRegionSalesRepo) InitSchema(ctx context.Context) error {
 	return initRegionSalesSchema(ctx, r.pool)
 }
 
-const pgRegionSalesChunkSize = 500
+const pgRegionSalesChunkSize = 1000
 
 // Multi-row INSERT SQL fragments for region_sales.
 const (

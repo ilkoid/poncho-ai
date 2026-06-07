@@ -8,6 +8,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,6 +23,15 @@ type Pool struct {
 // Pool defaults:
 //   - MaxConns: 10 (suitable for concurrent downloaders)
 //   - MinConns: 2 (keeps warm connections)
+//   - MaxConnLifetime: 30m (rotate connections to prevent stale state)
+//   - MaxConnIdleTime: 5m (reclaim idle conns quickly for short-lived CLIs)
+//   - HealthCheckPeriod: 30s (detect dead connections proactively)
+//
+// Session params (applied at connection time, no extra round-trip):
+//   - work_mem: 64MB (prevents disk spill for large multi-row INSERTs)
+//   - synchronous_commit: off (2-5x faster COMMIT for re-downloadable data)
+//   - statement_timeout: 5min (safety net against stuck queries)
+//   - effective_cache_size: 2GB (planner hint, favors index scans)
 //
 // The pool pings the server on creation to verify connectivity.
 func NewPool(ctx context.Context, dsn string) (*Pool, error) {
@@ -30,8 +40,22 @@ func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 		return nil, fmt.Errorf("parse DSN: %w", err)
 	}
 
+	// Pool sizing
 	config.MaxConns = 10
 	config.MinConns = 2
+
+	// Connection lifecycle tuning for short-lived CLI utilities
+	config.MaxConnLifetime = 30 * time.Minute
+	config.MaxConnIdleTime = 5 * time.Minute
+	config.HealthCheckPeriod = 30 * time.Second
+
+	// Session-level optimizations via RuntimeParams (sent at connection time)
+	for k, v := range BulkLoadSessionParams() {
+		config.ConnConfig.RuntimeParams[k] = v
+	}
+
+	// AfterConnect hook for params that need explicit SET
+	config.AfterConnect = AfterConnectBulkLoad
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
