@@ -86,7 +86,7 @@ func main() {
 	dllog.PrintHeader("WB Warehouse Remains Downloader v2",
 		dllog.HeaderField{Key: "Config", Value: *configPath},
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
-		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DbPath},
+		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DisplayDB()},
 		dllog.HeaderField{Key: "Date", Value: snapshotDate},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
@@ -117,6 +117,7 @@ func main() {
 	} else {
 		apiKey := resolveAPIKey(cfg)
 		wbClient := wb.New(apiKey)
+		wbClient.SetHTTPTimeout(5 * time.Minute) // download step: large reports (~10-50 MB)
 		// 3 separate rate limiters for 3 ToolIDs
 		wbClient.SetRateLimit("wh_remains_create",
 			rl.Create, rl.CreateBurst, rl.CreateApi, rl.CreateApiBurst)

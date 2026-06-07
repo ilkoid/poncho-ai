@@ -92,7 +92,7 @@ func main() {
 	dllog.PrintHeader("WB Supplies Downloader v2",
 		dllog.HeaderField{Key: "Config", Value: *configPath},
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
-		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DbPath},
+		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DisplayDB()},
 		dllog.HeaderField{Key: "Period", Value: fmt.Sprintf("%s -> %s (filter: %s)", beginDate, endDate, supplyCfg.DateFilterType)},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},

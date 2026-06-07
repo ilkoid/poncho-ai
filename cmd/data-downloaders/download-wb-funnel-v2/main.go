@@ -88,7 +88,7 @@ func main() {
 	dllog.PrintHeader("WB Funnel Downloader v2",
 		dllog.HeaderField{Key: "Config", Value: *configPath},
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
-		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DbPath},
+		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DisplayDB()},
 		dllog.HeaderField{Key: "Days", Value: fmt.Sprintf("%d", cfg.Funnel.Days)},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},

@@ -100,15 +100,9 @@ func main() {
 	beginDate, endDate := calculateDateRange(pCfg)
 	calBegin, calEnd := calculateCalendarDateRange(pCfg)
 
-	// Display DB path in header (show resolved value)
-	dbDisplay := cfg.Storage.DbPath
-	if cfg.Storage.Backend == "postgres" {
-		dbDisplay = cfg.Storage.PgDatabase + "@" + cfg.Storage.GetDefaults().PgDatabase
-	}
-
 	dllog.PrintHeader("WB Promotion V2 Downloader",
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
-		dllog.HeaderField{Key: "DB", Value: dbDisplay},
+		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DisplayDB()},
 		dllog.HeaderField{Key: "Period", Value: beginDate + " -> " + endDate},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},

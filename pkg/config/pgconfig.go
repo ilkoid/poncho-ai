@@ -59,6 +59,18 @@ func (s V2StorageConfig) GetDefaults() V2StorageConfig {
 	return result
 }
 
+// DisplayDB returns a human-readable database identifier for log headers.
+// Returns PgDatabase for postgres backend, DbPath for sqlite.
+func (s V2StorageConfig) DisplayDB() string {
+	d := s.GetDefaults()
+	switch d.Backend {
+	case "postgres", "postgresql":
+		return d.PgDatabase
+	default:
+		return d.DbPath
+	}
+}
+
 // GetEffectiveDSN returns the resolved DSN for the selected backend.
 //
 // For "sqlite": returns DbPath (with WAL parameters appended).
