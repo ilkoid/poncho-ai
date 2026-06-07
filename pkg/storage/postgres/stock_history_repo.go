@@ -118,10 +118,14 @@ func (r *PgStockHistoryRepo) UpdateReportStatus(ctx context.Context, downloadID,
 
 // SaveMetrics saves metrics rows in chunks of 500 using multi-row INSERT.
 // Converts domain types to DB types (pointer -> nullable, map -> JSON).
+// Deduplicates by (report_id, nm_id, chrt_id) before chunking — PG ON CONFLICT
+// forbids duplicate conflict keys within a single multi-row INSERT (SQLSTATE 21000).
 func (r *PgStockHistoryRepo) SaveMetrics(ctx context.Context, rows []stockhistory.MetricRow) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
+
+	rows = dedupMetricRows(rows)
 
 	saved := 0
 	for i := 0; i < len(rows); i += pgStockHistChunkSize {
@@ -180,10 +184,14 @@ func (r *PgStockHistoryRepo) saveMetricsChunk(ctx context.Context, chunk []stock
 
 // SaveDaily saves daily rows in chunks of 500 using multi-row INSERT.
 // Converts domain types to DB types (map -> JSON).
+// Deduplicates by (report_id, nm_id, chrt_id) before chunking — PG ON CONFLICT
+// forbids duplicate conflict keys within a single multi-row INSERT (SQLSTATE 21000).
 func (r *PgStockHistoryRepo) SaveDaily(ctx context.Context, rows []stockhistory.DailyRow) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
+
+	rows = dedupDailyRows(rows)
 
 	saved := 0
 	for i := 0; i < len(rows); i += pgStockHistChunkSize {
@@ -234,6 +242,72 @@ func (r *PgStockHistoryRepo) saveDailyChunk(ctx context.Context, chunk []stockhi
 		return 0, fmt.Errorf("save daily batch (size %d): %w", len(chunk), err)
 	}
 	return int(tag.RowsAffected()), tx.Commit(ctx)
+}
+
+// ============================================================================
+// Deduplication helpers
+// ============================================================================
+
+// dedupDailyRows deduplicates daily rows by (report_id, nm_id, chrt_id).
+// Last-write-wins: later entry in slice overwrites earlier.
+// Fast path: no allocation when no duplicates found.
+func dedupDailyRows(rows []stockhistory.DailyRow) []stockhistory.DailyRow {
+	type key struct {
+		reportID string
+		nmID     int64
+		chrtID   int64
+	}
+	seen := make(map[key]int, len(rows))
+	for i, r := range rows {
+		k := key{r.ReportID, r.NmID, r.ChrtID}
+		if prev, ok := seen[k]; ok {
+			rows[prev] = r // last-write-wins
+		} else {
+			seen[k] = i
+		}
+	}
+	if len(seen) == len(rows) {
+		return rows // fast path: no duplicates
+	}
+	out := make([]stockhistory.DailyRow, 0, len(seen))
+	for i, r := range rows {
+		k := key{r.ReportID, r.NmID, r.ChrtID}
+		if seen[k] == i {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// dedupMetricRows deduplicates metrics rows by (report_id, nm_id, chrt_id).
+// Last-write-wins: later entry in slice overwrites earlier.
+// Fast path: no allocation when no duplicates found.
+func dedupMetricRows(rows []stockhistory.MetricRow) []stockhistory.MetricRow {
+	type key struct {
+		reportID string
+		nmID     int64
+		chrtID   int64
+	}
+	seen := make(map[key]int, len(rows))
+	for i, r := range rows {
+		k := key{r.ReportID, r.NmID, r.ChrtID}
+		if prev, ok := seen[k]; ok {
+			rows[prev] = r // last-write-wins
+		} else {
+			seen[k] = i
+		}
+	}
+	if len(seen) == len(rows) {
+		return rows // fast path: no duplicates
+	}
+	out := make([]stockhistory.MetricRow, 0, len(seen))
+	for i, r := range rows {
+		k := key{r.ReportID, r.NmID, r.ChrtID}
+		if seen[k] == i {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // ============================================================================

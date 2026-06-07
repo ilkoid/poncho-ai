@@ -105,8 +105,7 @@ const (
 	insertProductPricePrefixSQL = `INSERT INTO product_prices (
 	    nm_id, snapshot_date,
 	    price, discounted_price, club_discounted_price, discount, club_discount,
-	    vendor_code, currency, editable_size_price,
-	    downloaded_at
+	    vendor_code, currency, editable_size_price
 	) VALUES `
 
 	insertProductPriceOnConflictSQL = `
@@ -118,8 +117,7 @@ const (
 	    club_discount = EXCLUDED.club_discount,
 	    vendor_code = EXCLUDED.vendor_code,
 	    currency = EXCLUDED.currency,
-	    editable_size_price = EXCLUDED.editable_size_price,
-	    downloaded_at = EXCLUDED.downloaded_at`
+	    editable_size_price = EXCLUDED.editable_size_price`
 )
 
 // Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.

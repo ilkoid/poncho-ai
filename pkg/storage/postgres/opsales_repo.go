@@ -110,8 +110,7 @@ const (
 	    supplier_article, nm_id, barcode, category, subject, brand, tech_size,
 	    income_id, is_supply, is_realization,
 	    total_price, discount_percent, spp, payment_sale_amount, for_pay, finished_price, price_with_disc,
-	    sticker, g_number, srid,
-	    downloaded_at
+	    sticker, g_number, srid
 	) VALUES `
 
 	insertOpsaleOnConflictSQL = `
@@ -142,8 +141,7 @@ const (
 	    price_with_disc = EXCLUDED.price_with_disc,
 	    sticker = EXCLUDED.sticker,
 	    g_number = EXCLUDED.g_number,
-	    srid = EXCLUDED.srid,
-	    downloaded_at = EXCLUDED.downloaded_at`
+	    srid = EXCLUDED.srid`
 )
 
 // Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.

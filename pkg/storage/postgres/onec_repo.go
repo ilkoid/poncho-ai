@@ -53,10 +53,13 @@ func (r *PgOneCRepo) SaveGoods(ctx context.Context, goods []onec.Good) (int, err
 }
 
 // SaveSKUs saves a batch of 1C SKUs using ON CONFLICT upsert.
+// Deduplicates by (sku_guid, guid) to prevent SQLSTATE 21000 within a single batch.
 func (r *PgOneCRepo) SaveSKUs(ctx context.Context, skus []onec.SKU) (int, error) {
 	if len(skus) == 0 {
 		return 0, nil
 	}
+
+	skus = dedupSKUs(skus)
 
 	total := 0
 	for i := 0; i < len(skus); i += pgOneCChunkSize {
@@ -71,10 +74,13 @@ func (r *PgOneCRepo) SaveSKUs(ctx context.Context, skus []onec.SKU) (int, error)
 }
 
 // SaveDimensions saves a batch of dimension rows using ON CONFLICT upsert.
+// Deduplicates by (good_guid, sku_guid) to prevent SQLSTATE 21000 within a single batch.
 func (r *PgOneCRepo) SaveDimensions(ctx context.Context, dims []onec.DimensionRow) (int, error) {
 	if len(dims) == 0 {
 		return 0, nil
 	}
+
+	dims = dedupDimensions(dims)
 
 	total := 0
 	for i := 0; i < len(dims); i += pgOneCChunkSize {
@@ -139,6 +145,63 @@ func (r *PgOneCRepo) CleanAll(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Deduplication helpers
+//
+// PostgreSQL ON CONFLICT DO UPDATE forbids affecting the same row twice
+// within a single multi-row INSERT (SQLSTATE 21000). The 1C API may return
+// duplicate (sku_guid, guid) or (good_guid, sku_guid) pairs, so we
+// deduplicate before chunking. Last-write-wins (later entry overwrites).
+// ---------------------------------------------------------------------------
+
+func dedupSKUs(skus []onec.SKU) []onec.SKU {
+	type key struct{ a, b string }
+	seen := make(map[key]int, len(skus))
+	for i, s := range skus {
+		k := key{s.SKUGUID, s.GUID}
+		if prev, ok := seen[k]; ok {
+			skus[prev] = s // overwrite with later entry
+		} else {
+			seen[k] = i
+		}
+	}
+	if len(seen) == len(skus) {
+		return skus // no duplicates
+	}
+	out := make([]onec.SKU, 0, len(seen))
+	for i, s := range skus {
+		k := key{s.SKUGUID, s.GUID}
+		if seen[k] == i {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func dedupDimensions(dims []onec.DimensionRow) []onec.DimensionRow {
+	type key struct{ a, b string }
+	seen := make(map[key]int, len(dims))
+	for i, d := range dims {
+		k := key{d.GoodGUID, d.SKUGUID}
+		if prev, ok := seen[k]; ok {
+			dims[prev] = d // overwrite with later entry
+		} else {
+			seen[k] = i
+		}
+	}
+	if len(seen) == len(dims) {
+		return dims // no duplicates
+	}
+	out := make([]onec.DimensionRow, 0, len(seen))
+	for i, d := range dims {
+		k := key{d.GoodGUID, d.SKUGUID}
+		if seen[k] == i {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------

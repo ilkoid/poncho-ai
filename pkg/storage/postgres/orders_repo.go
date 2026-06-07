@@ -112,8 +112,7 @@ const (
 	    income_id, is_supply, is_realization,
 	    total_price, discount_percent, spp, finished_price, price_with_disc,
 	    is_cancel, cancel_date,
-	    sticker, g_number,
-	    downloaded_at
+	    sticker, g_number
 	) VALUES `
 
 	insertOrderOnConflictSQL = `
@@ -143,8 +142,7 @@ const (
 	    is_cancel = EXCLUDED.is_cancel,
 	    cancel_date = EXCLUDED.cancel_date,
 	    sticker = EXCLUDED.sticker,
-	    g_number = EXCLUDED.g_number,
-	    downloaded_at = EXCLUDED.downloaded_at`
+	    g_number = EXCLUDED.g_number`
 )
 
 // Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.

@@ -94,8 +94,7 @@ ON CONFLICT (good_guid, sku_guid, storage_guid, snapshot_date) DO UPDATE SET
     stock = EXCLUDED.stock,
     reserv = EXCLUDED.reserv,
     free = EXCLUDED.free,
-    first_stage = EXCLUDED.first_stage,
-    downloaded_at = EXCLUDED.downloaded_at`
+    first_stage = EXCLUDED.first_stage`
 
 const insertRestCols = 9
 

@@ -114,8 +114,7 @@ const (
 	    volume_sup, width_sup, length_sup, height_sup,
 	    photo_urls, dt_bonus,
 	    is_valid, is_valid_dt,
-	    reversal_amount, penalty_amount,
-	    downloaded_at
+	    reversal_amount, penalty_amount
 	) VALUES `
 
 	insertPenaltyOnConflictSQL = `
@@ -136,8 +135,7 @@ const (
 	    is_valid = EXCLUDED.is_valid,
 	    is_valid_dt = EXCLUDED.is_valid_dt,
 	    reversal_amount = EXCLUDED.reversal_amount,
-	    penalty_amount = EXCLUDED.penalty_amount,
-	    downloaded_at = EXCLUDED.downloaded_at`
+	    penalty_amount = EXCLUDED.penalty_amount`
 )
 
 // Pre-built query for full chunks (500 rows). Last chunk rebuilt with actual size.
