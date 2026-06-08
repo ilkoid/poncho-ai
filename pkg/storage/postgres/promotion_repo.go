@@ -654,6 +654,29 @@ func (r *PgPromotionRepo) SaveMinBids(ctx context.Context, advertID int, items [
 		}
 	}
 
+
+		// Deduplicate by (nmID, placement) — PG ON CONFLICT (nm_id, advert_id, placement_type, snapshot_date)
+		// forbids affecting the same row twice (SQLSTATE 21000). advertID and snapshotDate are constant per call.
+		type dedupKey struct{ nmID int; placement string }
+		seen := make(map[dedupKey]int, len(flat))
+		for i, f := range flat {
+			k := dedupKey{f.nmID, f.placement}
+			if prev, ok := seen[k]; ok {
+				flat[prev] = f // last-write-wins
+			} else {
+				seen[k] = i
+			}
+		}
+		if len(seen) < len(flat) {
+			deduped := make([]bidFlat, 0, len(seen))
+			for i, f := range flat {
+				k := dedupKey{f.nmID, f.placement}
+				if seen[k] == i {
+					deduped = append(deduped, f)
+				}
+			}
+			flat = deduped
+		}
 	for i := 0; i < len(flat); i += pgPromoChunkSize {
 		end := min(i+pgPromoChunkSize, len(flat))
 		chunk := flat[i:end]
