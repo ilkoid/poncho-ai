@@ -32,12 +32,16 @@ func (r *PgPenaltiesRepo) InitSchema(ctx context.Context) error {
 }
 
 // SavePenalties saves a batch of penalties using ON CONFLICT for upsert.
+// Deduplicates by dim_id before chunking — PG ON CONFLICT forbids affecting
+// the same row twice within a single multi-row INSERT (SQLSTATE 21000).
 // Chunk size: 500 penalties per transaction.
 // Returns count of saved penalties.
 func (r *PgPenaltiesRepo) SavePenalties(ctx context.Context, items []wb.MeasurementPenaltyItem) (int, error) {
 	if len(items) == 0 {
 		return 0, nil
 	}
+
+	items = dedupPenalties(items)
 
 	total := 0
 	for i := 0; i < len(items); i += pgPenaltiesChunkSize {
@@ -66,6 +70,29 @@ func (r *PgPenaltiesRepo) DeletePenaltiesOlderThan(ctx context.Context, before t
 }
 
 const pgPenaltiesChunkSize = 500
+
+// dedupPenalties removes duplicate dim_id entries (last-write-wins).
+// PG ON CONFLICT forbids affecting the same row twice in one multi-row INSERT (SQLSTATE 21000).
+func dedupPenalties(items []wb.MeasurementPenaltyItem) []wb.MeasurementPenaltyItem {
+	seen := make(map[int]int, len(items))
+	for i, p := range items {
+		if prev, ok := seen[p.DimId]; ok {
+			items[prev] = p // overwrite with later entry
+		} else {
+			seen[p.DimId] = i
+		}
+	}
+	if len(seen) == len(items) {
+		return items // no duplicates
+	}
+	out := make([]wb.MeasurementPenaltyItem, 0, len(seen))
+	for i, p := range items {
+		if seen[p.DimId] == i {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 // savePenaltiesChunk saves up to 500 penalties using a single multi-row INSERT.
 func (r *PgPenaltiesRepo) savePenaltiesChunk(ctx context.Context, chunk []wb.MeasurementPenaltyItem) (int, error) {
