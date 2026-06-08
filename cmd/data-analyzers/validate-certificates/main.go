@@ -285,10 +285,11 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 	seen := make(map[string]*job)
 	var jobs []*job
 	for _, c := range certs {
-		j, exists := seen[c.CertificateNumber]
+		trimmed := strings.TrimSpace(c.CertificateNumber)
+		j, exists := seen[trimmed]
 		if !exists {
-			j = &job{number: c.CertificateNumber}
-			seen[c.CertificateNumber] = j
+			j = &job{number: trimmed}
+			seen[trimmed] = j
 			jobs = append(jobs, j)
 		}
 		j.certs = append(j.certs, c)
@@ -334,6 +335,9 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 					CertificateType:   c.CertificateType,
 					CertificateNumber: c.CertificateNumber,
 					LocalEnd:          c.LocalEnd,
+					OneCType:          c.OneCType,
+					OneCCategory:      c.OneCCategory,
+					WBSubject:         c.WBSubject,
 					FSAStatus:         "Пропущен",
 				})
 			}
@@ -345,13 +349,14 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 			fmt.Printf(" [ДЕКЛ]")
 		}
 
-		// Route by known type: declarations use Chrome, certificates use API.
+		// Route by known type: declarations use declaration API, certificates use certificate API.
 		var fsaResult *FSASearchResult
+		var exactMatch bool
 		var searchErr error
 		if j.isDecl {
-			fsaResult, searchErr = fsaClient.SearchDeclaration(ctx, j.number)
+			fsaResult, exactMatch, searchErr = fsaClient.SearchDeclaration(ctx, j.number)
 		} else {
-			fsaResult, searchErr = fsaClient.SearchCertificate(ctx, j.number)
+			fsaResult, exactMatch, searchErr = fsaClient.SearchCertificate(ctx, j.number)
 		}
 
 		if searchErr != nil {
@@ -363,6 +368,9 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 					CertificateType:   c.CertificateType,
 					CertificateNumber: c.CertificateNumber,
 					LocalEnd:          c.LocalEnd,
+					OneCType:          c.OneCType,
+					OneCCategory:      c.OneCCategory,
+					WBSubject:         c.WBSubject,
 					Error:             searchErr.Error(),
 				})
 			}
@@ -375,6 +383,10 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 					CertificateType:   c.CertificateType,
 					CertificateNumber: c.CertificateNumber,
 					LocalEnd:          c.LocalEnd,
+					OneCType:          c.OneCType,
+					OneCCategory:      c.OneCCategory,
+					WBSubject:         c.WBSubject,
+					ApproxMatch:       !exactMatch && fsaResult != nil,
 				}
 				if fsaResult != nil {
 					vr.Found = true
@@ -389,7 +401,11 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 			}
 
 			if fsaResult != nil {
-				fmt.Printf(" %s (до %s, %d дн.)\n", statusName(fsaResult.StatusID), fsaResult.EndDate, daysUntilExpiry(fsaResult.EndDate))
+				matchLabel := ""
+				if !exactMatch {
+					matchLabel = " [~неточный]"
+				}
+				fmt.Printf(" %s (до %s, %d дн.)%s\n", statusName(fsaResult.StatusID), fsaResult.EndDate, daysUntilExpiry(fsaResult.EndDate), matchLabel)
 			} else {
 				fmt.Println(" НЕ НАЙДЕН")
 			}
@@ -406,14 +422,19 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 }
 
 // isSearchable returns true if the certificate number is likely findable in Russian FSA registry.
-// Returns false for: KG417 (Kyrgyzstan), KZ (Kazakhstan), old formats (digits only, 008и-...).
+// Returns false for: KG417/KG 417 (Kyrgyzstan), KZ (Kazakhstan), old formats (digits only, 008и-...).
 func isSearchable(number string) bool {
 	// Russian certificates and declarations contain "RU".
 	if strings.Contains(number, "RU") {
 		return true
 	}
 	// Some formats start with "ТС N RU" or just "ЕАЭС" without "RU" visible.
-	if strings.HasPrefix(number, "ЕАЭС") && !strings.Contains(number, "KG417") && !strings.Contains(number, "KZ") {
+	// Exclude Kyrgyzstan: "KG417" (slitno) or "KG " + digits (s probelom).
+	// Exclude Kazakhstan: "KZ" prefix.
+	isKG := strings.Contains(number, "KG417") ||
+		strings.Contains(number, "KG ") ||
+		strings.Contains(number, "KZ")
+	if strings.HasPrefix(number, "ЕАЭС") && !isKG {
 		return true
 	}
 	return false
@@ -438,6 +459,9 @@ func mockValidate(certs []CertRecord) []ValidationResult {
 			CertificateType:   c.CertificateType,
 			CertificateNumber: c.CertificateNumber,
 			LocalEnd:          c.LocalEnd,
+			OneCType:          c.OneCType,
+			OneCCategory:      c.OneCCategory,
+			WBSubject:         c.WBSubject,
 			Found:             true,
 			FSAStatus:         "Действующий",
 			FSAEndDate:        "2027-12-31",
@@ -455,6 +479,8 @@ func mockValidate(certs []CertRecord) []ValidationResult {
 			r.FSAStatus = "Архивный"
 			r.FSAEndDate = "2025-01-15"
 			r.DaysRemaining = -141
+		case i%11 == 0:
+			r.ApproxMatch = true
 		}
 		results[i] = r
 	}
@@ -477,13 +503,13 @@ func testDirectNumber(ctx context.Context, number string, chromiumPath string) {
 	fmt.Println(" ok (токен получен)")
 
 	fmt.Printf("  Поиск сертификата: %s\n", number)
-	cert, err := fsaClient.SearchCertificate(ctx, number)
+	cert, exact, err := fsaClient.SearchCertificate(ctx, number)
 	if err != nil {
 		fmt.Printf("  Сертификат — ОШИБКА: %v\n", err)
 	}
 	if cert == nil {
 		fmt.Printf("  Не найден как сертификат. Пробуем декларацию...\n")
-		cert, err = fsaClient.SearchDeclaration(ctx, number)
+		cert, exact, err = fsaClient.SearchDeclaration(ctx, number)
 		if err != nil {
 			fmt.Printf("  Декларация — ОШИБКА: %v\n", err)
 			return
@@ -494,6 +520,11 @@ func testDirectNumber(ctx context.Context, number string, chromiumPath string) {
 		return
 	}
 
+	matchLabel := "точный"
+	if !exact {
+		matchLabel = "неточный (первый результат)"
+	}
+
 	fmt.Println("\n  ┌─────────────────────────────────────────────")
 	fmt.Printf("  │ ID:          %d\n", cert.ID)
 	fmt.Printf("  │ Номер:       %s\n", cert.Number)
@@ -502,5 +533,6 @@ func testDirectNumber(ctx context.Context, number string, chromiumPath string) {
 	fmt.Printf("  │ Статус:      %s (id=%d)\n", statusName(cert.StatusID), cert.StatusID)
 	fmt.Printf("  │ Тип:         %s\n", cert.CertType)
 	fmt.Printf("  │ Дней до:     %d\n", daysUntilExpiry(cert.EndDate))
+	fmt.Printf("  │ Матч:        %s\n", matchLabel)
 	fmt.Println("  └─────────────────────────────────────────────")
 }

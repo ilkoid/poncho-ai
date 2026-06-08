@@ -1,4 +1,4 @@
-// report.go — console output and CSV export for certificate validation.
+// report.go — console output, CSV export, and XLSX export for certificate validation.
 package main
 
 import (
@@ -11,6 +11,17 @@ import (
 	"unicode/utf8"
 
 	"github.com/xuri/excelize/v2"
+)
+
+// Verdict constants — single-source-of-truth for result categorization.
+const (
+	VerdictOK            = "✅ Ок"
+	VerdictExpiringSoon  = "⚠️ Скоро истекает"
+	VerdictExpired       = "❌ Протух"
+	VerdictNotFound      = "❓ Не найден"
+	VerdictApproxMatch   = "❓ Неточный"
+	VerdictNonRU         = "🔧 KG/KZ"
+	VerdictError         = "⛔ Ошибка"
 )
 
 // ValidationResult combines local data with FSA lookup result.
@@ -26,6 +37,42 @@ type ValidationResult struct {
 	DateMatch         string // "✓", "✗", "—"
 	DaysRemaining     int    // negative = expired
 	Error             string // non-empty if lookup failed
+	// New fields for enhanced XLSX.
+	OneCType     string // 1C type: Обувь/Одежда/Аксессуары
+	OneCCategory string // 1C category level 1 name
+	WBSubject    string // WB subject name
+	ApproxMatch  bool   // true if findExactOrFirst took first result, not exact match
+}
+
+// verdict returns the single-category verdict for a validation result.
+func verdict(r ValidationResult) string {
+	if r.Error != "" {
+		return VerdictError
+	}
+	if r.FSAStatus == "Пропущен" {
+		return VerdictNonRU
+	}
+	if r.ApproxMatch {
+		return VerdictApproxMatch
+	}
+	if !r.Found {
+		return VerdictNotFound
+	}
+	switch r.FSAStatus {
+	case "Действующий", "Возобновлён", "Продлён":
+		if r.DaysRemaining > 30 {
+			return VerdictOK
+		}
+		if r.DaysRemaining > 0 {
+			return VerdictExpiringSoon
+		}
+		return VerdictExpired
+	case "Архивный", "Прекращён", "Аннулирован", "Окончание срока":
+		return VerdictExpired
+	default:
+		// Unknown active status — treat as needing review.
+		return VerdictNotFound
+	}
 }
 
 // printDryRun shows certificates that would be checked.
@@ -57,26 +104,43 @@ func printDryRun(certs []CertRecord) {
 
 // printReport outputs validation results as a formatted table.
 func printReport(results []ValidationResult) {
-	sep := strings.Repeat("═", 105)
-	dash := strings.Repeat("─", 105)
+	sep := strings.Repeat("═", 120)
+	dash := strings.Repeat("─", 120)
 
 	fmt.Println("\n" + sep)
 	fmt.Println("  РЕЗУЛЬТАТЫ ВАЛИДАЦИИ СЕРТИФИКАТОВ — ФГИС РОСАККРЕДИТАЦИИ")
 	fmt.Println(sep)
 
 	// Table header.
-	fmt.Printf("  %-12s  %-18s  %-12s  %-12s  %-8s  %-8s  %s\n",
-		"Артикул", "Номер", "Статус ФСА", "Дата ФСА", "Совп.", "Дни", "Тип")
+	fmt.Printf("  %-12s  %-18s  %-14s  %-12s  %-10s  %-8s  %-20s  %s\n",
+		"Артикул", "Номер", "Статус ФСА", "Дата ФСА", "Совп.", "Дни", "Вердикт", "Тип")
 	fmt.Println(dash)
 
-	var active, expired, notFound, errors, skipped int
+	var active, expired, notFound, errors, skipped, approx int
 	for _, r := range results {
+		v := verdict(r)
+
+		// Count categories.
+		switch v {
+		case VerdictOK, VerdictExpiringSoon:
+			active++
+		case VerdictExpired:
+			expired++
+		case VerdictNotFound:
+			notFound++
+		case VerdictNonRU:
+			skipped++
+		case VerdictError:
+			errors++
+		case VerdictApproxMatch:
+			approx++
+		}
+
 		// Days remaining.
 		var daysStr string
 		switch {
 		case r.Error != "":
 			daysStr = "—"
-			errors++
 		case r.DaysRemaining > 0:
 			daysStr = fmt.Sprintf("%d", r.DaysRemaining)
 		case r.DaysRemaining == 0:
@@ -85,22 +149,11 @@ func printReport(results []ValidationResult) {
 			daysStr = fmt.Sprintf("%d†", -r.DaysRemaining)
 		}
 
-		// Status.
 		status := r.FSAStatus
 		if r.Error != "" {
 			status = "ОШИБКА"
-		} else if r.FSAStatus == "Пропущен" {
-			skipped++
-		} else if !r.Found {
+		} else if !r.Found && r.FSAStatus != "Пропущен" {
 			status = "Не найден"
-			notFound++
-		} else {
-			switch r.FSAStatus {
-			case "Действующий", "Возобновлён":
-				active++
-			case "Архивный":
-				expired++
-			}
 		}
 
 		num := r.CertificateNumber
@@ -113,22 +166,22 @@ func printReport(results []ValidationResult) {
 			certType = "Д"
 		}
 
-		fmt.Printf("  %-12s  %-18s  %-12s  %-12s  %-8s  %-8s  %s\n",
-			r.Article, num, status, r.FSAEndDate, r.DateMatch, daysStr, certType)
+		fmt.Printf("  %-12s  %-18s  %-14s  %-12s  %-10s  %-8s  %-20s  %s\n",
+			r.Article, num, status, r.FSAEndDate, r.DateMatch, daysStr, v, certType)
 	}
 
 	fmt.Println(sep)
 
 	// Summary.
 	total := len(results)
-	fmt.Printf("  Всего: %d  |  Действующих: %d  |  Истёкших: %d  |  Не найдено: %d  |  Пропущено: %d  |  Ошибок: %d\n",
-		total, active, expired, notFound, skipped, errors)
+	fmt.Printf("  Всего: %d  |  Ок: %d  |  Истёкших: %d  |  Не найдено: %d  |  Неточных: %d  |  KG/KZ: %d  |  Ошибок: %d\n",
+		total, active, expired, notFound, approx, skipped, errors)
 	fmt.Println(sep)
 
 	// Expiring soon warning.
 	var expiring []ValidationResult
 	for _, r := range results {
-		if r.Found && r.DaysRemaining > 0 && r.DaysRemaining <= 30 {
+		if v := verdict(r); v == VerdictExpiringSoon {
 			expiring = append(expiring, r)
 		}
 	}
@@ -143,7 +196,7 @@ func printReport(results []ValidationResult) {
 	// Expired list (top-20 by days overdue).
 	var expiredList []ValidationResult
 	for _, r := range results {
-		if r.Found && r.DaysRemaining < 0 {
+		if v := verdict(r); v == VerdictExpired {
 			expiredList = append(expiredList, r)
 		}
 	}
@@ -179,22 +232,36 @@ func exportCSV(results []ValidationResult, path string) error {
 
 	// Header row.
 	_ = w.Write([]string{
-		"article", "good_name", "cert_type", "cert_number",
+		"article", "good_name", "onec_type", "onec_category", "wb_subject",
+		"cert_type", "cert_number",
 		"local_end", "fsa_status", "fsa_end_date",
-		"date_match", "days_remaining", "error",
+		"date_match", "days_remaining", "verdict", "approx_match", "error",
 	})
 
 	for _, r := range results {
+		certType := "С"
+		if isDeclaration(r.CertificateType) {
+			certType = "Д"
+		}
+		approxStr := ""
+		if r.ApproxMatch {
+			approxStr = "да"
+		}
 		_ = w.Write([]string{
 			r.Article,
 			r.GoodName,
-			r.CertificateType,
+			r.OneCType,
+			r.OneCCategory,
+			r.WBSubject,
+			certType,
 			r.CertificateNumber,
 			r.LocalEnd,
 			r.FSAStatus,
 			r.FSAEndDate,
 			r.DateMatch,
 			fmt.Sprintf("%d", r.DaysRemaining),
+			verdict(r),
+			approxStr,
 			r.Error,
 		})
 	}
@@ -252,7 +319,7 @@ func exportXLSX(results []ValidationResult, path string) error {
 	sheet := "Сертификаты"
 	f.SetSheetName("Sheet1", sheet)
 
-	// Styles.
+	// Styles — for full-row coloring by verdict.
 	headerStyle, _ := f.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true, Color: "FFFFFF"},
 		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"4472C4"}},
@@ -262,22 +329,45 @@ func exportXLSX(results []ValidationResult, path string) error {
 		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"C6EFCE"}},
 		Font: &excelize.Font{Color: "006100"},
 	})
+	expiringStyle, _ := f.NewStyle(&excelize.Style{
+		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"FFEB9C"}},
+		Font: &excelize.Font{Color: "9C5700"},
+	})
 	expiredStyle, _ := f.NewStyle(&excelize.Style{
 		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"FFC7CE"}},
 		Font: &excelize.Font{Color: "9C0006"},
 	})
 	notFoundStyle, _ := f.NewStyle(&excelize.Style{
-		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"FFEB9C"}},
-		Font: &excelize.Font{Color: "9C5700"},
+		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"F4B084"}},
+		Font: &excelize.Font{Color: "7F4700"},
 	})
-	errorStyle, _ := f.NewStyle(&excelize.Style{
+	nonRUStyle, _ := f.NewStyle(&excelize.Style{
 		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"D9D9D9"}},
 		Font: &excelize.Font{Color: "595959"},
 	})
+	errorStyle, _ := f.NewStyle(&excelize.Style{
+		Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"D5A6E6"}},
+		Font: &excelize.Font{Color: "4A235A"},
+	})
 
-	// Headers.
-	headers := []string{"Артикул", "Название", "Тип", "Номер", "Дата 1С",
-		"Статус ФСА", "Дата ФСА", "Совп.", "Дни", "Ошибка"}
+	// verdictStyle maps verdict to style.
+	verdictStyle := map[string]int{
+		VerdictOK:           activeStyle,
+		VerdictExpiringSoon: expiringStyle,
+		VerdictExpired:      expiredStyle,
+		VerdictNotFound:     notFoundStyle,
+		VerdictApproxMatch:  expiringStyle,
+		VerdictNonRU:        nonRUStyle,
+		VerdictError:        errorStyle,
+	}
+
+	// Headers (14 columns).
+	headers := []string{
+		"Артикул", "Название", "Тип 1С", "Категория 1С", "Предмет WB",
+		"Тип док-та", "Номер", "Дата 1С",
+		"Статус ФСА", "Дата ФСА", "Совп. дат", "Дней до конца",
+		"Вердикт", "Ошибка",
+	}
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheet, cell, h)
@@ -285,8 +375,12 @@ func exportXLSX(results []ValidationResult, path string) error {
 	}
 
 	// Column widths.
-	widths := map[string]float64{"A": 14, "B": 35, "C": 14, "D": 28, "E": 14,
-		"F": 16, "G": 14, "H": 10, "I": 10, "J": 30}
+	widths := map[string]float64{
+		"A": 14, "B": 35, "C": 14, "D": 22, "E": 22,
+		"F": 12, "G": 30, "H": 14,
+		"I": 16, "J": 14, "K": 10, "L": 14,
+		"M": 20, "N": 30,
+	}
 	for col, w := range widths {
 		f.SetColWidth(sheet, col, col, w)
 	}
@@ -294,41 +388,152 @@ func exportXLSX(results []ValidationResult, path string) error {
 	// Data rows.
 	for i, r := range results {
 		row := i + 2
-		xSet(f, sheet, row, 1, r.Article)
-		xSet(f, sheet, row, 2, r.GoodName)
-
+		v := verdict(r)
 		certType := "С"
 		if isDeclaration(r.CertificateType) {
 			certType = "Д"
 		}
-		xSet(f, sheet, row, 3, certType)
-		xSet(f, sheet, row, 4, r.CertificateNumber)
-		xSet(f, sheet, row, 5, formatLocalDate(r.LocalEnd))
-		xSet(f, sheet, row, 6, r.FSAStatus)
-		xSet(f, sheet, row, 7, r.FSAEndDate)
-		xSet(f, sheet, row, 8, r.DateMatch)
-		xSet(f, sheet, row, 9, r.DaysRemaining)
-		xSet(f, sheet, row, 10, r.Error)
 
-		// Conditional formatting: style the status column.
-		var style int
-		switch {
-		case r.Error != "":
-			style = errorStyle
-		case !r.Found:
-			style = notFoundStyle
-		case r.FSAStatus == "Действующий" || r.FSAStatus == "Возобновлён":
-			style = activeStyle
-		case r.FSAStatus == "Архивный" || r.FSAStatus == "Прекращён" || r.FSAStatus == "Аннулирован":
-			style = expiredStyle
-		default:
+		xSet(f, sheet, row, 1, r.Article)
+		xSet(f, sheet, row, 2, r.GoodName)
+		xSet(f, sheet, row, 3, r.OneCType)
+		xSet(f, sheet, row, 4, r.OneCCategory)
+		xSet(f, sheet, row, 5, r.WBSubject)
+		xSet(f, sheet, row, 6, certType)
+		xSet(f, sheet, row, 7, r.CertificateNumber)
+		xSet(f, sheet, row, 8, formatLocalDate(r.LocalEnd))
+		xSet(f, sheet, row, 9, r.FSAStatus)
+		xSet(f, sheet, row, 10, r.FSAEndDate)
+		xSet(f, sheet, row, 11, r.DateMatch)
+		xSet(f, sheet, row, 12, r.DaysRemaining)
+		xSet(f, sheet, row, 13, v)
+		xSet(f, sheet, row, 14, r.Error)
+
+		// Color entire row (columns A–N) by verdict.
+		style, ok := verdictStyle[v]
+		if !ok {
 			style = notFoundStyle
 		}
-		statusCell, _ := excelize.CoordinatesToCellName(6, row)
-		f.SetCellStyle(sheet, statusCell, statusCell, style)
+		startCell, _ := excelize.CoordinatesToCellName(1, row)
+		endCell, _ := excelize.CoordinatesToCellName(14, row)
+		f.SetCellStyle(sheet, startCell, endCell, style)
 	}
 
+	// Add Summary sheet.
+	addSummarySheet(f, results)
+
 	return f.SaveAs(path)
+}
+
+// addSummarySheet adds a "Сводка" sheet with verdict counts and examples.
+func addSummarySheet(f *excelize.File, results []ValidationResult) {
+	sheet := "Сводка"
+	f.NewSheet(sheet)
+
+	// Styles for summary.
+	titleStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Size: 14},
+	})
+	headerStyle, _ := f.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Bold: true, Color: "FFFFFF"},
+		Fill:      excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"4472C4"}},
+		Alignment: &excelize.Alignment{Horizontal: "center"},
+	})
+
+	// Title.
+	f.SetCellValue(sheet, "A1", "СВОДКА ВАЛИДАЦИИ СЕРТИФИКАТОВ")
+	f.SetCellStyle(sheet, "A1", "A1", titleStyle)
+
+	// Count by verdict.
+	counts := make(map[string]int)
+	var order []string
+	for _, v := range []string{
+		VerdictExpired, VerdictExpiringSoon, VerdictOK,
+		VerdictNotFound, VerdictApproxMatch, VerdictNonRU, VerdictError,
+	} {
+		order = append(order, v)
+		counts[v] = 0
+	}
+	for _, r := range results {
+		counts[verdict(r)]++
+	}
+
+	// Summary table: verdict + count.
+	row := 3
+	sumHeaders := []string{"Вердикт", "Кол-во"}
+	for i, h := range sumHeaders {
+		cell, _ := excelize.CoordinatesToCellName(i+1, row)
+		f.SetCellValue(sheet, cell, h)
+		f.SetCellStyle(sheet, cell, cell, headerStyle)
+	}
+	row++
+
+	for _, v := range order {
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), v)
+		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), counts[v])
+		row++
+	}
+
+	// Total.
+	f.SetCellValue(sheet, fmt.Sprintf("A%d", row), "ВСЕГО")
+	f.SetCellValue(sheet, fmt.Sprintf("B%d", row), len(results))
+	row += 2
+
+	// Action items: show details for expired and expiring-soon.
+	actionVerdicts := []struct {
+		title   string
+		verdict string
+	}{
+		{"❌ ПРОТУКШИЕ — ТРЕБУЕТСЯ ЗАМЕНА", VerdictExpired},
+		{"⚠️ СКОРО ИСТЕКАЮТ — ПЛАНИРУЙТЕ ЗАМЕНУ", VerdictExpiringSoon},
+		{"❓ НЕ НАЙДЕНЫ — ПРОВЕРИТЕ ВРУЧНУЮ", VerdictNotFound},
+	}
+
+	for _, action := range actionVerdicts {
+		var items []ValidationResult
+		for _, r := range results {
+			if verdict(r) == action.verdict {
+				items = append(items, r)
+			}
+		}
+		if len(items) == 0 {
+			continue
+		}
+
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), action.title)
+		f.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("A%d", row), titleStyle)
+		row++
+
+		// Detail headers.
+		detailHeaders := []string{"Артикул", "Название", "Категория 1С", "Предмет WB", "Номер", "Дата ФСА", "Дней"}
+		for i, h := range detailHeaders {
+			cell, _ := excelize.CoordinatesToCellName(i+1, row)
+			f.SetCellValue(sheet, cell, h)
+			f.SetCellStyle(sheet, cell, cell, headerStyle)
+		}
+		row++
+
+		for _, r := range items {
+			f.SetCellValue(sheet, fmt.Sprintf("A%d", row), r.Article)
+			f.SetCellValue(sheet, fmt.Sprintf("B%d", row), r.GoodName)
+			f.SetCellValue(sheet, fmt.Sprintf("C%d", row), r.OneCCategory)
+			f.SetCellValue(sheet, fmt.Sprintf("D%d", row), r.WBSubject)
+			f.SetCellValue(sheet, fmt.Sprintf("E%d", row), r.CertificateNumber)
+			f.SetCellValue(sheet, fmt.Sprintf("F%d", row), r.FSAEndDate)
+			f.SetCellValue(sheet, fmt.Sprintf("G%d", row), r.DaysRemaining)
+			row++
+		}
+		row++ // blank row between sections
+	}
+
+	// Column widths for summary.
+	f.SetColWidth(sheet, "A", "A", 40)
+	f.SetColWidth(sheet, "B", "B", 14)
+	f.SetColWidth(sheet, "C", "C", 22)
+	f.SetColWidth(sheet, "D", "D", 22)
+	f.SetColWidth(sheet, "E", "E", 35)
+	f.SetColWidth(sheet, "F", "F", 14)
+	f.SetColWidth(sheet, "G", "G", 10)
 }
 
 // xSet is a helper for setting cell values in excelize.

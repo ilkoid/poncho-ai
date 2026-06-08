@@ -19,6 +19,9 @@ type CertRecord struct {
 	CertificateNumber string // e.g. "ЕАЭС RU С-CN.ПФ02.В.07011/23"
 	LocalBegin        string // registration date from 1C (ISO)
 	LocalEnd          string // expiration date from 1C (ISO)
+	OneCType          string // 1C type: Обувь/Одежда/Аксессуары
+	OneCCategory      string // 1C category level 1 name (читаемое название)
+	WBSubject         string // WB subject name (предмет, читаемое название)
 }
 
 // loadCertificates reads certificate records from onec_goods (read-only).
@@ -32,17 +35,20 @@ func loadCertificates(ctx context.Context, dbPath string, limit int, f filter.Fi
 
 	// Base query: onec_goods joined with cards for filter support.
 	query := `
-		SELECT og.article,
-		       og.name,
-		       og.certificate,
-		       og.certificate_number,
-		       og.certificate_begin,
-		       og.certificate_end
-		FROM onec_goods og
-		JOIN cards c ON c.vendor_code = og.article
-		WHERE og.has_certificate = 1
-		  AND og.certificate_number IS NOT NULL
-		  AND og.certificate_number != ''`
+			SELECT og.article,
+			       og.name,
+			       og.certificate,
+			       og.certificate_number,
+			       og.certificate_begin,
+			       og.certificate_end,
+			       COALESCE(og.type, ''),
+			       COALESCE(og.category_level1_name, ''),
+			       COALESCE(c.subject_name, '')
+			FROM onec_goods og
+			JOIN cards c ON c.vendor_code = og.article
+			WHERE og.has_certificate = 1
+			  AND og.certificate_number IS NOT NULL
+			  AND og.certificate_number != ''`
 
 	var args []any
 
@@ -86,6 +92,7 @@ func loadCertificates(ctx context.Context, dbPath string, limit int, f filter.Fi
 		if err := rows.Scan(
 			&c.Article, &c.GoodName, &c.CertificateType,
 			&c.CertificateNumber, &c.LocalBegin, &c.LocalEnd,
+			&c.OneCType, &c.OneCCategory, &c.WBSubject,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}

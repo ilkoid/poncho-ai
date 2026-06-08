@@ -1,6 +1,6 @@
 wb:
   analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
-  timeout: 30m
+  timeout: 60m
 
 funnel_aggregated:
   days: 7
@@ -12,12 +12,12 @@ funnel_aggregated:
   order_by_field: ""
   order_by_mode: "desc"
   page_size: 1000
-  rate_limit: 3
+  rate_limit: 2
   burst: 1
   rate_limits:
-    funnel_aggregated: 3
+    funnel_aggregated: 2
     funnel_aggregated_burst: 1
-    funnel_aggregated_api: 3
+    funnel_aggregated_api: 2
     funnel_aggregated_api_burst: 1
   adaptive_probe_after: 10
   max_backoff_seconds: 120

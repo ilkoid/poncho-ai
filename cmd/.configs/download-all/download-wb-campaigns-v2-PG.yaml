@@ -1,6 +1,6 @@
 wb:
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
-  timeout: 120s                    # Longer timeout for batch operations
+  timeout: 240s                    # Longer timeout for batch operations
 
 campaigns:
   # Date range: days as fallback when begin/end not specified
@@ -21,9 +21,9 @@ campaigns:
     advert_details_api: 300
     advert_details_api_burst: 5
     # Fullstats: GET /adv/v3/fullstats — swagger: 3/min (MOST RESTRICTIVE)
-    fullstats: 3
+    fullstats: 2
     fullstats_burst: 1
-    fullstats_api: 3
+    fullstats_api: 2
     fullstats_api_burst: 1
   adaptive_probe_after: 15
   max_backoff_seconds: 30

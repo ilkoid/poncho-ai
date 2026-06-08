@@ -2,16 +2,16 @@ wb:
   timeout: "120s"
 
 search_visibility:
-  days: 14
+  days: 7
   limit: 50
   skip_positions: false
   skip_queries: false
   rate_limits:
-    search_report: 3
+    search_report: 2
     search_report_burst: 1
     search_report_api: 2
     search_report_api_burst: 1
-    search_texts: 3
+    search_texts: 2
     search_texts_burst: 1
     search_texts_api: 2
     search_texts_api_burst: 1

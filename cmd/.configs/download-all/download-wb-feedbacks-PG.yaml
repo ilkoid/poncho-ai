@@ -6,7 +6,7 @@ feedbacks:
   db_path: "/var/db/wb-sales.db"
   begin: ""
   end: ""
-  days: 21
+  days: 7
   feedbacks: true
   questions: true
   rate_limits:

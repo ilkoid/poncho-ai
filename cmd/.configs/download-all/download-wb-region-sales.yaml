@@ -4,7 +4,7 @@ wb:
 
 region_sales:
   db_path: "/var/db/wb-sales.db"
-  days: 90
+  days: 7
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
   rate_limits:
     region_sale: 6

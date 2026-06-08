@@ -7,7 +7,7 @@ wb:
   timeout: 30m
 
 download:
-  days: 90
+  days: 7
   resume: false
   rewrite: true
   adaptive_recover_after: 5
@@ -16,7 +16,7 @@ download:
 
 filter:
   exclude_lengths: [6]
-  allowed_years: [20, 21, 22, 23, 24, 25, 26]
+  allowed_years: []
 
 storage:
   backend: "postgres"

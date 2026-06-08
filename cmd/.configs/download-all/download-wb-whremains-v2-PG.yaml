@@ -1,6 +1,6 @@
 wb:
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
-  timeout: "60s"
+  timeout: "120s"
 
 wh_remains:
   db_path: "/var/db/wb-sales.db"

@@ -3,6 +3,7 @@ wb:
   timeout: 30m
 
 funnel_csv:
+  days: 90
   report_type: detail
   rate_limits:
     create: 3

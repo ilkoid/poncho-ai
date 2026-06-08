@@ -95,7 +95,7 @@ type FSADeclarationResult struct {
 	DeclObjectType string `json:"declObjectType"` // "Серийный выпуск"
 }
 
-// FSAClient provides access to ФГИС РОСАККРЕДИТАЦИИ API.
+// FSAClient provides access to ФГИС РОСАКРЕДИТАЦИИ API.
 type FSAClient struct {
 	httpClient  *http.Client
 	token       string
@@ -175,9 +175,10 @@ func NewFSAClient(parentCtx context.Context, chromiumPath string) (*FSAClient, e
 }
 
 // SearchCertificate searches for a certificate by number via API.
+// Returns (result, wasExactMatch, error).
 // Endpoint: POST /api/v1/rss/common/certificates/get
 // Filter uses {"column": "number", "search": "..."}.
-func (c *FSAClient) SearchCertificate(ctx context.Context, number string) (*FSASearchResult, error) {
+func (c *FSAClient) SearchCertificate(ctx context.Context, number string) (*FSASearchResult, bool, error) {
 	url := "https://pub.fsa.gov.ru/api/v1/rss/common/certificates/get"
 
 	body := map[string]interface{}{
@@ -193,26 +194,28 @@ func (c *FSAClient) SearchCertificate(ctx context.Context, number string) (*FSAS
 
 	bodyJSON, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("marshal: %w", err)
+		return nil, false, fmt.Errorf("marshal: %w", err)
 	}
 
 	respBody, err := c.doPost(ctx, url, bodyJSON)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	var searchResp FSASearchResponse
 	if err := json.Unmarshal(respBody, &searchResp); err != nil {
-		return nil, fmt.Errorf("parse JSON: %w", err)
+		return nil, false, fmt.Errorf("parse JSON: %w", err)
 	}
 
-	return findExactOrFirst(searchResp.Items, number), nil
+	result, exact := findExactOrFirst(searchResp.Items, number)
+	return result, exact, nil
 }
 
 // SearchDeclaration searches for a declaration by number via server-side API.
+// Returns (result, wasExactMatch, error).
 // Endpoint: POST /api/v1/rds/common/declarations/get
 // Filter uses {"name": "number", "search": "...", "type": 0} (not "column" like certificates).
-func (c *FSAClient) SearchDeclaration(ctx context.Context, number string) (*FSASearchResult, error) {
+func (c *FSAClient) SearchDeclaration(ctx context.Context, number string) (*FSASearchResult, bool, error) {
 	url := "https://pub.fsa.gov.ru/api/v1/rds/common/declarations/get"
 
 	body := map[string]interface{}{
@@ -228,17 +231,17 @@ func (c *FSAClient) SearchDeclaration(ctx context.Context, number string) (*FSAS
 
 	bodyJSON, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("marshal: %w", err)
+		return nil, false, fmt.Errorf("marshal: %w", err)
 	}
 
 	respBody, err := c.doPost(ctx, url, bodyJSON)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	var searchResp FSADeclarationSearchResponse
 	if err := json.Unmarshal(respBody, &searchResp); err != nil {
-		return nil, fmt.Errorf("parse JSON: %w", err)
+		return nil, false, fmt.Errorf("parse JSON: %w", err)
 	}
 
 	// Map declaration-specific fields to unified FSASearchResult.
@@ -255,7 +258,8 @@ func (c *FSAClient) SearchDeclaration(ctx context.Context, number string) (*FSAS
 		}
 	}
 
-	return findExactOrFirst(items, number), nil
+	result, exact := findExactOrFirst(items, number)
+	return result, exact, nil
 }
 
 // doPost executes a POST request with the Bearer token and returns the response body.
@@ -293,17 +297,18 @@ func (c *FSAClient) doPost(ctx context.Context, url string, bodyJSON []byte) ([]
 }
 
 // findExactOrFirst returns the exact match by number, or the first item, or nil.
-func findExactOrFirst(items []FSASearchResult, number string) *FSASearchResult {
+// Second return value indicates whether the match was exact.
+func findExactOrFirst(items []FSASearchResult, number string) (*FSASearchResult, bool) {
 	target := strings.TrimSpace(number)
 	for i := range items {
 		if strings.EqualFold(strings.TrimSpace(items[i].Number), target) {
-			return &items[i]
+			return &items[i], true
 		}
 	}
 	if len(items) > 0 {
-		return &items[0]
+		return &items[0], false
 	}
-	return nil
+	return nil, false
 }
 
 // Close releases all resources including the browser allocator.
