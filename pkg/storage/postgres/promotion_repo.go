@@ -21,6 +21,58 @@ var (
 
 const pgPromoChunkSize = 500
 
+// dedupExpenses removes duplicate (advert_id, upd_num) entries (last-write-wins).
+// PG ON CONFLICT forbids affecting the same row twice in one multi-row INSERT (SQLSTATE 21000).
+func dedupExpenses(rows []wb.ExpenseRow) []wb.ExpenseRow {
+	type key struct{ a, b int }
+	seen := make(map[key]int, len(rows))
+	for i, r := range rows {
+		k := key{r.AdvertID, r.UpdNum}
+		if prev, ok := seen[k]; ok {
+			rows[prev] = r // overwrite with later entry
+		} else {
+			seen[k] = i
+		}
+	}
+	if len(seen) == len(rows) {
+		return rows // no duplicates
+	}
+	out := make([]wb.ExpenseRow, 0, len(seen))
+	for i, r := range rows {
+		k := key{r.AdvertID, r.UpdNum}
+		if seen[k] == i {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// dedupCampaignBids removes duplicate (advert_id, nm_id) entries (last-write-wins).
+// PG ON CONFLICT forbids affecting the same row twice in one multi-row INSERT (SQLSTATE 21000).
+func dedupCampaignBids(rows []wb.CampaignBidRow) []wb.CampaignBidRow {
+	type key struct{ a, b int }
+	seen := make(map[key]int, len(rows))
+	for i, r := range rows {
+		k := key{r.AdvertID, r.NmID}
+		if prev, ok := seen[k]; ok {
+			rows[prev] = r
+		} else {
+			seen[k] = i
+		}
+	}
+	if len(seen) == len(rows) {
+		return rows
+	}
+	out := make([]wb.CampaignBidRow, 0, len(seen))
+	for i, r := range rows {
+		k := key{r.AdvertID, r.NmID}
+		if seen[k] == i {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // PgPromotionRepo implements promotion.Writer + promotion.Reader for PostgreSQL.
 type PgPromotionRepo struct {
 	pool *pgxpool.Pool
@@ -45,6 +97,7 @@ func (r *PgPromotionRepo) SaveCampaignBids(ctx context.Context, rows []wb.Campai
 	if len(rows) == 0 {
 		return nil
 	}
+	rows = dedupCampaignBids(rows)
 	nowUTC := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	for i := 0; i < len(rows); i += pgPromoChunkSize {
@@ -345,10 +398,13 @@ func (r *PgPromotionRepo) SaveBidRecommendations(ctx context.Context, recs []wb.
 }
 
 // SaveExpenses saves campaign write-off history using ON CONFLICT upsert.
+// Deduplicates by (advert_id, upd_num) before chunking — PG ON CONFLICT forbids
+// affecting the same row twice within a single multi-row INSERT (SQLSTATE 21000).
 func (r *PgPromotionRepo) SaveExpenses(ctx context.Context, rows []wb.ExpenseRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
+	rows = dedupExpenses(rows)
 	for i := 0; i < len(rows); i += pgPromoChunkSize {
 		end := min(i+pgPromoChunkSize, len(rows))
 		chunk := rows[i:end]
