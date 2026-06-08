@@ -5,7 +5,7 @@ wb:
 stock_history:
   db_path: "/var/db/wb-sales.db"
   days: 90
-  report_type: "daily"
+  report_type: "metrics"
   stock_type: ""
   resume: false
   rate_limits:

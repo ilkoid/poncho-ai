@@ -5,7 +5,7 @@ wb:
   endpoint: "https://statistics-api.wildberries.ru"
 
 orders:
-  days: 7                     # дней от вчерашнего (default: 90, retention WB API)
+  days: 90                     # дней от вчерашнего (default: 90, retention WB API)
   # from: "2026-03-01"         # точная начальная дата (приоритет над days)
   # to: "2026-06-01"           # точная конечная дата (приоритет над days)
   rewrite: false               # upsert без удаления — сохраняем историю за пределами 90 дней

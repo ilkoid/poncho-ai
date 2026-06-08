@@ -7,7 +7,7 @@ wb:
   timeout: 30m
 
 download:
-  days: 3
+  days: 90
   resume: false
   rewrite: true
   adaptive_recover_after: 5

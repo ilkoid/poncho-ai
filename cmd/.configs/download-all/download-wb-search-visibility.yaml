@@ -3,7 +3,7 @@ wb:
 
 search_visibility:
   db_path: "/var/db/wb-sales.db"
-  days: 7
+  days: 14
   limit: 50
   skip_positions: false
   skip_queries: false

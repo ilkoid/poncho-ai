@@ -5,7 +5,7 @@ wb:
 stock_history:
   db_path: "/var/db/wb-sales.db"
   days: 90
-  report_type: "daily"
+  report_type: "metrics"
   stock_type: ""
   resume: false
   rate_limits:
@@ -25,3 +25,10 @@ stock_history:
   max_backoff_seconds: 60
   poll_interval_sec: 30
   poll_timeout_min: 30
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

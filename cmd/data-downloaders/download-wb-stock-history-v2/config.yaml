@@ -4,7 +4,7 @@ wb:
 stock_history:
   report_type: daily
   stock_type: ""
-  days: 7
+  days: 90
   resume: true
   rate_limits:
     create: 3

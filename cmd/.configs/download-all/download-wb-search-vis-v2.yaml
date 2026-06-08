@@ -2,7 +2,7 @@ wb:
   timeout: "120s"
 
 search_visibility:
-  days: 7
+  days: 14
   limit: 50
   skip_positions: false
   skip_queries: false

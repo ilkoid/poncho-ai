@@ -4,7 +4,7 @@ wb:
 
 supply:
   db_path: "/var/db/wb-sales.db"
-  days: 14
+  days: 21
   date_filter_type: "updatedDate"
   rate_limits:
     # All supply endpoints share a global per-seller limit of ~30 req/min
