@@ -633,10 +633,11 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 	limiter := c.getOrCreateLimiter(toolID, rateLimit, burst)
 	var lastErr error
 
-	// Track timing for rate limiting
+	// Track timing for rate limiting.
+	// Jitter: add random 0–50% of minInterval to prevent synchronization with
+	// server-side fixed-window rate limiters (e.g., WB 3 req/min per calendar minute).
 	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit)) // 3/min → 20s
-
-	// Debug: show limiter state before first request
+	jitterRange := minInterval / 2                                          // 0–10s for 3/min
 
 	for i := 0; i < c.retryAttempts; i++ {
 		if err := limiter.Wait(ctx); err != nil {
@@ -652,8 +653,9 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 
 		if !lastRequestTime.IsZero() {
 			sinceLastReq := time.Since(lastRequestTime)
-			if sinceLastReq < minInterval {
-				additionalWait := minInterval - sinceLastReq
+			effectiveInterval := minInterval + time.Duration(rand.Int64N(int64(jitterRange)))
+			if sinceLastReq < effectiveInterval {
+				additionalWait := effectiveInterval - sinceLastReq
 				select {
 				case <-time.After(additionalWait):
 				case <-ctx.Done():
