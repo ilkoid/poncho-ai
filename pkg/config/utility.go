@@ -1188,6 +1188,70 @@ func (c *SupplyConfig) GetDefaults() SupplyConfig {
 	return result
 }
 
+// ============================================================================
+// Stock Products (Seller Analytics API — /api/v2/stocks-report/products/products)
+// ============================================================================
+
+// StockProductsConfig — конфигурация для download-wb-stock-products-v2 утилиты.
+//
+// Загружает товарные остатки с расширенными метриками (заказы, выкупы, оборачиваемость).
+// Seller Analytics API: 3 req/min, burst 3.
+// Двухуровневый rate limiting: desired + api (swagger floor для восстановления).
+type StockProductsConfig struct {
+	PageSize           int                        `yaml:"page_size"`            // max 1000 (default: 1000)
+	Days               int                        `yaml:"days"`                 // Дней от вчерашнего (default: 1)
+	APIKeyEnv          string                     `yaml:"api_key_env"`          // default: WB_API_ANALYTICS_AND_PROMO_KEY
+	RateLimits         StockProductsRateLimits    `yaml:"rate_limits"`
+	AdaptiveProbeAfter int                        `yaml:"adaptive_probe_after"` // default: 10
+	MaxBackoffSeconds  int                        `yaml:"max_backoff_seconds"`  // default: 60
+}
+
+// StockProductsRateLimits — rate limits для stock products API endpoint.
+//
+// Seller Analytics API: 3 req/min, burst 3 (shared with stocks-report/search-report).
+type StockProductsRateLimits struct {
+	StockProducts      int `yaml:"stock_products"`        // desired rate (default: 3)
+	StockProductsBurst int `yaml:"stock_products_burst"`  // desired burst (default: 3)
+	StockProductsApi   int `yaml:"stock_products_api"`    // swagger rate (default: 3)
+	StockProductsApiBurst int `yaml:"stock_products_api_burst"` // swagger burst (default: 3)
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c StockProductsConfig) GetDefaults() StockProductsConfig {
+	result := c
+	if result.PageSize <= 0 {
+		result.PageSize = 1000
+	}
+	if result.Days <= 0 {
+		result.Days = 1
+	}
+	if result.APIKeyEnv == "" {
+		result.APIKeyEnv = "WB_API_ANALYTICS_AND_PROMO_KEY"
+	}
+
+	// Stock products rate limits (3 req/min, burst 3)
+	if result.RateLimits.StockProductsApi == 0 {
+		result.RateLimits.StockProductsApi = 3
+	}
+	if result.RateLimits.StockProducts == 0 {
+		result.RateLimits.StockProducts = result.RateLimits.StockProductsApi
+	}
+	if result.RateLimits.StockProductsApiBurst == 0 {
+		result.RateLimits.StockProductsApiBurst = 3
+	}
+	if result.RateLimits.StockProductsBurst == 0 {
+		result.RateLimits.StockProductsBurst = result.RateLimits.StockProductsApiBurst
+	}
+
+	if result.AdaptiveProbeAfter <= 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds <= 0 {
+		result.MaxBackoffSeconds = 60
+	}
+	return result
+}
+
 // SearchVisibilityConfig — конфигурация для download-wb-search-visibility утилиты.
 //
 // Загружает органическую поисковую видимость товаров из WB Seller Analytics API.

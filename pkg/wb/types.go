@@ -1244,3 +1244,120 @@ type MeasurementPenaltiesResponse struct {
 		Total   int                      `json:"total"`
 	} `json:"data"`
 }
+
+// ============================================================================
+// Stock Products Types (Seller Analytics API — /api/v2/stocks-report/products/products)
+// ============================================================================
+
+// DurationMetrics represents a duration with special negative values.
+// -1 = infinite, -2 = zero, -3 = not calculated, -4 = absent entire period.
+type DurationMetrics struct {
+	Days  int `json:"days"`
+	Hours int `json:"hours"`
+}
+
+// PriceRange represents current product price range.
+// Swagger: type integer, format uint64 — NOT float.
+type PriceRange struct {
+	MinPrice int64 `json:"minPrice"`
+	MaxPrice int64 `json:"maxPrice"`
+}
+
+// FloatGraphByPeriodItem represents avg orders by month data.
+type FloatGraphByPeriodItem struct {
+	Start string  `json:"start"` // format: date
+	End   string  `json:"end"`   // format: date
+	Value float64 `json:"value"`
+}
+
+// TableOrderBy specifies sort field and direction.
+type TableOrderBy struct {
+	Field string `json:"field"` // TableGroupField enum values
+	Mode  string `json:"mode"`  // "asc" or "desc"
+}
+
+// StockProductMetrics — 22 metric fields from TableCommonMetrics + product extensions.
+// Types verified against Swagger 11-analytics.yaml (Phase 1 verification).
+type StockProductMetrics struct {
+	// Counts and sums (Swagger: integer uint64 → Go int64, PG BIGINT)
+	OrdersCount     int64 `json:"ordersCount"`
+	OrdersSum       int64 `json:"ordersSum"`
+	BuyoutCount     int64 `json:"buyoutCount"`
+	BuyoutSum       int64 `json:"buyoutSum"`
+	BuyoutPercent   int   `json:"buyoutPercent"` // Swagger: integer uint32, bounded 0-100
+	StockCount      int64 `json:"stockCount"`
+	StockSum        int64 `json:"stockSum"`
+	ToClientCount   int64 `json:"toClientCount"`
+	FromClientCount int64 `json:"fromClientCount"`
+
+	// Float values (Swagger: number float64)
+	AvgOrders float64 `json:"avgOrders"`
+
+	// Duration metrics (Swagger: integer int32, special negatives -1..-4)
+	SaleRate          DurationMetrics `json:"saleRate"`
+	AvgStockTurnover  DurationMetrics `json:"avgStockTurnover"`
+	OfficeMissingTime DurationMetrics `json:"officeMissingTime"`
+
+	// Lost metrics (Swagger: number float64, special negatives: <0 ≠ -2 = not calc, -2 = zero)
+	LostOrdersCount  float64 `json:"lostOrdersCount"`
+	LostOrdersSum    float64 `json:"lostOrdersSum"`
+	LostBuyoutsCount float64 `json:"lostBuyoutsCount"`
+	LostBuyoutsSum   float64 `json:"lostBuyoutsSum"`
+
+	// Avg orders by month
+	AvgOrdersByMonth []FloatGraphByPeriodItem `json:"avgOrdersByMonth"`
+
+	// Product-specific extensions
+	CurrentPrice PriceRange `json:"currentPrice"`
+	Availability string     `json:"availability"` // enum: deficient, actual, balanced, nonActual, nonLiquid, invalidData
+}
+
+// StockProductItem — one product from TableProductItemSt.
+// POST /api/v2/stocks-report/products/products
+type StockProductItem struct {
+	NmID        int64  `json:"nmID"` // Swagger: integer int64
+	IsDeleted   bool   `json:"isDeleted"`
+	SubjectName string `json:"subjectName"`
+	Name        string `json:"name"`
+	VendorCode  string `json:"vendorCode"`
+	BrandName   string `json:"brandName"`
+	MainPhoto   string `json:"mainPhoto"`
+	HasSizes    bool   `json:"hasSizes"`
+	Metrics     StockProductMetrics `json:"metrics"`
+}
+
+// StockProductRequest — TableProductRequest (CommonProductFilters + limit/offset).
+// PeriodInv: format date (YYYY-MM-DD), max 3 months back.
+type StockProductRequest struct {
+	// CommonProductFilters fields
+	NmIDs               []int        `json:"nmIDs,omitempty"`
+	SubjectID           int          `json:"subjectID,omitempty"`
+	BrandName           string       `json:"brandName,omitempty"`
+	TagID               int64        `json:"tagID,omitempty"`
+	CurrentPeriod       PeriodInv    `json:"currentPeriod"`
+	StockType           string       `json:"stockType"`            // "", "wb", "mp"
+	SkipDeletedNm       bool         `json:"skipDeletedNm"`
+	OrderBy             TableOrderBy `json:"orderBy"`
+	AvailabilityFilters []string     `json:"availabilityFilters"`
+
+	// Pagination (Swagger: limit max 1000 default 100, offset required)
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
+// PeriodInv — date range, max 3 months back.
+// format: date → "2006-01-02" (NOT date-time, no T suffix).
+type PeriodInv struct {
+	Start string `json:"start"` // YYYY-MM-DD
+	End   string `json:"end"`   // YYYY-MM-DD
+}
+
+// StockProductResponse — wraps TableProductResponse.
+type StockProductResponse struct {
+	Data struct {
+		Items    []StockProductItem `json:"items"`
+		Currency string             `json:"currency"`
+	} `json:"data"`
+	Error     bool   `json:"error"`
+	ErrorText string `json:"errorText"`
+}

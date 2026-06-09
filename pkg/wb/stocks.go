@@ -10,6 +10,10 @@ const (
 	stocksBaseURL       = "https://seller-analytics-api.wildberries.ru"
 	stocksWarehousePath = "/api/analytics/v1/stocks-report/wb-warehouses"
 
+	// Stock Products endpoint (Seller Analytics API v2)
+	ToolIDStockProducts   = "stock_products"
+	stockProductsPath     = "/api/v2/stocks-report/products/products"
+
 	// Stock History CSV Report endpoints
 	stockHistoryReportsBaseURL = "https://seller-analytics-api.wildberries.ru"
 	stockHistoryCreatePath     = "/api/v2/nm-report/downloads"
@@ -38,6 +42,68 @@ func (c *Client) GetStockWarehouses(ctx context.Context, limit, offset, rateLimi
 	}
 
 	return resp.Data.Items, nil
+}
+
+// GetStockProducts fetches product-level stock metrics from WB Seller Analytics API v2.
+// POST /api/v2/stocks-report/products/products
+// Rate limit: 3 req/min, burst 3 (shared with other stocks-report/search-report endpoints).
+func (c *Client) GetStockProducts(ctx context.Context, req StockProductRequest, rateLimit, burst int) ([]StockProductItem, error) {
+	if c.IsDemoKey() {
+		return c.getMockStockProducts(req), nil
+	}
+	var resp StockProductResponse
+	err := c.Post(ctx, ToolIDStockProducts, sellerAnalyticsBaseURL,
+		rateLimit, burst, stockProductsPath, req, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("stock products: %w", err)
+	}
+	if resp.Error {
+		return nil, fmt.Errorf("stock products API error: %s", resp.ErrorText)
+	}
+	return resp.Data.Items, nil
+}
+
+// getMockStockProducts returns deterministic mock data for --mock mode.
+func (c *Client) getMockStockProducts(req StockProductRequest) []StockProductItem {
+	count := min(req.Limit, 5)
+	items := make([]StockProductItem, count)
+	for i := range count {
+		items[i] = StockProductItem{
+			NmID:        int64(100000 + i + req.Offset),
+			IsDeleted:   false,
+			SubjectName: "Кроссовки",
+			Name:        fmt.Sprintf("Mock Product %d", i+req.Offset),
+			VendorCode:  fmt.Sprintf("12%d", i+req.Offset),
+			BrandName:   "MockBrand",
+			MainPhoto:   "https://mock.photo/1.jpg",
+			HasSizes:    true,
+			Metrics: StockProductMetrics{
+				OrdersCount:     int64(100 + i*10),
+				OrdersSum:       int64(150000 + i*1000),
+				BuyoutCount:     int64(85 + i*5),
+				BuyoutSum:       int64(120000 + i*500),
+				BuyoutPercent:   85,
+				StockCount:      int64(50 + i*3),
+				StockSum:        int64(75000 + i*200),
+				ToClientCount:   int64(10 + i),
+				FromClientCount: int64(5 + i),
+				AvgOrders:       float64(3 + i),
+				SaleRate:        DurationMetrics{Days: 14, Hours: 5},
+				AvgStockTurnover: DurationMetrics{Days: 30, Hours: 0},
+				OfficeMissingTime: DurationMetrics{Days: -3, Hours: 0}, // -3 = not calculated
+				LostOrdersCount:  float64(12 + i),
+				LostOrdersSum:    float64(18000 + i*100),
+				LostBuyoutsCount: float64(8 + i),
+				LostBuyoutsSum:   float64(12000 + i*50),
+				AvgOrdersByMonth: []FloatGraphByPeriodItem{
+					{Start: "2026-05-01", End: "2026-05-31", Value: 2.5 + float64(i)},
+				},
+				CurrentPrice: PriceRange{MinPrice: int64(1500 + i*100), MaxPrice: int64(2500 + i*100)},
+				Availability: "actual",
+			},
+		}
+	}
+	return items
 }
 
 // ============================================================================
