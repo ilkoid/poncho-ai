@@ -6,10 +6,10 @@ import "encoding/json"
 
 // Common Response Wrapper
 type APIResponse[T any] struct {
-	Data      T           `json:"data"`
-	Error     bool        `json:"error"`
-	ErrorText string      `json:"errorText"`
-	// AdditionalErrors игнорируем, так как тип плавает (string/null)
+	Data             T                `json:"data"`
+	Error            bool             `json:"error"`
+	ErrorText        string           `json:"errorText"`
+	AdditionalErrors json.RawMessage  `json:"additionalErrors"` // WB может вернуть детали по карточкам даже при error:false
 }
 
 // 1. Parent Category

@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
 	"strconv"
 )
@@ -526,6 +527,15 @@ func (c *Client) UpdateCards(ctx context.Context, baseURL string, rateLimit, bur
 	}
 
 	body := string(resp.Data)
+
+	// Логируем additionalErrors даже при error:false — WB может молча отклонять отдельные карточки.
+	if len(resp.AdditionalErrors) > 0 &&
+		string(resp.AdditionalErrors) != "{}" &&
+		string(resp.AdditionalErrors) != "null" &&
+		string(resp.AdditionalErrors) != `""` {
+		log.Printf("  WB UPDATE additionalErrors: %s", string(resp.AdditionalErrors))
+	}
+
 	if resp.Error {
 		return body, resp.ErrorText, fmt.Errorf("update cards API error: %s", resp.ErrorText)
 	}

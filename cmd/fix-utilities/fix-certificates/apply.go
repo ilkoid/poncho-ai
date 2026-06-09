@@ -96,7 +96,10 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg cardupdate
 			continue
 		}
 
-		_, errorText, err := client.UpdateCards(ctx, wb.CardsBaseURL, cfg.RatePerMin, cfg.RateBurst, items)
+		body, errorText, err := client.UpdateCards(ctx, wb.CardsBaseURL, cfg.RatePerMin, cfg.RateBurst, items)
+			if body != "" {
+				log.Printf("  WB RESPONSE body: %s", body)
+			}
 		if err != nil {
 			log.Printf("batch %d-%d: %v (WB: %s)", i+1, end, err, errorText)
 			for _, r := range chunk {
