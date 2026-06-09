@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/filter"
+	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
 // Certificate characteristic IDs on WB.
@@ -92,7 +93,7 @@ type changeEntry struct {
 	New    string `json:"new"`
 }
 
-func runStage(ctx context.Context, db *sql.DB, f *filter.Filter, refTime time.Time) error {
+func runStage(ctx context.Context, db *sql.DB, f *filter.Filter, refTime time.Time, client *wb.Client) error {
 	if _, err := db.ExecContext(ctx, stagingTableDDL); err != nil {
 		return fmt.Errorf("create staging table: %w", err)
 	}
@@ -146,6 +147,9 @@ func runStage(ctx context.Context, db *sql.DB, f *filter.Filter, refTime time.Ti
 	if err != nil {
 		return fmt.Errorf("sql filters: %w", err)
 	}
+
+	// Exclude basket (trashed) cards via WB API.
+	cards = excludeTrashCards(ctx, client, cards, func(c stageRow) int { return c.NmID })
 
 	fmt.Printf("Found %d cards with missing certificate data\n\n", len(cards))
 
@@ -243,7 +247,7 @@ func (a fixRowAdapter) GetSeasons() []string   { return nil }
 
 // runFixTypeStage finds cards where cert/decl number is correct but in the wrong char_id.
 // Only fixes cards where the number string matches between 1C and WB.
-func runFixTypeStage(ctx context.Context, db *sql.DB, f *filter.Filter) error {
+func runFixTypeStage(ctx context.Context, db *sql.DB, f *filter.Filter, client *wb.Client) error {
 	if _, err := db.ExecContext(ctx, stagingTableDDL); err != nil {
 		return fmt.Errorf("create staging table: %w", err)
 	}
@@ -302,6 +306,9 @@ func runFixTypeStage(ctx context.Context, db *sql.DB, f *filter.Filter) error {
 	if err != nil {
 		return fmt.Errorf("sql filters: %w", err)
 	}
+
+	// Exclude basket (trashed) cards via WB API.
+	fixes = excludeTrashCards(ctx, client, fixes, func(f fixRow) int { return f.NmID })
 
 	fmt.Printf("Found %d cards with type mismatch\n\n", len(fixes))
 
@@ -384,7 +391,7 @@ func runFixTypeStage(ctx context.Context, db *sql.DB, f *filter.Filter) error {
 }
 
 // runReconcileStage finds cards where WB cert/decl data differs from 1C (any discrepancy).
-func runReconcileStage(ctx context.Context, db *sql.DB, f *filter.Filter, refTime time.Time) error {
+func runReconcileStage(ctx context.Context, db *sql.DB, f *filter.Filter, refTime time.Time, client *wb.Client) error {
 	if _, err := db.ExecContext(ctx, stagingTableDDL); err != nil {
 		return fmt.Errorf("create staging table: %w", err)
 	}
@@ -435,6 +442,9 @@ func runReconcileStage(ctx context.Context, db *sql.DB, f *filter.Filter, refTim
 	if err != nil {
 		return fmt.Errorf("sql filters: %w", err)
 	}
+
+	// Exclude basket (trashed) cards via WB API.
+	cards = excludeTrashCards(ctx, client, cards, func(c stageRow) int { return c.NmID })
 
 	fmt.Printf("Found %d candidate cards\n\n", len(cards))
 
@@ -920,4 +930,38 @@ func applyFixSQLFilters(ctx context.Context, db *sql.DB, rows []fixRow, f *filte
 		}
 	}
 	return result, nil
+}
+
+// excludeTrashCards removes basket (trashed) cards from a slice.
+// If client is nil, returns the slice unchanged (trash filter disabled).
+// Uses WB API /content/v2/get/cards/trash to fetch trashed nmIDs.
+func excludeTrashCards[T any](ctx context.Context, client *wb.Client, items []T, nmIDFn func(T) int) []T {
+	if client == nil {
+		return items
+	}
+
+	fmt.Println("Fetching basket cards from WB API...")
+	trashSet, trashErr := client.GetAllTrashNmIDs(ctx, 100, 5)
+	if trashErr != nil {
+		fmt.Printf("  WARNING: trash filter failed (%v), proceeding without it\n", trashErr)
+		return items
+	}
+
+	if len(trashSet) == 0 {
+		fmt.Println("  No basket cards found")
+		return items
+	}
+
+	fmt.Printf("  Found %d basket cards\n", len(trashSet))
+	var filtered []T
+	for _, item := range items {
+		if !trashSet[nmIDFn(item)] {
+			filtered = append(filtered, item)
+		}
+	}
+	excluded := len(items) - len(filtered)
+	if excluded > 0 {
+		fmt.Printf("  Excluded %d basket cards from staging\n", excluded)
+	}
+	return filtered
 }

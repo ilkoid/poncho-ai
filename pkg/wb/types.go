@@ -271,6 +271,47 @@ type CardsCursorResponse struct {
 	Total     int    `json:"total"`
 }
 
+// TrashCardsListRequest — POST /content/v2/get/cards/trash.
+type TrashCardsListRequest struct {
+	Settings TrashCardsSettings `json:"settings"`
+}
+
+// TrashCardsSettings — настройки запроса корзинных карточек.
+type TrashCardsSettings struct {
+	Cursor TrashCardsCursor `json:"cursor"`
+	Filter *CardsFilter     `json:"filter,omitempty"`
+	Sort   *CardsSort       `json:"sort,omitempty"`
+}
+
+// TrashCardsCursor — курсор для пагинации trash endpoint.
+// Использует trashedAt вместо updatedAt — семантически другое поле.
+type TrashCardsCursor struct {
+	Limit     int    `json:"limit"`
+	TrashedAt string `json:"trashedAt,omitempty"`
+	NmID      int    `json:"nmID,omitempty"`
+}
+
+// TrashCardsListResponse — ответ trash endpoint.
+type TrashCardsListResponse struct {
+	Cards     []TrashCard          `json:"cards"`
+	Cursor    *TrashCursorResponse `json:"cursor,omitempty"`
+	Error     bool                 `json:"error"`
+	ErrorText string               `json:"errorText,omitempty"`
+}
+
+// TrashCard — карточка в корзине. Embeds ProductCard для доступа ко всем полям.
+type TrashCard struct {
+	ProductCard            // full card fields
+	TrashedAt   string     `json:"trashedAt"`
+}
+
+// TrashCursorResponse — курсор ответа trash endpoint.
+type TrashCursorResponse struct {
+	TrashedAt string `json:"trashedAt"`
+	NmID      int    `json:"nmID"`
+	Total     int    `json:"total"`
+}
+
 // ProductCard представляет карточку товара от Content API.
 // GET /content/v2/get/cards/list — полный каталог с вложенными данными.
 type ProductCard struct {

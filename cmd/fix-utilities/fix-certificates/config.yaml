@@ -15,15 +15,15 @@ db_path: "/var/db/wb-sales.db"
 filters:
   nm_ids: []             # Конкретные nm_id (для теста на 1 карточке)
   vendor_codes: []       # Раскомментируй нужные из списка ниже
-  allowed_years: [25]  # Год из позиций 2-3 артикула (307 шт, см. список ниже)
+  allowed_years: []  # Год из позиций 2-3 артикула (307 шт, см. список ниже)
   exclude_lengths: [5, 6]         # Исключить артикулы указанной длины
   exclude_vendor_codes: [] # Артикулы с некорректными датами (1С ≠ ФСА), WB отклоняет
   # vendor_code_prefix: "1"      # Первая цифра артикула
-  subject: "Кроссовки"         # Точное совпадение subject_name (case-insensitive)
-  #     Комбинезоны Костюмы Футболки
+  subject: ""         # Точное совпадение subject_name (case-insensitive)
+  #       
   # subject_ids: []           # WB subject IDs
   # seasons: ["зима"]            # Сезон из card_characteristics
-  in_stock: false               # Только с остатками
+  in_stock: true               # Только с остатками
   # onec_type: ["Обувь"]         # 1C тип (Обувь/Одежда/Аксессуары)
   # category_level1: ["Женская"] # 1C категория L1
   # category_level2: ["Кроссовки"] # 1C категория L2
@@ -36,7 +36,7 @@ reference_date: "08.06.2026"
 
 # WB Content API (POST /content/v2/cards/update, swagger: 100/min burst 5)
 wb_update:
-  batch_size: 70             # Карточек на один API-запрос
+  batch_size: 30             # Карточек на один API-запрос
   rate_per_min: 8            # Желаемый rate (req/min)
   rate_burst: 2              # Burst для rate limiter
   api_floor_per_min: 5       # Recovery floor после 429 (req/min)
@@ -45,3 +45,11 @@ wb_update:
   # batch_size: 1            # Для отладки — по одной карточке
   # rate_per_min: 5          # Осторожнее — Content API чувствителен
   # interval_seconds: 15     # Больше пауза — мягче rate
+
+# Фильтрация корзинных карточек (trash endpoint).
+# На этапе --stage исключает карточки «в корзине» WB из staging.
+# Без этого фильтра корзинная карточка в батче убивает весь батч (400 error).
+trash_filter:
+  enabled: true              # false = пропустить запрос к trash API
+  rate_per_min: 100          # Content API лимит
+  rate_burst: 5

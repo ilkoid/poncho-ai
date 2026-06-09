@@ -72,15 +72,27 @@ func main() {
 
 	switch {
 	case *stage:
-		if err := runStage(ctx, dbConn, &cfg.Filters, refTime); err != nil {
+		var client *wb.Client
+		if cfg.TrashFilter.Enabled {
+			client = newTrashClient(cfg)
+		}
+		if err := runStage(ctx, dbConn, &cfg.Filters, refTime, client); err != nil {
 			log.Fatalf("stage: %v", err)
 		}
 	case *fixType:
-		if err := runFixTypeStage(ctx, dbConn, &cfg.Filters); err != nil {
+		var client *wb.Client
+		if cfg.TrashFilter.Enabled {
+			client = newTrashClient(cfg)
+		}
+		if err := runFixTypeStage(ctx, dbConn, &cfg.Filters, client); err != nil {
 			log.Fatalf("stage: %v", err)
 		}
 	case *reconcile:
-		if err := runReconcileStage(ctx, dbConn, &cfg.Filters, refTime); err != nil {
+		var client *wb.Client
+		if cfg.TrashFilter.Enabled {
+			client = newTrashClient(cfg)
+		}
+		if err := runReconcileStage(ctx, dbConn, &cfg.Filters, refTime, client); err != nil {
 			log.Fatalf("reconcile: %v", err)
 		}
 	case *check:
@@ -123,6 +135,16 @@ func resolveAPIKey() string {
 		return k
 	}
 	return os.Getenv("WB_API_KEY")
+}
+
+// newTrashClient создаёт WB клиент для запроса корзинных карточек.
+// Nil-safe: если TrashFilter.Disabled, просто не вызывайте эту функцию.
+func newTrashClient(cfg *Config) *wb.Client {
+	client := wb.New(resolveAPIKey())
+	client.SetRateLimit("get_cards_trash",
+		cfg.TrashFilter.RatePerMin, cfg.TrashFilter.RateBurst,
+		cfg.TrashFilter.RatePerMin, cfg.TrashFilter.RateBurst)
+	return client
 }
 
 // parseRefDate parses the --date flag. Accepts DD.MM.YYYY or YYYY-MM-DD.

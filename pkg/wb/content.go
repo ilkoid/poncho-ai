@@ -503,6 +503,57 @@ func (c *Client) GetCardsList(
 	return resp.Cards, resp.Cursor, nil
 }
 
+// GetCardsTrash fetches one page of trashed (basket) cards from WB Content API.
+// POST /content/v2/get/cards/trash with cursor-based pagination.
+// Max 100 cards per page. Rate limit: shared with Content API (100 req/min).
+// Returns trash cards slice and response cursor (nil if last page or error).
+func (c *Client) GetCardsTrash(
+	ctx context.Context,
+	settings TrashCardsSettings,
+	rateLimit, burst int,
+) ([]TrashCard, *TrashCursorResponse, error) {
+	reqBody := TrashCardsListRequest{Settings: settings}
+	var resp TrashCardsListResponse
+	err := c.Post(ctx, "get_cards_trash", cardsBaseURL, rateLimit, burst, "/content/v2/get/cards/trash", reqBody, &resp)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cards trash: %w", err)
+	}
+
+	if resp.Error {
+		return nil, nil, fmt.Errorf("cards trash API error: %s", resp.ErrorText)
+	}
+
+	return resp.Cards, resp.Cursor, nil
+}
+
+// GetAllTrashNmIDs fetches ALL trashed card nmIDs via cursor pagination.
+// Returns a set (map[int]bool) of nmIDs that are in the basket.
+// On error after partial fetch, returns already-collected set + error — caller decides.
+func (c *Client) GetAllTrashNmIDs(ctx context.Context, rateLimit, burst int) (map[int]bool, error) {
+	trashSet := make(map[int]bool)
+	settings := TrashCardsSettings{
+		Cursor: TrashCardsCursor{Limit: 100},
+	}
+	for {
+		cards, cursor, err := c.GetCardsTrash(ctx, settings, rateLimit, burst)
+		if err != nil {
+			return trashSet, fmt.Errorf("fetch trash page: %w", err)
+		}
+		for _, card := range cards {
+			trashSet[card.NmID] = true
+		}
+		if cursor == nil || cursor.Total < settings.Cursor.Limit {
+			break
+		}
+		settings.Cursor = TrashCardsCursor{
+			Limit:     100,
+			TrashedAt: cursor.TrashedAt,
+			NmID:      cursor.NmID,
+		}
+	}
+	return trashSet, nil
+}
+
 const cardsBaseURL = "https://content-api.wildberries.ru"
 
 // CardsBaseURL — экспортируемый базовый URL WB Content API (продакшн).
