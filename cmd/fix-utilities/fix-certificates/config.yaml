@@ -19,8 +19,8 @@ filters:
   exclude_lengths: [5, 6]         # Исключить артикулы указанной длины
   exclude_vendor_codes: [] # Артикулы с некорректными датами (1С ≠ ФСА), WB отклоняет
   # vendor_code_prefix: "1"      # Первая цифра артикула
-  subject: "Платья"         # Точное совпадение subject_name (case-insensitive)
-  #    Кроссовки Комбинезоны Костюмы Футболки
+  subject: "Кроссовки"         # Точное совпадение subject_name (case-insensitive)
+  #     Комбинезоны Костюмы Футболки
   # subject_ids: []           # WB subject IDs
   # seasons: ["зима"]            # Сезон из card_characteristics
   in_stock: false               # Только с остатками

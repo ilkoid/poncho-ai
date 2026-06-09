@@ -49,6 +49,7 @@ go run "$PONCHO/cmd/data-downloaders/download-wb-region-sales-v2" --config "$C/d
 echo "── Phase 4: Stock & Logistics ──"
 
 go run "$PONCHO/cmd/data-downloaders/download-wb-stocks-v2" --config "$C/download-wb-stocks-v2.yaml" --backend sqlite --date $(date +%Y-%m-%d)
+go run "$PONCHO/cmd/data-downloaders/download-wb-stock-products-v2" --config "$C/download-wb-stock-products.yaml" --backend sqlite --date $(date +%Y-%m-%d)
 go run "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" --config "$C/download-wb-stock-history.yaml" --backend sqlite ${DAYS:+--days=$DAYS}
 go run "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" --config "$C/download-wb-stock-history-metrics.yaml" --backend sqlite ${DAYS:+--days=$DAYS}
 go run "$PONCHO/cmd/data-downloaders/download-wb-supplies-v2" --config "$C/download-wb-supplies.yaml" --backend sqlite ${DAYS:+--days=$DAYS}
@@ -104,6 +105,7 @@ go run "$PONCHO/cmd/data-downloaders/download-wb-region-sales-v2" --config "$C/d
 echo "── Phase 4: Stock & Logistics ──"
 
 go run "$PONCHO/cmd/data-downloaders/download-wb-stocks-v2" --config "$C/download-wb-stocks-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)
+go run "$PONCHO/cmd/data-downloaders/download-wb-stock-products-v2" --config "$C/download-wb-stock-products-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)
 go run "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" --config "$C/download-wb-stock-history-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 go run "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" --config "$C/download-wb-stock-history-metrics-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 go run "$PONCHO/cmd/data-downloaders/download-wb-supplies-v2" --config "$C/download-wb-supplies-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}

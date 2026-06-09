@@ -1,0 +1,20 @@
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  timeout: "120s"
+
+stock_products:
+  page_size: 1000
+  days: 1
+  rate_limits:
+    stock_products: 3
+    stock_products_burst: 3
+    stock_products_api: 3
+    stock_products_api_burst: 3
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
