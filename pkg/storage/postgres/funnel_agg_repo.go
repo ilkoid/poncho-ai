@@ -267,65 +267,10 @@ func (r *PgFunnelAggRepo) SaveFunnelAggregatedBatch(
 		)
 	}
 
-	// Build args for metrics multi-row INSERT.
-	// Each row: 90 params.
-	metricArgs := make([]any, 0, len(valid)*insertAggMetricCols)
+	// Convert API products to DB rows upfront (shared across chunks).
 	rows := make([]wb.FunnelAggregatedRow, len(valid))
 	for i, p := range valid {
 		rows[i] = convertAPIResponseToRow(p, periodStart, periodEnd, currency)
-		row := rows[i]
-		metricArgs = append(metricArgs,
-			// Natural key
-			row.NmID, row.PeriodStart, row.PeriodEnd,
-			// Selected metrics (28 fields)
-			row.SelectedOpenCount, row.SelectedCartCount, row.SelectedOrderCount,
-			row.SelectedOrderSum, row.SelectedBuyoutCount, row.SelectedBuyoutSum,
-			row.SelectedCancelCount, row.SelectedCancelSum, row.SelectedAvgPrice,
-			row.SelectedAvgOrdersCountPerDay, row.SelectedShareOrderPercent,
-			row.SelectedAddToWishlist, row.SelectedLocalizationPercent,
-			row.SelectedTimeToReadyDays, row.SelectedTimeToReadyHours, row.SelectedTimeToReadyMins,
-			row.SelectedWBClubOrderCount, row.SelectedWBClubOrderSum,
-			row.SelectedWBClubBuyoutCount, row.SelectedWBClubBuyoutSum,
-			row.SelectedWBClubCancelCount, row.SelectedWBClubCancelSum,
-			row.SelectedWBClubAvgPrice, row.SelectedWBClubBuyoutPercent,
-			row.SelectedWBClubAvgOrderCountPerDay,
-			row.SelectedConversionAddToCart, row.SelectedConversionCartToOrder,
-			row.SelectedConversionBuyout,
-			// Past metrics (30 fields)
-			row.PastPeriodStart, row.PastPeriodEnd,
-			row.PastOpenCount, row.PastCartCount, row.PastOrderCount,
-			row.PastOrderSum, row.PastBuyoutCount, row.PastBuyoutSum,
-			row.PastCancelCount, row.PastCancelSum, row.PastAvgPrice,
-			row.PastAvgOrdersCountPerDay, row.PastShareOrderPercent,
-			row.PastAddToWishlist, row.PastLocalizationPercent,
-			row.PastTimeToReadyDays, row.PastTimeToReadyHours, row.PastTimeToReadyMins,
-			row.PastWBClubOrderCount, row.PastWBClubOrderSum,
-			row.PastWBClubBuyoutCount, row.PastWBClubBuyoutSum,
-			row.PastWBClubCancelCount, row.PastWBClubCancelSum,
-			row.PastWBClubAvgPrice, row.PastWBClubBuyoutPercent,
-			row.PastWBClubAvgOrderCountPerDay,
-			row.PastConversionAddToCart, row.PastConversionCartToOrder,
-			row.PastConversionBuyout,
-			// Comparison metrics (28 fields)
-			row.ComparisonOpenCountDynamic, row.ComparisonCartCountDynamic,
-			row.ComparisonOrderCountDynamic, row.ComparisonOrderSumDynamic,
-			row.ComparisonBuyoutCountDynamic, row.ComparisonBuyoutSumDynamic,
-			row.ComparisonCancelCountDynamic, row.ComparisonCancelSumDynamic,
-			row.ComparisonAvgOrdersCountPerDayDynamic, row.ComparisonAvgPriceDynamic,
-			row.ComparisonShareOrderPercentDynamic, row.ComparisonAddToWishlistDynamic,
-			row.ComparisonLocalizationPercentDynamic,
-			row.ComparisonTimeToReadyDays, row.ComparisonTimeToReadyHours,
-			row.ComparisonTimeToReadyMins,
-			row.ComparisonWBClubOrderCount, row.ComparisonWBClubOrderSum,
-			row.ComparisonWBClubBuyoutCount, row.ComparisonWBClubBuyoutSum,
-			row.ComparisonWBClubCancelCount, row.ComparisonWBClubCancelSum,
-			row.ComparisonWBClubAvgPrice, row.ComparisonWBClubBuyoutPercent,
-			row.ComparisonWBClubAvgOrderCountPerDay,
-			row.ComparisonConversionAddToCart, row.ComparisonConversionCartToOrder,
-			row.ComparisonConversionBuyout,
-			// Metadata
-			row.Currency,
-		)
 	}
 
 	tx, err := r.pool.Begin(ctx)
@@ -340,16 +285,81 @@ func (r *PgFunnelAggRepo) SaveFunnelAggregatedBatch(
 		return 0, fmt.Errorf("upsert products batch (size %d): %w", len(valid), err)
 	}
 
-	// 2. Multi-row upsert metrics.
-	metricQuery := insertAggMetricFullChunkSQL
-	if len(valid) < pgFunnelAggChunkSize {
-		metricQuery = BuildMultiRowInsert(insertAggMetricPrefixSQL, insertAggMetricOnConflictSQL, len(valid), insertAggMetricCols)
+	// 2. Multi-row upsert metrics in chunks (mirrors funnel_repo.go pattern).
+	// Each chunk gets its own query + args to avoid placeholder/argument mismatch
+	// when len(valid) > pgFunnelAggChunkSize.
+	var saved int
+	for i := 0; i < len(rows); i += pgFunnelAggChunkSize {
+		end := min(i+pgFunnelAggChunkSize, len(rows))
+		chunk := rows[i:end]
+
+		metricArgs := make([]any, 0, len(chunk)*insertAggMetricCols)
+		for _, row := range chunk {
+			metricArgs = append(metricArgs,
+				// Natural key
+				row.NmID, row.PeriodStart, row.PeriodEnd,
+				// Selected metrics (28 fields)
+				row.SelectedOpenCount, row.SelectedCartCount, row.SelectedOrderCount,
+				row.SelectedOrderSum, row.SelectedBuyoutCount, row.SelectedBuyoutSum,
+				row.SelectedCancelCount, row.SelectedCancelSum, row.SelectedAvgPrice,
+				row.SelectedAvgOrdersCountPerDay, row.SelectedShareOrderPercent,
+				row.SelectedAddToWishlist, row.SelectedLocalizationPercent,
+				row.SelectedTimeToReadyDays, row.SelectedTimeToReadyHours, row.SelectedTimeToReadyMins,
+				row.SelectedWBClubOrderCount, row.SelectedWBClubOrderSum,
+				row.SelectedWBClubBuyoutCount, row.SelectedWBClubBuyoutSum,
+				row.SelectedWBClubCancelCount, row.SelectedWBClubCancelSum,
+				row.SelectedWBClubAvgPrice, row.SelectedWBClubBuyoutPercent,
+				row.SelectedWBClubAvgOrderCountPerDay,
+				row.SelectedConversionAddToCart, row.SelectedConversionCartToOrder,
+				row.SelectedConversionBuyout,
+				// Past metrics (30 fields)
+				row.PastPeriodStart, row.PastPeriodEnd,
+				row.PastOpenCount, row.PastCartCount, row.PastOrderCount,
+				row.PastOrderSum, row.PastBuyoutCount, row.PastBuyoutSum,
+				row.PastCancelCount, row.PastCancelSum, row.PastAvgPrice,
+				row.PastAvgOrdersCountPerDay, row.PastShareOrderPercent,
+				row.PastAddToWishlist, row.PastLocalizationPercent,
+				row.PastTimeToReadyDays, row.PastTimeToReadyHours, row.PastTimeToReadyMins,
+				row.PastWBClubOrderCount, row.PastWBClubOrderSum,
+				row.PastWBClubBuyoutCount, row.PastWBClubBuyoutSum,
+				row.PastWBClubCancelCount, row.PastWBClubCancelSum,
+				row.PastWBClubAvgPrice, row.PastWBClubBuyoutPercent,
+				row.PastWBClubAvgOrderCountPerDay,
+				row.PastConversionAddToCart, row.PastConversionCartToOrder,
+				row.PastConversionBuyout,
+				// Comparison metrics (28 fields)
+				row.ComparisonOpenCountDynamic, row.ComparisonCartCountDynamic,
+				row.ComparisonOrderCountDynamic, row.ComparisonOrderSumDynamic,
+				row.ComparisonBuyoutCountDynamic, row.ComparisonBuyoutSumDynamic,
+				row.ComparisonCancelCountDynamic, row.ComparisonCancelSumDynamic,
+				row.ComparisonAvgOrdersCountPerDayDynamic, row.ComparisonAvgPriceDynamic,
+				row.ComparisonShareOrderPercentDynamic, row.ComparisonAddToWishlistDynamic,
+				row.ComparisonLocalizationPercentDynamic,
+				row.ComparisonTimeToReadyDays, row.ComparisonTimeToReadyHours,
+				row.ComparisonTimeToReadyMins,
+				row.ComparisonWBClubOrderCount, row.ComparisonWBClubOrderSum,
+				row.ComparisonWBClubBuyoutCount, row.ComparisonWBClubBuyoutSum,
+				row.ComparisonWBClubCancelCount, row.ComparisonWBClubCancelSum,
+				row.ComparisonWBClubAvgPrice, row.ComparisonWBClubBuyoutPercent,
+				row.ComparisonWBClubAvgOrderCountPerDay,
+				row.ComparisonConversionAddToCart, row.ComparisonConversionCartToOrder,
+				row.ComparisonConversionBuyout,
+				// Metadata
+				row.Currency,
+			)
+		}
+
+		metricQuery := insertAggMetricFullChunkSQL
+		if len(chunk) < pgFunnelAggChunkSize {
+			metricQuery = BuildMultiRowInsert(insertAggMetricPrefixSQL, insertAggMetricOnConflictSQL, len(chunk), insertAggMetricCols)
+		}
+
+		tag, err := tx.Exec(ctx, metricQuery, metricArgs...)
+		if err != nil {
+			return 0, fmt.Errorf("upsert metrics chunk [%d:%d] of %d: %w", i, end, len(rows), err)
+		}
+		saved += int(tag.RowsAffected())
 	}
-	tag, err := tx.Exec(ctx, metricQuery, metricArgs...)
-	if err != nil {
-		return 0, fmt.Errorf("upsert metrics batch (size %d): %w", len(valid), err)
-	}
-	saved := int(tag.RowsAffected())
 
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit: %w", err)

@@ -79,6 +79,24 @@ type preprocessedCard struct {
 // saveCardsChunk saves up to 500 cards in a single transaction.
 // Parent cards use multi-row INSERT; child records use per-card DELETE+INSERT.
 func (r *PgCardsRepo) saveCardsChunk(ctx context.Context, chunk []wb.ProductCard) (int, error) {
+	// Deduplicate by nm_id — WB Content API cursor pagination can return
+	// duplicate nmIDs at page boundaries when updated_at changes mid-download.
+	// PostgreSQL ON CONFLICT cannot affect the same row twice in one statement (SQLSTATE 21000).
+	seen := make(map[int]int, len(chunk))
+	for i, card := range chunk {
+		seen[card.NmID] = i // last-write-wins (later index overwrites earlier)
+	}
+	if len(seen) < len(chunk) {
+		deduped := make([]wb.ProductCard, 0, len(seen))
+		for _, card := range chunk {
+			if seen[card.NmID] >= 0 {
+				deduped = append(deduped, card)
+				seen[card.NmID] = -1 // mark as emitted
+			}
+		}
+		chunk = deduped
+	}
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)

@@ -68,6 +68,8 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 
 	totalLoaded := offset
 
+	var fatalErr error
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -92,6 +94,8 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 		products, currency, err := d.fetchWithRetry(ctx, req)
 		if err != nil {
 			d.progress("❌ API error after %d retries: %v", d.opts.MaxPageRetries, err)
+			fatalErr = fmt.Errorf("API error page %d: %w", pageNum, err)
+			result.Errors++
 			break
 		}
 
@@ -112,6 +116,8 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 				d.opts.SelectedStart, d.opts.SelectedEnd, currency)
 			if err != nil {
 				d.progress("❌ Save error: %v", err)
+				fatalErr = fmt.Errorf("save cards page %d: %w", pageNum, err)
+				result.Errors++
 				break
 			}
 		}
@@ -134,7 +140,7 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 	}
 
 	result.Duration = time.Since(start)
-	return result, nil
+	return result, fatalErr
 }
 
 // buildRequest constructs the API request for the given offset.

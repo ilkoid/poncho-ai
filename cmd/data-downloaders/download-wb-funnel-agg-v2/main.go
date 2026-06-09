@@ -155,8 +155,8 @@ func main() {
 		log.Fatalf("download: %v", err)
 	}
 
-	dllog.Done(result.Duration, "products=%d pages=%d errors=0",
-		result.ProductsLoaded, result.PagesLoaded)
+	dllog.Done(result.Duration, "products=%d pages=%d errors=%d",
+		result.ProductsLoaded, result.PagesLoaded, result.Errors)
 }
 
 // createWriter creates the appropriate funnelagg.Writer based on backend config.

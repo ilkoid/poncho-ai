@@ -269,11 +269,14 @@ func TestSaveErrorStops(t *testing.T) {
 	})
 
 	result, err := dl.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run should not return error on save failure: %v", err)
+	if err == nil {
+		t.Fatal("Run should return error on save failure")
 	}
 	if result.PagesLoaded != 0 {
 		t.Errorf("expected 0 pages on save error, got %d", result.PagesLoaded)
+	}
+	if result.Errors != 1 {
+		t.Errorf("expected 1 error, got %d", result.Errors)
 	}
 }
 
@@ -291,11 +294,14 @@ func TestAPIErrorExhausted(t *testing.T) {
 	})
 
 	result, err := dl.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run should not return error: %v", err)
+	if err == nil {
+		t.Fatal("Run should return error when API retries exhausted")
 	}
 	if result.PagesLoaded != 0 {
 		t.Errorf("expected 0 pages on API error, got %d", result.PagesLoaded)
+	}
+	if result.Errors != 1 {
+		t.Errorf("expected 1 error, got %d", result.Errors)
 	}
 }
 

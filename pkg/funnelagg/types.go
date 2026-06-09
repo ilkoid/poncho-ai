@@ -87,5 +87,6 @@ type DownloadOptions struct {
 type DownloadResult struct {
 	ProductsLoaded int
 	PagesLoaded    int
+	Errors         int
 	Duration       time.Duration
 }
