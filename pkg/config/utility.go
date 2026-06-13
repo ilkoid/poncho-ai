@@ -160,7 +160,7 @@ func (c *DownloadConfig) GetDefaults() DownloadConfig {
 // См. dev_limits.md для деталей.
 type FunnelConfig struct {
 	Days       int    `yaml:"days"`        // Дней истории (1-365) — альтернатива from/to
-	BatchSize  int    `yaml:"batch_size"`  // Продуктов на запрос (max 20)
+	BatchSize  int    `yaml:"batch_size"`  // Продуктов на запрос (WB API hard limit: 20, despite OpenAPI saying 1000)
 	RateLimit  int    `yaml:"rate_limit"`  // Запросов в минуту (default: 3, WB Analytics API limit)
 	BurstLimit int    `yaml:"burst"`       // Burst для rate limiter (default: 3)
 	From       string `yaml:"from"`        // Начальная дата YYYY-MM-DD (опционально, приоритет над days)

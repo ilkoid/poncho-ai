@@ -23,7 +23,7 @@ filters:
   #       
   # subject_ids: []           # WB subject IDs
   # seasons: ["зима"]            # Сезон из card_characteristics
-  in_stock: true               # Только с остатками
+  in_stock: false               # Только с остатками
   # onec_type: ["Обувь"]         # 1C тип (Обувь/Одежда/Аксессуары)
   # category_level1: ["Женская"] # 1C категория L1
   # category_level2: ["Кроссовки"] # 1C категория L2
@@ -36,7 +36,7 @@ reference_date: "08.06.2026"
 
 # WB Content API (POST /content/v2/cards/update, swagger: 100/min burst 5)
 wb_update:
-  batch_size: 30             # Карточек на один API-запрос
+  batch_size: 5             # Карточек на один API-запрос
   rate_per_min: 8            # Желаемый rate (req/min)
   rate_burst: 2              # Burst для rate limiter
   api_floor_per_min: 5       # Recovery floor после 429 (req/min)

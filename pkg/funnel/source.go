@@ -11,7 +11,7 @@ const (
 	sellerAnalyticsURL = "https://seller-analytics-api.wildberries.ru"
 	funnelHistoryPath  = "/api/analytics/v3/sales-funnel/products/history"
 	ToolID             = "get_wb_product_funnel_history"
-	MaxBatchSize       = 20
+	MaxBatchSize       = 20 // WB API enforces max 20 nmIds despite OpenAPI spec saying 1000
 )
 
 // apiProduct mirrors the camelCase JSON from WB Analytics API v3.
