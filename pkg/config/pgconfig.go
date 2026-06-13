@@ -2,6 +2,12 @@
 //
 // V2StorageConfig selects between SQLite and PostgreSQL backends.
 // BuildPgDSN constructs a DSN from environment variables with sensible defaults.
+//
+// Machine-specific values are env-driven so committed configs are portable across hosts:
+//   - PGHOST, PGPORT — PostgreSQL host/port (see BuildPgDSN)
+//   - PGDATABASE     — PostgreSQL database name (overrides storage.pg_database)
+//   - SQLITE_PATH    — SQLite database file path (overrides storage.db_path)
+//   - PG_PWD         — PostgreSQL password (named via storage.pg_password_env)
 package config
 
 import (
@@ -26,6 +32,7 @@ type V2StorageConfig struct {
 	Backend string `yaml:"backend"`
 
 	// DbPath is the SQLite database file path (used when Backend is "sqlite" or empty).
+	// Override at deploy time via $SQLITE_PATH (see GetDefaults).
 	DbPath string `yaml:"db_path"`
 
 	// PgDSN is a full PostgreSQL connection string.
@@ -33,7 +40,7 @@ type V2StorageConfig struct {
 	PgDSN string `yaml:"pg_dsn"`
 
 	// PgDatabase is the database name (wb_data_prod, wb_data_test).
-	// Used only when PgDSN is empty.
+	// Used only when PgDSN is empty. Override at deploy time via $PGDATABASE (see GetDefaults).
 	PgDatabase string `yaml:"pg_database"`
 
 	// PgPasswordEnv names the environment variable holding the PostgreSQL password.
@@ -41,7 +48,11 @@ type V2StorageConfig struct {
 	PgPasswordEnv string `yaml:"pg_password_env"`
 }
 
-// GetDefaults applies sensible defaults for zero-value fields.
+// GetDefaults applies sensible defaults for zero-value fields and environment overrides.
+//
+// Precedence (highest first): environment variable > YAML config value > hardcoded default.
+// The env overrides make configs portable across hosts without editing committed YAML —
+// e.g. a remote VPS sets PGDATABASE / SQLITE_PATH instead of forking configs.
 func (s V2StorageConfig) GetDefaults() V2StorageConfig {
 	result := s
 	if result.Backend == "" {
@@ -56,6 +67,17 @@ func (s V2StorageConfig) GetDefaults() V2StorageConfig {
 	if result.PgPasswordEnv == "" {
 		result.PgPasswordEnv = "PG_PWD"
 	}
+
+	// Environment overrides — deployment portability without editing committed configs.
+	// SQLITE_PATH overrides db_path (SQLite file). PGDATABASE overrides pg_database,
+	// mirroring the libpq convention already used for PGHOST/PGPORT.
+	if v := os.Getenv("SQLITE_PATH"); v != "" {
+		result.DbPath = v
+	}
+	if v := os.Getenv("PGDATABASE"); v != "" {
+		result.PgDatabase = v
+	}
+
 	return result
 }
 
@@ -142,7 +164,9 @@ func injectPassword(dsn, passwordEnv string) (string, error) {
 //   - password: from $PG_PWD (caller must inject via injectPassword)
 //   - sslmode: disable
 //
-// The returned DSN does NOT include the password — call injectPassword() separately.
+// The database name is passed in by the caller (postgresDSN passes the already-resolved
+// V2StorageConfig.PgDatabase, which GetDefaults overrides via $PGDATABASE). The returned
+// DSN does NOT include the password — call injectPassword() separately.
 func BuildPgDSN(database string) string {
 	host := envOrDefault("PGHOST", "192.168.10.7")
 	port := envOrDefault("PGPORT", "15432")
