@@ -1,0 +1,43 @@
+# fix-scrub-substring — YAML config.
+#
+# EVERY field below is required (except the clearly-marked optional ones). The tool
+# has NO hardcoded defaults: omit a required value and it crashes with a clear
+# error rather than silently connecting to the wrong database.
+#
+# Modes (pick one):
+#   --show         read-only: report which columns match + counts
+#   --dry-run      read-only: show planned UPDATEs + before→after samples
+#   --apply        DESTRUCTIVE: run all UPDATEs in a single transaction
+#   --mock         offline: synthetic plan, no DB connection
+#   --select_tables=cards,products   restrict to a table subset (any mode)
+
+# --- PostgreSQL connection (all required; password expanded from env by LoadYAML) ---
+pg:
+  host: "192.168.10.7"
+  port: 15432
+  user: "postgres"
+  password: "${PG_PWD}"      # set PG_PWD in your shell; expanded before parsing
+  database: "wb_data_prod"
+  sslmode: "disable"         # one of: disable, allow, prefer, require, verify-ca, verify-full
+
+# --- Scrub parameters ---
+schema: "public"
+read_substring: "PlayToday"        # matched CASE-INSENSITIVELY (PlayToday/PLAYTODAY/playtoday all match)
+write_substring: "[PlayBrand]"      # inserted VERBATIM, exactly as written; must not be empty
+
+# information_schema.data_type names to scan. Text-like by default.
+column_types:
+  - "text"
+  - "character varying"
+  - "character"
+
+# --- Optional ---
+include_jsonb: false        # true appends jsonb/json to column_types (rare in this cache; no-op today)
+include_tables: []          # e.g. ["cards", "products", "onec_goods"] — keep only these tables
+exclude_tables: []          # e.g. ["service_records"] — always skip these tables
+sample_rows: 5              # before→after pairs shown per column in --dry-run (0 → 3)
+# Per-transaction statement timeout in seconds. Overrides the pool's 5-min default,
+# which would otherwise kill a consolidated UPDATE on tens of millions of rows
+# mid-transaction and roll back the whole scrub. 0 = no limit (safe default for a
+# one-shot --apply the user explicitly runs and watches).
+statement_timeout_seconds: 0
