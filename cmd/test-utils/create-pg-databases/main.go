@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	defaultHost = "192.168.10.7"
-	defaultPort = "15432"
-	defaultUser = "postgres"
+	defaultHost = "10.120.24.155"
+	defaultPort = "5432"
+	defaultUser = "arm_ai_admin"
 	pwdEnvVar   = "PG_PWD"
 
 	maintenanceDB = "postgres"
@@ -41,9 +41,10 @@ func main() {
 
 	host := envOrDefault("PGHOST", defaultHost)
 	port := envOrDefault("PGPORT", defaultPort)
+	user := envOrDefault("PGUSER", defaultUser)
 
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		defaultUser, pwd, host, port, maintenanceDB)
+		user, pwd, host, port, maintenanceDB)
 
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

@@ -194,6 +194,10 @@ Mapping: `onec_prices(good_guid) → onec_goods(guid) → article → cards.vend
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | S3 storage |
 | `OPENROUTER_API_KEY` | OpenRouter (LLM gateway for analyzers) |
 | `ONEC_API_URL` / `ONEC_PIM_URL` | 1C/PIM catalog APIs |
+| `PGHOST` / `PGPORT` | PostgreSQL host/port (default `10.120.24.155:5432`) |
+| `PGUSER` / `PGDATABASE` | PostgreSQL user (default `arm_ai_admin`) / database (overrides `pg_database`) |
+| `PG_ADMIN` / `PG_USER` | PostgreSQL admin user `arm_ai_admin` (write) / RO user `arm_ai_ro` (read) |
+| `PG_PWD` / `PG_USER_PWD` | Password for `PG_ADMIN` (`arm_ai_admin`) / `PG_USER` (`arm_ai_ro`) |
 
 ## Compact Instructions
 When compacting, preserve: goal, changed files, failing command, current hypothesis, test results, next exact command.
@@ -224,7 +228,7 @@ cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI →
 - `dllog.PrintHeader()` + `dllog.Progress()` + `dllog.Done()` — one line per page, no `fmt.Printf` in `pkg/`
 - **DiscardWriter pattern:** `--mock` mode must create DiscardWriter (zero DB interaction), NOT open a real database. Writer creation goes INSIDE the else branch — see `download-wb-orders-v2/main.go` for reference
 
-**PostgreSQL setup:** `192.168.10.7:15432`, user `postgres`, password from `$PG_PWD`, databases: `wb_data_prod` / `wb_data_test`
+**PostgreSQL setup:** host/port from `$PGHOST`/`$PGPORT` (default `10.120.24.155:5432`), default user `arm_ai_admin` (`$PG_ADMIN`, override via `$PGUSER`), password from `$PG_PWD`, databases: `wb_data_prod` / `wb_data_test`. RO access via `$PG_USER`=`arm_ai_ro` (`$PG_USER_PWD`).
 
 **Migration status:**
 

@@ -38,8 +38,8 @@ storage:
   backend: "sqlite"
   db_path: "/var/db/wb-sales.db"
   # PostgreSQL settings (when backend: postgres)
-  # pg_host: "192.168.10.7"
-  # pg_port: 15432
-  # pg_user: "postgres"
+  # pg_host: "10.120.24.155"
+  # pg_port: 5432
+  # pg_user: "arm_ai_admin"
   # pg_password_env: "PG_PWD"
   # pg_database: "wb_data_prod"

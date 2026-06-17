@@ -15,6 +15,6 @@ onec_rests:
 storage:
   backend: sqlite
   db_path: "/var/db/wb-sales.db"
-  # pg_dsn: "postgres://postgres@192.168.10.7:15432/wb_data_prod?sslmode=disable"
+  # pg_dsn: "postgres://arm_ai_admin@10.120.24.155:5432/wb_data_prod?sslmode=disable"
   # pg_password_env: "PG_PWD"
   # pg_database: "wb_data_prod"

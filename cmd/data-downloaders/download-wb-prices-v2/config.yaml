@@ -54,4 +54,4 @@ storage:
   pg_dsn: ""                   # Полный DSN (пусто = собрать из env vars через BuildPgDSN)
   pg_database: "wb_data_prod"  # Имя базы (wb_data_prod | wb_data_test)
   pg_password_env: "PG_PWD"   # Env var с паролем PostgreSQL
-                                # Host/port: 192.168.10.7:15432 (default, override через PGHOST/PGPORT)
+                                # Host/port: 10.120.24.155:5432 (default, override через PGHOST/PGPORT), user: arm_ai_admin (PGUSER)

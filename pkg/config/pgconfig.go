@@ -5,6 +5,7 @@
 //
 // Machine-specific values are env-driven so committed configs are portable across hosts:
 //   - PGHOST, PGPORT — PostgreSQL host/port (see BuildPgDSN)
+//   - PGUSER         — PostgreSQL user (see BuildPgDSN, default arm_ai_admin)
 //   - PGDATABASE     — PostgreSQL database name (overrides storage.pg_database)
 //   - SQLITE_PATH    — SQLite database file path (overrides storage.db_path)
 //   - PG_PWD         — PostgreSQL password (named via storage.pg_password_env)
@@ -158,9 +159,9 @@ func injectPassword(dsn, passwordEnv string) (string, error) {
 // BuildPgDSN constructs a PostgreSQL DSN from environment variables with defaults.
 //
 // Defaults:
-//   - host: 192.168.10.7 (override via PGHOST)
-//   - port: 15432 (override via PGPORT)
-//   - user: postgres
+//   - host: 10.120.24.155 (override via PGHOST)
+//   - port: 5432 (override via PGPORT)
+//   - user: arm_ai_admin (override via PGUSER)
 //   - password: from $PG_PWD (caller must inject via injectPassword)
 //   - sslmode: disable
 //
@@ -168,10 +169,11 @@ func injectPassword(dsn, passwordEnv string) (string, error) {
 // V2StorageConfig.PgDatabase, which GetDefaults overrides via $PGDATABASE). The returned
 // DSN does NOT include the password — call injectPassword() separately.
 func BuildPgDSN(database string) string {
-	host := envOrDefault("PGHOST", "192.168.10.7")
-	port := envOrDefault("PGPORT", "15432")
+	host := envOrDefault("PGHOST", "10.120.24.155")
+	port := envOrDefault("PGPORT", "5432")
+	user := envOrDefault("PGUSER", "arm_ai_admin")
 
-	return fmt.Sprintf("postgres://postgres@%s:%s/%s?sslmode=disable", host, port, database)
+	return fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable", user, host, port, database)
 }
 
 func envOrDefault(key, fallback string) string {

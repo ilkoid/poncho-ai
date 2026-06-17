@@ -36,9 +36,9 @@ opsales:
 #
 # PostgreSQL options (backend: "postgres"):
 #   pg_dsn           — полный DSN (если задан, остальные pg_* игнорируются)
-#                      Пример: "postgres://postgres@192.168.10.7:15432/wb_data_prod?sslmode=disable"
+#                      Пример: "postgres://arm_ai_admin@10.120.24.155:5432/wb_data_prod?sslmode=disable"
 #   pg_database      — имя базы (default: wb_data_prod, override: --pg-database)
-#                      Хост/порт берутся из PGHOST (default: 192.168.10.7) и PGPORT (default: 15432)
+#                      Хост/порт берутся из PGHOST (default: 10.120.24.155) и PGPORT (default: 5432), юзер — из PGUSER (default: arm_ai_admin)
 #   pg_password_env  — env var с паролем (default: PG_PWD)
 #
 # ⚠️  Для тестирования ВСЕГДА используй --db /tmp/test.db или --pg-database wb_data_test
