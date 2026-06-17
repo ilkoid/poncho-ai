@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -62,12 +63,14 @@ func dispatch(ctx context.Context, cfg *Config, mock, show, dryRun, apply bool, 
 // runReadOnly powers --show (withSamples=false) and --dry-run (withSamples=true).
 // All reads run inside a READ ONLY transaction.
 func runReadOnly(ctx context.Context, cfg *Config, selectTables []string, withSamples bool) error {
+	printConnect(cfg.PG.Host, cfg.PG.Port, cfg.PG.Database, cfg.PG.User)
 	pool, err := openPool(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 	s := newScrubber(pool.DB(), cfg, selectTables)
+	start := time.Now()
 
 	var updates []Update
 	if err := s.withReadOnlyTx(ctx, func(tx pgx.Tx) error {
@@ -76,7 +79,18 @@ func runReadOnly(ctx context.Context, cfg *Config, selectTables []string, withSa
 			return err
 		}
 		groups := groupTargetsByTable(targets)
-		updates, err = collectMatches(ctx, s, tx, groups, withSamples)
+		nCols := 0
+		for _, g := range groups {
+			nCols += len(g.Cols)
+		}
+		mode := "SHOW (read-only)"
+		write := ""
+		if withSamples {
+			mode = "DRY-RUN (no writes)"
+			write = cfg.Write
+		}
+		printScanBegin(mode, cfg.Schema, cfg.Read, write, len(groups), nCols, start)
+		updates, err = collectMatches(ctx, s, tx, groups, withSamples, start)
 		return err
 	}); err != nil {
 		return err
@@ -87,11 +101,13 @@ func runReadOnly(ctx context.Context, cfg *Config, selectTables []string, withSa
 	} else {
 		printShow(cfg.Schema, cfg.Read, cfg.IncludeTables, selectTables, cfg.ExcludeTables, updates)
 	}
+	printScanDone(time.Since(start), time.Now())
 	return nil
 }
 
 // runApply executes the scrub. Discovery runs on the pool; writes run in one tx.
 func runApply(ctx context.Context, cfg *Config, selectTables []string) error {
+	printConnect(cfg.PG.Host, cfg.PG.Port, cfg.PG.Database, cfg.PG.User)
 	pool, err := openPool(ctx, cfg)
 	if err != nil {
 		return err
@@ -106,28 +122,32 @@ func runApply(ctx context.Context, cfg *Config, selectTables []string) error {
 	}
 	groups := groupTargetsByTable(targets)
 
-	printApplyBegin(cfg.Schema, cfg.Read, cfg.Write)
+	start := time.Now()
+	printApplyBegin(cfg.Schema, cfg.Read, cfg.Write, start)
 	total, touched, err := s.apply(ctx, groups)
 	if err != nil {
 		return err
 	}
-	printApplyDone(total, touched)
+	printApplyDone(total, touched, time.Since(start), time.Now())
 	return nil
 }
 
 // collectMatches counts matches per table group in a single scan each (and gathers
 // samples when requested), keeping only columns with at least one match. The output
 // is per-column so --show/--dry-run keep their familiar shape; only the underlying
-// scans are consolidated to one per table.
-func collectMatches(ctx context.Context, s *Scrubber, q queryer, groups []TableGroup, withSamples bool) ([]Update, error) {
+// scans are consolidated to one per table. start anchors the scan-wide clock for
+// per-table progress lines, printed BEFORE each count so a hang names the table.
+func collectMatches(ctx context.Context, s *Scrubber, q queryer, groups []TableGroup, withSamples bool, start time.Time) ([]Update, error) {
 	var updates []Update
-	for _, g := range groups {
+	for i := range groups {
+		g := groups[i]
+		printScanProgress(i+1, len(groups), g, time.Since(start))
 		counts, err := s.countTable(ctx, q, g)
 		if err != nil {
 			return nil, err
 		}
-		for i, t := range g.Cols {
-			n := counts[i]
+		for ci, t := range g.Cols {
+			n := counts[ci]
 			if n == 0 {
 				continue
 			}
