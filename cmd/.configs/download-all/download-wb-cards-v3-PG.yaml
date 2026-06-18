@@ -1,0 +1,29 @@
+# WB Cards Downloader v3 — pipeline config (scrub-enabled generation), PostgreSQL
+# v3 = v2 + превентивный скраб подстрок на этапе загрузки (storage.scrub_rules_path → pkg/scrub).
+# download-wb-cards-v2 и pkg/cards не затрагиваются.
+
+wb:
+  api_key: ""                # Прямой API ключ (пусто — берётся из env)
+  analytics_api_key: ""
+  calendar_api_key: ""
+  base_url: ""
+  rate_limit: 100            # Базовый rate limit
+  burst: 5
+  timeout: "60s"
+  endpoint: ""
+
+cards:
+  api_key_env: "WB_API_CONTENT_KEY"  # Env var с API ключом Content API
+  rate_limit: 100            # Запросов в минуту (swagger: 100/min)
+  burst_limit: 5             # Burst для rate limiter
+  adaptive_probe_after: 10   # OKs перед probe desired rate после 429
+  max_backoff_seconds: 60    # Максимальный backoff при 429
+
+# Хранение — выбор бэкенда
+storage:
+  backend: "postgres"          # "sqlite" (pipeline default) | "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
+  scrub_rules_path: "cmd/.configs/download-all/scrub-rules.yaml"  # v3: превентивный скраб (см. pkg/scrub). Пусто = выкл.

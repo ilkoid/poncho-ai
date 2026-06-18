@@ -1,0 +1,19 @@
+# Preventive substring scrubbing rules (shared across v2 downloaders).
+#
+# Applied at load time by pkg/scrub to the string and json.RawMessage fields of
+# downloaded structs (e.g. cards.Brand/Title/Description, characteristic values,
+# tag names). Recurses into nested structs/slices. Case-insensitive by default.
+#
+# This is the load-time counterpart of cmd/fix-utilities/fix-scrub-substring
+# (which scrubs already-stored data). The two are complementary.
+#
+# Wire a downloader in by setting `storage.scrub_rules_path` to this file.
+#
+# Each rule:
+#   find:            substring to match (literal, case-insensitive by default)
+#   replace:         verbatim replacement ('$' and '\' have no special meaning)
+#   case_sensitive:  optional, default false
+rules:
+  - find: "PlayToday"
+    replace: "[PlayBrand]"
+    # case_sensitive: false

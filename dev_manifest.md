@@ -9,6 +9,7 @@
 | [dev_best_practices.md](dev_best_practices.md) | Куда положить код, общие паттерны | Средний (отражает текущее состояние) |
 | [dev_v2_downloader.md](dev_v2_downloader.md) | Создание v2 даунлоадера (Source/Writer, антипаттерны) | Задачный (пошаговая инструкция) |
 | [dev_v2_postgres.md](dev_v2_postgres.md) | PostgreSQL адаптер (dual-backend, SQL cheat sheet) | Доменный (для PG — побеждает downloader) |
+| [dev_v3_scrub.md](dev_v3_scrub.md) | Миграция загрузчиков на v3 (превентивный scrub, декоратор Writer) | Доменный (для v3-scrub — побеждает v2) |
 | [dev_swagger_reusable_packages.md](dev_swagger_reusable_packages.md) | WB API write-утилиты, sandbox, песочницы | Доменный (для WB write — побеждает) |
 
 **Правило:** более специфичный документ побеждает более общий.

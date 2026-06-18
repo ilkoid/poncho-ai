@@ -47,6 +47,16 @@ type V2StorageConfig struct {
 	// PgPasswordEnv names the environment variable holding the PostgreSQL password.
 	// Default: "PG_PWD".
 	PgPasswordEnv string `yaml:"pg_password_env"`
+
+	// ScrubRulesPath optionally points to a YAML file of substring-scrubbing rules
+	// (see pkg/scrub). When set, the loader rewrites sensitive substrings in the
+	// string and json.RawMessage fields of downloaded structs at load time
+	// (preventive masking, e.g. brand names). Empty (default) = no scrubbing.
+	//
+	// Shared by all v2 downloaders: adding the path to any downloader's storage
+	// block opts it into scrubbing. The field is additive — empty means no-op, so
+	// existing configs and downloaders are unaffected unless they opt in.
+	ScrubRulesPath string `yaml:"scrub_rules_path"`
 }
 
 // GetDefaults applies sensible defaults for zero-value fields and environment overrides.

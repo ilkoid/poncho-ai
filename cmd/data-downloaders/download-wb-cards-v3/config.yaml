@@ -1,0 +1,35 @@
+# WB Cards Downloader v3 — полная конфигурация
+# v3 = v2 + превентивный скраб подстрок (pkg/scrub) на этапе загрузки.
+# Используется pkg/config/types: WBClientConfig, cardsConfig, V2StorageConfig
+
+wb:
+  api_key: ""                # Прямой API ключ (не рекомендуется — лучше через env)
+  analytics_api_key: ""      # Альтернативный ключ (Analytics + Promo)
+  calendar_api_key: ""       # Calendar API ключ (dp-calendar-api)
+  base_url: ""               # Переопределение Content API URL (пусто = дефолт)
+  rate_limit: 100            # Базовый rate limit (не используется cards — см. cards.rate_limit)
+  burst: 5                   # Базовый burst
+  timeout: "60s"             # HTTP timeout
+  endpoint: ""               # Альтернативный endpoint (пусто = дефолт)
+
+cards:
+  api_key_env: "WB_API_CONTENT_KEY"  # Env var с API ключом Content API
+  rate_limit: 100            # Запросов в минуту (swagger: 100/min)
+  burst_limit: 5             # Burst для rate limiter
+  adaptive_probe_after: 10   # OKs перед probe desired rate после 429
+  max_backoff_seconds: 60    # Максимальный backoff при 429
+
+# Хранение — выбор бэкенда
+storage:
+  backend: "postgres"        # "sqlite" | "postgres"
+  db_path: "/var/db/wb-sales.db"  # Путь к SQLite (используется при backend=sqlite)
+
+  # PostgreSQL настройки (используются при backend=postgres)
+  pg_dsn: ""                 # Полный DSN (пусто = собрать из env vars)
+  pg_database: "wb_data_prod"  # Имя базы (wb_data_prod | wb_data_test)
+  pg_password_env: "PG_PWD"  # Env var с паролем PostgreSQL
+
+  # v3: превентивный скраб подстрок (путь к YAML с правилами pkg/scrub).
+  # Пусто = скраб выключен (v3 ведёт себя как v2). Для включения укажите путь,
+  # например: "cmd/.configs/download-all/scrub-rules.yaml"
+  scrub_rules_path: ""
