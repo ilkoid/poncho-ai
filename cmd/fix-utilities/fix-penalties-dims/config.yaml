@@ -1,0 +1,38 @@
+# fix-penalties-dims — robot fixer for WB measurement penalties (МГХ).
+# Rewrites card L/W/H from WB's own warehouse measurement when a card is penalized.
+# PostgreSQL only. Run after download-wb-penalties-v2 (which fills measurement_penalties).
+
+storage:
+  backend: postgres
+  pg_database: wb_data_prod        # wb_data_test for testing
+  pg_password_env: PG_PWD          # host/port/user come from PGHOST/PGPORT/PGUSER env
+
+wb:
+  api_key_env: WB_API_ANALYTICS_AND_PROMO_KEY   # WB_API_KEY as fallback (set in code env)
+
+source:
+  only_confirmed: true             # only is_valid = true penalties (cancelled ones ignored)
+  latest_per_nm: true              # the freshest measurement per nm_id wins (DISTINCT ON dt_bonus DESC)
+
+# Article filter (PG-native, applied inline in the stage SQL).
+# Empty = process every confirmed-penalized article. pkg/filter is NOT used (SQLite-oriented).
+filter:
+  nm_ids: []                       # e.g. [12345678, 87654321] — restrict to specific nm_ids (testing!)
+  vendor_codes: []                 # restrict to specific seller articles
+  exclude_vendor_codes: []         # skip these articles
+
+# WB card update tuning (cardupdate.WBUpdateConfig; Defaults() fills zeros).
+# Rate 8/min is conservative vs swagger 100/min — mirrors the reference fixer.
+wb_update:
+  batch_size: 30
+  rate_per_min: 8
+  rate_burst: 2
+  api_floor_per_min: 5
+  api_floor_burst: 1
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+  interval_seconds: 8
+
+# Daily-rotated CSV audit log ("было→стало" per card + per-batch WB-error line).
+audit:
+  log_dir: "logs"                  # relative to the binary / working directory
