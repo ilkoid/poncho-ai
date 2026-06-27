@@ -6,6 +6,9 @@ _*/
 .env.*
 !.env.example
 
+# ilkoid.sh — local launcher; carries WB API keys via export (secrets)
+ilkoid.sh
+
 # Standard Go ignores
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore

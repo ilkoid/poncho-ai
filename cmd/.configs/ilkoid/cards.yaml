@@ -1,0 +1,23 @@
+# ilkoid.sh — SQLite-only config for download-wb-cards.
+# Feeds the penalties-dims fixer's isolated fixer.db with the REAL card catalog
+# (v1 downloader, NO scrub → brand stays PlayToday). NO prod /var/db path.
+# db_path is overridden by ilkoid.sh's --db (absolute fixer.db path).
+
+wb:
+  api_key: ""  # use WB_API_KEY env var (cards.api_key_env below)
+  timeout: "60s"
+
+cards:
+  db_path: "fixer.db"            # overridden by ilkoid.sh --db (absolute)
+
+  # Environment variable for API key (Priority: configured env var > WB_API_KEY > config value)
+  api_key_env: "WB_API_KEY"
+
+  rate_limits:
+    cards_list: 100              # client-side desired (requests/min)
+    cards_list_burst: 5
+    cards_list_api: 100          # API floor (for 429 recovery)
+    cards_list_api_burst: 5
+
+  adaptive_probe_after: 10       # OKs before probing desired rate again
+  max_backoff_seconds: 60        # max backoff when reducing rate on 429

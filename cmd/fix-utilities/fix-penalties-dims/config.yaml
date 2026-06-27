@@ -1,28 +1,33 @@
 # fix-penalties-dims — robot fixer for WB measurement penalties (МГХ).
 # Rewrites card L/W/H from WB's own warehouse measurement when a card is penalized.
-# PostgreSQL only. Run after download-wb-penalties-v2 (which fills measurement_penalties).
+#
+# Autonomous SQLite-only robot. It works off its OWN isolated database (fixer.db),
+# which the .sh wrapper repopulates each run with fresh REAL cards + penalties via
+# the existing downloaders. It never touches the shared PostgreSQL data-lake, so the
+# cloud-LLM sanitization of PG ([PlayBrand]) cannot leak into WB through this robot.
+#
+# Run via run-penalties-dims-fixer.sh (which loads fixer.db first), or standalone
+# for inspection.
 
 storage:
-  backend: postgres
-  pg_database: wb_data_prod        # wb_data_test for testing
-  pg_password_env: PG_PWD          # host/port/user come from PGHOST/PGPORT/PGUSER env
+  db_path: "fixer.db"            # isolated SQLite for this robot (overridden by --db)
 
 wb:
   api_key_env: WB_API_ANALYTICS_AND_PROMO_KEY   # WB_API_KEY as fallback (set in code env)
 
 source:
-  only_confirmed: true             # only is_valid = true penalties (cancelled ones ignored)
-  latest_per_nm: true              # the freshest measurement per nm_id wins (DISTINCT ON dt_bonus DESC)
+  only_confirmed: true           # only is_valid = 1 penalties (cancelled ones ignored)
+  latest_per_nm: true            # the freshest measurement per nm_id wins (window ORDER BY dt_bonus DESC)
 
-# Article filter (PG-native, applied inline in the stage SQL).
-# Empty = process every confirmed-penalized article. pkg/filter is NOT used (SQLite-oriented).
+# Article filter (applied inline in the stage SQL as SQLite IN/NOT IN).
+# Empty = process every confirmed-penalized article.
 filter:
-  nm_ids: []                       # e.g. [12345678, 87654321] — restrict to specific nm_ids (testing!)
-  vendor_codes: []                 # restrict to specific seller articles
-  exclude_vendor_codes: []         # skip these articles
+  nm_ids: []                     # e.g. [12345678, 87654321] — restrict to specific nm_ids (testing!)
+  vendor_codes: []               # restrict to specific seller articles
+  exclude_vendor_codes: []       # skip these articles
 
 # WB card update tuning (cardupdate.WBUpdateConfig; Defaults() fills zeros).
-# Rate 8/min is conservative vs swagger 100/min — mirrors the reference fixer.
+# Rate 8/min is conservative vs swagger 100/min.
 wb_update:
   batch_size: 30
   rate_per_min: 8
@@ -33,6 +38,6 @@ wb_update:
   max_backoff_seconds: 60
   interval_seconds: 8
 
-# Daily-rotated CSV audit log ("было→стало" per card + per-batch WB-error line).
+# Daily-rotated CSV audit log ("было→стало" per rewritten card + per-batch WB-error line).
 audit:
-  log_dir: "logs"                  # relative to the binary / working directory
+  log_dir: "logs"                # relative to the binary / working directory

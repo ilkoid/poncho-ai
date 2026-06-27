@@ -1,0 +1,24 @@
+# ilkoid.sh — SQLite-only config for download-wb-penalties-v2.
+# Feeds the penalties-dims fixer's isolated fixer.db. NO PostgreSQL anywhere
+# (no pg_* fields) — PG cannot be reached even if ilkoid.sh flags are mangled.
+# db_path is overridden by ilkoid.sh's --db (absolute fixer.db path).
+
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"   # env var with WB API key
+  rate_limit: 1
+  burst_limit: 1                    # burst=1: prevents burst-fire 429 on slow APIs
+
+penalties:
+  days: 90                     # дней от сегодня (default: 90)
+  rewrite: true                # удалить старые данные за период перед загрузкой (fresh each run)
+  adaptive_recover_after: 5    # OKs before restore to api floor after 429
+  adaptive_probe_after: 10     # OKs at api floor before probing desired rate
+  max_backoff_seconds: 60      # cap for exponential backoff
+
+filter:
+  nm_ids: []                   # без фильтра — все подтверждённые штрафы
+  subject: ""
+
+storage:
+  backend: "sqlite"            # ← SQLite only (no postgres branch)
+  db_path: "fixer.db"          # overridden by ilkoid.sh --db (absolute)

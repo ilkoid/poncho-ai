@@ -2,24 +2,25 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ilkoid/poncho-ai/pkg/dllog"
-	"github.com/ilkoid/poncho-ai/pkg/storage/postgres"
+	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "YAML config file path")
-	backend := flag.String("backend", "", "Storage backend override (this fixer is PostgreSQL-only)")
-	pgDatabase := flag.String("pg-database", "", "PostgreSQL database override (e.g. wb_data_test)")
+	dbPath := flag.String("db", "", "SQLite database path (overrides config storage.db_path)")
 	stage := flag.Bool("stage", false, "Stage: latest confirmed penalties → staging table")
 	diff := flag.Bool("diff", false, "Show staged before→after for review")
 	apply := flag.Bool("apply", false, "Apply staged pending changes via WB API")
@@ -37,14 +38,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	if *backend != "" {
-		cfg.Storage.Backend = *backend
-	}
-	if *pgDatabase != "" {
-		cfg.Storage.PgDatabase = *pgDatabase
-	}
-	if cfg.Storage.Backend != "postgres" && cfg.Storage.Backend != "postgresql" {
-		log.Fatalf("this fixer is PostgreSQL-only (got backend=%q)", cfg.Storage.Backend)
+	if *dbPath != "" {
+		cfg.Storage.DBPath = *dbPath
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -60,21 +55,22 @@ func main() {
 	needDB := *stage || *diff || *apply || *auto
 	needWB := (*apply && !*dryRun) || (*auto && !*dryRun) || *check
 
-	var pool *pgxpool.Pool
+	var db *sql.DB
 	if needDB {
-		dsn, err := cfg.Storage.GetEffectiveDSN()
+		db, err = openSQLite(ctx, cfg.Storage.DBPath)
 		if err != nil {
-			log.Fatalf("storage DSN: %v", err)
+			log.Fatalf("open sqlite: %v", err)
 		}
-		p, err := postgres.NewPool(ctx, dsn)
-		if err != nil {
-			log.Fatalf("postgres pool: %v", err)
-		}
-		defer p.Close()
-		pool = p.DB()
-		// Ensure staging table exists for every DB mode (idempotent).
-		if err := initStagingSchema(ctx, pool); err != nil {
+		defer db.Close()
+		// Ensure this fixer's staging table + the read tables (cards,
+		// measurement_penalties) exist. On a populated fixer.db these are no-ops
+		// (IF NOT EXISTS); on a fresh DB they prevent 'no such table' crashes so
+		// standalone --stage/--diff degrade gracefully instead of erroring.
+		if err := initStagingSchema(ctx, db); err != nil {
 			log.Fatalf("staging schema: %v", err)
+		}
+		if err := ensureReadSchemas(ctx, db); err != nil {
+			log.Fatalf("read schema: %v", err)
 		}
 	}
 
@@ -107,25 +103,59 @@ func main() {
 			log.Fatalf("check: %v", err)
 		}
 	case *stage:
-		if _, _, err := runStage(ctx, pool, cfg, audit); err != nil {
+		if _, _, err := runStage(ctx, db, cfg, audit); err != nil {
 			log.Fatalf("stage: %v", err)
 		}
 	case *diff:
-		if err := showDiff(ctx, pool); err != nil {
+		if err := showDiff(ctx, db); err != nil {
 			log.Fatalf("diff: %v", err)
 		}
 	case *apply:
-		if err := runApply(ctx, pool, client, cfg, audit, *dryRun); err != nil {
+		if err := runApply(ctx, db, client, cfg, audit, *dryRun); err != nil {
 			log.Fatalf("apply: %v", err)
 		}
 	case *auto:
-		if _, _, err := runStage(ctx, pool, cfg, audit); err != nil {
+		if _, _, err := runStage(ctx, db, cfg, audit); err != nil {
 			log.Fatalf("stage: %v", err)
 		}
-		if err := runApply(ctx, pool, client, cfg, audit, *dryRun); err != nil {
+		if err := runApply(ctx, db, client, cfg, audit, *dryRun); err != nil {
 			log.Fatalf("apply: %v", err)
 		}
 	}
+}
+
+// openSQLite opens the fixer's isolated SQLite database. SetMaxOpenConns(1) serializes
+// access through a single connection (SQLite-safe; avoids "database is locked").
+// busy_timeout makes a writer wait briefly rather than failing on a transient lock.
+func openSQLite(ctx context.Context, dbPath string) (*sql.DB, error) {
+	dsn := dbPath
+	if !strings.Contains(dsn, "?") {
+		dsn += "?_busy_timeout=5000"
+	}
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", dbPath, err)
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping %s: %w", dbPath, err)
+	}
+	return db, nil
+}
+
+// ensureReadSchemas idempotently creates the read tables the fixer queries
+// (cards + child tables, measurement_penalties) by reusing the canonical DDL from
+// pkg/storage/sqlite (Rule 0). On a populated fixer.db this is a no-op (IF NOT EXISTS);
+// on a fresh DB it prevents 'no such table' crashes so standalone --stage/--diff degrade
+// gracefully. The downloaders create the same tables when they populate fixer.db.
+func ensureReadSchemas(ctx context.Context, db *sql.DB) error {
+	for _, ddl := range []string{sqlite.CardsSchemaSQL, sqlite.PenaltiesSchemaSQL} {
+		if _, err := db.ExecContext(ctx, ddl); err != nil {
+			return fmt.Errorf("ensure read schema: %w", err)
+		}
+	}
+	return nil
 }
 
 // resolveAPIKey resolves the WB API key: direct config value > named env var.
@@ -164,12 +194,13 @@ func modeString(stage, diff, apply, auto, check, dryRun *bool) string {
 func printUsage() {
 	fmt.Println("fix-penalties-dims — rewrite card L/W/H from WB measurement penalties (МГХ)")
 	fmt.Println()
-	fmt.Println("PostgreSQL only. Reuses pkg/cardupdate for safe full-card overwrites.")
+	fmt.Println("Autonomous SQLite robot. Run via run-penalties-dims-fixer.sh (loads fixer.db first),")
+	fmt.Println("or standalone for inspection. Reuses pkg/cardupdate for safe full-card overwrites.")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  fix-penalties-dims --stage  --config config.yaml --pg-database wb_data_test")
-	fmt.Println("  fix-penalties-dims --diff   --config config.yaml --pg-database wb_data_test")
-	fmt.Println("  fix-penalties-dims --apply --dry-run --config config.yaml --pg-database wb_data_test")
+	fmt.Println("  fix-penalties-dims --stage  --config config.yaml --db /tmp/test.db")
+	fmt.Println("  fix-penalties-dims --diff   --config config.yaml --db /tmp/test.db")
+	fmt.Println("  fix-penalties-dims --apply --dry-run --config config.yaml --db /tmp/test.db")
 	fmt.Println("  fix-penalties-dims --check  --config config.yaml")
 	fmt.Println("  fix-penalties-dims --auto   --config config.yaml                  (⚠ production, cron)")
 	fmt.Println()

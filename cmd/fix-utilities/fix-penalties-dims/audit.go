@@ -9,10 +9,12 @@ import (
 	"time"
 )
 
-// CSV audit row "kind" values.
+// CSV audit row "kind" values. The CSV is a change log: FIX (rewritten), ERROR
+// (per-card failure), WB_*/RUN (batch + run outcomes). Skipped cards are NOT logged
+// — "skipped" means nothing changed; their count lives in the RUN summary line and
+// their per-row status in the staging table.
 const (
 	kindFix     = "FIX"      // card rewritten: old→new dimensions
-	kindSkip    = "SKIP"     // staged but already matches the measurement (idempotent)
 	kindError   = "ERROR"    // build/send failure for one card
 	kindWBError = "WB_ERROR" // WB validation error line (per affected vendor_code)
 	kindWBOK    = "WB_OK"    // batch passed the read-after-write check
@@ -124,12 +126,6 @@ func (a *Auditor) write(kind string, r stagedRow, detail string) {
 func (a *Auditor) Fix(r stagedRow) {
 	r.Status = "applied"
 	a.write(kindFix, r, "")
-}
-
-// Skip logs a staged card that already matched the measurement (not rewritten).
-func (a *Auditor) Skip(r stagedRow) {
-	r.Status = "skipped"
-	a.write(kindSkip, r, "already matches WB measurement")
 }
 
 // Error logs a per-card build/send failure.

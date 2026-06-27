@@ -2,41 +2,42 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // runStage rebuilds the staging table from confirmed penalties + current card dims.
-// Returns (pending, skipped) counts. Cards whose dims already match the WB
-// measurement are staged as 'skipped' (idempotent — they will not be rewritten).
-func runStage(ctx context.Context, pool *pgxpool.Pool, cfg *Config, audit *Auditor) (pending, skipped int, err error) {
-	if err := initStagingSchema(ctx, pool); err != nil {
+// Returns (pending, skipped) counts. Status is set by classifyFix: 'pending' for real
+// under-declarations (will be rewritten), 'skipped' for exact matches and over-declared
+// cards (no risk). Skipped cards are NOT written to the audit CSV — the CSV is a
+// change log (what was rewritten), and skipped means "nothing changed". Their count
+// still appears in the RUN summary line; the staging table keeps the per-row status.
+func runStage(ctx context.Context, db *sql.DB, cfg *Config, audit *Auditor) (pending, skipped int, err error) {
+	if err := initStagingSchema(ctx, db); err != nil {
 		return 0, 0, err
 	}
 
-	totalPenalized, err := countPenalizedNmIDs(ctx, pool, cfg.Filter)
+	totalPenalized, err := countPenalizedNmIDs(ctx, db, cfg.Filter)
+	if err != nil {
+		return 0, 0, err
+	}
+	if totalPenalized == 0 {
+		// No penalties to process — almost always means fixer.db hasn't been loaded
+		// yet (the .sh wrapper / downloaders populate it). Say so clearly instead of
+		// silently printing "0 staged", which reads as "everything's fine".
+		fmt.Println("stage: 0 confirmed penalties in fixer.db — run run-penalties-dims-fixer.sh")
+		fmt.Println("       (or the downloaders download-wb-cards + download-wb-penalties-v2) to populate it first.")
+		return 0, 0, nil
+	}
+
+	rows, err := fetchStageCandidates(ctx, db, cfg.Filter)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	rows, err := fetchStageCandidates(ctx, pool, cfg.Filter)
+	pending, skipped, err = upsertStaging(ctx, db, rows, nowUTC())
 	if err != nil {
 		return 0, 0, err
-	}
-
-	pending, skipped, err = upsertStaging(ctx, pool, rows, nowUTC())
-	if err != nil {
-		return 0, 0, err
-	}
-
-	// Audit the skipped (already-matching) cards so the manager sees them too.
-	if audit != nil {
-		for _, r := range rows {
-			if dimsMatch(r.OldLength, r.OldWidth, r.OldHeight, r.NewLength, r.NewWidth, r.NewHeight) {
-				audit.Skip(r)
-			}
-		}
 	}
 
 	withoutCard := totalPenalized - len(rows)
@@ -49,32 +50,38 @@ func runStage(ctx context.Context, pool *pgxpool.Pool, cfg *Config, audit *Audit
 	return pending, skipped, nil
 }
 
-// showDiff prints every staged row's before→after dimensions for review.
-func showDiff(ctx context.Context, pool *pgxpool.Pool) error {
-	all, err := selectByStatus(ctx, pool, "pending")
+// showDiff prints staged rows that are actionable: pending (will be rewritten),
+// applied (rewritten this cycle) and error (failed, needs attention). Skipped cards
+// (exact match or over-declared — the majority, no change) are omitted from the
+// listing to keep the diff scannable; their count appears in the summary line.
+func showDiff(ctx context.Context, db *sql.DB) error {
+	pending, err := selectByStatus(ctx, db, "pending")
 	if err != nil {
 		return err
 	}
-	applied, err := selectByStatus(ctx, pool, "applied")
+	applied, err := selectByStatus(ctx, db, "applied")
 	if err != nil {
 		return err
 	}
-	skipped, err := selectByStatus(ctx, pool, "skipped")
+	errored, err := selectByStatus(ctx, db, "error")
 	if err != nil {
 		return err
 	}
-	errored, err := selectByStatus(ctx, pool, "error")
+	counts, err := stagingCounts(ctx, db)
 	if err != nil {
 		return err
 	}
 
-	rows := append(append(append(all, applied...), skipped...), errored...)
+	rows := append(append(pending, applied...), errored...)
+	skipped := counts["skipped"]
+
 	if len(rows) == 0 {
-		fmt.Println("no staged cards found")
+		fmt.Printf("no changes pending — %d staged card(s) all skipped (exact match or over-declared)\n", skipped)
 		return nil
 	}
 
-	fmt.Printf("=== fix-penalties-dims: diff (%d cards) ===\n\n", len(rows))
+	fmt.Printf("=== fix-penalties-dims: diff — %d actionable (%d pending, %d applied, %d error); %d skipped (hidden) ===\n",
+		len(rows), len(pending), len(applied), len(errored), skipped)
 	fmt.Printf("%-12s %-18s %-16s | %-16s | %s\n", "nm_id", "vendor_code", "old (L×W×H)", "new (L×W×H)", "status")
 	for _, r := range rows {
 		old := fmt.Sprintf("%g×%g×%g", r.OldLength, r.OldWidth, r.OldHeight)
@@ -85,7 +92,5 @@ func showDiff(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 		fmt.Printf("%-12d %-18s %-16s | %-16s | %s%s\n", r.NmID, r.VendorCode, old, new, r.Status, extra)
 	}
-	fmt.Printf("\nTotal: %d cards (pending=%d, applied=%d, skipped=%d, error=%d)\n",
-		len(rows), len(all), len(applied), len(skipped), len(errored))
 	return nil
 }

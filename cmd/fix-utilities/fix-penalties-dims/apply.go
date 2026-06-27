@@ -2,12 +2,11 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ilkoid/poncho-ai/pkg/cardupdate"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
@@ -17,7 +16,7 @@ import (
 // dimensions replaced by the WB measurement. The safe-rewrite invariant:
 // LoadFullCard (all fields) → ToUpdateItem (full payload) → mutate L/W/H only.
 // WeightBrutto is preserved from the loaded card (penalties data has no weight).
-func buildPenaltiesDimPayload(ctx context.Context, u *cardupdate.PGCardUpdater, r stagedRow) (wb.CardUpdateItem, error) {
+func buildPenaltiesDimPayload(ctx context.Context, u *cardupdate.CardUpdater, r stagedRow) (wb.CardUpdateItem, error) {
 	card, err := u.LoadFullCard(ctx, r.NmID)
 	if err != nil {
 		return wb.CardUpdateItem{}, fmt.Errorf("load full card: %w", err)
@@ -37,8 +36,8 @@ func buildPenaltiesDimPayload(ctx context.Context, u *cardupdate.PGCardUpdater, 
 // Custom loop (NOT cardupdate.ApplyBatch) so we can read-after-write per batch and
 // STOP on the first WB validation error. Transport errors mark the chunk 'error'
 // and continue; only WB *validation* errors halt the run.
-func runApply(ctx context.Context, pool *pgxpool.Pool, client *wb.Client, cfg *Config, audit *Auditor, dryRun bool) error {
-	rows, err := selectPending(ctx, pool)
+func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg *Config, audit *Auditor, dryRun bool) error {
+	rows, err := selectPending(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -50,7 +49,7 @@ func runApply(ctx context.Context, pool *pgxpool.Pool, client *wb.Client, cfg *C
 	bs := cfg.WBUpdate.BatchSize
 	fmt.Printf("Applying %d cards (batch size %d, dry-run=%v)\n", len(rows), bs, dryRun)
 
-	updater := cardupdate.NewPGCardUpdater(pool)
+	updater := cardupdate.NewCardUpdater(db)
 	sent, failed := 0, 0
 
 	for i := 0; i < len(rows); i += bs {
@@ -72,7 +71,7 @@ func runApply(ctx context.Context, pool *pgxpool.Pool, client *wb.Client, cfg *C
 			item, err := buildPenaltiesDimPayload(ctx, updater, r)
 			if err != nil {
 				log.Printf("  ERROR build payload nm_id=%d: %v", r.NmID, err)
-				_ = updateStagingStatus(ctx, pool, r.NmID, "error", err.Error())
+				_ = updateStagingStatus(ctx, db, r.NmID, "error", err.Error())
 				if audit != nil {
 					audit.Error(r, err.Error())
 				}
@@ -97,7 +96,7 @@ func runApply(ctx context.Context, pool *pgxpool.Pool, client *wb.Client, cfg *C
 		if err != nil {
 			log.Printf("batch %d: %v (WB: %s)", batchNo, err, errorText)
 			for _, r := range chunk {
-				_ = updateStagingStatus(ctx, pool, r.NmID, "error", err.Error())
+				_ = updateStagingStatus(ctx, db, r.NmID, "error", err.Error())
 				if audit != nil {
 					audit.Error(r, fmt.Sprintf("UpdateCards: %v (WB: %s)", err, errorText))
 				}
@@ -105,7 +104,7 @@ func runApply(ctx context.Context, pool *pgxpool.Pool, client *wb.Client, cfg *C
 			failed += len(chunk)
 		} else {
 			for _, r := range chunk {
-				_ = updateStagingStatus(ctx, pool, r.NmID, "applied", "")
+				_ = updateStagingStatus(ctx, db, r.NmID, "applied", "")
 				if audit != nil {
 					audit.Fix(r)
 				}

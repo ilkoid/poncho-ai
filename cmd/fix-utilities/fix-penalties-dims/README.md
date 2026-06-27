@@ -1,72 +1,120 @@
-# fix-penalties-dims — робот-фиксер штрафняка МГХ
+# fix-penalties-dims — автономный робот-фиксер штрафняка МГХ
 
 Перезаписывает габариты карточки (L/W/H) складскими замерами WB, когда по артикулу
 прилетел штраф за неверные габариты. Цель — карточка совпадает с фактом WB, и
-повторных штрафов нет. Работает автоматически по cron после загрузчика
-`download-wb-penalties-v2`.
+повторных штрафов нет. Работает автоматически по cron.
 
-**PostgreSQL only.** Переиспользует `pkg/cardupdate` (безопасная полная перезапись
-карточки: `LoadFullCard` → `ToUpdateItem` → мутация только L/W/H).
+## Автономная SQLite-архитектура (изоляция от PG)
+
+Робот работает с **собственной изолированной SQLite** (`fixer.db`). Обёртка
+`run-penalties-dims-fixer.sh` перед каждым прогоном грузит в неё свежие **реальные**
+данные через существующие загрузчики, и только потом запускает фиксер:
+
+1. `download-wb-penalties-v2 --backend sqlite --db fixer.db` — подтверждённые штрафы.
+2. `download-wb-cards --db fixer.db` — полный каталог карточек (v1, **без scrub** →
+   реальный бренд `PlayToday`).
+3. `fix-penalties-dims --auto --db fixer.db` — stage (гард направления) + apply (WB API).
+
+На **PostgreSQL** фиксер не опирается. Это сделано осознанно: общая PG-база
+(`wb_data_prod`) может санитизироваться для облака (`PlayToday` → `[PlayBrand]`), и
+изоляция гарантирует, что **фейковый бренд никогда не попадёт в WB** через этого
+робота. Соответствует Rule 13 (cmd-утилита автономна, ресурсы рядом). Переиспользует
+`pkg/cardupdate` (`CardUpdater.LoadFullCard` + `ToUpdateItem`) — безопасная полная
+перезапись: загрузить ВСЕ поля → мутировать только L/W/H → отправить.
 
 ## Что делает
 
-1. **stage** — берёт последний подтверждённый замер (`is_valid=true`, max `dt_bonus`)
-   на каждый `nm_id` из `measurement_penalties`, джойнит с текущими габаритами
-   карточки (`cards`), пишет в staging-таблицу `fix_penalties_dims_staging`.
-   - Если габариты карточки уже = замеру → `status='skipped'` (**идемпотентность**:
-     почасовой прогон не перезаписывает уже исправленные карточки).
-   - Иначе → `status='pending'`.
-2. **apply** — батчами шлёт `POST /content/v2/cards/update` (полный payload, вес
-   `WeightBrutto` сохраняется из карточки — штрафы веса не содержат). После каждого
-   батча — read-after-write (`GetCardErrorsList`); при первой ошибке валидации —
-   **стоп** прогона (оставшиеся `pending` подберёт следующий прогон крона).
+1. **stage** — берёт последний подтверждённый замер (`is_valid=1`, max `dt_bonus`)
+   на каждый `nm_id` (оконная функция `ROW_NUMBER()` — SQLite не умеет `DISTINCT ON`),
+   джойнит с габаритами карточки, пишет в `fix_penalties_dims_staging`.
+   - **Гард направления**: `pending` только при **недозаявке** (объём карточки <
+     замера → реальный риск штрафа). Пере-заявленные и точные карточки → `skipped`
+     (риска нет, не уменьшаем). Сравнение по **объёму** (коммутативно — устойчиво к
+     перестановке осей L/W).
+   - Идемпотентность: уже-фиксенные карточки → `skipped`, почасовой прогон их не трогает.
+2. **apply** — батчами шлёт `POST /content/v2/cards/update` (вес `WeightBrutto`
+   сохраняется из карточки — штрафы веса не содержат). После каждого батча —
+   read-after-write (`GetCardErrorsList`); при первой ошибке валидации — **стоп**
+   прогона (оставшиеся `pending` подберёт следующий прогон крона).
 3. **audit** — дневной CSV в `logs/penalties-dims-YYYY-MM-DD.csv`: строка на каждую
-   карточку (`FIX`/`SKIP`/`ERROR`) + отдельная строка на WB-проверку батча
-   (`WB_OK`/`WB_ERROR`/`WB_STOP`) + строки сводки прогона (`RUN`).
+   перезаписанную карточку (`FIX` — было→стало) + отдельная строка на WB-проверку
+   батча (`WB_OK`/`WB_ERROR`/`WB_STOP`) + строка сводки прогона (`RUN`). Skipped-
+   карточки в CSV **не пишутся** (лог — хроника изменений, а skipped = «ничего не
+   менялось»); их счётчик виден в `RUN` и в staging-таблице.
 
 ## Конфиг (`config.yaml`)
 
-- `storage.backend: postgres`, `pg_database` (wb_data_prod / wb_data_test),
-  `pg_password_env: PG_PWD`. Host/port/user из `PGHOST`/`PGPORT`/`PGUSER`.
+- `storage.db_path` — изолированная SQLite робота (`fixer.db`; override через `--db`).
 - `wb.api_key_env: WB_API_ANALYTICS_AND_PROMO_KEY`.
-- `filter` — `nm_ids` / `vendor_codes` / `exclude_vendor_codes` (PG-native).
+- `source` — `only_confirmed`, `latest_per_nm`.
+- `filter` — `nm_ids` / `vendor_codes` / `exclude_vendor_codes` (SQLite `IN`/`NOT IN`).
 - `wb_update` — rate/batch (defaults из `cardupdate.WBUpdateConfig.Defaults()`).
 - `audit.log_dir` — каталог CSV (по умолчанию `logs` рядом с бинарем).
 
 ## Команды
 
 ```bash
-# ТЕСТ (только wb_data_test + --dry-run; НИКОГДА /var/db, prod --apply — только юзер):
-go run . --stage  --config config.yaml --pg-database wb_data_test
-go run . --diff   --config config.yaml --pg-database wb_data_test
-go run . --apply --dry-run --config config.yaml --pg-database wb_data_test
+# Авто (cron) — ilkoid.sh сам грузит cards+penalties в fixer.db, потом stage+apply:
+./ilkoid.sh                 # из корня репо
 
-# Ручной запуск на одной карточке (фильтр в config.yaml: filter.nm_ids: [<id>]):
-go run . --auto --dry-run --config config.yaml --pg-database wb_data_test
-
-# Авто (cron) — stage + apply одним вызовом:
-go run . --auto --config config.yaml                 # ⚠ prod-запись, только юзер
+# Ручная инспекция staging-таблицы (fixer.db уже загружен ilkoid.sh):
+go run . --stage  --config config.yaml --db fixer.db
+go run . --diff   --config config.yaml --db fixer.db
+go run . --apply --dry-run --config config.yaml --db fixer.db   # payload без отправки
 
 # Проверить недавние ошибки валидации WB:
 go run . --check --config config.yaml
 ```
 
-## Cron
+## Запуск / cron — `ilkoid.sh` (корень репо)
 
-`run-penalties-dims-fixer.sh` (flock + дневной лог + source env) запускается
-после `download-wb-penalties-v2`:
+Один простой launchер в стиле `download-all.sh`: `export`-ключи прямо в скрипте, `go run`
+(без сборки бинарей), линейно. Грузит penalties + cards в изолированный `fixer.db`
+(SQLite; прод-PG **не трогается**), затем правит габариты.
 
+**`ilkoid.sh` занесён в `.gitignore`** (несёт API-ключи через `export`). На новой машине:
+создай его по образцу ниже (или `scp` с другой машины) и `chmod +x ilkoid.sh`.
+
+Образец `ilkoid.sh` (использует выделенные SQLite-конфиги в `cmd/.configs/ilkoid/` —
+PG вообще не участвует, даже без флагов):
+```bash
+#!/bin/bash
+export WB_API_KEY="<ключ>"                       # для download-wb-cards
+export WB_API_ANALYTICS_AND_PROMO_KEY="<ключ>"   # для penalties + fixer
+PONCHO="$(cd "$(dirname "$0")" && pwd)"
+FIXER_DB="$PONCHO/cmd/fix-utilities/fix-penalties-dims/fixer.db"
+CFG="$PONCHO/cmd/.configs/ilkoid"
+go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$CFG/penalties.yaml" --db "$FIXER_DB"
+go run "$PONCHO/cmd/data-downloaders/download-wb-cards"         --config "$CFG/cards.yaml"     --db "$FIXER_DB"
+( cd "$PONCHO/cmd/fix-utilities/fix-penalties-dims" && go run . --auto --db fixer.db "$@" )
 ```
-37 * * * * .../fix-penalties-dims/run-penalties-dims-fixer.sh
+
+Запуск:
+```bash
+./ilkoid.sh --dry-run    # ПЕРВЫЙ прогон: payload brand=PlayToday, pending≈5, без WB-записи
+./ilkoid.sh              # реальный прогон (WB-запись)
+# cron:  37 * * * * /path/to/ilkoid.sh
 ```
 
-Период настраивает пользователь в cron'е.
 
 ## Безопасность
 
 - WB API `/content/v2/cards/update` **полностью перезаписывает** карточку. Инвариант
-  фиксера: `LoadFullCard` (все поля) → `ToUpdateItem` (полный payload) → менять
-  только L/W/H → отправить. Никаких частичных payload'ов.
-- `WeightBrutto`, характеристики и размеры несутся из загруженной карточки целиком.
-- Prod `--apply`/`--auto` запускает **только пользователь**. Claude не выполняет
-  запись; тесты — на `wb_data_test` + `--dry-run`.
+  фиксера: `LoadFullCard` (все поля) → `ToUpdateItem` (полный payload) → менять только
+  L/W/H → отправить. `WeightBrutto`, характеристики и размеры несутся из карточки целиком.
+- **Изоляция брендов**: `fixer.db` заполняется v1-загрузчиком без scrub, поэтому бренд
+  всегда реальный. Санитизация PG (`[PlayBrand]`) физически не может попасть в робота.
+- Prod `--apply`/`--auto` запускает **только пользователь**. Claude не выполняет запись;
+  тесты — на `--db /tmp/…` + `--dry-run`. `/var/db` и общая PG роботу недоступны.
+
+## Известные ограничения
+
+- **kizMarked не round-trip'ится** (отложено). `POST /content/v2/cards/update` принимает
+  `kizMarked` (default false), но поля нет в `ProductCard`/`CardUpdateItem`/`cards`/
+  загрузчике → при перезаписи подтверждение маркировки «Честный ЗНАК» может сброситься.
+  Для маркированной одежды (needKiz=true) учитывать вручную. См. `pkg/cardupdate`
+  (`KNOWN GAP` у `ToUpdateItem`) и memory `cardupdate_kizmarked_gap`. Не влияет на
+  габариты — поэтому в scope этой утилиты не входит.
+- Сертификаты/декларации, photos/video/tags/wholesale, imtID/subject*/needKz/timestamps —
+  **безопасны** (audit сверен со swagger): либо не входят в объект карточки, либо
+  read-only, либо явно «невозможно обновлять» через этот эндпоинт.

@@ -172,6 +172,17 @@ func (u *CardUpdater) LoadBulkSizes(ctx context.Context, nmIDs []int) (map[int][
 
 // ToUpdateItem converts FullCardData to wb.CardUpdateItem ready for the WB API.
 // Unwraps characteristic values from DB format (JSON arrays) to WB API format (scalars).
+//
+// KNOWN GAP — kizMarked: POST /content/v2/cards/update also accepts `kizMarked`
+// (default false; confirmation of "Честный ЗНАК" marking). This round-trip does NOT
+// send it — the field is absent from ProductCard, cards table, and CardUpdateItem —
+// so a marking-required card (needKiz=true, e.g. clothing) can have its kizMarked
+// reset to false on rewrite. Swagger: docs/wb_api_swagger/02-products.yaml,
+// /content/v2/cards/update schema (kizMarked). Fix later by adding KizMarked to
+// ProductCard + CardUpdateItem + carrying it through FullCardData/ToUpdateItem
+// (source: either a cards.kiz_marked column populated by the downloader, or a live
+// GetCardsByNmIDs fetch). Tracked in memory cardupdate_kizmarked_gap. See also the
+// penalties-dims fixer README ("Известные ограничения").
 func ToUpdateItem(card FullCardData) wb.CardUpdateItem {
 	chars := make([]wb.CardUpdateCharc, 0, len(card.Characteristics))
 	for _, c := range card.Characteristics {
