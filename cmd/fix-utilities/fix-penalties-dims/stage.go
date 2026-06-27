@@ -54,20 +54,20 @@ func runStage(ctx context.Context, db *sql.DB, cfg *Config, audit *Auditor) (pen
 // applied (rewritten this cycle) and error (failed, needs attention). Skipped cards
 // (exact match or over-declared — the majority, no change) are omitted from the
 // listing to keep the diff scannable; their count appears in the summary line.
-func showDiff(ctx context.Context, db *sql.DB) error {
-	pending, err := selectByStatus(ctx, db, "pending")
+func showDiff(ctx context.Context, db *sql.DB, f ArticleFilter) error {
+	pending, err := selectByStatus(ctx, db, "pending", f)
 	if err != nil {
 		return err
 	}
-	applied, err := selectByStatus(ctx, db, "applied")
+	applied, err := selectByStatus(ctx, db, "applied", f)
 	if err != nil {
 		return err
 	}
-	errored, err := selectByStatus(ctx, db, "error")
+	errored, err := selectByStatus(ctx, db, "error", f)
 	if err != nil {
 		return err
 	}
-	counts, err := stagingCounts(ctx, db)
+	counts, err := stagingCounts(ctx, db, f)
 	if err != nil {
 		return err
 	}

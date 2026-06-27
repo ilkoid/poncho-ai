@@ -37,7 +37,7 @@ func buildPenaltiesDimPayload(ctx context.Context, u *cardupdate.CardUpdater, r 
 // STOP on the first WB validation error. Transport errors mark the chunk 'error'
 // and continue; only WB *validation* errors halt the run.
 func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg *Config, audit *Auditor, dryRun bool) error {
-	rows, err := selectPending(ctx, db)
+	rows, err := selectPending(ctx, db, cfg.Filter)
 	if err != nil {
 		return err
 	}

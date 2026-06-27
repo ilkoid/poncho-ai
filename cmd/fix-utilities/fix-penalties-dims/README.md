@@ -48,6 +48,10 @@
 - `wb.api_key_env: WB_API_ANALYTICS_AND_PROMO_KEY`.
 - `source` — `only_confirmed`, `latest_per_nm`.
 - `filter` — `nm_ids` / `vendor_codes` / `exclude_vendor_codes` (SQLite `IN`/`NOT IN`).
+  Скоуп рабочего множества на **любом** чтении staging: применяется и на `--stage`
+  (что попадает в staging), и на `--apply`/`--diff` (что читается из staging). Поэтому
+  правка фильтра в yaml Honourится `--apply --dry-run` **сразу**, без ре-стейджа. Пустой
+  фильтр → все подтверждённые штрафы (поведение cron `--auto` не меняется).
 - `wb_update` — rate/batch (defaults из `cardupdate.WBUpdateConfig.Defaults()`).
 - `audit.log_dir` — каталог CSV (по умолчанию `logs` рядом с бинарем).
 
@@ -102,6 +106,14 @@ go run "$PONCHO/cmd/data-downloaders/download-wb-cards"         --config "$CFG/c
 - WB API `/content/v2/cards/update` **полностью перезаписывает** карточку. Инвариант
   фиксера: `LoadFullCard` (все поля) → `ToUpdateItem` (полный payload) → менять только
   L/W/H → отправить. `WeightBrutto`, характеристики и размеры несутся из карточки целиком.
+- **Целочисленные габариты (ceil):** `/content/v2/cards/update` требует
+  `dimensions.length/width/height` как `integer` (swagger `02-products.yaml`). Складской
+  замер WB бывает дробным (`81.1×21.3×2.3`), поэтому на стадии staging фиксер округляет
+  габариты **вверх** до целых см (`ceilCm`). Ceil по каждой оси гарантирует
+  `card_volume ≥ measured_volume` → МГХ-штраф за занижение гаснет; round/floor могли бы
+  оставить карточку недозаявленной (`81×21×2=3402 < 3976`). Over-declaration МГХ не
+  штрафуется (чуть выше тарифы хранения). Staged = записываемому, поэтому `--diff` честно
+  показывает что уйдёт в WB.
 - **Изоляция брендов**: `fixer.db` заполняется v1-загрузчиком без scrub, поэтому бренд
   всегда реальный. Санитизация PG (`[PlayBrand]`) физически не может попасть в робота.
 - Prod `--apply`/`--auto` запускает **только пользователь**. Claude не выполняет запись;

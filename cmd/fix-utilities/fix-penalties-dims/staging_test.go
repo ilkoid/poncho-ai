@@ -98,6 +98,40 @@ func TestFetchStageCandidates_WindowPicksLatest(t *testing.T) {
 	}
 }
 
+// TestFetchStageCandidates_CeilsFractionalDims verifies warehouse measurements are
+// ceiled to whole cm at staging: WB /content/v2/cards/update requires integer L/W/H
+// (swagger: type: integer), and ceil per axis guarantees card_volume >= measured_volume
+// (clears the МГХ under-declaration penalty; round/floor could leave it under-declared).
+// A fractional measurement 81.1×21.3×2.3 becomes 82×22×3. Existing integer measurements
+// are unchanged (ceil(30)=30) — also covered by WindowPicksLatest expecting 30×29×6.
+func TestFetchStageCandidates_CeilsFractionalDims(t *testing.T) {
+	db := newStagingTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	addCard(t, db, 100, "VC100", 10, 10, 10) // card 10×10×10 < measured → pending
+	// Real WB warehouse measurements can be fractional; insert directly since addPenalty
+	// takes ints. INTEGER-affinity columns store 21.3 etc. as REAL (not lossless int).
+	if _, err := db.Exec(`INSERT INTO measurement_penalties
+        (nm_id, width, length, height, dim_id, dt_bonus, is_valid)
+        VALUES (100, 21.3, 81.1, 2.3, 555, '2026-06-26T00:00:00Z', 1)`); err != nil {
+		t.Fatalf("insert fractional penalty: %v", err)
+	}
+
+	rows, err := fetchStageCandidates(ctx, db, ArticleFilter{})
+	if err != nil {
+		t.Fatalf("fetchStageCandidates: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	r := rows[0]
+	// Ceil each axis: length 81.1→82, width 21.3→22, height 2.3→3.
+	if r.NewLength != 82 || r.NewWidth != 22 || r.NewHeight != 3 {
+		t.Errorf("ceiled new dims = %g×%g×%g, want 82×22×3", r.NewLength, r.NewWidth, r.NewHeight)
+	}
+}
+
 // TestUpsertStaging_DirectionAware verifies staging classifies cards by direction:
 // over-declared + exact → skipped, under-declared → pending (the heart of the fixer).
 func TestUpsertStaging_DirectionAware(t *testing.T) {
@@ -127,7 +161,7 @@ func TestUpsertStaging_DirectionAware(t *testing.T) {
 		t.Fatalf("pending=%d skipped=%d, want 1/2", pending, skipped)
 	}
 
-	got, err := selectPending(ctx, db)
+	got, err := selectPending(ctx, db, ArticleFilter{})
 	if err != nil {
 		t.Fatalf("selectPending: %v", err)
 	}
@@ -135,7 +169,7 @@ func TestUpsertStaging_DirectionAware(t *testing.T) {
 		t.Errorf("pending = %+v, want single nm_id=200", got)
 	}
 
-	counts, err := stagingCounts(ctx, db)
+	counts, err := stagingCounts(ctx, db, ArticleFilter{})
 	if err != nil {
 		t.Fatalf("counts: %v", err)
 	}
@@ -171,6 +205,66 @@ func TestUpsertStaging_IdempotentRefresh(t *testing.T) {
 	}
 	if pending != 0 || skipped != 1 {
 		t.Fatalf("after fix: pending=%d skipped=%d, want 0/1 (idempotent)", pending, skipped)
+	}
+}
+
+// TestSelectPending_HonorsFilter verifies the YAML filter scopes EVERY staging read
+// (apply/diff), not just stage. After staging several cards with an empty filter,
+// selectPending with NmIDs / VendorCodes / ExcludeVendorCodes returns only the scoped
+// subset; an empty filter returns all. Regression for the "edited filter, applied stale
+// staging" footgun.
+func TestSelectPending_HonorsFilter(t *testing.T) {
+	db := newStagingTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	// Two under-declared cards → pending (200, 201); one exact match → skipped (300).
+	addCard(t, db, 200, "VC200", 35, 30, 12)
+	addPenalty(t, db, 200, 43, 42, 12, 333, "2026-04-11T00:00:00Z")
+	addCard(t, db, 201, "VC201", 10, 10, 10)
+	addPenalty(t, db, 201, 20, 20, 20, 334, "2026-04-11T00:00:00Z")
+	addCard(t, db, 300, "VC300", 10, 10, 10)
+	addPenalty(t, db, 300, 10, 10, 10, 444, "2026-04-11T00:00:00Z")
+
+	rows, _ := fetchStageCandidates(ctx, db, ArticleFilter{})
+	if _, _, err := upsertStaging(ctx, db, rows, "t1"); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Empty filter → both pending cards (200, 201).
+	all, err := selectPending(ctx, db, ArticleFilter{})
+	if err != nil {
+		t.Fatalf("selectPending all: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("empty filter: got %d pending, want 2", len(all))
+	}
+
+	// Filter to nm 200 only → exactly 1; the other pending (201) is excluded.
+	one, err := selectPending(ctx, db, ArticleFilter{NmIDs: []int{200}})
+	if err != nil {
+		t.Fatalf("selectPending filtered: %v", err)
+	}
+	if len(one) != 1 || one[0].NmID != 200 {
+		t.Errorf("filtered = %+v, want single nm_id=200", one)
+	}
+
+	// Filter by vendor_code is symmetric.
+	vc, err := selectPending(ctx, db, ArticleFilter{VendorCodes: []string{"VC201"}})
+	if err != nil {
+		t.Fatalf("selectPending by vc: %v", err)
+	}
+	if len(vc) != 1 || vc[0].NmID != 201 {
+		t.Errorf("vc filter = %+v, want single nm_id=201", vc)
+	}
+
+	// Exclude also works (keeps 200, drops 201).
+	exc, err := selectPending(ctx, db, ArticleFilter{ExcludeVendorCodes: []string{"VC201"}})
+	if err != nil {
+		t.Fatalf("selectPending exclude: %v", err)
+	}
+	if len(exc) != 1 || exc[0].NmID != 200 {
+		t.Errorf("exclude filter = %+v, want single nm_id=200", exc)
 	}
 }
 

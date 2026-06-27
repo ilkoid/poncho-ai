@@ -107,7 +107,7 @@ func main() {
 			log.Fatalf("stage: %v", err)
 		}
 	case *diff:
-		if err := showDiff(ctx, db); err != nil {
+		if err := showDiff(ctx, db, cfg.Filter); err != nil {
 			log.Fatalf("diff: %v", err)
 		}
 	case *apply:

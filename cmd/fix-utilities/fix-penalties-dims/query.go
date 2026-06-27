@@ -51,6 +51,34 @@ func buildCardFilter(f ArticleFilter) (string, []any) {
 	return sb.String(), args
 }
 
+// buildStagingFilter builds the optional WHERE fragment for staging-table reads
+// (selectByStatus, stagingCounts). Same shape as buildCardFilter, but on the
+// UNALIASED staging columns (nm_id, vendor_code) — staging queries are single-table.
+// The filter is the working-set scope applied at EVERY staging read, not just at
+// stage time, so editing filter.nm_ids in YAML takes effect on --apply/--diff
+// immediately without a re-stage. Returns the SQL fragment (" AND … AND …") and
+// args in order.
+func buildStagingFilter(f ArticleFilter) (string, []any) {
+	var sb strings.Builder
+	var args []any
+	if len(f.NmIDs) > 0 {
+		ph, a := inPlaceholders(f.NmIDs)
+		fmt.Fprintf(&sb, " AND nm_id IN (%s)", ph)
+		args = append(args, a...)
+	}
+	if len(f.VendorCodes) > 0 {
+		ph, a := inPlaceholders(f.VendorCodes)
+		fmt.Fprintf(&sb, " AND vendor_code IN (%s)", ph)
+		args = append(args, a...)
+	}
+	if len(f.ExcludeVendorCodes) > 0 {
+		ph, a := inPlaceholders(f.ExcludeVendorCodes)
+		fmt.Fprintf(&sb, " AND vendor_code NOT IN (%s)", ph)
+		args = append(args, a...)
+	}
+	return sb.String(), args
+}
+
 // fetchStageCandidates returns the latest confirmed WB measurement joined to the
 // card's current dimensions, for every penalized nm_id that has a matching card.
 //
@@ -92,6 +120,15 @@ func fetchStageCandidates(ctx context.Context, db *sql.DB, f ArticleFilter) ([]s
 		); err != nil {
 			return nil, fmt.Errorf("scan stage candidate: %w", err)
 		}
+		// WB /content/v2/cards/update requires integer L/W/H (swagger: type: integer).
+		// Warehouse measurements can be fractional (e.g. 81.1×21.3×2.3). Ceil each axis
+		// so the card declares whole cm AND card_volume >= measured_volume — which clears
+		// the МГХ under-declaration penalty (over-declaration is not penalized, only
+		// marginally higher storage fees). Applied at staging so the staged value equals
+		// the written value: --diff is an honest preview, classifyFix sees whole volumes.
+		r.NewLength = ceilCm(r.NewLength)
+		r.NewWidth = ceilCm(r.NewWidth)
+		r.NewHeight = ceilCm(r.NewHeight)
 		result = append(result, r)
 	}
 	return result, rows.Err()
@@ -167,20 +204,22 @@ func upsertStaging(ctx context.Context, db *sql.DB, rows []stagedRow, now string
 }
 
 // selectPending returns staged rows with status='pending', ordered by nm_id.
-func selectPending(ctx context.Context, db *sql.DB) ([]stagedRow, error) {
-	return selectByStatus(ctx, db, "pending")
+// f scopes the result to the configured working set (nm_ids / vendor_codes / exclude).
+func selectPending(ctx context.Context, db *sql.DB, f ArticleFilter) ([]stagedRow, error) {
+	return selectByStatus(ctx, db, "pending", f)
 }
 
-func selectByStatus(ctx context.Context, db *sql.DB, status string) ([]stagedRow, error) {
+func selectByStatus(ctx context.Context, db *sql.DB, status string, f ArticleFilter) ([]stagedRow, error) {
+	frag, args := buildStagingFilter(f)
 	rows, err := db.QueryContext(ctx, `
 		SELECT nm_id, vendor_code, subject_name, dim_id, dt_bonus,
 		       old_length, old_width, old_height,
 		       new_length, new_width, new_height,
 		       status, error_msg
 		FROM fix_penalties_dims_staging
-		WHERE status = ?
+		WHERE status = ?`+frag+`
 		ORDER BY nm_id
-	`, status)
+	`, append([]any{status}, args...)...)
 	if err != nil {
 		return nil, fmt.Errorf("query staging %q: %w", status, err)
 	}
@@ -202,11 +241,12 @@ func selectByStatus(ctx context.Context, db *sql.DB, status string) ([]stagedRow
 	return result, rows.Err()
 }
 
-// stagingCounts returns the row count per status across the staging table. Used by
-// showDiff to report the skipped total without fetching (and printing) every row.
-func stagingCounts(ctx context.Context, db *sql.DB) (map[string]int, error) {
+// stagingCounts returns the row count per status across the staging table, scoped to f.
+// Used by showDiff to report the skipped total without fetching (and printing) every row.
+func stagingCounts(ctx context.Context, db *sql.DB, f ArticleFilter) (map[string]int, error) {
+	frag, args := buildStagingFilter(f)
 	rows, err := db.QueryContext(ctx,
-		`SELECT status, count(*) FROM fix_penalties_dims_staging GROUP BY status`)
+		`SELECT status, count(*) FROM fix_penalties_dims_staging WHERE 1=1`+frag+` GROUP BY status`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query staging counts: %w", err)
 	}
@@ -266,6 +306,12 @@ func dimsMatch(oldL, oldW, oldH, newL, newW, newH float64) bool {
 }
 
 func roundCm(v float64) int { return int(math.Round(v)) }
+
+// ceilCm rounds a warehouse measurement UP to the next whole cm, returned as float64.
+// encoding/json serializes 82.0 as "82", satisfying WB's `integer` L/W/H schema while
+// guaranteeing card_volume >= measured_volume (clears the МГХ under-declaration penalty).
+// Round/floor could leave the card under-declared (e.g. 81×21×2=3402 < 3976=81.1×21.3×2.3).
+func ceilCm(v float64) float64 { return math.Ceil(v) }
 
 // classifyFix decides whether a staged row needs a card rewrite.
 //
