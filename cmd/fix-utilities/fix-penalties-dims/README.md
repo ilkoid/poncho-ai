@@ -42,6 +42,23 @@
    карточки в CSV **не пишутся** (лог — хроника изменений, а skipped = «ничего не
    менялось»); их счётчик виден в `RUN` и в staging-таблице.
 
+## Хранение: где что лежит
+
+Поведение разных слоёв — **неодинаковое** (см. код по ссылкам). Снепшотов/timestamped-копий
+нет вообще: всё in-place в одной постоянной базе, плюс append-only CSV-хроника.
+
+| Где | Что | Режим |
+|-----|-----|-------|
+| `fixer.db` (файл) | постоянная SQLite робота | персистентна, растёт, **НЕ** пересоздаётся между прогонами |
+| `measurement_penalties` | подтверждённые штрафы МГХ | `rewrite: true` → window-ресет окна (`days: 90`), затем `INSERT OR REPLACE` по `dim_id` ([penalties_repo.go](../../../pkg/storage/sqlite/penalties_repo.go)). Таблица не дропается |
+| `cards` + `card_sizes` + `card_characteristics` | каталог карточек | upsert по `nm_id` (v1-загрузчик, без `rewrite`) |
+| `fix_penalties_dims_staging` | рабочий стол фиксера (to-do) | **полная перезапись** каждый `--stage`/`--auto`: `DELETE` + `INSERT` в одной транзакции ([query.go](query.go)). Это **состояние**, НЕ история |
+| `logs/penalties-dims-YYYY-MM-DD.csv` | хроника изменений | append-only, дневная ротация ([audit.go](audit.go)). `FIX`/`ERROR`/`WB_OK`/`WB_ERROR`/`WB_STOP`/`RUN`. Skipped-карточки **не** пишутся |
+
+**Вывод:** история накапливается только в CSV; staging-таблица — это «что делать сейчас»
+(пересобирается каждый прогон); cards/penalties обновляются на месте. Retention для CSV не
+нужен — темп 9–35 строк/день (≈15 МБ/год в худшем случае), прецедента ротации в репо нет.
+
 ## Конфиг (`config.yaml`)
 
 - `storage.db_path` — изолированная SQLite робота (`fixer.db`; override через `--db`).
@@ -95,14 +112,19 @@ go run "$PONCHO/cmd/data-downloaders/download-wb-cards"         --config "$CFG/c
 
 Запуск:
 ```bash
-./ilkoid.sh --dry-run    # ПЕРВЫЙ прогон: payload brand=PlayToday, pending≈5, без WB-записи
-./ilkoid.sh              # реальный прогон (WB-запись)
-# cron:  37 * * * * /path/to/ilkoid.sh
+./ilkoid.sh --dry-run    # ПЕРВЫЙ прогон: payload без WB-записи (превью)
+./ilkoid.sh --yes        # реальный прогон (WB-запись) — --yes обязателен (fail-closed)
+# cron:  37 * * * * /path/to/ilkoid.sh --yes
 ```
 
 
 ## Безопасность
 
+- **Fail-closed guard:** реальная запись (`--apply`/`--auto` без `--dry-run`) требует
+  явного `--yes` (или env `PENALTIES_DIMS_ALLOW_WRITE=1`); без него фиксер **отказывает**
+  и падает с ненулевым кодом. Это защищает от потерянного/опечатанного `--dry-run` в
+  обвязке (`ilkoid.sh`, cron) — однажды карточку уже перезаписало именно так. `--dry-run`
+  имеет приоритет над `--yes`. Cron обязан включать `--yes`.
 - WB API `/content/v2/cards/update` **полностью перезаписывает** карточку. Инвариант
   фиксера: `LoadFullCard` (все поля) → `ToUpdateItem` (полный payload) → менять только
   L/W/H → отправить. `WeightBrutto`, характеристики и размеры несутся из карточки целиком.

@@ -25,6 +25,7 @@ func main() {
 	diff := flag.Bool("diff", false, "Show staged before→after for review")
 	apply := flag.Bool("apply", false, "Apply staged pending changes via WB API")
 	dryRun := flag.Bool("dry-run", false, "With --apply/--auto: print payloads, do not send")
+	yes := flag.Bool("yes", false, "Confirm a REAL WB write (--apply/--auto without --dry-run). Required; without it real writes are refused")
 	auto := flag.Bool("auto", false, "Stage + apply in one run (for cron)")
 	check := flag.Bool("check", false, "Query WB error list for recent validation errors")
 	flag.Parse()
@@ -32,6 +33,19 @@ func main() {
 	if !*stage && !*diff && !*apply && !*auto && !*check {
 		printUsage()
 		os.Exit(0)
+	}
+
+	// Fail-closed guard: a REAL WB write (--apply/--auto without --dry-run) requires
+	// explicit opt-in via --yes or PENALTIES_DIMS_ALLOW_WRITE=1. Without it, REFUSE and
+	// exit non-zero. A dropped/mistyped --dry-run in a wrapper script (ilkoid.sh, cron)
+	// must never silently overwrite cards — it once did. See confirmRealWrite + plan.
+	if *apply || *auto {
+		if err := confirmRealWrite(*dryRun, *yes, os.Getenv("PENALTIES_DIMS_ALLOW_WRITE")); err != nil {
+			log.Fatalf("⛔ %v", err)
+		}
+		if !*dryRun {
+			fmt.Fprintln(os.Stderr, "⛔ REAL WB WRITE — cards WILL be overwritten (--yes confirmed)")
+		}
 	}
 
 	cfg, err := loadConfig(*configPath)
@@ -169,6 +183,22 @@ func resolveAPIKey(cfg *Config) string {
 	return ""
 }
 
+// confirmRealWrite is the fail-closed gate for a real WB card write. Returns nil when
+// the write is explicitly confirmed (or not happening at all); returns an error when a
+// real write would occur without opt-in — the caller then refuses and exits non-zero.
+// dryRun short-circuits to nil (no write). This guard is independent of how the binary
+// is invoked: even if a wrapper script drops --dry-run, the fixer itself refuses.
+func confirmRealWrite(dryRun, yes bool, allowEnv string) error {
+	if dryRun {
+		return nil
+	}
+	if yes || allowEnv == "1" {
+		return nil
+	}
+	return fmt.Errorf("real WB write refused: --apply/--auto without --dry-run requires explicit opt-in\n" +
+		"  → re-run with --dry-run to preview payloads, or add --yes (or set PENALTIES_DIMS_ALLOW_WRITE=1) to write for real")
+}
+
 func modeString(stage, diff, apply, auto, check, dryRun *bool) string {
 	switch {
 	case *check:
@@ -204,5 +234,5 @@ func printUsage() {
 	fmt.Println("  fix-penalties-dims --check  --config config.yaml")
 	fmt.Println("  fix-penalties-dims --auto   --config config.yaml                  (⚠ production, cron)")
 	fmt.Println()
-	fmt.Println("⚠ --apply / --auto without --dry-run performs a REAL WB write — run by user only.")
+	fmt.Println("⚠ --apply / --auto without --dry-run REFUSES to write unless --yes is given (fail-closed guard).")
 }

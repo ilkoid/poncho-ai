@@ -12,8 +12,11 @@
 // Reuses pkg/cardupdate (CardUpdater.LoadFullCard + ToUpdateItem) for the safe
 // full-card overwrite invariant.
 //
-// ⚠️ WB write safety: --apply/--auto without --dry-run performs a REAL WB write
-// and is run ONLY by the user (cron). Claude never runs --apply. Testing uses
+// ⚠️ WB write safety (fail-closed): a REAL WB write (--apply/--auto without --dry-run)
+// requires explicit opt-in via --yes (or env PENALTIES_DIMS_ALLOW_WRITE=1). Without it
+// the fixer REFUSES to write and exits non-zero — a dropped/mistyped --dry-run in a
+// wrapper script can never silently overwrite cards (it once did). Real writes are run
+// ONLY by the user (cron passes --yes). Claude never runs --apply. Testing uses
 // --dry-run + a throwaway SQLite DB (--db /tmp/…).
 package main
 
