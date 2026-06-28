@@ -333,3 +333,36 @@ func TestRunStage_EmptyDB_Graceful(t *testing.T) {
 		t.Errorf("pending=%d skipped=%d, want 0/0", pending, skipped)
 	}
 }
+
+// TestRunStage_ZeroPenaltiesWipesStaging locks the fix for the silent stale-write
+// footgun: with 0 confirmed penalties, runStage must WIPE staging so a following
+// --apply/--auto can't apply leftover 'pending' rows from a prior interrupted run
+// (fixes for penalties that no longer exist). Without the wipe, runApply would read
+// stale pending and rewrite cards. See plan: "0 штрафов не должно применять STALE staging".
+func TestRunStage_ZeroPenaltiesWipesStaging(t *testing.T) {
+	db := newStagingTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	// A stale 'pending' row a prior interrupted run left behind. measurement_penalties
+	// is empty → countPenalizedNmIDs == 0 → the bug's trigger branch.
+	if _, err := db.Exec(`INSERT INTO fix_penalties_dims_staging (nm_id, dim_id, status) VALUES (999, 1, 'pending')`); err != nil {
+		t.Fatalf("seed stale pending row: %v", err)
+	}
+
+	pending, skipped, err := runStage(ctx, db, &Config{}, nil)
+	if err != nil {
+		t.Fatalf("runStage: %v", err)
+	}
+	if pending != 0 || skipped != 0 {
+		t.Errorf("pending=%d skipped=%d, want 0/0", pending, skipped)
+	}
+
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM fix_penalties_dims_staging`).Scan(&n); err != nil {
+		t.Fatalf("count staging after runStage: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("staging rows after runStage = %d, want 0 (stale pending must be wiped on 0 penalties)", n)
+	}
+}

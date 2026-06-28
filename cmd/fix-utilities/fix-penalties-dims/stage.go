@@ -22,11 +22,17 @@ func runStage(ctx context.Context, db *sql.DB, cfg *Config, audit *Auditor) (pen
 		return 0, 0, err
 	}
 	if totalPenalized == 0 {
-		// No penalties to process — almost always means fixer.db hasn't been loaded
-		// yet (the .sh wrapper / downloaders populate it). Say so clearly instead of
-		// silently printing "0 staged", which reads as "everything's fine".
-		fmt.Println("stage: 0 confirmed penalties in fixer.db — run run-penalties-dims-fixer.sh")
-		fmt.Println("       (or the downloaders download-wb-cards + download-wb-penalties-v2) to populate it first.")
+		// No confirmed penalties. WIPE staging so a subsequent --apply/--auto can't
+		// rewrite cards from STALE 'pending' rows — a prior run interrupted by a WB
+		// validation error (runApply `break`) leaves some rows 'pending', and without
+		// this clear they'd be applied on the next cron tick for penalties that no
+		// longer exist. Staging is working state, not history (audit CSV keeps the
+		// chronicle); wiping is the correct "nothing to do" semantics.
+		if _, err := db.ExecContext(ctx, "DELETE FROM fix_penalties_dims_staging"); err != nil {
+			return 0, 0, fmt.Errorf("clear staging (0 penalties): %w", err)
+		}
+		fmt.Println("stage: 0 confirmed penalties — staging cleared, nothing to apply")
+		fmt.Println("       (if unexpected: run download-wb-cards + download-wb-penalties-v2 to populate fixer.db)")
 		return 0, 0, nil
 	}
 
