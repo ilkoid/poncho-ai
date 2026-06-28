@@ -43,7 +43,9 @@ go.work.sum
 *.swp
 *.swo
 *~
-docs/
+docs/*
+!docs/wb_api_swagger/
+!docs/ozon_api_swagger/
 reports/
 plans/
 examples/
@@ -61,6 +63,7 @@ Thumbs.db
 # Logs
 *.log
 *.json
+!docs/ozon_api_swagger/ozon_api.json
 
 # Temporary files
 tmp/
