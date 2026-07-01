@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "WB Scraper",
+  "version": "0.1.0",
+  "description": "Recon/collect WB storefront data via network interception (MAIN world fetch/XHR wrap).",
+  "permissions": ["tabs", "scripting", "storage", "downloads", "offscreen", "activeTab"],
+  "host_permissions": ["*://*.wildberries.ru/*"],
+  "background": { "service_worker": "src/background.js" },
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "WB Scraper"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.wildberries.ru/*"],
+      "js": ["src/inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["*://*.wildberries.ru/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/inject.js"],
+      "matches": ["*://*.wildberries.ru/*"]
+    }
+  ]
+}
