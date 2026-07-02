@@ -147,8 +147,8 @@ type wbCardProduct struct {
 	wbSearchProduct
 	Supplier      string          `json:"supplier"`
 	Pics          json.RawMessage `json:"pics"`   // number OR array → count
-	Weight        int64           `json:"weight"` // /detail characteristic
-	Volume        int64           `json:"volume"` // /detail characteristic
+	Weight        float64         `json:"weight"` // kg, fractional (WB sends floats, not ints)
+	Volume        float64         `json:"volume"`
 	Colors        json.RawMessage `json:"colors"` // array of {name} OR strings
 	SubjectID     *int64          `json:"subjectId"`
 	TotalQuantity int             `json:"totalQuantity"` // /detail-exclusive

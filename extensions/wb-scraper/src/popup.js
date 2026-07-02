@@ -97,8 +97,11 @@ $('clear').addEventListener('click', () => {
 chrome.storage.local.get(['collectTargets', 'reconUrl', 'collectEndpoint']).then((s) => {
   if (s.collectTargets) $('collectTargets').value = s.collectTargets;
   if (s.reconUrl) $('reconUrl').value = s.reconUrl;
-  // Default to the collector's canonical loopback addr so pull mode works on first open.
-  if (s.collectEndpoint != null) $('collectEndpoint').value = s.collectEndpoint || 'http://127.0.0.1:7780';
+  // Always default to the canonical loopback addr. A previous version guarded this with
+  // `!= null`, which skipped the default on first open (storage has no key yet) and left the
+  // field empty — only the placeholder showed, so COLLECT_START's `!endpoint` guard silently
+  // bailed and no tab opened. Defaulting unconditionally fixes that.
+  $('collectEndpoint').value = s.collectEndpoint || 'http://127.0.0.1:7780';
 }).catch(() => {});
 
 let persistTimer;

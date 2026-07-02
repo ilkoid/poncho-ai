@@ -80,8 +80,8 @@ CREATE TABLE IF NOT EXISTS competitor_cards (
     rating        REAL NOT NULL DEFAULT 0,
     feedbacks     INTEGER NOT NULL DEFAULT 0,
     pics          INTEGER NOT NULL DEFAULT 0,
-    weight        INTEGER NOT NULL DEFAULT 0,
-    volume        INTEGER NOT NULL DEFAULT 0,
+    weight        REAL NOT NULL DEFAULT 0,
+    volume        REAL NOT NULL DEFAULT 0,
     colors        TEXT NOT NULL DEFAULT '',
     subject_id    INTEGER,
     panel_promo_id INTEGER

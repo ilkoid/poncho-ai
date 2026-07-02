@@ -82,8 +82,8 @@ CREATE TABLE IF NOT EXISTS competitor_cards (
     rating        DOUBLE PRECISION NOT NULL DEFAULT 0,
     feedbacks     INTEGER NOT NULL DEFAULT 0,
     pics          INTEGER NOT NULL DEFAULT 0,
-    weight        BIGINT NOT NULL DEFAULT 0,
-    volume        BIGINT NOT NULL DEFAULT 0,
+    weight        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    volume        DOUBLE PRECISION NOT NULL DEFAULT 0,
     colors        TEXT NOT NULL DEFAULT '',
     subject_id    BIGINT,
     panel_promo_id BIGINT

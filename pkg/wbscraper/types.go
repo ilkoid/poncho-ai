@@ -171,8 +171,8 @@ type CompetitorCard struct {
 	Rating       float64    `json:"rating"`
 	Feedbacks    int        `json:"feedbacks"`
 	Pics         int        `json:"pics"`
-	Weight       int64      `json:"weight"`
-	Volume       int64      `json:"volume"`
+	Weight       float64    `json:"weight"` // kg, as WB sends it (fractional, e.g. 0.09)
+	Volume       float64    `json:"volume"`
 	Colors       string     `json:"colors"`
 	SubjectID    *int64     `json:"subject_id"`
 	PanelPromoID *int64     `json:"panel_promo_id"`
