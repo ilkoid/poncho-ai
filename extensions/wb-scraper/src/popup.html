@@ -19,6 +19,7 @@
       .danger { background: #e53e3e; color: #fff; }
       .status { margin-top: 12px; padding: 8px; background: #f0f4f8; border-radius: 4px; font-size: 12px; }
       .status .ok { color: #2f855a; font-weight: 600; }
+      .status .warn { color: #c53030; font-weight: 600; }
       .hidden { display: none; }
     </style>
   </head>
@@ -42,9 +43,13 @@
 
     <!-- COLLECT -->
     <div id="collectPanel" class="hidden">
-      <label for="collectTargets">Цели (по строке): nmId или поисковый запрос</label>
+      <label for="collectEndpoint">Коллектор (Go-сервер)</label>
+      <input id="collectEndpoint" type="text" placeholder="http://127.0.0.1:7780" />
+      <div class="hint">Pull целей отсюда и push перехватов сюда. Пустое поле целей ниже → режим pull.</div>
+
+      <label for="collectTargets">Цели (по строке, опц.): nmId или поисковый запрос</label>
       <textarea id="collectTargets" placeholder="17401163&#10;футболки для мальчика набор однотонные&#10;https://www.wildberries.ru/brands/le-and-lo"></textarea>
-      <div class="hint">Число → карточка, текст → поиск, http(s) → как есть. Паузы 2-7с, навигация фоновой вкладкой.</div>
+      <div class="hint">Пусто → pull с сервера. Заполнено → только эти цели (без сервера). Паузы 1-3с.</div>
       <div class="row">
         <button id="collectStart" class="primary">Старт</button>
         <button id="collectStop" class="danger">Стоп</button>
@@ -56,6 +61,7 @@
       <button id="clear" class="ghost">Очистить буфер</button>
     </div>
 
+    <div class="status" id="serverStatus">Go: —</div>
     <div class="status" id="status">…</div>
 
     <script src="popup.js"></script>

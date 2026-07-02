@@ -394,6 +394,11 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+		// Create wb-scraper tables (browser extension captures → pkg/wbscraper collector)
+		_, err = r.db.Exec(GetWbscraperSchemaSQL())
+		if err != nil {
+			return err
+		}
 	return nil
 }
 

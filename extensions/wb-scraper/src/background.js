@@ -7,6 +7,13 @@ let mode = 'recon';            // 'recon' | 'collect'
 let collectTabId = null;       // dedicated background tab navigated per target
 let collectRunning = false;
 let offscreenReady = false;
+// collectEndpoint is the Go collector base URL (e.g. http://127.0.0.1:7780) the offscreen
+// pulls targets from / pushes captures to. Set per COLLECT_START; empty in manual-only runs.
+let collectEndpoint = '';
+// currentTarget is the active collect target ({kind, query_id, query, url}). The SW stamps its
+// query_id onto every capture it forwards so the server can bind a row to its originating query.
+// Card/url targets carry query_id = NoQuery (0) → server stores NULL.
+let currentTarget = null;
 // per-run set of nmIds already opened for detail harvest (avoids re-opening the same competitor
 // card across overlapping search targets). Reset on each COLLECT_START; lost on SW rebirth, which
 // only means "this run starts fresh" — fine for a single clean snapshot.
@@ -15,9 +22,12 @@ let harvestedNmids = new Set();
 // SW can be killed & reborn mid-collect; recover persisted state on startup.
 // Use local (always available via "storage" permission), not session — session can be
 // unavailable in some builds and would crash the SW on load (top-level await-free call).
-chrome.storage.local.get(['mode', 'collectTabId']).then((s) => {
+chrome.storage.local.get(['mode', 'collectTabId', 'currentQueryId', 'collectEndpoint']).then((s) => {
   mode = s.mode || 'recon';
   collectTabId = s.collectTabId ?? null;
+  collectEndpoint = s.collectEndpoint || '';
+  // query_id alone is enough for stamping after a rebirth; the rest of the target is informational.
+  if (s.currentQueryId != null) currentTarget = { query_id: s.currentQueryId };
 }).catch(() => {});
 
 // ---------- Collect patterns (VERIFIED against wb-recon-*.json, 2026-06-28) ----------
@@ -84,18 +94,40 @@ async function onIntercept(payload) {
     if (mode === 'recon') {
       await idbAdd('recon', payload);
       console.log('[WB Scraper] recon+', url.slice(0, 80));
-    } else {
-      const kind = classify(url);
-      if (kind) {
-        await idbAdd('collect', { ...payload, kind });
-        console.log('[WB Scraper] collect ' + kind, url.slice(0, 80));
-      } else {
-        console.log('[WB Scraper] collect (skip)', url.slice(0, 80));
-      }
+      return;
     }
+    // collect mode
+    const kind = classify(url);
+    if (!kind) {
+      console.log('[WB Scraper] collect (skip)', url.slice(0, 80));
+      return;
+    }
+    // IndexedDB stays the local buffer: GET_NMIDS reads it to pick competitor cards for detail
+    // harvest, and it is the safety net if the collector is offline. It is cleared per run.
+    await idbAdd('collect', { ...payload, kind });
+    // Forward to the collector (Stage 6). The item is the server's Intercept wire shape:
+    // {kind, url, query_id, status, body}. query_id is stamped from the active target so the
+    // server binds this response to its originating search query. Fire-and-forget — the offscreen
+    // batches these and POSTs /capture; if it is dead, the capture is still safe in IndexedDB.
+    forwardCapture({
+      kind,
+      url,
+      query_id: currentTarget?.query_id ?? 0,
+      status: payload?.status ?? 0,
+      body: payload?.body ?? null,
+    });
+    console.log('[WB Scraper] collect ' + kind, url.slice(0, 80));
   } catch (e) {
     console.error('[WB Scraper] idb intercept', e);
   }
+}
+
+// forwardCapture hands one classified intercept to the offscreen document for batching. The
+// offscreen is the stable context that owns the flush timer; the SW is not (MV3 kills it ~30s
+// idle). If the offscreen is not yet up or has died, the message silently drops — the capture
+// already lives in IndexedDB, so nothing is lost; it just is not pushed to the collector this run.
+function forwardCapture(item) {
+  chrome.runtime.sendMessage({ type: 'CAPTURE', item }).catch(() => {});
 }
 
 // ---------- export ----------
@@ -219,12 +251,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 
     case 'COLLECT_START':
       (async () => {
-        console.log('[WB Scraper] COLLECT_START', (msg.targets || []).length, 'targets');
+        console.log('[WB Scraper] COLLECT_START', (msg.targets || []).length, 'targets, endpoint', msg.endpoint || '(manual)');
         mode = 'collect';
         collectRunning = true;
+        collectEndpoint = msg.endpoint || '';
+        currentTarget = null; // fresh run — no capture should inherit a stale query_id
+        await chrome.storage.local.set({ mode, collectEndpoint, currentQueryId: 0 });
         await idbClear('collect').catch(() => {}); // fresh snapshot per run — "one run = one clean file"
         harvestedNmids = new Set(); // also reset per-run detail-harvest dedup
-        await chrome.storage.local.set({ mode });
         const tab = await chrome.tabs.create({ url: 'https://www.wildberries.ru', active: true });
         console.log('[WB Scraper] collect tab', tab.id, 'opened (active — avoids background-tab throttling)');
         collectTabId = tab.id;
@@ -233,7 +267,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         // offscreen script may not have attached its listener yet — retry until it answers
         for (let attempt = 0; attempt < 10; attempt++) {
           try {
-            await chrome.runtime.sendMessage({ type: 'COLLECT_LOOP', targets: msg.targets });
+            await chrome.runtime.sendMessage({ type: 'COLLECT_LOOP', targets: msg.targets || [], endpoint: collectEndpoint });
             return;
           } catch {
             await new Promise((r) => setTimeout(r, 200));
@@ -248,8 +282,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       chrome.runtime.sendMessage({ type: 'COLLECT_STOP' }).catch(() => {});
       return;
 
-    case 'NAVIGATE': // from offscreen
-      navigateCollectTab(msg.url).catch((e) => console.warn('[WB Scraper] navigate', e));
+    case 'NAVIGATE': // from offscreen — carries the full target so the SW can stamp query_id
+      currentTarget = msg.target || currentTarget;
+      chrome.storage.local.set({ currentQueryId: currentTarget?.query_id ?? 0 }).catch(() => {});
+      navigateCollectTab(msg.target ? msg.target.url : msg.url).catch((e) => console.warn('[WB Scraper] navigate', e));
       return;
 
     case 'SCROLL': // from offscreen → forward to the content script → relay its {grew} reply back
@@ -312,8 +348,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 
     case 'GET_STATE':
       Promise.all([idbCount('recon'), idbCount('collect')])
-        .then(([r, c]) => reply({ mode, reconCount: r || 0, collectCount: c || 0, collectRunning }))
-        .catch(() => reply({ mode, reconCount: 0, collectCount: 0, collectRunning }));
+        .then(([r, c]) => reply({ mode, reconCount: r || 0, collectCount: c || 0, collectRunning, collectEndpoint }))
+        .catch(() => reply({ mode, reconCount: 0, collectCount: 0, collectRunning, collectEndpoint }));
       return true; // async reply
   }
 });

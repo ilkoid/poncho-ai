@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "description": "Recon/collect WB storefront data via network interception (MAIN world fetch/XHR wrap).",
   "permissions": ["tabs", "scripting", "storage", "downloads", "offscreen", "activeTab"],
-  "host_permissions": ["*://*.wildberries.ru/*"],
+  "host_permissions": [
+    "*://*.wildberries.ru/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
   "background": { "service_worker": "src/background.js" },
   "action": {
     "default_popup": "src/popup.html",

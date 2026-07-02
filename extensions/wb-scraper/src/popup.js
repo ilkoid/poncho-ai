@@ -39,6 +39,26 @@ function refreshStatus() {
   });
 }
 
+// refreshServerStatus pings the collector's /state directly (the popup is an extension page, so
+// the loopback host_permission lets it fetch http://127.0.0.1 without CORS). Shows session id,
+// queue progress, and capture count — the operator's at-a-glance "is the Go side alive + fed".
+async function refreshServerStatus() {
+  const endpoint = $('collectEndpoint').value.trim();
+  if (currentMode !== 'collect' || !endpoint) {
+    $('serverStatus').textContent = 'Go: —';
+    return;
+  }
+  try {
+    const r = await fetch(endpoint + '/state');
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    const done = j.done ? ' · <span class="ok">done</span>' : '';
+    $('serverStatus').innerHTML = `Go: #${j.sessionId} · ${j.served}/${j.total} · capture ${j.capturesReceived}${done}`;
+  } catch {
+    $('serverStatus').innerHTML = 'Go: <span class="warn">нет связи</span>';
+  }
+}
+
 // ---------- wiring ----------
 $('modeRecon').addEventListener('click', () => { setMode('recon'); send({ type: 'SET_MODE', mode: 'recon' }); });
 $('modeCollect').addEventListener('click', () => { setMode('collect'); send({ type: 'SET_MODE', mode: 'collect' }); });
@@ -54,8 +74,11 @@ $('collectStart').addEventListener('click', () => {
     .split('\n')
     .map(targetToUrl)
     .filter(Boolean);
-  if (!targets.length) return;
-  send({ type: 'COLLECT_START', targets });
+  const endpoint = $('collectEndpoint').value.trim();
+  // Empty targets + endpoint → pull mode (offscreen fetches /targets). Non-empty targets →
+  // manual override (no server). Either way we forward the endpoint so the SW/offscreen know it.
+  if (!targets.length && !endpoint) return;
+  send({ type: 'COLLECT_START', targets, endpoint });
 });
 
 $('collectStop').addEventListener('click', () => send({ type: 'COLLECT_STOP' }));
@@ -71,9 +94,11 @@ $('clear').addEventListener('click', () => {
 // ---------- persist user inputs across popup close/reopen ----------
 // Popup is destroyed on close, so textarea/input values vanish. Restore from storage on open,
 // autosave (debounced ~400ms) on input. Kept in storage.local (short text), not IndexedDB.
-chrome.storage.local.get(['collectTargets', 'reconUrl']).then((s) => {
+chrome.storage.local.get(['collectTargets', 'reconUrl', 'collectEndpoint']).then((s) => {
   if (s.collectTargets) $('collectTargets').value = s.collectTargets;
   if (s.reconUrl) $('reconUrl').value = s.reconUrl;
+  // Default to the collector's canonical loopback addr so pull mode works on first open.
+  if (s.collectEndpoint != null) $('collectEndpoint').value = s.collectEndpoint || 'http://127.0.0.1:7780';
 }).catch(() => {});
 
 let persistTimer;
@@ -85,9 +110,14 @@ function persistOnInput(key, el) {
 }
 persistOnInput('collectTargets', $('collectTargets'));
 persistOnInput('reconUrl', $('reconUrl'));
+persistOnInput('collectEndpoint', $('collectEndpoint'));
 
 // sync mode once on open (from SW), then poll only the counts — never yank mode back
 chrome.runtime.sendMessage({ type: 'GET_STATE' }, (st) => { if (st) setMode(st.mode || 'recon'); });
 refreshStatus();
-const poll = setInterval(refreshStatus, 1500);
+refreshServerStatus();
+const poll = setInterval(() => {
+  refreshStatus();
+  refreshServerStatus();
+}, 1500);
 window.addEventListener('unload', () => clearInterval(poll));

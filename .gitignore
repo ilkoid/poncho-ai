@@ -227,3 +227,6 @@ cmd/fix-utilities/fix-card-dimensions/conf-bak.txt
 cmd/fix-utilities/fix-card-dimensions-v1.5/*.yaml
 !cmd/fix-utilities/fix-card-dimensions-v1.5/config.yaml
 /analyze-promo-calendar
+
+# Local build artifact: wb-scraper collector binary (do not commit)
+/wb-scraper-collector
