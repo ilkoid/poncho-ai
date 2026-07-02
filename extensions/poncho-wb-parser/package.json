@@ -1,0 +1,27 @@
+{
+  "name": "poncho-wb-parser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Poncho WB Parser — browser-only WB storefront scraper (TS + Vite + Dexie). v2 of wb-scraper, no Go backend.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dexie": "^4.4.4",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.7.1",
+    "@types/chrome": "^0.2.2",
+    "@types/node": "^22.0.0",
+    "fake-indexeddb": "^6.2.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.3",
+    "vitest": "^4.1.9"
+  }
+}

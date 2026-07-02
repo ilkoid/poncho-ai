@@ -1,0 +1,143 @@
+// src/dashboard/settings.ts — the "Настройки" tab logic: constructor editing with live cartesian
+// preview, save → upsert (stable query_id), own_supplier_id, storage estimate + persist.
+// Imported and invoked by dashboard.ts.
+
+import { upsertQueries } from '../db/upsert';
+import { cartesian, parseTextarea, type ConstructorConfig } from '../querygen/static';
+import { loadConstructor, saveConstructor, loadOwnSupplierId, saveOwnSupplierId, loadDetailK, saveDetailK } from '../storage/config';
+
+/** Read the 6 textareas + the comment input + knobs into a ConstructorConfig. */
+function readConfigFromForm(): ConstructorConfig {
+  const val = (id: string): string[] => parseTextarea((document.getElementById(id) as HTMLTextAreaElement | null)?.value ?? '');
+  const raw = (id: string): string => ((document.getElementById(id) as HTMLInputElement | null)?.value ?? '').trim();
+  const max = Number((document.getElementById('ctor-max') as HTMLInputElement | null)?.value);
+  const dedup = (document.getElementById('ctor-dedup') as HTMLInputElement | null)?.checked ?? true;
+  return {
+    subjects: val('ctor-subjects'),
+    gender: val('ctor-gender'),
+    season: val('ctor-season'),
+    age: val('ctor-age'),
+    material: val('ctor-material'),
+    purpose: val('ctor-purpose'),
+    comment: raw('ctor-comment'),
+    max_queries: Number.isFinite(max) ? max : 0,
+    dedup,
+  };
+}
+
+function renderPreview(c: ConstructorConfig): void {
+  const el = document.getElementById('ctor-preview');
+  if (!el) return;
+  // eff: an empty axis still iterates once in cartesian() (via dim()), so the effective length is
+  // max(1, n) — using raw .length would show "×0 = 0 комбинаций" for an unconfigured dimension,
+  // which looks like a bug. This matches what cartesian() actually produces.
+  const eff = (n: number): number => Math.max(1, n);
+  const total = eff(c.subjects.length) * eff(c.gender.length) * eff(c.season.length) * eff(c.age.length) * eff(c.material.length) * eff(c.purpose.length);
+  const seeds = cartesian(c);
+  const capped = c.max_queries > 0 ? Math.min(seeds.length, c.max_queries) : seeds.length;
+  const commentSuffix = c.comment ? ` (+ «${c.comment}» к каждому)` : '';
+  el.textContent = `${eff(c.subjects.length)}×${eff(c.gender.length)}×${eff(c.season.length)}×${eff(c.age.length)}×${eff(c.material.length)}×${eff(c.purpose.length)} = ${total} комбинаций → ${seeds.length} уникальных → ${capped} к сбору${commentSuffix}`;
+}
+
+/** Populate the form from storage, then wire preview + save + collect + own_id + storage. */
+export async function initSettings(): Promise<void> {
+  const cfg = await loadConstructor();
+  const setVal = (id: string, v: string): void => {
+    const el = document.getElementById(id) as HTMLTextAreaElement | HTMLInputElement | null;
+    if (el) el.value = v;
+  };
+  setVal('ctor-subjects', cfg.subjects.join('\n'));
+  setVal('ctor-gender', cfg.gender.join('\n'));
+  setVal('ctor-season', cfg.season.join('\n'));
+  setVal('ctor-age', cfg.age.join('\n'));
+  setVal('ctor-material', cfg.material.join('\n'));
+  setVal('ctor-purpose', cfg.purpose.join('\n'));
+  setVal('ctor-comment', cfg.comment);
+  const maxEl = document.getElementById('ctor-max') as HTMLInputElement | null;
+  if (maxEl) maxEl.value = String(cfg.max_queries);
+  const dedupEl = document.getElementById('ctor-dedup') as HTMLInputElement | null;
+  if (dedupEl) dedupEl.checked = cfg.dedup;
+  renderPreview(cfg);
+
+  // live preview on any input change
+  for (const id of ['ctor-subjects', 'ctor-gender', 'ctor-season', 'ctor-age', 'ctor-material', 'ctor-purpose', 'ctor-comment', 'ctor-max', 'ctor-dedup']) {
+    document.getElementById(id)?.addEventListener('input', () => renderPreview(readConfigFromForm()));
+  }
+
+  // save → upsert all query texts (stable query_id across sessions)
+  document.getElementById('ctor-save')?.addEventListener('click', async () => {
+    const c = readConfigFromForm();
+    await saveConstructor(c);
+    const seeds = cartesian(c);
+    const map = await upsertQueries(seeds);
+    const el = document.getElementById('ctor-result');
+    if (el) el.textContent = `✓ Сохранено: ${seeds.length} запрос(ов), ${map.size} с стабильными query_id (id переживают перезагрузку).`;
+  });
+
+  // collect by constructor → save first, then tell the SW to run COLLECT_START
+  document.getElementById('ctor-run')?.addEventListener('click', async () => {
+    const c = readConfigFromForm();
+    await saveConstructor(c);
+    renderPreview(c);
+    const snap = new Date().toISOString();
+    void chrome.runtime.sendMessage({ type: 'COLLECT_START', collect: { source: 'constructor' }, snapshotTs: snap }).catch((e) => {
+      const el = document.getElementById('ctor-result');
+      if (el) el.textContent = `⚠ ${String(e)}`;
+    });
+    const el = document.getElementById('ctor-result');
+    if (el) el.textContent = `▶ Сбор запущен (${cartesian(c).length} целей) — см. вкладку «Сбор данных».`;
+  });
+
+  // own supplier_id
+  const own = await loadOwnSupplierId();
+  const ownEl = document.getElementById('own-supplier') as HTMLInputElement | null;
+  if (ownEl && own != null) ownEl.value = String(own);
+  document.getElementById('own-save')?.addEventListener('click', async () => {
+    const raw = (document.getElementById('own-supplier') as HTMLInputElement | null)?.value?.trim();
+    const n = raw ? Number(raw) : NaN;
+    await saveOwnSupplierId(Number.isFinite(n) ? n : null);
+    const est = document.getElementById('ctor-result');
+    // reuse a hint surface; no dedicated element for own-save feedback
+    if (est) est.textContent = Number.isFinite(n) ? `✓ supplier_id = ${n}` : '✓ supplier_id сброшен';
+  });
+
+  // detail_k: top-N cards to open per query for /detail capture (per-wh stocks, promotions)
+  const dk = await loadDetailK();
+  const dkEl = document.getElementById('detail-k') as HTMLInputElement | null;
+  if (dkEl) dkEl.value = String(dk);
+  document.getElementById('detail-k-save')?.addEventListener('click', async () => {
+    const raw = (document.getElementById('detail-k') as HTMLInputElement | null)?.value?.trim();
+    const n = raw ? Number(raw) : NaN;
+    const val = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 8;
+    await saveDetailK(val);
+    const est = document.getElementById('ctor-result');
+    if (est) est.textContent = val > 0 ? `✓ детализация: топ-${val} карточек на запрос` : '✓ детализация: все карточки (без лимита)';
+  });
+
+  // storage estimate + persist
+  refreshStorageEstimate();
+  document.getElementById('storage-persist')?.addEventListener('click', async () => {
+    if (navigator.storage?.persist) {
+      const granted = await navigator.storage.persist();
+      refreshStorageEstimate();
+      const el = document.getElementById('storage-estimate');
+      if (el) el.textContent = granted ? '✓ Постоянное хранилище предоставлено.' : '✗ Браузер отклонил запрос (нельзя детерминированно — зависит от настроек сайта).';
+    }
+  });
+}
+
+async function refreshStorageEstimate(): Promise<void> {
+  const el = document.getElementById('storage-estimate');
+  if (!el) return;
+  if (!navigator.storage?.estimate) {
+    el.textContent = 'Storage API недоступен в этом браузере.';
+    return;
+  }
+  const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+  const pct = quota > 0 ? Math.round((usage / quota) * 100) : 0;
+  let suffix = '';
+  if (typeof navigator.storage.persisted === 'function') {
+    suffix = (await navigator.storage.persisted()) ? ' [persisted]' : ' [не persisted]';
+  }
+  el.textContent = `Использовано ${(usage / 1048576).toFixed(1)} МБ из ${(quota / 1048576).toFixed(0)} МБ (${pct}%).${suffix}`;
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+coverage/
+.vite/
+
+# The root .gitignore has a global `*.json` rule (to keep API dumps / test data out of the repo).
+# Re-include our build-critical config so a fresh clone can `npm install` / `tsc` / `build`.
+!package.json
+!package-lock.json
+!tsconfig.json
