@@ -168,29 +168,120 @@ func TestDecodeCard_Detail(t *testing.T) {
 	}
 }
 
-// TestDecodeAd verifies banner decoding: advertiser name/INN lifted from the
-// OrdBannerMark object, erid and promo_id carried.
+// TestDecodeAd covers the two real WB ad-endpoint shapes captured in Stage 6.5:
+//
+//   - banners-website v2/banners → top-level ARRAY (the primary source): each
+//     banner is {href, src, alt, promoText?, ordBannerMark?, bannerType}.
+//   - __internal/banners/shelfs/search → {data:{banners:{data:[]}, shelfs:{data:[]}}}.
+//
+// Advertiser identity is parsed from the ordBannerMark string
+// "NAME, ИНН <digits>, ЕРИД <token>"; internal WB promos (no mark) fall back to
+// promoText/alt; erid falls back to the landing href's ?erid= param.
 func TestDecodeAd(t *testing.T) {
-	d, err := Decode(raw("ad", "https://w.ru/ad", `{
-		"data":{"shelfs":[{"data":[{
-		  "promoId": 42, "bannerType": "catalog",
-		  "creative": {"url":"https://x/c.jpg"}, "landing": "https://x/land",
-		  "ordBannerErid": "erid123",
-		  "ordBannerMark": {"advertiserName":"ООО Рога","advertiserInn":"7700123456"}
-		}]}]}}`), ts)
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
-	if len(d.VitrineAds) != 1 {
-		t.Fatalf("vitrine_ads = %d, want 1", len(d.VitrineAds))
-	}
-	a := d.VitrineAds[0]
-	if a.AdvertiserName != "ООО Рога" || a.AdvertiserINN != "7700123456" {
-		t.Errorf("advertiser = %q/%q", a.AdvertiserName, a.AdvertiserINN)
-	}
-	if a.Erid != "erid123" || a.CreativeURL != "https://x/c.jpg" || a.PromoID == nil || *a.PromoID != 42 {
-		t.Errorf("ad = %+v", a)
-	}
+	t.Run("v2 banners array", func(t *testing.T) {
+		// Three banners lifted from a live capture: social ad (ordBannerMark),
+		// internal promo (promoText), and a bare link (alt only).
+		d, err := Decode(raw("ad",
+			"https://banners-website.wildberries.ru/public/v2/banners?urltype=1024", `[
+			  {"href":"https://projects.pervye.ru/?utm=x&erid=L71GTkMSi","src":"/adsf/1782856217708260210.webp",
+			   "alt":"Социальная реклама","ordBannerMark":"ДВИЖЕНИЕ ПЕРВЫХ, ИНН 9709087880, ЕРИД L71GTkMSi","bannerType":"static"},
+			  {"href":"/promotions/vse-dlya-uborki","src":"/poster/ru/action2/c660x210/tab_hozztov_12_22574745.jpg",
+			   "alt":"Хозяйственные товары","promoText":"Хозяйственные товары","bannerType":"static"},
+			  {"href":"/wbclub","src":"/poster/ru/horizontal1/960x412/960x412.jpg",
+			   "alt":"Wb Клуб","bannerType":""}
+			]`), ts)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if got, want := len(d.VitrineAds), 3; got != want {
+			t.Fatalf("vitrine_ads = %d, want %d", got, want)
+		}
+		a := d.VitrineAds[0]
+		if a.AdvertiserName != "ДВИЖЕНИЕ ПЕРВЫХ" || a.AdvertiserINN != "9709087880" || a.Erid != "L71GTkMSi" {
+			t.Errorf("banner0 identity = %q/%q/%q", a.AdvertiserName, a.AdvertiserINN, a.Erid)
+		}
+		if a.BannerType != "static" || a.CreativeURL != "/adsf/1782856217708260210.webp" ||
+			a.LandingHref != "https://projects.pervye.ru/?utm=x&erid=L71GTkMSi" {
+			t.Errorf("banner0 fields = %+v", a)
+		}
+		if a.PromoID != nil {
+			t.Errorf("banner0 promo_id = %v, want nil (v2/banners has none)", *a.PromoID)
+		}
+		b := d.VitrineAds[1]
+		if b.AdvertiserName != "Хозяйственные товары" || b.AdvertiserINN != "" || b.Erid != "" {
+			t.Errorf("banner1 (internal promo) = %q/%q/%q", b.AdvertiserName, b.AdvertiserINN, b.Erid)
+		}
+		c := d.VitrineAds[2]
+		if c.AdvertiserName != "Wb Клуб" {
+			t.Errorf("banner2 (alt fallback) name = %q", c.AdvertiserName)
+		}
+	})
+
+	t.Run("shelfs search object both slots", func(t *testing.T) {
+		// data.banners and data.shelfs each populated with one banner → 2 ads total.
+		d, err := Decode(raw("ad",
+			"/__internal/banners/shelfs/search?query=x", `{
+			  "metadata":{"query":"x"},
+			  "data":{
+			    "banners":{"data":[{"href":"/b1","src":"/s1.jpg","alt":"B1","bannerType":"static"}],"total":1},
+			    "shelfs":{"data":[{"href":"/b2","src":"/s2.jpg","alt":"B2",
+			      "ordBannerMark":"ООО ТЕСТ, ИНН 1234567890, ЕРИД Lj1"}],"total":1}}} `), ts)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if got, want := len(d.VitrineAds), 2; got != want {
+			t.Fatalf("vitrine_ads = %d, want %d", got, want)
+		}
+		if d.VitrineAds[0].AdvertiserName != "B1" {
+			t.Errorf("banners-slot ad name = %q", d.VitrineAds[0].AdvertiserName)
+		}
+		s := d.VitrineAds[1]
+		if s.AdvertiserName != "ООО ТЕСТ" || s.AdvertiserINN != "1234567890" || s.Erid != "Lj1" {
+			t.Errorf("shelfs-slot ad = %q/%q/%q", s.AdvertiserName, s.AdvertiserINN, s.Erid)
+		}
+	})
+
+	t.Run("shelfs search empty slots", func(t *testing.T) {
+		// The shape actually captured for a low-ad query: both slots total=0.
+		d, err := Decode(raw("ad",
+			"/__internal/banners/shelfs/search?query=x", `{
+			  "metadata":{"query":"x"},
+			  "data":{"banners":{"data":[],"total":0},"shelfs":{"data":[],"total":0}}}`), ts)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if len(d.VitrineAds) != 0 {
+			t.Fatalf("vitrine_ads = %d, want 0", len(d.VitrineAds))
+		}
+	})
+
+	t.Run("empty array yields nothing", func(t *testing.T) {
+		// v2/banners returns [] when no banners match the urltype — no error.
+		d, err := Decode(raw("ad", "https://banners-website.wildberries.ru/public/v2/banners", `[]`), ts)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if len(d.VitrineAds) != 0 {
+			t.Fatalf("vitrine_ads = %d, want 0", len(d.VitrineAds))
+		}
+	})
+
+	t.Run("erid falls back to href param", func(t *testing.T) {
+		// ordBannerMark carries name+INN but no ЕРИД; the href's ?erid= fills it.
+		d, err := Decode(raw("ad", "https://banners-website.wildberries.ru/public/v2/banners", `[
+		  {"href":"https://adv.example/?erid=Lj9","src":"/s.jpg","alt":"A",
+		   "ordBannerMark":"ООО ФИРМА, ИНН 9999999999"}]`), ts)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		a := d.VitrineAds[0]
+		if a.AdvertiserName != "ООО ФИРМА" || a.AdvertiserINN != "9999999999" {
+			t.Errorf("identity = %q/%q", a.AdvertiserName, a.AdvertiserINN)
+		}
+		if a.Erid != "Lj9" {
+			t.Errorf("erid = %q, want Lj9 (href fallback)", a.Erid)
+		}
+	})
 }
 
 // TestDecodeUnknownKind verifies an unrecognized kind yields no rows and no error

@@ -47,7 +47,18 @@ func Decode(it Intercept, snapshot SnapshotTs) (Decoded, error) {
 var (
 	rePage = regexp.MustCompile(`[?&]page=(\d+)`)
 	reDest = regexp.MustCompile(`[?&]dest=(\d+)`)
+
+	// OРД marker (ordBannerMark) parsing. WB's v2/banners sends it as a literal
+	// string "NAME, ИНН <digits>, ЕРИД <token>"; these pull the INN and ЕРИД out.
+	reOrdINN  = regexp.MustCompile(`ИНН\s*(\d+)`)
+	reOrdERID = regexp.MustCompile(`ЕРИД\s*([A-Za-z0-9]+)`)
+	// External/paid ad landing hrefs carry the erid as a ?erid= query param.
+	reEridParam = regexp.MustCompile(`[?&]erid=([A-Za-z0-9]+)`)
 )
+
+// ordINNLabel is the Cyrillic "ИНН" marker delimiting the advertiser name within
+// an ordBannerMark string. Upper-cased for a case-insensitive substring search.
+const ordINNLabel = "ИНН"
 
 // pageAndDest extracts the page (default 1) and dest/region (nil if absent) from a
 // captured WB search/brand URL. Mirrors background.js exactly.
@@ -265,94 +276,145 @@ func extractDetail(p *wbCardProduct, qid int64, snapshot SnapshotTs) CompetitorC
 // ----------------------------------------------------------------------------
 // ad — banner advertisements
 //
-// The banners/shelfs response shape is the least-documented of the capture kinds;
-// the structure below is the assumed WB layout (data.shelfs[].data[]). It is
-// refined against live captures during the Stage 6 extension session. Decoding is
-// defensive: absent fields default to zero/empty, never error.
+// WB serves vitrine ads from two endpoints with different shapes (refined from
+// live captures, Stage 6.5):
+//
+//  1. banners-website.../public/v2/banners  →  top-level ARRAY of wbBanner. This
+//     is the primary source: a single search page fires several v2/banners calls
+//     (one per urltype), each returning 0..N banners.
+//  2. __internal/banners/shelfs/search      →  {data:{banners:{data:[],total},
+//     shelfs:{data:[],total}}}. Slot banners share the wbBanner shape; for low-ad
+//     queries both slots are empty (total=0). Handled defensively regardless.
+//
+// A wbBanner carries the landing href, creative src, and an OРД marker
+// (ordBannerMark) encoding the legal advertiser identity. Decoding never errors on
+// a structural mismatch — it yields 0 ads and lets the caller log the kind, so a
+// future third endpoint shape cannot break the pipeline.
 // ----------------------------------------------------------------------------
 
 type wbAdResponse struct {
 	Data struct {
-		Shelfs []wbShelf `json:"shelfs"`
+		Banners wbAdSlot `json:"banners"`
+		Shelfs  wbAdSlot `json:"shelfs"`
 	} `json:"data"`
 }
 
-type wbShelf struct {
+// wbAdSlot is one named slot of the shelfs/search response: a banner array + count.
+type wbAdSlot struct {
 	Data []wbBanner `json:"data"`
 }
 
+// wbBanner is one banner from v2/banners (or a shelfs/search slot). Only the
+// fields we persist are decoded; the rest (uid, locationType, urlType, tgoData, …)
+// are ignored by Go's json decoder. ordBannerMark stays RawMessage because it is a
+// string in v2/banners ("NAME, ИНН N, ЕРИД E") but may be an object elsewhere.
 type wbBanner struct {
-	PromoID       *int64          `json:"promoId"`
-	BannerType    string          `json:"bannerType"`
-	Creative      json.RawMessage `json:"creative"` // object {src/url} OR string URL
-	Landing       string          `json:"landing"`
-	OrdBannerErid string          `json:"ordBannerErid"`
-	OrdBannerMark json.RawMessage `json:"ordBannerMark"` // ОРД marker: object {name,inn} OR string
+	Href          string          `json:"href"`              // landing URL (absolute or WB-relative)
+	Src           string          `json:"src"`               // creative image path (WB-relative)
+	Alt           string          `json:"alt"`               // alt text; for internal promos = the promo name
+	PromoText     string          `json:"promoText"`         // internal-WB promo text (no OРД marker)
+	OrdBannerMark json.RawMessage `json:"ordBannerMark"`
+	BannerType    string          `json:"bannerType"`        // "" | "static" | "banner"
 }
 
 func decodeAd(it Intercept, snapshot SnapshotTs) (Decoded, error) {
-	var resp wbAdResponse
-	if err := json.Unmarshal(it.Body, &resp); err != nil {
-		return Decoded{}, fmt.Errorf("decode ad body: %w", err)
+	var banners []wbBanner
+
+	// Shape 1: top-level array (banners-website v2/banners).
+	if err := json.Unmarshal(it.Body, &banners); err == nil {
+		return adsFromBanners(banners, it.QueryID, snapshot), nil
 	}
 
-	var d Decoded
-	for _, shelf := range resp.Data.Shelfs {
-		for _, b := range shelf.Data {
-			name, inn := ordAdvertiser(b.OrdBannerMark)
-			d.VitrineAds = append(d.VitrineAds, VitrineAd{
-				SnapshotTs:     snapshot,
-				QueryID:        it.QueryID,
-				AdvertiserName: name,
-				AdvertiserINN:  inn,
-				Erid:           b.OrdBannerErid,
-				PromoID:        b.PromoID,
-				BannerType:     b.BannerType,
-				CreativeURL:    extractURL(b.Creative),
-				LandingHref:    b.Landing,
-			})
-		}
+	// Shape 2: object wrapper with data.{banners,shelfs} slots (shelfs/search).
+	var resp wbAdResponse
+	if err := json.Unmarshal(it.Body, &resp); err == nil {
+		banners = append(banners, resp.Data.Banners.Data...)
+		banners = append(banners, resp.Data.Shelfs.Data...)
+		return adsFromBanners(banners, it.QueryID, snapshot), nil
 	}
-	return d, nil
+
+	// Neither known shape matched — defensive: yield nothing, never error.
+	return Decoded{}, nil
 }
 
-// ordAdvertiser extracts the advertiser name/INN from an OrdBannerMark, which may
-// be a JSON object {advertiserName, advertiserInn} or an opaque marker string.
-func ordAdvertiser(raw json.RawMessage) (name, inn string) {
+// adsFromBanners maps a slice of wbBanner into VitrineAd rows.
+func adsFromBanners(banners []wbBanner, qid int64, snapshot SnapshotTs) Decoded {
+	var d Decoded
+	for _, b := range banners {
+		d.VitrineAds = append(d.VitrineAds, adFromBanner(b, qid, snapshot))
+	}
+	return d
+}
+
+// adFromBanner builds one VitrineAd. Advertiser identity (name/INN/erid) comes
+// from the OРД marker; for internal WB promos (no marker) the promo/alt text is
+// used as the name. PromoID is left nil — v2/banners exposes no numeric promo id.
+func adFromBanner(b wbBanner, qid int64, snapshot SnapshotTs) VitrineAd {
+	name, inn, erid := parseOrdMark(b.OrdBannerMark)
+	if erid == "" {
+		erid = eridFromHref(b.Href) // external ad hrefs carry ?erid=
+	}
+	if name == "" {
+		// Internal WB promo (no OРД marker): "Хозяйственные товары", "Wb Клуб", …
+		name = b.PromoText
+		if name == "" {
+			name = b.Alt
+		}
+	}
+	return VitrineAd{
+		SnapshotTs:     snapshot,
+		QueryID:        qid,
+		AdvertiserName: name,
+		AdvertiserINN:  inn,
+		Erid:           erid,
+		BannerType:     b.BannerType,
+		CreativeURL:    b.Src,
+		LandingHref:    b.Href,
+	}
+}
+
+// parseOrdMark extracts advertiser name/INN/erid from an ordBannerMark. WB's
+// v2/banners sends it as a string "NAME, ИНН <digits>, ЕРИД <token>"; an object
+// form {advertiserName, advertiserInn, erid} is also tolerated (defensive).
+func parseOrdMark(raw json.RawMessage) (name, inn, erid string) {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" {
-		return "", ""
+		return "", "", ""
 	}
+	// Object form (not observed in v2/banners, but tolerated).
 	var obj struct {
 		Name string `json:"advertiserName"`
 		INN  string `json:"advertiserInn"`
+		Erid string `json:"erid"`
 	}
 	if err := json.Unmarshal(raw, &obj); err == nil && (obj.Name != "" || obj.INN != "") {
-		return obj.Name, obj.INN
+		return obj.Name, obj.INN, obj.Erid
 	}
-	return s, "" // fall back: store the raw marker as the name
+	// String form: "ДВИЖЕНИЕ ПЕРВЫХ, ИНН 9709087880, ЕРИД L71GTkMSi".
+	var str string
+	if err := json.Unmarshal(raw, &str); err != nil {
+		return s, "", "" // give up: store the raw bytes as the name
+	}
+	if m := reOrdINN.FindStringSubmatch(str); m != nil {
+		inn = m[1]
+	}
+	if m := reOrdERID.FindStringSubmatch(str); m != nil {
+		erid = m[1]
+	}
+	// Name = everything before the "ИНН" marker, trimmed of the trailing comma.
+	if idx := strings.Index(strings.ToUpper(str), ordINNLabel); idx > 0 {
+		name = strings.Trim(strings.TrimSpace(str[:idx]), ",")
+	} else {
+		name = strings.TrimSpace(str)
+	}
+	return name, inn, erid
 }
 
-// extractURL reads a URL from a field that may be a string or an object with a
-// url/src member.
-func extractURL(raw json.RawMessage) string {
-	s := strings.TrimSpace(string(raw))
-	if s == "" || s == "null" {
-		return ""
-	}
-	var str string
-	if err := json.Unmarshal(raw, &str); err == nil {
-		return str
-	}
-	var obj struct {
-		URL string `json:"url"`
-		Src string `json:"src"`
-	}
-	if err := json.Unmarshal(raw, &obj); err == nil {
-		if obj.URL != "" {
-			return obj.URL
-		}
-		return obj.Src
+// eridFromHref pulls the erid token from a landing href's ?erid= query param
+// (external/paid ad hrefs carry it as a fallback when ordBannerMark is absent).
+func eridFromHref(href string) string {
+	if m := reEridParam.FindStringSubmatch(href); m != nil {
+		return m[1]
 	}
 	return ""
 }
