@@ -19,6 +19,7 @@ describe('buildTargets — constructor branch', () => {
   it('resolves stable query_ids across two builds and builds search targets', async () => {
     await saveConstructor({
       subjects: ['кроссовки', 'ботинки'],
+      brand: ['Nike'],
       gender: [],
       season: [],
       age: [],
@@ -32,8 +33,9 @@ describe('buildTargets — constructor branch', () => {
     const a = await buildTargets({ source: 'constructor' });
     const b = await buildTargets({ source: 'constructor' });
 
-    // comment appended; material/purpose threaded into the query string
-    expect(a.map((t) => t.query)).toEqual(['кроссовки текстиль для бега недорогие', 'ботинки текстиль для бега недорогие']);
+    // brand threaded right after subject; material/purpose + comment appended
+    expect(a.map((t) => t.query)).toEqual(['кроссовки Nike текстиль для бега недорогие', 'ботинки Nike текстиль для бега недорогие']);
+    expect(a[0]!.brand).toBe('Nike');
     expect(a[0]!.material).toBe('текстиль');
     expect(a[0]!.purpose).toBe('для бега');
     expect(a[0]!.comment).toBe('недорогие');

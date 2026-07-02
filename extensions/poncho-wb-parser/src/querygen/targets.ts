@@ -22,11 +22,11 @@ export async function buildTargets(collect: CollectSource): Promise<Target[]> {
   if (collect.source === 'single') {
     if (collect.singleQuery && collect.singleQuery.trim() !== '') {
       const query = collect.singleQuery.trim();
-      const query_id = await upsertQuery({ query, subject: '', gender: '', season: '', age: '', material: '', purpose: '', comment: '' });
-      return [{ kind: 'search', query_id, query, url: searchUrl(query), subject: '', gender: '', season: '', age: '', material: '', purpose: '', comment: '' }];
+      const query_id = await upsertQuery({ query, subject: '', brand: '', gender: '', season: '', age: '', material: '', purpose: '', comment: '' });
+      return [{ kind: 'search', query_id, query, url: searchUrl(query), subject: '', brand: '', gender: '', season: '', age: '', material: '', purpose: '', comment: '' }];
     }
     if (collect.singleNmId != null) {
-      return [{ kind: 'card', query_id: null, query: '', url: detailUrl(collect.singleNmId), subject: '', gender: '', season: '', age: '', material: '', purpose: '', comment: '' }];
+      return [{ kind: 'card', query_id: null, query: '', url: detailUrl(collect.singleNmId), subject: '', brand: '', gender: '', season: '', age: '', material: '', purpose: '', comment: '' }];
     }
     return [];
   }
@@ -42,6 +42,7 @@ export async function buildTargets(collect: CollectSource): Promise<Target[]> {
     query: s.query,
     url: searchUrl(s.query),
     subject: s.subject,
+    brand: s.brand,
     gender: s.gender,
     season: s.season,
     age: s.age,

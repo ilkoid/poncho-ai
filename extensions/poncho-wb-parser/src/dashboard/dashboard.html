@@ -64,7 +64,7 @@
       table.rpt { width: 100%; border-collapse: collapse; font-size: 13px; }
       table.rpt th, table.rpt td { border: 1px solid #eee; padding: 5px 8px; text-align: left; }
       table.rpt th { background: #f5f6f8; font-weight: 600; }
-      table.rpt tr.own { background: #fff4ce; font-weight: 600; }
+      table.rpt tr.focus { background: #fff4ce; font-weight: 600; }
       table.rpt td.num { text-align: right; font-variant-numeric: tabular-nums; }
       .delta-up { color: #1a7f37; }
       .delta-down { color: #cf222e; }
@@ -91,9 +91,10 @@
       <section id="tab-settings" class="tab-panel active">
         <div class="panel">
           <h3>Конструктор запросов</h3>
-          <p class="hint">Декартово произведение subject × gender × season × age × материал × назначение. Пустая строка в списке = «без этого измерения». Один токен — на строку. «Дополнение» — одно поле, дописывается в конец каждого запроса (не умножается).</p>
+          <p class="hint">Декартово произведение subject × бренд × gender × season × age × материал × назначение. Пустая строка в списке = «без этого измерения». Один токен — на строку. «Дополнение» — одно поле, дописывается в конец каждого запроса (не умножается).</p>
           <div class="ctor-grid">
             <label>Предметы (subject)<textarea id="ctor-subjects" rows="3"></textarea></label>
+            <label>Бренд (brand)<textarea id="ctor-brand" rows="3"></textarea></label>
             <label>Пол (gender)<textarea id="ctor-gender" rows="3"></textarea></label>
             <label>Сезон / повод (season)<textarea id="ctor-season" rows="3"></textarea></label>
             <label>Возраст (age)<textarea id="ctor-age" rows="3"></textarea></label>
@@ -113,17 +114,19 @@
           </div>
           <div class="row" style="margin-top:10px; display:flex; gap:8px;">
             <button id="ctor-save" class="primary">Сохранить конструктор</button>
-            <button id="ctor-run">Собрать по конструктору</button>
           </div>
           <p id="ctor-result" class="hint"></p>
         </div>
         <div class="panel">
-          <h3>Свой supplier_id</h3>
-          <div class="row" style="display:flex; gap:8px; align-items:center;">
-            <input id="own-supplier" type="number" placeholder="например: 12345" style="flex:1; padding:7px; border:1px solid #ccc; border-radius:4px;" />
-            <button id="own-save">Сохранить</button>
+          <h3>Фильтр по бренду</h3>
+          <label style="display:flex; flex-direction:column; font-size:12px; color:#555; gap:4px;">
+            Бренды для подсветки (один на строку)
+            <textarea id="highlight-brands" rows="3" placeholder="например:&#10;Ralf Ringer&#10;Ecco" style="font:13px/1.4 -apple-system, sans-serif; padding:6px; border:1px solid #ccc; border-radius:4px; resize:vertical;"></textarea>
+          </label>
+          <div class="row" style="margin-top:8px;">
+            <button id="highlight-brands-save">Сохранить</button>
           </div>
-          <p class="hint">Подсветит ваши позиции/карточки в отчётах (Видимость, Карта конкурентов).</p>
+          <p class="hint">Подсветит эти бренды в отчётах (Видимость, Карта конкурентов) — жёлтая строка + ★. Данные не исключает, только акцент.</p>
         </div>
         <div class="panel">
           <h3>Детализация карточек</h3>
@@ -142,23 +145,31 @@
         <div class="panel">
           <h3>Инструкция (3 шага)</h3>
           <ol style="margin:0; padding-left:20px; color:#444;">
-            <li>Заполните конструктор выше → «Сохранить».</li>
-            <li>На вкладке «Сбор данных» нажмите «Собрать по конструктору» (или стартуйте один запрос для проверки).</li>
+            <li>Заполните конструктор выше → «Сохранить». При желании задайте «Фильтр по бренду» для подсветки в отчётах.</li>
+            <li>На вкладке «Сбор данных» нажмите «Собрать по поиску» (или стартуйте один запрос для проверки).</li>
             <li>На вкладке «Отчёты и экспорт» выберите снимок — появятся отчёты и кнопки экспорта.</li>
           </ol>
+        </div>
+        <div class="panel">
+          <h3>Отладка</h3>
+          <div class="row" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <button id="btn-mock" class="primary">▶ Run mock session</button>
+            <button id="btn-stop" class="danger">■ Стоп</button>
+          </div>
+          <p class="hint">Mock — проверка конвейера decode→Dexie на синтетике (без live-WB). Стоп прерывает текущий прогон (включая конструкторный сбор на вкладке «Сбор данных»).</p>
         </div>
       </section>
 
       <!-- Сбор данных -->
       <section id="tab-collect" class="tab-panel">
         <div class="panel">
-          <h3>Движок сбора</h3>
-          <div class="row" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-            <button id="btn-mock" class="primary">▶ Run mock session</button>
-            <button id="btn-stop" class="danger">■ Стоп</button>
-          </div>
-          <p class="hint">Mock-сессия прогоняет синтетические перехваты (search + card_detail) без live-WB — для проверки конвейера decode→Dexie.</p>
-          <hr style="margin:14px 0; border:none; border-top:1px solid #eee;" />
+          <h3>Запрос</h3>
+          <p class="hint">Текущий конструктор — см. вкладку «Настройки». Ниже список запросов, которые уйдут в WB.</p>
+          <div id="run-preview" class="hint" style="font-style:normal; max-height:140px; overflow:auto; background:#f5f6f8; border:1px solid #eee; border-radius:4px; padding:8px; margin-bottom:10px;">загрузка…</div>
+          <button id="btn-run-constructor" class="primary">▶ Собрать по поиску</button>
+        </div>
+        <div class="panel">
+          <h3>Разовый запрос</h3>
           <div class="row" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
             <input id="single-query" type="text" placeholder="один запрос, например: кроссовки детские" style="flex:1; min-width:200px; padding:7px; border:1px solid #ccc; border-radius:4px;" />
             <button id="btn-query">Старт (запрос)</button>

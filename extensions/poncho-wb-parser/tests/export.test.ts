@@ -25,7 +25,7 @@ describe('toCSV', () => {
 
 const vis: VisibilityReport = {
   snapshot_a: 'A', snapshot_b: null, query_id: 1,
-  rows: [{ nm_id: 111, brand: 'Nike', supplier_id: 900, is_own: true, promo_id: null, pos_a: 5, pos_b: null, delta: null }],
+  rows: [{ nm_id: 111, brand: 'Nike', supplier_id: 900, is_focus: true, promo_id: null, pos_a: 5, pos_b: null, delta: null }],
   summary: { total_a: 1, total_b: 0, appeared: 0, disappeared: 0, improved: 0, deteriorated: 0, promo_panels: 0, promo_covered: 0 },
 };
 
@@ -39,7 +39,7 @@ describe('report → table converters', () => {
   it('competitors → table with avg_price converted to rubles', () => {
     const m: CompetitorMapReport = {
       snapshot: 'A', query_id: null,
-      rows: [{ supplier_id: 900, supplier_name: 'ООО Рога', nm_count: 3, query_count: 2, avg_rating: 4.5, avg_price: 89900, is_own: true }],
+      rows: [{ supplier_id: 900, supplier_name: 'ООО Рога', nm_count: 3, query_count: 2, avg_rating: 4.5, avg_price: 89900, is_focus: true }],
     };
     const t = competitorsToTables(m);
     // avg_price_rub is the last column; 89900 kop → 899.00 rub

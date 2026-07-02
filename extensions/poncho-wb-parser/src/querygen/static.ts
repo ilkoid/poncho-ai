@@ -1,7 +1,7 @@
 // src/querygen/static.ts — the cartesian constructor. Pure port of StaticGenerator.Generate
 // in pkg/wbscraper/querygen.go (no chrome, no DB → unit-testable in isolation).
 //
-// Construction rules (mirror the Go source, extended with material/purpose/comment):
+// Construction rules (mirror the Go source, extended with brand/material/purpose/comment):
 //   - subjects is the seed list and the outer axis; every query contains a subject.
 //   - the "" token in any list dimension means "skip that dimension for this cell"; non-empty
 //     tokens are joined with a single space into the query text.
@@ -13,6 +13,7 @@
 
 export interface ConstructorConfig {
   subjects: string[];
+  brand: string[]; // cartesian axis (Nike, Ralf Ringer, …); "" line = skip
   gender: string[];
   season: string[];
   age: string[];
@@ -27,6 +28,7 @@ export interface ConstructorConfig {
 export interface ConstructorSeed {
   query: string;
   subject: string;
+  brand: string;
   gender: string;
   season: string;
   age: string;
@@ -38,6 +40,7 @@ export interface ConstructorSeed {
 /** Default constructor — mirrors cmd/.configs/download-all/wb-scraper-collector.yaml. */
 export const DEFAULT_CONSTRUCTOR: ConstructorConfig = {
   subjects: ['бейсболки'],
+  brand: [],
   gender: ['для девочки'],
   season: ['летние'],
   age: [''],
@@ -48,26 +51,28 @@ export const DEFAULT_CONSTRUCTOR: ConstructorConfig = {
   dedup: true,
 };
 
-/** cartesian walks subjects × gender × season × age × material × purpose (deterministic order),
- *  appends `comment` verbatim to every cell, and returns one seed per surviving, deduplicated
+/** cartesian walks subjects × brand × gender × season × age × material × purpose (deterministic
+ *  order), appends `comment` verbatim to every cell, and returns one seed per surviving, deduplicated
  *  query. An empty subject list yields an empty array. `comment` is applied per-cell, never looped,
  *  so it does not grow the product. */
 export function cartesian(c: ConstructorConfig): ConstructorSeed[] {
   const seen = new Set<string>();
   const out: ConstructorSeed[] = [];
   for (const subject of dim(c.subjects)) {
-    for (const gender of dim(c.gender)) {
-      for (const season of dim(c.season)) {
-        for (const age of dim(c.age)) {
-          for (const material of dim(c.material)) {
-            for (const purpose of dim(c.purpose)) {
-              const query = joinTokens(subject, gender, season, age, material, purpose, c.comment);
-              if (query === '') continue; // all dimensions empty for this cell — nothing to search
-              if (c.dedup) {
-                if (seen.has(query)) continue;
-                seen.add(query);
+    for (const brand of dim(c.brand)) {
+      for (const gender of dim(c.gender)) {
+        for (const season of dim(c.season)) {
+          for (const age of dim(c.age)) {
+            for (const material of dim(c.material)) {
+              for (const purpose of dim(c.purpose)) {
+                const query = joinTokens(subject, brand, gender, season, age, material, purpose, c.comment);
+                if (query === '') continue; // all dimensions empty for this cell — nothing to search
+                if (c.dedup) {
+                  if (seen.has(query)) continue;
+                  seen.add(query);
+                }
+                out.push({ query, subject, brand, gender, season, age, material, purpose, comment: c.comment });
               }
-              out.push({ query, subject, gender, season, age, material, purpose, comment: c.comment });
             }
           }
         }

@@ -12,12 +12,12 @@ export function visibilityToTables(v: VisibilityReport): ExportTable[] {
   return [
     {
       name: 'Видимость',
-      columns: ['nm_id', 'brand', 'supplier_id', 'is_own', 'promo', 'pos_a', 'pos_b', 'delta'],
+      columns: ['nm_id', 'brand', 'supplier_id', 'is_focus', 'promo', 'pos_a', 'pos_b', 'delta'],
       rows: v.rows.map((r) => [
         r.nm_id,
         r.brand,
         r.supplier_id ?? '',
-        r.is_own ? 1 : 0,
+        r.is_focus ? 1 : 0,
         r.promo_id != null ? 1 : 0, // 1 = item sits in a WB promo panel (not a per-item CPC signal)
         r.pos_a ?? '',
         r.pos_b ?? '',

@@ -17,26 +17,26 @@ beforeEach(async () => {
 
 describe('upsertQuery — query_id stability', () => {
   it('resolves the same text to the same id across calls', async () => {
-    const a = await upsertQuery({ query: 'бейсболки для девочки', subject: 'бейсболки', gender: 'для девочки', season: '', age: '', material: '', purpose: '', comment: '' });
-    const b = await upsertQuery({ query: 'бейсболки для девочки', subject: 'бейсболки', gender: 'для девочки', season: '', age: '', material: '', purpose: '', comment: '' });
+    const a = await upsertQuery({ query: 'бейсболки для девочки', subject: 'бейсболки', gender: 'для девочки', season: '', age: '', material: '', purpose: '', comment: '', brand: '' });
+    const b = await upsertQuery({ query: 'бейсболки для девочки', subject: 'бейсболки', gender: 'для девочки', season: '', age: '', material: '', purpose: '', comment: '', brand: '' });
     expect(a).toBe(b);
     expect(db.search_queries.count()).resolves.toBe(1);
   });
 
   it('resolves different texts to different ids', async () => {
-    const a = await upsertQuery({ query: 'кроссовки', subject: 'кроссовки', gender: '', season: '', age: '', material: '', purpose: '', comment: '' });
-    const b = await upsertQuery({ query: 'ботинки', subject: 'ботинки', gender: '', season: '', age: '', material: '', purpose: '', comment: '' });
+    const a = await upsertQuery({ query: 'кроссовки', subject: 'кроссовки', gender: '', season: '', age: '', material: '', purpose: '', comment: '', brand: '' });
+    const b = await upsertQuery({ query: 'ботинки', subject: 'ботинки', gender: '', season: '', age: '', material: '', purpose: '', comment: '', brand: '' });
     expect(a).not.toBe(b);
   });
 });
 
 describe('upsertQueries — bulk with dedup', () => {
   it('dedups the same text within a batch and against existing rows', async () => {
-    const pre = await upsertQuery({ query: 'кроссовки', subject: 'кроссовки', gender: '', season: '', age: '', material: '', purpose: '', comment: '' });
+    const pre = await upsertQuery({ query: 'кроссовки', subject: 'кроссовки', gender: '', season: '', age: '', material: '', purpose: '', comment: '', brand: '' });
     const map = await upsertQueries([
-      { query: 'кроссовки', subject: 'кроссовки', gender: '', season: '', age: '', material: '', purpose: '', comment: '' }, // exists
-      { query: 'кроссовки', subject: 'кроссовки', gender: '', season: '', age: '', material: '', purpose: '', comment: '' }, // dup in batch
-      { query: 'ботинки', subject: 'ботинки', gender: '', season: '', age: '', material: '', purpose: '', comment: '' }, // new
+      { query: 'кроссовки', subject: 'кроссовки', gender: '', season: '', age: '', material: '', purpose: '', comment: '', brand: '' }, // exists
+      { query: 'кроссовки', subject: 'кроссовки', gender: '', season: '', age: '', material: '', purpose: '', comment: '', brand: '' }, // dup in batch
+      { query: 'ботинки', subject: 'ботинки', gender: '', season: '', age: '', material: '', purpose: '', comment: '', brand: '' }, // new
     ]);
     expect(map.get('кроссовки')).toBe(pre); // stable across the two paths
     expect(map.get('ботинки')).not.toBe(pre);

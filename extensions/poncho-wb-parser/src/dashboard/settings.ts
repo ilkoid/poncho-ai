@@ -1,19 +1,22 @@
 // src/dashboard/settings.ts — the "Настройки" tab logic: constructor editing with live cartesian
-// preview, save → upsert (stable query_id), own_supplier_id, storage estimate + persist.
-// Imported and invoked by dashboard.ts.
+// preview, save → upsert (stable query_id), highlight-brands filter, detail_k, storage estimate.
+// Imported and invoked by dashboard.ts. readConfigFromForm is exported for the collect-tab run button.
 
 import { upsertQueries } from '../db/upsert';
 import { cartesian, parseTextarea, type ConstructorConfig } from '../querygen/static';
-import { loadConstructor, saveConstructor, loadOwnSupplierId, saveOwnSupplierId, loadDetailK, saveDetailK } from '../storage/config';
+import { loadConstructor, saveConstructor, loadHighlightBrands, saveHighlightBrands, loadDetailK, saveDetailK } from '../storage/config';
 
-/** Read the 6 textareas + the comment input + knobs into a ConstructorConfig. */
-function readConfigFromForm(): ConstructorConfig {
+/** Read the 7 textareas + the comment input + knobs into a ConstructorConfig. Exported because the
+ *  collect-tab "Собрать по поиску" button reads the SAME form (tabs are display:none, the DOM lives
+ *  in one document) to preserve the save-then-run behaviour without duplicating the parse logic. */
+export function readConfigFromForm(): ConstructorConfig {
   const val = (id: string): string[] => parseTextarea((document.getElementById(id) as HTMLTextAreaElement | null)?.value ?? '');
   const raw = (id: string): string => ((document.getElementById(id) as HTMLInputElement | null)?.value ?? '').trim();
   const max = Number((document.getElementById('ctor-max') as HTMLInputElement | null)?.value);
   const dedup = (document.getElementById('ctor-dedup') as HTMLInputElement | null)?.checked ?? true;
   return {
     subjects: val('ctor-subjects'),
+    brand: val('ctor-brand'),
     gender: val('ctor-gender'),
     season: val('ctor-season'),
     age: val('ctor-age'),
@@ -32,11 +35,11 @@ function renderPreview(c: ConstructorConfig): void {
   // max(1, n) — using raw .length would show "×0 = 0 комбинаций" for an unconfigured dimension,
   // which looks like a bug. This matches what cartesian() actually produces.
   const eff = (n: number): number => Math.max(1, n);
-  const total = eff(c.subjects.length) * eff(c.gender.length) * eff(c.season.length) * eff(c.age.length) * eff(c.material.length) * eff(c.purpose.length);
+  const total = eff(c.subjects.length) * eff(c.brand.length) * eff(c.gender.length) * eff(c.season.length) * eff(c.age.length) * eff(c.material.length) * eff(c.purpose.length);
   const seeds = cartesian(c);
   const capped = c.max_queries > 0 ? Math.min(seeds.length, c.max_queries) : seeds.length;
   const commentSuffix = c.comment ? ` (+ «${c.comment}» к каждому)` : '';
-  el.textContent = `${eff(c.subjects.length)}×${eff(c.gender.length)}×${eff(c.season.length)}×${eff(c.age.length)}×${eff(c.material.length)}×${eff(c.purpose.length)} = ${total} комбинаций → ${seeds.length} уникальных → ${capped} к сбору${commentSuffix}`;
+  el.textContent = `${eff(c.subjects.length)}×${eff(c.brand.length)}×${eff(c.gender.length)}×${eff(c.season.length)}×${eff(c.age.length)}×${eff(c.material.length)}×${eff(c.purpose.length)} = ${total} комбинаций → ${seeds.length} уникальных → ${capped} к сбору${commentSuffix}`;
 }
 
 /** Populate the form from storage, then wire preview + save + collect + own_id + storage. */
@@ -47,6 +50,7 @@ export async function initSettings(): Promise<void> {
     if (el) el.value = v;
   };
   setVal('ctor-subjects', cfg.subjects.join('\n'));
+  setVal('ctor-brand', cfg.brand.join('\n'));
   setVal('ctor-gender', cfg.gender.join('\n'));
   setVal('ctor-season', cfg.season.join('\n'));
   setVal('ctor-age', cfg.age.join('\n'));
@@ -60,7 +64,7 @@ export async function initSettings(): Promise<void> {
   renderPreview(cfg);
 
   // live preview on any input change
-  for (const id of ['ctor-subjects', 'ctor-gender', 'ctor-season', 'ctor-age', 'ctor-material', 'ctor-purpose', 'ctor-comment', 'ctor-max', 'ctor-dedup']) {
+  for (const id of ['ctor-subjects', 'ctor-brand', 'ctor-gender', 'ctor-season', 'ctor-age', 'ctor-material', 'ctor-purpose', 'ctor-comment', 'ctor-max', 'ctor-dedup']) {
     document.getElementById(id)?.addEventListener('input', () => renderPreview(readConfigFromForm()));
   }
 
@@ -74,31 +78,17 @@ export async function initSettings(): Promise<void> {
     if (el) el.textContent = `✓ Сохранено: ${seeds.length} запрос(ов), ${map.size} с стабильными query_id (id переживают перезагрузку).`;
   });
 
-  // collect by constructor → save first, then tell the SW to run COLLECT_START
-  document.getElementById('ctor-run')?.addEventListener('click', async () => {
-    const c = readConfigFromForm();
-    await saveConstructor(c);
-    renderPreview(c);
-    const snap = new Date().toISOString();
-    void chrome.runtime.sendMessage({ type: 'COLLECT_START', collect: { source: 'constructor' }, snapshotTs: snap }).catch((e) => {
-      const el = document.getElementById('ctor-result');
-      if (el) el.textContent = `⚠ ${String(e)}`;
-    });
-    const el = document.getElementById('ctor-result');
-    if (el) el.textContent = `▶ Сбор запущен (${cartesian(c).length} целей) — см. вкладку «Сбор данных».`;
-  });
-
-  // own supplier_id
-  const own = await loadOwnSupplierId();
-  const ownEl = document.getElementById('own-supplier') as HTMLInputElement | null;
-  if (ownEl && own != null) ownEl.value = String(own);
-  document.getElementById('own-save')?.addEventListener('click', async () => {
-    const raw = (document.getElementById('own-supplier') as HTMLInputElement | null)?.value?.trim();
-    const n = raw ? Number(raw) : NaN;
-    await saveOwnSupplierId(Number.isFinite(n) ? n : null);
+  // highlight brands (replaces the old supplier_id highlighter) — a cosmetic accent in reports;
+  // does NOT exclude any data. The actual highlight is applied in reports.ts via focusBrands set.
+  const focusRaw = await loadHighlightBrands();
+  const focusEl = document.getElementById('highlight-brands') as HTMLTextAreaElement | null;
+  if (focusEl) focusEl.value = focusRaw.join('\n');
+  document.getElementById('highlight-brands-save')?.addEventListener('click', async () => {
+    const text = (document.getElementById('highlight-brands') as HTMLTextAreaElement | null)?.value ?? '';
+    const list = parseTextarea(text);
+    await saveHighlightBrands(list);
     const est = document.getElementById('ctor-result');
-    // reuse a hint surface; no dedicated element for own-save feedback
-    if (est) est.textContent = Number.isFinite(n) ? `✓ supplier_id = ${n}` : '✓ supplier_id сброшен';
+    if (est) est.textContent = list.length ? `✓ бренды для подсветки: ${list.join(', ')}` : '✓ подсветка брендов сброшена';
   });
 
   // detail_k: top-N cards to open per query for /detail capture (per-wh stocks, promotions)

@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { cartesian, type ConstructorConfig } from '../src/querygen/static';
 
-const base: ConstructorConfig = { subjects: [], gender: [], season: [], age: [], material: [], purpose: [], comment: '', max_queries: 0, dedup: true };
+const base: ConstructorConfig = { subjects: [], brand: [], gender: [], season: [], age: [], material: [], purpose: [], comment: '', max_queries: 0, dedup: true };
 
 describe('cartesian', () => {
   it('nested product with "" skip token across dimensions', () => {
@@ -106,5 +106,25 @@ describe('cartesian', () => {
     });
     expect(seeds).toHaveLength(1); // two identical "кроссовки летние" collapse
     expect(seeds[0]!.query).toBe('кроссовки летние');
+  });
+
+  it('brand is a cartesian axis threaded right after subject (subject brand …)', () => {
+    const seeds = cartesian({
+      ...base,
+      subjects: ['кроссовки'],
+      brand: ['Nike', 'Adidas'],
+      material: ['текстиль'],
+    });
+    // brand sits right after subject in joinTokens: "subject brand …"
+    expect(seeds.map((s) => s.query)).toEqual(['кроссовки Nike текстиль', 'кроссовки Adidas текстиль']);
+    expect(seeds[0]!.brand).toBe('Nike');
+    expect(seeds[1]!.brand).toBe('Adidas');
+  });
+
+  it('empty brand list behaves like an unconfigured dimension (no token added)', () => {
+    const seeds = cartesian({ ...base, subjects: ['кроссовки'], brand: [] });
+    expect(seeds).toHaveLength(1);
+    expect(seeds[0]!.query).toBe('кроссовки'); // brand contributes nothing
+    expect(seeds[0]!.brand).toBe(''); // dim(['']) yields the '' token
   });
 });

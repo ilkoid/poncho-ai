@@ -25,8 +25,9 @@ describe('PonchoDB schema (S1)', () => {
 
   it('round-trips a search_query (incl. the new material/purpose/comment fields)', async () => {
     const id = await db.search_queries.add({
-      query: 'бейсболки для девочки летние',
+      query: 'бейсболки Nike для девочки летние',
       subject: 'бейсболки',
+      brand: 'Nike',
       gender: 'для девочки',
       season: 'летние',
       age: '',
@@ -36,8 +37,9 @@ describe('PonchoDB schema (S1)', () => {
     });
     expect(typeof id).toBe('number');
     const row = await db.search_queries.get(id);
-    expect(row?.query).toBe('бейсболки для девочки летние');
-    // new dimension fields round-trip (stored even though only material/purpose are indexed)
+    expect(row?.query).toBe('бейсболки Nike для девочки летние');
+    // dimension fields round-trip (stored even though only some are indexed)
+    expect(row?.brand).toBe('Nike');
     expect(row?.material).toBe('текстиль');
     expect(row?.purpose).toBe('для школы');
     expect(row?.comment).toBe('демо');

@@ -16,6 +16,7 @@ export interface Target {
   query: string; // human text (kind=search); empty otherwise
   url: string;
   subject: string;
+  brand: string;
   gender: string;
   season: string;
   age: string;

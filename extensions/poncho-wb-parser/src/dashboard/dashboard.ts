@@ -5,9 +5,11 @@
 
 import { db } from '../db/dexie';
 import type { FactCounts } from '../messages';
-import { initSettings } from './settings';
+import { initSettings, readConfigFromForm } from './settings';
 import { initReports, refreshPickers } from './reports';
 import { clearFacts } from '../db/write';
+import { cartesian } from '../querygen/static';
+import { saveConstructor } from '../storage/config';
 
 // ---- tab switching ----
 const buttons = document.querySelectorAll<HTMLButtonElement>('nav button');
@@ -19,6 +21,9 @@ buttons.forEach((btn) => {
     document.getElementById(`tab-${btn.dataset.tab}`)?.classList.add('active');
     // coming to Reports → refresh the snapshot/query dropdowns so the user sees fresh data
     if (btn.dataset.tab === 'reports') void refreshPickers();
+    // coming to Collect → refresh the constructor query preview (reads the settings form, which
+    // lives in the same document behind display:none — reflects unsaved edits too)
+    if (btn.dataset.tab === 'collect') refreshCollectPreview();
   });
 });
 
@@ -49,7 +54,9 @@ async function renderCounts(): Promise<void> {
     .join('');
 }
 void renderCounts();
-void initSettings();
+// refreshCollectPreview runs after initSettings has populated the constructor form from storage,
+// so the collect-tab preview shows the saved queries immediately (not an empty form)
+void initSettings().then(refreshCollectPreview);
 void initReports();
 
 // Best-effort: ask for persistent storage on first dashboard open so a large (~hundreds-MB)
@@ -100,6 +107,37 @@ function snapshotTs(): string {
 function send(msg: unknown): void {
   void chrome.runtime.sendMessage(msg).catch((e) => logLine(`⚠ ${String(e)}`));
 }
+
+/** Render the constructor's cartesian query list into #run-preview (the collect-tab header).
+ *  Reads the SAME settings form (its display:none panel lives in-document) so it reflects unsaved
+ *  edits too. Pure DOM read + cartesian — no storage write. */
+function refreshCollectPreview(): void {
+  const el = document.getElementById('run-preview');
+  if (!el) return;
+  const seeds = cartesian(readConfigFromForm());
+  if (seeds.length === 0) {
+    el.textContent = 'конструктор пуст — задайте хотя бы subject на вкладке «Настройки».';
+    return;
+  }
+  const head = seeds.slice(0, 15);
+  const tail = seeds.length > head.length ? `\n…и ещё ${seeds.length - head.length}` : '';
+  el.textContent = `${seeds.length} запрос(ов):\n${head.map((s) => `• ${s.query}`).join('\n')}${tail}`;
+}
+
+// run the full constructor — save-then-run (captures unsaved edits before dispatching), like the
+// old in-settings #ctor-run button did. The run itself is the same COLLECT_START message.
+document.getElementById('btn-run-constructor')?.addEventListener('click', async () => {
+  const c = readConfigFromForm();
+  await saveConstructor(c);
+  const seeds = cartesian(c);
+  refreshCollectPreview();
+  if (seeds.length === 0) {
+    logLine('⚠ конструктор пуст — задайте subject на вкладке «Настройки».');
+    return;
+  }
+  logLine(`▶ сбор по конструктору: ${seeds.length} запрос(ов) — откроется вкладка WB…`);
+  send({ type: 'COLLECT_START', collect: { source: 'constructor' }, snapshotTs: snapshotTs() });
+});
 
 document.getElementById('btn-mock')?.addEventListener('click', () => {
   logEl!.textContent = '';

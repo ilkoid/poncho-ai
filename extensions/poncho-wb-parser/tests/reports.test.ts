@@ -40,15 +40,15 @@ describe('snapshots', () => {
 });
 
 describe('visibility', () => {
-  it('single snapshot: best rank per nm_id, own supplier highlighted', async () => {
-    await seedMock(SNAP_A); // search: nm111@101, nm222@102 (query 7); card: nm111 supplier 900
-    const r = await buildVisibility(SNAP_A, null, 7, 900);
+  it('single snapshot: best rank per nm_id, focus brand highlighted', async () => {
+    await seedMock(SNAP_A); // search: nm111(Nike)@101, nm222(Adidas)@102 (query 7); card: nm111 supplier 900
+    const r = await buildVisibility(SNAP_A, null, 7, new Set(['nike']));
     expect(r.summary.total_a).toBe(2);
     expect(r.rows[0]!.nm_id).toBe(111); // pos 101 < 102 → first
     expect(r.rows[0]!.pos_a).toBe(101);
-    expect(r.rows[0]!.is_own).toBe(true); // supplier 900 = own
+    expect(r.rows[0]!.is_focus).toBe(true); // brand Nike matches the focus set (case-insensitive)
     expect(r.rows[1]!.nm_id).toBe(222);
-    expect(r.rows[1]!.is_own).toBe(false);
+    expect(r.rows[1]!.is_focus).toBe(false); // Adidas ≠ focus
     expect(r.snapshot_b).toBeNull();
     // promo-panel coverage: mock search has nm111 (organic) + nm222 (panelPromoId 99)
     expect(r.summary.promo_panels).toBe(1); // one distinct panel id (99)
@@ -68,7 +68,7 @@ describe('visibility', () => {
       body: { products: [{ id: 111, brand: 'Nike', supplierId: 900, sizes: [{ price: { basic: 100000, product: 89900 } }] }] },
     };
     await persistDecoded(Decode(searchB, SNAP_B));
-    const r = await buildVisibility(SNAP_A, SNAP_B, 7, 900);
+    const r = await buildVisibility(SNAP_A, SNAP_B, 7, new Set(['nike']));
     const nm111 = r.rows.find((x) => x.nm_id === 111)!;
     expect(nm111.pos_a).toBe(101);
     expect(nm111.pos_b).toBe(1);
@@ -80,8 +80,8 @@ describe('visibility', () => {
 
 describe('competitor map', () => {
   it('aggregates cards by supplier with nm_count + avg_price', async () => {
-    await seedMock(SNAP_A); // card_detail: nm111, supplier 900 "ООО Рога", price 89900, rating 4.5
-    const r = await buildCompetitorMap(SNAP_A, 7, 900);
+    await seedMock(SNAP_A); // card_detail: nm111 (brand Nike), supplier 900 "ООО Рога", price 89900, rating 4.5
+    const r = await buildCompetitorMap(SNAP_A, 7, new Set(['nike']));
     expect(r.rows).toHaveLength(1);
     const s = r.rows[0]!;
     expect(s.supplier_id).toBe(900);
@@ -90,7 +90,7 @@ describe('competitor map', () => {
     expect(s.query_count).toBe(1);
     expect(s.avg_price).toBe(89900);
     expect(s.avg_rating).toBeCloseTo(4.5);
-    expect(s.is_own).toBe(true);
+    expect(s.is_focus).toBe(true); // supplier 900 carries nm111 (brand Nike) → focus
   });
 });
 
@@ -123,7 +123,7 @@ describe('prices & stocks', () => {
 // smoke: upsertQuery still works inside a report test (query text round-trip)
 describe('queries', () => {
   it('upsertQuery assigns a stable id', async () => {
-    const id = await upsertQuery({ query: 'test', subject: '', gender: '', season: '', age: '', material: '', purpose: '', comment: '' });
+    const id = await upsertQuery({ query: 'test', subject: '', brand: '', gender: '', season: '', age: '', material: '', purpose: '', comment: '' });
     expect(typeof id).toBe('number');
   });
 });

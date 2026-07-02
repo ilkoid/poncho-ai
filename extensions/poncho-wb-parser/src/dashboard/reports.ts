@@ -6,7 +6,7 @@ import { listSnapshots, listQueriesForSnapshot } from '../reports/snapshots';
 import { buildVisibility, type VisibilityReport } from '../reports/visibility';
 import { buildCompetitorMap, type CompetitorMapReport } from '../reports/competitor-map';
 import { buildPricesStocks, type PricesStocksReport } from '../reports/prices-stocks';
-import { loadOwnSupplierId } from '../storage/config';
+import { loadHighlightBrands } from '../storage/config';
 import { downloadCSV } from '../export/csv';
 import { downloadXLSX } from '../export/xlsx';
 import { dumpSnapshot, downloadJSON } from '../export/json-dump';
@@ -114,16 +114,18 @@ async function buildAndRender(): Promise<void> {
   const snapB = (document.getElementById('rpt-snap-b') as HTMLSelectElement | null)?.value || null;
   const qidRaw = (document.getElementById('rpt-query') as HTMLSelectElement | null)?.value;
   const queryId = qidRaw ? Number(qidRaw) : null;
-  const own = await loadOwnSupplierId();
+  // focus brands → lowercase set for case-insensitive match against card.brand / position.brand.
+  const focusRaw = await loadHighlightBrands();
+  const focus = new Set(focusRaw.map((b) => b.trim().toLowerCase()));
 
   const banner = document.getElementById('rpt-banner');
   if (banner) {
-    banner.textContent = own == null ? 'ℹ supplier_id не задан — ваши позиции не подсвечиваются (см. Настройки).' : `Ваш supplier_id: ${own}.`;
+    banner.textContent = focus.size ? `★ Фокус-бренды: ${focusRaw.join(', ')}.` : 'ℹ фокус-бренды не заданы — подсветки нет (см. Настройки → Фильтр по бренду).';
   }
 
   const [vis, map, ps] = await Promise.all([
-    buildVisibility(snapA, snapB, queryId, own),
-    buildCompetitorMap(snapA, queryId, own),
+    buildVisibility(snapA, snapB, queryId, focus),
+    buildCompetitorMap(snapA, queryId, focus),
     buildPricesStocks(snapA, queryId),
   ]);
   lastVis = vis;
@@ -142,8 +144,8 @@ function renderVisibility(v: VisibilityReport): void {
   const top = v.rows.slice(0, 100);
   const body = top
     .map(
-      (r) => `<tr class="${r.is_own ? 'own' : ''}">
-        <td>${r.nm_id}${r.promo_id != null ? ' <span class="oobadge">промо</span>' : ''}${r.is_own ? ' <span class="oobadge">вы</span>' : ''}</td>
+      (r) => `<tr class="${r.is_focus ? 'focus' : ''}">
+        <td>${r.nm_id}${r.promo_id != null ? ' <span class="oobadge">промо</span>' : ''}${r.is_focus ? ' <span class="oobadge">★</span>' : ''}</td>
         <td>${escapeHtml(r.brand)}</td>
         <td class="num">${r.pos_a ?? '—'}</td>
         <td class="num">${r.pos_b ?? '—'}</td>
@@ -163,8 +165,8 @@ function renderCompetitors(m: CompetitorMapReport): void {
   const body = m.rows
     .slice(0, 100)
     .map(
-      (r) => `<tr class="${r.is_own ? 'own' : ''}">
-        <td>${r.supplier_id}${r.is_own ? ' <span class="oobadge">вы</span>' : ''}</td>
+      (r) => `<tr class="${r.is_focus ? 'focus' : ''}">
+        <td>${r.supplier_id}${r.is_focus ? ' <span class="oobadge">★</span>' : ''}</td>
         <td>${escapeHtml(r.supplier_name)}</td>
         <td class="num">${r.nm_count}</td>
         <td class="num">${r.query_count}</td>

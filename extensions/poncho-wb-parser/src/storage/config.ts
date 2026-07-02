@@ -1,8 +1,9 @@
 // src/storage/config.ts — user-editable settings persisted in chrome.storage.local (always
 // available via the "storage" permission; survives SW death + browser restart).
-//   - constructor: 6 cartesian lists (subject/gender/season/age/material/purpose) + a single
+//   - constructor: 7 cartesian lists (subject/brand/gender/season/age/material/purpose) + a single
 //     `comment` appended to every query + max_queries + dedup (the query generator config).
-//   - own_supplier_id: the seller's own supplier id, used in reports to highlight "our" rank/card.
+//   - highlight_brands: brand names to highlight in reports (Видимость, Карта конкурентов);
+//     cosmetic accent only — does not filter/exclude any collected data. Empty = no highlight.
 //   - detail_k: how many top cards (by position) to open per query for /detail capture
 //     (per-wh stocks + promotions). >0 = top-N; <=0 = unlimited (all). Default 8.
 
@@ -10,7 +11,7 @@ import type { ConstructorConfig } from '../querygen/static';
 import { DEFAULT_CONSTRUCTOR } from '../querygen/static';
 
 const KEY_CONSTRUCTOR = 'constructor';
-const KEY_OWN_SUPPLIER = 'own_supplier_id';
+const KEY_HIGHLIGHT_BRANDS = 'highlight_brands';
 const KEY_DETAIL_K = 'detail_k';
 export const DEFAULT_DETAIL_K = 8;
 
@@ -25,15 +26,15 @@ export async function saveConstructor(c: ConstructorConfig): Promise<void> {
   await chrome.storage.local.set({ [KEY_CONSTRUCTOR]: c });
 }
 
-/** The seller's own supplier_id (null = not set → reports show no "own" highlight). */
-export async function loadOwnSupplierId(): Promise<number | null> {
-  const s = await chrome.storage.local.get(KEY_OWN_SUPPLIER).catch(() => ({}) as Record<string, unknown>);
-  const v = s[KEY_OWN_SUPPLIER];
-  return typeof v === 'number' ? v : null;
+/** Brand names to highlight in reports (empty = no highlight). Survives SW death + restart. */
+export async function loadHighlightBrands(): Promise<string[]> {
+  const s = await chrome.storage.local.get(KEY_HIGHLIGHT_BRANDS).catch(() => ({}) as Record<string, unknown>);
+  const v = s[KEY_HIGHLIGHT_BRANDS];
+  return Array.isArray(v) ? (v as string[]) : [];
 }
 
-export async function saveOwnSupplierId(id: number | null): Promise<void> {
-  await chrome.storage.local.set({ [KEY_OWN_SUPPLIER]: id });
+export async function saveHighlightBrands(brands: string[]): Promise<void> {
+  await chrome.storage.local.set({ [KEY_HIGHLIGHT_BRANDS]: brands });
 }
 
 /** detail_k: top-N cards (by position) to open per query for /detail capture. >0 = top-N;
