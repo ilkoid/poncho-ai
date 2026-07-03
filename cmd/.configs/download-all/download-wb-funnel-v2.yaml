@@ -3,7 +3,7 @@ wb:
   timeout: 30m
 
 funnel:
-  days: 3
+  days: 7
   batch_size: 20  # WB API hard limit 20, despite OpenAPI spec claiming 1000
   funnel_rate_limit: 2
   funnel_rate_limit_burst: 3

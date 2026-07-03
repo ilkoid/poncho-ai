@@ -3,7 +3,7 @@ wb:
   timeout: "60s"
 
 penalties:
-  days: 3
+  days: 7
   rewrite: false
   adaptive_probe_after: 10
   max_backoff_seconds: 60
