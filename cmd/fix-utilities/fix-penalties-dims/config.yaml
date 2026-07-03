@@ -29,7 +29,7 @@ filter:
 # WB card update tuning (cardupdate.WBUpdateConfig; Defaults() fills zeros).
 # Rate 8/min is conservative vs swagger 100/min.
 wb_update:
-  batch_size: 30
+  batch_size: 10
   rate_per_min: 8
   rate_burst: 2
   api_floor_per_min: 5

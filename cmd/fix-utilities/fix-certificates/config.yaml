@@ -23,7 +23,7 @@ filters:
   #       
   # subject_ids: []           # WB subject IDs
   # seasons: ["зима"]            # Сезон из card_characteristics
-  in_stock: false               # Только с остатками
+  in_stock: true               # Только с остатками
   # onec_type: ["Обувь"]         # 1C тип (Обувь/Одежда/Аксессуары)
   # category_level1: ["Женская"] # 1C категория L1
   # category_level2: ["Кроссовки"] # 1C категория L2
@@ -32,7 +32,7 @@ filters:
 # Reference date для проверки истечения сертификатов (DD.MM.YYYY или YYYY-MM-DD).
 # Сертификаты с certificate_end раньше этой даты пропускаются.
 # Default: сегодня. Можно переопределить через --date.
-reference_date: "08.06.2026"
+reference_date: "13.06.2026"
 
 # WB Content API (POST /content/v2/cards/update, swagger: 100/min burst 5)
 wb_update:

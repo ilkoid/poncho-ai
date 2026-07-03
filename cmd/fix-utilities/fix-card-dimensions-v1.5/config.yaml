@@ -15,14 +15,14 @@ db_path: "/var/db/wb-sales.db"
 filters:
   nm_ids: []                  # Конкретные nm_id (для теста на 1 карточке)
   vendor_codes: [] # ["32231102", "32311053", "32411021", "32431011", "32431012"]  # Артикулы продавца — 8 симв (пусто = все)
-  allowed_years: [26]           # Год из позиций 2-3 vendor_code (26 = 2026). Пусто = все
+  allowed_years: [23,24,25,26]           # Год из позиций 2-3 vendor_code (26 = 2026). Пусто = все
   exclude_lengths: [5, 6]     # Исключить артикулы указанной длины
   exclude_vendor_codes: []    # Исключить конкретные артикулы
   # vendor_code_prefix: "1"  # Первая цифра артикула
   subject: ""                 # Точное совпадение subject_name (case-insensitive)
   subject_ids: []             # WB subject IDs
   seasons: []                 # Сезон из card_characteristics
-  in_stock: false             # Только с остатками
+  in_stock: true             # Только с остатками
   # onec_type: ["Обувь"]     # 1C тип (Обувь/Одежда/Аксессуары)
   # category_level1: ["Женская"] # 1C категория L1
   # category_level2: ["Кроссовки"] # 1C категория L2
