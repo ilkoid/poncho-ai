@@ -12,11 +12,13 @@ export function visibilityToTables(v: VisibilityReport): ExportTable[] {
   return [
     {
       name: 'Видимость',
-      columns: ['nm_id', 'brand', 'supplier_id', 'is_focus', 'promo', 'pos_a', 'pos_b', 'delta'],
+      columns: ['nm_id', 'name', 'brand', 'supplier_id', 'supplier_name', 'is_focus', 'promo', 'pos_a', 'pos_b', 'delta'],
       rows: v.rows.map((r) => [
         r.nm_id,
+        r.name,
         r.brand,
         r.supplier_id ?? '',
+        r.supplier_name,
         r.is_focus ? 1 : 0,
         r.promo_id != null ? 1 : 0, // 1 = item sits in a WB promo panel (not a per-item CPC signal)
         r.pos_a ?? '',
@@ -31,14 +33,19 @@ export function competitorsToTables(m: CompetitorMapReport): ExportTable[] {
   return [
     {
       name: 'Конкуренты',
-      columns: ['supplier_id', 'supplier_name', 'nm_count', 'query_count', 'avg_rating', 'avg_price_rub'],
-      rows: m.rows.map((r) => [r.supplier_id, r.supplier_name, r.nm_count, r.query_count, Number(r.avg_rating.toFixed(2)), rub(r.avg_price)]),
+      columns: ['supplier_id', 'supplier_name', 'nm_count', 'query_count', 'brand_count', 'avg_rating', 'avg_price_rub'],
+      rows: m.rows.map((r) => [r.supplier_id, r.supplier_name, r.nm_count, r.query_count, r.brand_count, Number(r.avg_rating.toFixed(2)), rub(r.avg_price)]),
     },
   ];
 }
 
 export function pricesToTables(p: PricesStocksReport): ExportTable[] {
   return [
+    {
+      name: 'Товары',
+      columns: ['nm_id', 'name', 'brand', 'supplier', 'price_min_rub', 'price_avg_rub', 'total_qty'],
+      rows: p.rows.map((r) => [r.nm_id, r.name, r.brand, r.supplier, rub(r.price_min), rub(r.price_avg), r.total_qty]),
+    },
     {
       name: 'Гистограмма цен',
       columns: ['bucket_lo_rub', 'bucket_hi_rub', 'count'],

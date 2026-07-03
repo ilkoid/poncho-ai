@@ -25,40 +25,47 @@ describe('toCSV', () => {
 
 const vis: VisibilityReport = {
   snapshot_a: 'A', snapshot_b: null, query_id: 1,
-  rows: [{ nm_id: 111, brand: 'Nike', supplier_id: 900, is_focus: true, promo_id: null, pos_a: 5, pos_b: null, delta: null }],
+  rows: [{ nm_id: 111, name: 'Кроссовки Nike', brand: 'Nike', supplier_id: 900, supplier_name: 'ООО Рога', is_focus: true, promo_id: null, pos_a: 5, pos_b: null, delta: null }],
   summary: { total_a: 1, total_b: 0, appeared: 0, disappeared: 0, improved: 0, deteriorated: 0, promo_panels: 0, promo_covered: 0 },
 };
 
 describe('report → table converters', () => {
-  it('visibility → table with all rows', () => {
+  it('visibility → table with name + supplier_name columns', () => {
     const t = visibilityToTables(vis);
     expect(t[0]!.columns).toContain('nm_id');
+    expect(t[0]!.columns).toContain('name');
+    expect(t[0]!.columns).toContain('supplier_name');
     expect(t[0]!.rows[0]).toContain(111);
+    expect(t[0]!.rows[0]).toContain('ООО Рога');
   });
 
-  it('competitors → table with avg_price converted to rubles', () => {
+  it('competitors → table with brand_count + avg_price converted to rubles', () => {
     const m: CompetitorMapReport = {
       snapshot: 'A', query_id: null,
-      rows: [{ supplier_id: 900, supplier_name: 'ООО Рога', nm_count: 3, query_count: 2, avg_rating: 4.5, avg_price: 89900, is_focus: true }],
+      rows: [{ supplier_id: 900, supplier_name: 'ООО Рога', nm_count: 3, query_count: 2, brand_count: 2, avg_rating: 4.5, avg_price: 89900, is_focus: true }],
     };
     const t = competitorsToTables(m);
+    expect(t[0]!.columns).toContain('brand_count');
     // avg_price_rub is the last column; 89900 kop → 899.00 rub
     const lastIdx = t[0]!.columns.length - 1;
     expect(t[0]!.rows[0]![lastIdx]).toBe(899);
   });
 
-  it('prices → histogram + OOP tables', () => {
+  it('prices → товары (first, for CSV) + histogram + OOP tables', () => {
     const p: PricesStocksReport = {
       snapshot: 'A', query_id: null,
       histogram: [{ lo: 100000, hi: 110000, count: 5 }],
       price_count: 5,
       out_of_stock: [{ nm_id: 999, brand: 'Empty', total_qty: 0 }],
       in_stock_count: 4,
+      rows: [{ nm_id: 111, name: 'Кроссовки', brand: 'Nike', supplier: 'ООО Рога', price_min: 89900, price_avg: 89900, total_qty: 10 }],
     };
     const t = pricesToTables(p);
-    expect(t).toHaveLength(2);
-    expect(t[0]!.name).toBe('Гистограмма цен');
-    expect(t[1]!.name).toBe('Out of stock');
-    expect(t[0]!.rows[0]![0]).toBe(1000); // lo 100000 kop → 1000.00 rub
+    expect(t).toHaveLength(3);
+    expect(t[0]!.name).toBe('Товары'); // first → CSV (tables[0]) ships the useful per-product table
+    expect(t[1]!.name).toBe('Гистограмма цен');
+    expect(t[2]!.name).toBe('Out of stock');
+    expect(t[1]!.rows[0]![0]).toBe(1000); // lo 100000 kop → 1000.00 rub
+    expect(t[0]!.rows[0]).toContain('ООО Рога');
   });
 });

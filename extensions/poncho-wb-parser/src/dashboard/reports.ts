@@ -38,6 +38,14 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
+/** shared search box rendered above each report table; wired by the renderer to a fillBody closure. */
+const FILTER_INPUT = '<input class="rpt-filter" type="search" placeholder="фильтр по товару / бренду / поставщику…" />';
+
+/** lowercase concatenation of a row's text fields — substring match against it = the table filter. */
+function textOf(...parts: string[]): string {
+  return parts.join(' ').toLowerCase();
+}
+
 export async function initReports(): Promise<void> {
   await refreshPickers();
   document.getElementById('rpt-snap-a')?.addEventListener('change', () => void populateQueries(currentSnapA()));
@@ -141,43 +149,73 @@ function renderVisibility(v: VisibilityReport): void {
   if (!host) return;
   const s = v.summary;
   const head = `<div class="summary">Снимок A: ${s.total_a} тов. · B: ${s.total_b} · ▼улучшилось ${s.improved} · ▲ухудшилось ${s.deteriorated} · исчезло ${s.disappeared} · появилось ${s.appeared} · промо: ${s.promo_panels} панел(ей) × ${s.promo_covered} тов.</div>`;
-  const top = v.rows.slice(0, 100);
-  const body = top
-    .map(
-      (r) => `<tr class="${r.is_focus ? 'focus' : ''}">
+  const table =
+    '<table class="rpt"><colgroup>' +
+    '<col class="c-id" /><col class="c-name" /><col class="c-brand" /><col class="c-supplier" />' +
+    '<col class="c-num" /><col class="c-num" /><col class="c-num" />' +
+    '</colgroup><thead><tr><th>nm_id</th><th>Товар</th><th>Бренд</th><th>Поставщик</th><th>Поз. A</th><th>Поз. B</th><th>Δ</th></tr></thead><tbody></tbody></table>';
+  host.innerHTML = head + FILTER_INPUT + table + '<p class="hint rpt-rest"></p>';
+  const tbody = host.querySelector('tbody')!;
+  const rest = host.querySelector('.rpt-rest')!;
+  const fill = (ft: string): void => {
+    const q = ft.trim().toLowerCase();
+    const matched = q ? v.rows.filter((r) => textOf(r.name, r.brand, r.supplier_name).includes(q)) : v.rows;
+    const cap = q ? 200 : 100;
+    tbody.innerHTML = matched
+      .slice(0, cap)
+      .map(
+        (r) => `<tr class="${r.is_focus ? 'focus' : ''}">
         <td>${r.nm_id}${r.promo_id != null ? ' <span class="oobadge">промо</span>' : ''}${r.is_focus ? ' <span class="oobadge">★</span>' : ''}</td>
+        <td class="wrap"><a href="https://www.wildberries.ru/catalog/${r.nm_id}/detail.aspx" target="_blank" rel="noopener noreferrer">${escapeHtml(r.name) || String(r.nm_id)}</a></td>
         <td>${escapeHtml(r.brand)}</td>
+        <td>${escapeHtml(r.supplier_name)}</td>
         <td class="num">${r.pos_a ?? '—'}</td>
         <td class="num">${r.pos_b ?? '—'}</td>
         <td class="num">${fmtDelta(r.delta)}</td>
       </tr>`,
-    )
-    .join('');
-  host.innerHTML =
-    head +
-    `<table class="rpt"><thead><tr><th>nm_id</th><th>Бренд</th><th>Поз. A</th><th>Поз. B</th><th>Δ</th></tr></thead><tbody>${body}</tbody></table>` +
-    (v.rows.length > 100 ? `<p class="hint">…и ещё ${v.rows.length - 100} строк (показан топ-100 по позиции).</p>` : '');
+      )
+      .join('');
+    rest.textContent = matched.length > cap ? `…и ещё ${matched.length - cap} строк${q ? ' (фильтр, топ-200)' : ' (топ-100 по позиции)'}.` : '';
+  };
+  host.querySelector('input.rpt-filter')?.addEventListener('input', (e) => fill((e.target as HTMLInputElement).value));
+  fill('');
 }
 
 function renderCompetitors(m: CompetitorMapReport): void {
   const host = document.getElementById('rpt-competitors');
   if (!host) return;
-  const body = m.rows
-    .slice(0, 100)
-    .map(
-      (r) => `<tr class="${r.is_focus ? 'focus' : ''}">
+  const head =
+    `<div class="summary">Поставщиков: ${m.rows.length}. Ранжированы по числу товаров в выдаче. ` +
+    `«Запросов» — в скольких запросах засветился поставщик; «Брендов» — число разных брендов у него.</div>`;
+  const table =
+    '<table class="rpt"><colgroup>' +
+    '<col class="c-id" /><col class="c-supplier" /><col class="c-num" /><col class="c-num" /><col class="c-num" /><col class="c-num" /><col class="c-num" />' +
+    '</colgroup><thead><tr><th>supplier_id</th><th>Поставщик</th><th>Товаров</th><th>Запросов</th><th>Брендов</th><th>Ср. рейтинг</th><th>Ср. цена</th></tr></thead><tbody></tbody></table>';
+  host.innerHTML = head + FILTER_INPUT + table + '<p class="hint rpt-rest"></p>';
+  const tbody = host.querySelector('tbody')!;
+  const rest = host.querySelector('.rpt-rest')!;
+  const fill = (ft: string): void => {
+    const q = ft.trim().toLowerCase();
+    const matched = q ? m.rows.filter((r) => textOf(r.supplier_name, String(r.supplier_id)).includes(q)) : m.rows;
+    const cap = q ? 200 : 100;
+    tbody.innerHTML = matched
+      .slice(0, cap)
+      .map(
+        (r) => `<tr class="${r.is_focus ? 'focus' : ''}">
         <td>${r.supplier_id}${r.is_focus ? ' <span class="oobadge">★</span>' : ''}</td>
-        <td>${escapeHtml(r.supplier_name)}</td>
+        <td class="wrap">${escapeHtml(r.supplier_name)}</td>
         <td class="num">${r.nm_count}</td>
         <td class="num">${r.query_count}</td>
+        <td class="num">${r.brand_count}</td>
         <td class="num">${r.avg_rating.toFixed(2)}</td>
         <td class="num">${fmtRub(r.avg_price)}</td>
       </tr>`,
-    )
-    .join('');
-  host.innerHTML =
-    `<div class="summary">Конкурентов: ${m.rows.length} (топ-100 по числу товаров).</div>` +
-    `<table class="rpt"><thead><tr><th>supplier_id</th><th>Поставщик</th><th>Товаров</th><th>Запросов</th><th>Ср. рейтинг</th><th>Ср. цена</th></tr></thead><tbody>${body}</tbody></table>`;
+      )
+      .join('');
+    rest.textContent = matched.length > cap ? `…и ещё ${matched.length - cap} поставщиков.` : '';
+  };
+  host.querySelector('input.rpt-filter')?.addEventListener('input', (e) => fill((e.target as HTMLInputElement).value));
+  fill('');
 }
 
 function renderPrices(p: PricesStocksReport): void {
@@ -190,5 +228,39 @@ function renderPrices(p: PricesStocksReport): void {
   const oop = p.out_of_stock.length
     ? `<p class="hint">Out of stock: ${p.out_of_stock.slice(0, 50).map((o) => `${o.nm_id} (${escapeHtml(o.brand) || '—'})`).join(', ')}${p.out_of_stock.length > 50 ? '…' : ''}</p>`
     : '';
-  host.innerHTML = `<div class="summary">Цен: ${p.price_count} · в наличии: ${p.in_stock_count} · out of stock: ${p.out_of_stock.length}</div>` + histo + oop;
+  const table =
+    '<table class="rpt"><colgroup>' +
+    '<col class="c-id" /><col class="c-name" /><col class="c-brand" /><col class="c-supplier" /><col class="c-num" /><col class="c-num" /><col class="c-num" />' +
+    '</colgroup><thead><tr><th>nm_id</th><th>Товар</th><th>Бренд</th><th>Поставщик</th><th>мин. цена</th><th>ср. цена</th><th>остаток</th></tr></thead><tbody></tbody></table>';
+  host.innerHTML =
+    `<div class="summary">Цен: ${p.price_count} · в наличии: ${p.in_stock_count} · out of stock: ${p.out_of_stock.length}</div>` +
+    histo +
+    FILTER_INPUT +
+    table +
+    '<p class="hint rpt-rest"></p>' +
+    oop;
+  const tbody = host.querySelector('tbody')!;
+  const rest = host.querySelector('.rpt-rest')!;
+  const fill = (ft: string): void => {
+    const q = ft.trim().toLowerCase();
+    const matched = q ? p.rows.filter((r) => textOf(r.name, r.brand, r.supplier).includes(q)) : p.rows;
+    const cap = q ? 200 : 100;
+    tbody.innerHTML = matched
+      .slice(0, cap)
+      .map(
+        (r) => `<tr>
+        <td>${r.nm_id}</td>
+        <td class="wrap"><a href="https://www.wildberries.ru/catalog/${r.nm_id}/detail.aspx" target="_blank" rel="noopener noreferrer">${escapeHtml(r.name) || String(r.nm_id)}</a></td>
+        <td>${escapeHtml(r.brand)}</td>
+        <td>${escapeHtml(r.supplier)}</td>
+        <td class="num">${fmtRub(r.price_min)}</td>
+        <td class="num">${fmtRub(r.price_avg)}</td>
+        <td class="num">${r.total_qty}</td>
+      </tr>`,
+      )
+      .join('');
+    rest.textContent = matched.length > cap ? `…и ещё ${matched.length - cap} строк.` : '';
+  };
+  host.querySelector('input.rpt-filter')?.addEventListener('input', (e) => fill((e.target as HTMLInputElement).value));
+  fill('');
 }

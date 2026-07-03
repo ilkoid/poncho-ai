@@ -55,6 +55,9 @@ describe('visibility', () => {
     expect(r.summary.promo_covered).toBe(1); // only nm222 sits under it
     expect(r.rows.find((x) => x.nm_id === 222)!.promo_id).toBe(99);
     expect(r.rows.find((x) => x.nm_id === 111)!.promo_id).toBeNull();
+    // supplier name resolved via the competitor_cards join (search_positions carries only the id)
+    expect(r.rows.find((x) => x.nm_id === 111)!.supplier_name).toBe('ООО Рога');
+    expect(r.rows.find((x) => x.nm_id === 222)!.supplier_name).toBe(''); // no card for supplier 901
   });
 
   it('two snapshots: delta (improved / disappeared)', async () => {
@@ -65,7 +68,7 @@ describe('visibility', () => {
       url: 'https://w.ru/s?search=x&page=1&dest=8038',
       query_id: 7,
       status: 200,
-      body: { products: [{ id: 111, brand: 'Nike', supplierId: 900, sizes: [{ price: { basic: 100000, product: 89900 } }] }] },
+      body: { products: [{ id: 111, name: 'Кроссовки Nike', brand: 'Nike', supplierId: 900, sizes: [{ price: { basic: 100000, product: 89900 } }] }] },
     };
     await persistDecoded(Decode(searchB, SNAP_B));
     const r = await buildVisibility(SNAP_A, SNAP_B, 7, new Set(['nike']));
@@ -73,24 +76,30 @@ describe('visibility', () => {
     expect(nm111.pos_a).toBe(101);
     expect(nm111.pos_b).toBe(1);
     expect(nm111.delta).toBe(-100); // 1 - 101, improved (lower rank)
+    expect(nm111.name).toBe('Кроссовки Nike'); // product title flows through search_positions.name
     expect(r.summary.improved).toBe(1);
     expect(r.summary.disappeared).toBe(1); // nm222 in A, absent in B
   });
 });
 
 describe('competitor map', () => {
-  it('aggregates cards by supplier with nm_count + avg_price', async () => {
-    await seedMock(SNAP_A); // card_detail: nm111 (brand Nike), supplier 900 "ООО Рога", price 89900, rating 4.5
+  it('aggregates RANKED POSITIONS by supplier (not cards): nm_count + brands + avg listing price', async () => {
+    await seedMock(SNAP_A); // search qid=7: nm111 (Nike, sup 900, 89900, 4.5) + nm222 (Adidas, sup 901, 45000, 4.0)
     const r = await buildCompetitorMap(SNAP_A, 7, new Set(['nike']));
-    expect(r.rows).toHaveLength(1);
-    const s = r.rows[0]!;
-    expect(s.supplier_id).toBe(900);
-    expect(s.supplier_name).toBe('ООО Рога');
-    expect(s.nm_count).toBe(1);
-    expect(s.query_count).toBe(1);
-    expect(s.avg_price).toBe(89900);
-    expect(s.avg_rating).toBeCloseTo(4.5);
-    expect(s.is_focus).toBe(true); // supplier 900 carries nm111 (brand Nike) → focus
+    expect(r.rows).toHaveLength(2); // two distinct suppliers ranked (built from search_positions, not cards)
+    const s900 = r.rows.find((x) => x.supplier_id === 900)!;
+    const s901 = r.rows.find((x) => x.supplier_id === 901)!;
+    expect(s900.supplier_name).toBe('ООО Рога'); // resolved from competitor_cards
+    expect(s900.nm_count).toBe(1);
+    expect(s900.query_count).toBe(1);
+    expect(s900.brand_count).toBe(1); // Nike
+    expect(s900.avg_price).toBe(89900); // listing price_product from positions
+    expect(s900.avg_rating).toBeCloseTo(4.5);
+    expect(s900.is_focus).toBe(true); // carries Nike (focus brand)
+    expect(s901.supplier_name).toBe(''); // no card_detail for nm222 → name unknown (id-only)
+    expect(s901.brand_count).toBe(1); // Adidas
+    expect(s901.avg_price).toBe(45000);
+    expect(s901.is_focus).toBe(false); // Adidas ≠ focus
   });
 });
 
@@ -102,6 +111,14 @@ describe('prices & stocks', () => {
     expect(r.histogram.reduce((n, b) => n + b.count, 0)).toBe(1);
     expect(r.in_stock_count).toBe(1);
     expect(r.out_of_stock).toHaveLength(0);
+    // per-product table: nm111 from the card_detail capture
+    const row111 = r.rows.find((x) => x.nm_id === 111)!;
+    expect(row111).toBeDefined();
+    expect(row111.supplier).toBe('ООО Рога');
+    expect(row111.brand).toBe('Nike');
+    expect(row111.price_min).toBe(89900);
+    expect(row111.price_avg).toBe(89900);
+    expect(row111.total_qty).toBe(10); // summed warehouse stock (wh 507 × qty 10)
   });
 
   it('flags qty=0 as out of print', async () => {
@@ -117,6 +134,7 @@ describe('prices & stocks', () => {
     await persistDecoded(Decode(zeroDetail, SNAP_A));
     const r = await buildPricesStocks(SNAP_A, 7);
     expect(r.out_of_stock.find((o) => o.nm_id === 999)).toBeDefined();
+    expect(r.rows.find((x) => x.nm_id === 999)).toBeDefined(); // zero-stock card still gets a table row
   });
 });
 

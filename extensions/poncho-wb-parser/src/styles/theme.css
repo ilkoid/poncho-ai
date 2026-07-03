@@ -1,0 +1,315 @@
+/* src/styles/theme.css — single source of styling for the extension's two rendered surfaces
+ * (dashboard tab + toolbar popup). Imported once from each TS entry point (dashboard.ts, popup.ts);
+ * Vite emits and injects it. No inline <style> blocks remain in the HTML — every visual lives here.
+ *
+ * "Poncho" warm palette: cream/sand background, terracotta accent, deep-brown header, amber
+ * focus highlights. Shadows carry a brown undertone (rgba(58,43,32,…)) so depth reads as part of
+ * the warm light rather than gray dirt. All colors flow from the :root tokens below — retheming
+ * (incl. a future dark mode) means editing tokens, not chasing literals.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* palette */
+  --bg: #f7f2ec;             /* warm cream/sand page background */
+  --panel: #fffdf9;          /* warm-white card surface */
+  --panel-border: #e6ddd1;   /* hairline borders, input borders */
+  --ink: #332c25;            /* primary text — warm dark brown-slate */
+  --ink-soft: #635849;       /* secondary text (≥AA on cream) */
+  --accent: #bf5439;         /* terracotta — signature accent (links, active tab, badges) */
+  --accent-strong: #a8442b;  /* primary-button bg (white-on-it passes AA) */
+  --accent-ink: #fffaf3;     /* text/foreground on terracotta */
+  --amber: #d98a3d;          /* secondary accent (focus-row stripe, hover bar) */
+  --header-bg: #3a2b20;      /* deep warm brown header */
+  --danger: #c0392b;         /* warm brick red (Stop / Clear) */
+  --ok: #1a7f37;             /* delta-up (improved rank) */
+  --bad: #cf222e;            /* delta-down (deteriorated rank) */
+  --focus-bg: #fbe7b0;       /* amber focus-brand row background */
+  --log-bg: #2b2320;         /* warm near-black live log */
+  --log-ink: #ece4d8;        /* warm cream log text */
+
+  /* geometry */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  /* depth (brown undertone, not gray) */
+  --shadow: 0 1px 2px rgba(58, 43, 32, 0.06), 0 1px 3px rgba(58, 43, 32, 0.05);
+  --shadow-hover: 0 4px 14px rgba(58, 43, 32, 0.13);
+
+  --control-transition: background-color .15s ease, box-shadow .15s ease, border-color .15s ease, color .15s ease;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* ---- header + tab nav ---- */
+header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 10px 20px;
+  background: var(--header-bg);
+  color: var(--accent-ink);
+}
+header h1 { font-size: 16px; margin: 0; }
+header .ver { opacity: 0.6; font-size: 12px; }
+
+nav {
+  display: flex;
+  gap: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--panel-border);
+}
+nav button {
+  /* tab buttons override the action-button base: no fill, just a bottom accent rail */
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 12px 20px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+nav button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+main { padding: var(--space-4); }
+
+/* ---- tabs ---- */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ---- panels (cards) ---- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  box-shadow: var(--shadow);
+}
+.panel h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+/* ---- typography helpers ---- */
+.placeholder { color: var(--ink-soft); font-style: italic; }
+.hint { font-size: 12px; color: var(--ink-soft); margin: var(--space-2) 0 0; line-height: 1.45; }
+code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; }
+a { color: var(--accent); text-decoration: none; transition: color .15s ease; }
+a:hover { text-decoration: underline; }
+
+/* ---- layout utilities (replace the scattered inline style="" attributes) ---- */
+.row { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; }
+.row.tight { gap: var(--space-2); }
+.row.between { justify-content: space-between; }
+.field {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: var(--ink-soft);
+  gap: var(--space-1);
+}
+.grow { flex: 1; min-width: 200px; }     /* expanding text/number input inside a .row */
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); }
+.inline input[type='number'] { width: 80px; }
+
+/* ---- form controls (one rule replaces a dozen inline padding/border/radius copies) ---- */
+input, textarea, select {
+  font: 13px/1.4 inherit;
+  padding: 7px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  transition: var(--control-transition);
+}
+textarea { resize: vertical; }
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(191, 84, 57, 0.15);
+}
+
+/* ---- buttons (the main visual win: every button now has a consistent style) ---- */
+button {
+  font: 13px/1.2 inherit;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  transition: var(--control-transition);
+}
+button:hover { box-shadow: var(--shadow); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* primary CTA — terracotta fill */
+.primary, .btn-primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--accent-ink);
+}
+.primary:hover, .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
+
+/* secondary — cream fill with terracotta outline (Save / Start / Build) */
+.btn-secondary {
+  background: var(--panel);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.btn-secondary:hover { background: rgba(191, 84, 57, 0.08); }
+
+/* ghost — transparent, for small inline actions (export buttons) */
+.export-btn, .btn-ghost {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--ink-soft);
+}
+.export-btn:hover, .btn-ghost:hover { color: var(--accent); border-color: var(--accent); background: rgba(191, 84, 57, 0.06); }
+
+/* danger — warm brick red (Stop / Clear) */
+.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.danger:hover { background: #a83224; border-color: #a83224; }
+
+.btn-block { width: 100%; }
+
+/* global keyboard-focus ring for accessibility */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; } /* they use the box-shadow ring above */
+
+.export-group { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ---- constructor grid (settings) ---- */
+.ctor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.ctor-grid label { display: flex; flex-direction: column; font-size: 12px; color: var(--ink-soft); gap: var(--space-1); }
+.ctor-grid textarea { font: 13px/1.4 inherit; }
+
+/* ---- DB count cards ---- */
+.counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+.count-card {
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  box-shadow: var(--shadow);
+}
+.count-card .n { font-size: 24px; font-weight: 700; color: var(--accent); line-height: 1.1; }
+.count-card .lbl { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.03em; margin-top: 2px; }
+
+/* ---- query preview box (collect tab) ---- */
+.preview-box {
+  max-height: 140px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  margin-bottom: var(--space-3);
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* ---- live log ---- */
+.log {
+  max-height: 240px;
+  overflow: auto;
+  background: var(--log-bg);
+  color: var(--log-ink);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* ---- instruction steps ---- */
+.steps { margin: 0; padding-left: 20px; color: var(--ink); line-height: 1.6; }
+.steps li { margin-bottom: var(--space-1); }
+
+/* ---- report tables ---- */
+table.rpt { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.rpt th, table.rpt td { border: 1px solid var(--panel-border); padding: 5px 8px; text-align: left; white-space: nowrap; vertical-align: top; }
+table.rpt td.wrap { white-space: normal; word-break: break-word; } /* long product titles wrap */
+/* per-column widths via <colgroup><col class="…"/>: narrow ids/numbers, the name column takes the rest */
+table.rpt col.c-id { width: 100px; }
+table.rpt col.c-brand { width: 120px; }
+table.rpt col.c-supplier { width: 150px; }
+table.rpt col.c-name { width: 34%; min-width: 160px; }
+table.rpt col.c-num { width: 64px; }
+table.rpt th { background: var(--bg); font-weight: 600; color: var(--ink); }
+table.rpt tr.focus { background: var(--focus-bg); font-weight: 600; }
+table.rpt tr.focus td:first-child { border-left: 3px solid var(--amber); }
+table.rpt td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* per-table text filter rendered above each report table */
+.rpt-filter { max-width: 340px; margin: 0 0 var(--space-2); padding: 6px 9px; }
+.delta-up { color: var(--ok); font-weight: 600; }
+.delta-down { color: var(--bad); font-weight: 600; }
+
+/* ---- price histogram (reports) ---- */
+.histo { display: flex; align-items: flex-end; gap: var(--space-1); height: 80px; margin: var(--space-3) 0; }
+.histo .bar {
+  flex: 1;
+  background: var(--accent);
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  position: relative;
+  transition: background-color .15s ease;
+}
+.histo .bar:hover { background: var(--amber); }
+.histo .bar span { position: absolute; bottom: -16px; left: 0; right: 0; text-align: center; font-size: 9px; color: var(--ink-soft); }
+
+.summary { font-size: 12px; color: var(--ink-soft); margin: var(--space-2) 0; }
+.oobadge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--space-1);
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(217, 138, 61, 0.15);
+  color: var(--amber);
+}
+
+/* ---- popup (toolbar launcher) — geometry only; visuals come from the rules above ---- */
+body.popup { width: 280px; padding: var(--space-3); }
+body.popup h1 { font-size: 14px; margin: 0 0 var(--space-3); }
+body.popup .status { margin-top: var(--space-3); font-size: 12px; color: var(--ink-soft); white-space: pre-wrap; line-height: 1.45; }

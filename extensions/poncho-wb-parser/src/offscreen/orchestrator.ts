@@ -17,6 +17,7 @@ import type { FactCounts, FromOffscreen, Target, ToOffscreen } from '../messages
 import { EMPTY_COUNTS } from '../messages';
 import { detailUrl } from '../querygen/targets';
 import { pollUntilNonEmpty, pickUnharvested } from './harvest';
+import { dropCascadeCards } from './filter';
 import { DEFAULT_DETAIL_K } from '../storage/config';
 
 const MAX_PAGES = 3;
@@ -32,6 +33,10 @@ let detailK = DEFAULT_DETAIL_K; // top-N cards to /detail per query; (re)loaded 
 const counts: FactCounts = { ...EMPTY_COUNTS };
 let progressDirty = false;
 let harvested = new Set<number>();
+// ranked nm_ids for this snapshot (built from decoded search_positions). competitor cards whose nm
+// is NOT in here — and that carry a real query_id — are carousel/recommendation noise and are
+// dropped before persist (see dropCascadeCards in offscreen/filter.ts).
+let positionNm = new Set<number>();
 // per-snapshot natural-key sets for fact-row dedup (see dedupeBySeen in db/write.ts)
 let seen = freshSeen();
 
@@ -46,6 +51,7 @@ chrome.runtime.onMessage.addListener((msg: ToOffscreen | FromOffscreen | unknown
       console.log(`[Poncho] COLLECT_LOOP detailK=${detailK} targets=${m.targets.length}`);
       Object.assign(counts, EMPTY_COUNTS);
       harvested = new Set();
+      positionNm = new Set();
       seen = freshSeen();
       startProgressTimer();
       runLoop(m.targets).catch((e) => console.error('[Poncho] collect loop', e));
@@ -55,6 +61,7 @@ chrome.runtime.onMessage.addListener((msg: ToOffscreen | FromOffscreen | unknown
       stopped = false;
       snapshot = m.snapshotTs;
       Object.assign(counts, EMPTY_COUNTS);
+      positionNm = new Set();
       seen = freshSeen();
       runMockDecode(m.intercepts).catch((e) => console.error('[Poncho] mock decode', e));
       return;
@@ -153,9 +160,21 @@ async function decodeAndPersist(it: Intercept): Promise<void> {
     console.warn('[Poncho] decode failed (skipping capture):', (e as Error).message, it.url);
     return;
   }
+  // Feed the ranked-nm set from search captures so card captures can be filtered against it. No DB
+  // read needed — the positions we just decoded ARE the new ranked nm. For a resumed run (offscreen
+  // reborn mid-session) where cards arrive before any search capture, hydrate once from Dexie.
+  if (it.kind === 'search' || it.kind === 'brand') {
+    for (const sp of decoded.search_positions) positionNm.add(sp.nm_id);
+  } else if (positionNm.size === 0 && decoded.competitor_cards.length > 0) {
+    await db.search_positions.where('snapshot_ts').equals(snapshot).each((r) => positionNm.add(r.nm_id));
+  }
+  // Drop carousel/recommendation cards (nm not ranked for this snapshot) BEFORE dedup, so carousel
+  // nm never enters seen.cards. query_id=null (direct nmId/url targets) is always kept — its carousel
+  // is legitimate competitor context for the target product.
+  const filtered = dropCascadeCards(decoded, positionNm);
   // drop rows already persisted this snapshot (WB re-fires /list+/detail on scroll/nav); counting
   // the FRESH rows keeps the progress totals honest instead of inflated by duplicates.
-  const fresh = dedupeBySeen(decoded, seen);
+  const fresh = dedupeBySeen(filtered, seen);
   counts.search_positions += fresh.search_positions.length;
   counts.vitrine_ads += fresh.vitrine_ads.length;
   counts.competitor_cards += fresh.competitor_cards.length;
