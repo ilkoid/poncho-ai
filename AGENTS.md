@@ -53,6 +53,7 @@ Full map with priorities → `dev_manifest.md` → "Карта документ�
 | Code placement, patterns | `dev_best_practices.md` |
 | WB API write-utilities, sandboxes | `dev_swagger_reusable_packages.md` |
 | Downloader migration v1→v2 | `dev_utils.md` |
+| Ozon integration (reference + roadmap) | `CLAUDE.md` (Ozon API Swagger Docs, env) + `dev_manifest.md` (Multi-Marketplace: Ozon) |
 
 Rule: more specific document overrides more general.
 

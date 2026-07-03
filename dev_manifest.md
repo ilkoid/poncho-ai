@@ -16,6 +16,40 @@
 
 ---
 
+## Multi-Marketplace: Ozon (следующий этап)
+
+Ozon Seller API (`api-seller.ozon.ru`, 456 эндпоинтов) — следующая платформа после WB. Спека: `docs/ozon_api_swagger/ozon_api.json`. Этот раздел — **decision record**: что переиспользуем, что строим заново, чего нет в принципе.
+
+### Архитектурная позиция
+- **Parallel tree `pkg/ozon/` mirroring `pkg/wb/`** (подтверждает CLAUDE.md → "Extending the Framework"). **НЕ** вводим `pkg/marketplace/` abstraction: WB и Ozon расходятся по форме JSON-ответов, пагинации (Ozon — `last_item_id`+`limit`, всё через `POST`) и модели данных. Абстракция поверх двух расходящихся API = premature (YAGNI).
+- **PG-first:** Ozon-даунлоадеры таргетят PostgreSQL, переиспользуя `pkg/config/pgconfig.go` (`V2StorageConfig.GetEffectiveDSN()`) и ISP Writer + compile-time assertion из `pkg/storage/postgres/`. SQLite для Ozon — **out of scope** (в отличие от WB, который держит dual-backend исторически). `DiscardWriter` для `--mock` обязателен — zero DB interaction.
+- **Таблицы с префиксом `ozon_`** (по аналогии с `onec_`) — не смешивать с WB-данными в одной схеме. Отдельные доменные репозитории `PgOzon*Repo`.
+
+### Roadmap WB ↔ Ozon (с приоритетами и пробелами)
+
+| Tier | Домен Ozon | WB-пакет | Заметка |
+|------|-----------|----------|---------|
+| **1 — port first, PG-ready** | `ProductAPI` (19) | `pkg/cards/`, `pkg/cardupdate/` | incl. `/v1/product/info/wrong-volume` ↔ МГХ-penalties (`fix-penalties-dims`) |
+| 1 | `FinanceAPI` (10) | `pkg/sales/`, nmreport | realization + B2B + mutual-settlement — *богаче* WB |
+| 1 | `Prices&StocksAPI` (11) | `pkg/prices/` + `pkg/stocks/` | прямая аналогия |
+| 1 | `ReviewAPI` (12) + `Questions&Answers` (8) | `pkg/feedbacks/` | отзывы + вопросы |
+| 1 | `WarehouseAPI` (10) + `FboSupplyRequest` (25) | `pkg/supplies/` | Ozon *крупнее* (cargo/timeslot) |
+| 1 | `ReportAPI` (11) | `pkg/nmreport/` | async create→poll→download, паттерн 1-в-1 |
+| 1 | `OrderAPI` + `FboPostingAPI` + FBO/FBS postings | `pkg/orders/`, `pkg/opsales/` | posting-модель FBO/FBS/rFBS отличается |
+| **2 — adapt** | `Promos` (8) + `SellerActions` (18) | `pkg/campaigns/` | **акции со скидками, НЕ CPC** — другая модель |
+| 2 | `CategoryAPI` (5) | content-словари | tree / attribute / values |
+| 2 | `ReturnsAPI` / `ReturnAPI` | opsales (возвраты) | `/v1/returns/list` |
+| **3 — NEW (нет WB-аналога)** | `PricingStrategyAPI` (12) | — | динамическое ценообразование + конкуренты (↔ `Динамическое_Ценообразование`) |
+| 3 | `CertificationAPI` (15) | `fix-certificates` | сертифицируемые бренды |
+| 3 | `ChatAPI` (3) | — | чат продавец↔покупатель |
+| **Gap (есть у WB, нет в Ozon)** | ❌ organic search positions | `search-vis-v2` | Ozon `/v1/search-queries/*` = популярные *запросы*, не *позиция товара* |
+| Gap | ❌ CPC-реклама | `campaigns-v2` / `promotion-v2` | нет эндпоинтов продвигать/буст/реклама |
+
+### Write-safety
+Ozon write-эндпоинты (`/v3/product/import`, `/v1/product/attributes/update`, `/v2/products/stocks`, `/v1/product/import/prices`) подпадают под тот же **MASS WRITES FORBIDDEN**-rule, что и WB Content API: Claude не генерирует и не запускает bulk-write код — только staging / `--dry-run`. См. `dev_swagger_reusable_packages.md`.
+
+---
+
 ## Core Rules
 
 ### 0. Rule of Code Reuse

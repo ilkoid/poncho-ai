@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Storage: SQLite (WAL mode), S3
 - TUI: charmbracelet/bubbletea
 - AI: LLM-agnostic via Provider interface (Zai, OpenRouter, OpenAI)
-- External APIs: Wildberries (Statistics, Content, Analytics v3, Seller Analytics v2, Feedbacks, Advertising, Supplies), 1C/PIM
+- External APIs: Wildberries (Statistics, Content, Analytics v3, Seller Analytics v2, Feedbacks, Advertising, Supplies), 1C/PIM, **Ozon Seller API** (`api-seller.ozon.ru` — single Client-Id+Api-Key pair; see "Ozon API Swagger Docs")
 
 ## Commands
 - Run all tests: `go test ./...`
@@ -79,7 +79,7 @@ All configs in `cmd/.configs/download-all/`, all data in single DB `/var/db/wb-s
 6. **Analytics** — funnel, funnel-agg, search-visibility (3 req/min shared limit)
 
 ### Extending the Framework
-- New platform (e.g., Ozon): add to `config.yaml` + switch case in `registerTool()`
+- New platform (e.g., Ozon): parallel tree `pkg/ozon/` mirroring `pkg/wb/` (NOT a marketplace abstraction), PG-first (reuse `V2StorageConfig`). Auth = single `Client-Id`+`Api-Key` header pair on all endpoints; all reads are `POST`+JSON body (pagination via `last_item_id`/cursor+`limit`). See roadmap in `dev_manifest.md` → "Multi-Marketplace: Ozon"
 - New downloader: copy structure from `cmd/data-downloaders/`, reuse `pkg/config/utility.go` types, add config to `cmd/.configs/download-all/`
 - New tool: implement `Tool` interface, register in `registerTool()`
 
@@ -103,6 +103,32 @@ Key endpoints for organic search visibility:
 - `POST /api/v2/search-report/product/search-texts` — top search queries per product with frequency, position, orders
 - `POST /api/v2/search-report/product/orders` — orders and positions by search query text
 - Rate: **3 req/min** shared across all search-report endpoints
+
+## Ozon API Swagger Docs
+OpenAPI spec: `docs/ozon_api_swagger/ozon_api.json` (3.7 MB, **456 paths, 54 domains**, server `api-seller.ozon.ru`). Authoritative reference for all Ozon Seller API endpoints — next platform after WB.
+
+**Auth (simpler than WB):** single `Client-Id` + `Api-Key` header pair on ALL endpoints (no OpenAPI securitySchemes — they are header parameters). One key for everything (WB uses 4–5 separate keys). Env: `OZON_CLIENT_ID` + `OZON_API_KEY`.
+
+**Style:** all reads are `POST` + JSON body (even "list products"); pagination via `last_item_id`/cursor + `limit` in the request body.
+
+| Tag (count) | Domain | Key Endpoints | ↔ WB equivalent |
+|-------------|--------|---------------|-----------------|
+| `ProductAPI` (19) | Products | `/v3/product/list`, `/v3/product/info/list`, `/v4/product/info/attributes`, `/v1/product/info/wrong-volume` | `pkg/cards/`, `pkg/cardupdate/` |
+| `FinanceAPI` (10) | Finance | `/v2/finance/realization`, `/v3/finance/transaction/list`, `/v1/finance/document-b2b-sales/json` | `pkg/sales/`, nmreport |
+| `Prices&StocksAPI` (11) | Prices & Stocks | `/v5/product/info/prices`, `/v4/product/info/stocks`, `/v2/analytics/stock_on_warehouses` | `pkg/prices/`, `pkg/stocks/` |
+| `ReviewAPI` (12) + `Questions&Answers` (8) | Reviews & Q&A | `/v2/review/list`, `/v2/review/info`, `/v1/review/count` | `pkg/feedbacks/` |
+| `WarehouseAPI` (10) + `FboSupplyRequest` (25) | Supplies / FBO | `/v1/warehouse/list`, `/v1/cluster/list`, `/v2/draft/supply/create` | `pkg/supplies/` |
+| `ReportAPI` (11) | Async reports | `/v1/report/products/create` → `/v1/report/info` → download | `pkg/nmreport/` |
+| `OrderAPI` + `FboPostingAPI` + FBO/FBS postings | Orders / Postings | posting model FBO / FBS / rFBS | `pkg/orders/`, `pkg/opsales/` |
+| `CategoryAPI` (5) | Category tree & dicts | `/v1/description-category/tree`, `/attribute`, `/values` | content dictionaries |
+| `Promos` (8) + `SellerActions` (18) | Promotional **actions** | `/v1/actions`, `/v1/actions/products` — акции со скидками | `pkg/campaigns/` (differs: NOT CPC) |
+| `PricingStrategyAPI` (12) | **NEW:** dynamic pricing | `/v1/pricing-strategy/list`, `/competitors/list` | — (no WB downloader) |
+| `CertificationAPI` (15) | **NEW:** certification | certifiable brands, requirement types | `fix-certificates` |
+| `ChatAPI` (3) | **NEW:** seller↔buyer chat | list / history / send | — |
+
+**Ozon gaps — WB capabilities with NO Ozon equivalent (do NOT look for these):**
+- ❌ Organic search positions → no analog of `search-vis-v2`. Ozon `/v1/search-queries/text|top` = popular search *queries*, not *your product's rank*. (`BetaMethod /v1/product/visibility/*` = storefront visibility on/off, not search ranking.)
+- ❌ CPC advertising → no analog of `campaigns-v2` / `promotion-v2`. No продвигать/буст/реклама endpoints; Ozon `Promos` = discount акции.
 
 ## WB Client & Rate Limiting
 Setup is **mandatory** for all downloaders:
@@ -191,6 +217,8 @@ Mapping: `onec_prices(good_guid) → onec_goods(guid) → article → cards.vend
 | `WB_API_FEEDBACK_KEY` | WB Feedbacks API (separate key) |
 | `WB_STAT_API_KEY` | WB Statistics API |
 | `WB_API_MARKET_KEY` | WB Calendar API (dp-calendar-api, for promotion calendar) |
+| `OZON_CLIENT_ID` | Ozon Seller API Client-Id header (all endpoints) |
+| `OZON_API_KEY` | Ozon Seller API Api-Key header (single key for all 456 endpoints) |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | S3 storage |
 | `OPENROUTER_API_KEY` | OpenRouter (LLM gateway for analyzers) |
 | `ONEC_API_URL` / `ONEC_PIM_URL` | 1C/PIM catalog APIs |
