@@ -46,7 +46,7 @@ go.work.sum
 docs/*
 !docs/wb_api_swagger/
 !docs/ozon_api_swagger/
-reports/
+/reports/
 plans/
 examples/
 screenshots/
@@ -172,7 +172,7 @@ cmd/data-downloaders/download-all-articles/ЗАГРУЗКИ/
 *.pdf
 
 # Reports (local only, not synced to remote)
-reports/
+/reports/
 
 # Markdown reports and plans (business docs)
 *_REPORT.md
