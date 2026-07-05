@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS cards (
 
     -- Flags and media
     need_kiz BOOLEAN NOT NULL DEFAULT FALSE,
+    -- kiz_marked: WB принимает в /content/v2/cards/update, но НЕ возвращает в чтении.
+    -- NULL = неизвестно (опускаем поле в payload), TRUE/FALSE = явное значение.
+    kiz_marked BOOLEAN,
     video TEXT NOT NULL DEFAULT '',
 
     -- Wholesale (flattened from object)
@@ -134,6 +137,7 @@ ALTER TABLE card_characteristics ALTER COLUMN nm_id TYPE BIGINT;
 ALTER TABLE card_characteristics ALTER COLUMN char_id TYPE BIGINT;
 ALTER TABLE card_tags ALTER COLUMN nm_id TYPE BIGINT;
 ALTER TABLE card_tags ALTER COLUMN tag_id TYPE BIGINT;
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS kiz_marked BOOLEAN;
 `
 
 // initCardsSchema creates cards tables in the PostgreSQL database.

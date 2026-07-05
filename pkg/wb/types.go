@@ -405,6 +405,11 @@ type CardTag struct {
 
 // CardUpdateItem — карточка в теле запроса POST /content/v2/cards/update.
 // API полностью перезаписывает карточку — все поля отправляются явно, без omitempty.
+//
+// Исключение — KizMarked: pointer с omitempty (3-value logic). WB НЕ возвращает
+// это поле в /content/v2/get/cards/list, поэтому источник истины отсутствует:
+// nil = «неизвестно» → поле опускается в JSON → WB ставит default false;
+// *true / *false = явное значение (источник: cards.kiz_marked, ручной SQL/audit).
 type CardUpdateItem struct {
 	NmID            int                `json:"nmID"`
 	VendorCode      string             `json:"vendorCode"`
@@ -414,6 +419,7 @@ type CardUpdateItem struct {
 	Dimensions      *CardDimensions    `json:"dimensions"`
 	Characteristics []CardUpdateCharc  `json:"characteristics"`
 	Sizes           []CardSize         `json:"sizes"`
+	KizMarked       *bool              `json:"kizMarked,omitempty"`
 }
 
 // CardUpdateCharc — характеристика в запросе обновления.

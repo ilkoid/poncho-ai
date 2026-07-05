@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS cards (
 
 	-- Flags and media
 	need_kiz INTEGER NOT NULL DEFAULT 0,  -- boolean
+	-- kiz_marked: подтверждение маркировки «Честный ЗНАК». WB ПРИНИМАЕТ это поле в
+	-- /content/v2/cards/update, но НЕ ВОЗВРАЩАЕТ в /content/v2/get/cards/list.
+	-- NULL = неизвестно (опускаем поле в payload → WB ставит default false);
+	-- 0/1 = явное значение, заполненное вручную или audit-инструментом.
+	kiz_marked INTEGER,
 	video TEXT NOT NULL DEFAULT '',
 
 	-- Wholesale (flattened from object)

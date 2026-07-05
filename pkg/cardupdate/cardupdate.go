@@ -29,6 +29,10 @@ import (
 // FullCardData holds all data needed for a safe WB card update.
 // WB API fully overwrites cards — every field must be present in the update payload.
 // Loading through this struct guarantees no field is accidentally zeroed.
+//
+// KizMarked is a pointer for 3-value logic: nil = «unknown» (WB doesn't return the
+// field in /get/cards/list; cards.kiz_marked is NULL) → omitted from the payload →
+// WB applies default false. Non-nil carries an explicit value from cards.kiz_marked.
 type FullCardData struct {
 	NmID            int
 	VendorCode      string
@@ -38,6 +42,7 @@ type FullCardData struct {
 	Dimensions      wb.CardDimensions
 	Characteristics []CardChar
 	Sizes           []wb.CardSize
+	KizMarked       *bool
 }
 
 // CardUpdater loads card data from SQLite and helps build safe WB update payloads.
@@ -52,29 +57,35 @@ func NewCardUpdater(db *sql.DB) *CardUpdater {
 
 // LoadFullCard loads all card data from SQLite for a safe WB update.
 // Queries brand/title/description, dimensions, characteristics, and sizes
-// in a single pass for the given nmID.
+// in a single pass for the given nmID. Also reads kiz_marked (nullable: NULL →
+// KizMarked=nil → field omitted from the WB payload; WB then applies default false).
 func (u *CardUpdater) LoadFullCard(ctx context.Context, nmID int) (FullCardData, error) {
 	var card FullCardData
 	var dimValid int
+	var kizMarked sql.NullInt64
 
 	err := u.db.QueryRowContext(ctx, `
 		SELECT nm_id, COALESCE(vendor_code,''), COALESCE(brand,''),
 		       COALESCE(title,''), COALESCE(description,''),
 		       COALESCE(dim_length,0), COALESCE(dim_width,0),
 		       COALESCE(dim_height,0), COALESCE(dim_weight_brutto,0),
-		       COALESCE(dim_is_valid,0)
+		       COALESCE(dim_is_valid,0), kiz_marked
 		FROM cards WHERE nm_id = ?
 	`, nmID).Scan(
 		&card.NmID, &card.VendorCode, &card.Brand,
 		&card.Title, &card.Description,
 		&card.Dimensions.Length, &card.Dimensions.Width,
 		&card.Dimensions.Height, &card.Dimensions.WeightBrutto,
-		&dimValid,
+		&dimValid, &kizMarked,
 	)
 	if err != nil {
 		return FullCardData{}, fmt.Errorf("load card core for nm_id=%d: %w", nmID, err)
 	}
 	card.Dimensions.IsValid = dimValid != 0
+	if kizMarked.Valid {
+		v := kizMarked.Int64 != 0
+		card.KizMarked = &v
+	}
 
 	chars, err := u.loadCharacteristics(ctx, nmID)
 	if err != nil {
@@ -173,16 +184,11 @@ func (u *CardUpdater) LoadBulkSizes(ctx context.Context, nmIDs []int) (map[int][
 // ToUpdateItem converts FullCardData to wb.CardUpdateItem ready for the WB API.
 // Unwraps characteristic values from DB format (JSON arrays) to WB API format (scalars).
 //
-// KNOWN GAP — kizMarked: POST /content/v2/cards/update also accepts `kizMarked`
-// (default false; confirmation of "Честный ЗНАК" marking). This round-trip does NOT
-// send it — the field is absent from ProductCard, cards table, and CardUpdateItem —
-// so a marking-required card (needKiz=true, e.g. clothing) can have its kizMarked
-// reset to false on rewrite. Swagger: docs/wb_api_swagger/02-products.yaml,
-// /content/v2/cards/update schema (kizMarked). Fix later by adding KizMarked to
-// ProductCard + CardUpdateItem + carrying it through FullCardData/ToUpdateItem
-// (source: either a cards.kiz_marked column populated by the downloader, or a live
-// GetCardsByNmIDs fetch). Tracked in memory cardupdate_kizmarked_gap. See also the
-// penalties-dims fixer README ("Известные ограничения").
+// kizMarked: carried through as *bool (3-value logic). nil (cards.kiz_marked IS NULL)
+// → omitted from JSON → WB applies default false on rewrite. To preserve an explicit
+// marking state, populate cards.kiz_marked (manual SQL or audit tool) — WB API does
+// NOT return the field in /content/v2/get/cards/list, so there is no automatic source.
+// Audit-WARN recommended when need_kiz=1 AND kiz_marked IS NULL before --apply.
 func ToUpdateItem(card FullCardData) wb.CardUpdateItem {
 	chars := make([]wb.CardUpdateCharc, 0, len(card.Characteristics))
 	for _, c := range card.Characteristics {
@@ -203,6 +209,7 @@ func ToUpdateItem(card FullCardData) wb.CardUpdateItem {
 		Dimensions:      &card.Dimensions,
 		Characteristics: chars,
 		Sizes:           card.Sizes,
+		KizMarked:       card.KizMarked,
 	}
 }
 
