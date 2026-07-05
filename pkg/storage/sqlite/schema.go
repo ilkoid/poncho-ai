@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS sales (
     -- B2B fields (swagger 13-finances.yaml, июль 2026 — новые required-поля)
     b2b_customer_tin TEXT,
     order_uid TEXT,
-    is_b2b INTEGER DEFAULT 0,
+    is_legal_entity INTEGER DEFAULT 0,
     sale_price_affiliated_discount_prc REAL,
     sale_price_wholesale_discount_prc REAL,
 

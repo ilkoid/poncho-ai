@@ -44,7 +44,7 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 			seller_promo_discount, sale_price_promocode_discount_prc,
 			wibes_wb_discount_percent, loyalty_discount,
 			cashback_amount, cashback_discount, cashback_commission_change,
-			b2b_customer_tin, order_uid, is_b2b,
+			b2b_customer_tin, order_uid, is_legal_entity,
 			sale_price_affiliated_discount_prc, sale_price_wholesale_discount_prc
 		) VALUES (
 			?, ?, ?, ?, ?,
@@ -74,9 +74,9 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 		if row.IsCancel {
 			isCancel = 1
 		}
-		isB2B := 0
-		if row.IsB2b {
-			isB2B = 1
+		isLegalEntity := 0
+		if row.IsLegalEntity {
+			isLegalEntity = 1
 		}
 
 		var cancelDT sql.NullString
@@ -137,7 +137,7 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 			nullFloat(row.CashbackCommissionChange),
 			row.B2BCustomerTin,
 			row.OrderUID,
-			isB2B,
+			isLegalEntity,
 			nullFloat(row.SalePriceAffiliatedDiscountPrc),
 			nullFloat(row.SalePriceWholesaleDiscountPrc),
 		)

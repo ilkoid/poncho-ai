@@ -196,7 +196,7 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		// B2B fields (swagger 13-finances.yaml, июль 2026 — новые required-поля reportDetailByPeriod)
 		"ALTER TABLE sales ADD COLUMN b2b_customer_tin TEXT",
 		"ALTER TABLE sales ADD COLUMN order_uid TEXT",
-		"ALTER TABLE sales ADD COLUMN is_b2b INTEGER DEFAULT 0",
+		"ALTER TABLE sales ADD COLUMN is_legal_entity INTEGER DEFAULT 0",
 		"ALTER TABLE sales ADD COLUMN sale_price_affiliated_discount_prc REAL",
 		"ALTER TABLE sales ADD COLUMN sale_price_wholesale_discount_prc REAL",
 	}

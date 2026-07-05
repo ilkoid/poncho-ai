@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS sales (
     -- B2B fields (swagger 13-finances.yaml, июль 2026 — новые required-поля reportDetailByPeriod)
     b2b_customer_tin TEXT,
     order_uid TEXT,
-    is_b2b BOOLEAN DEFAULT FALSE,
+    is_legal_entity BOOLEAN DEFAULT FALSE,
     sale_price_affiliated_discount_prc DOUBLE PRECISION,  -- sparse → nullable
     sale_price_wholesale_discount_prc DOUBLE PRECISION,  -- sparse → nullable
 
@@ -213,7 +213,7 @@ ALTER TABLE sales ALTER COLUMN nm_id TYPE BIGINT;
 ALTER TABLE sales ALTER COLUMN quantity TYPE BIGINT;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS b2b_customer_tin TEXT;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS order_uid TEXT;
-ALTER TABLE sales ADD COLUMN IF NOT EXISTS is_b2b BOOLEAN DEFAULT FALSE;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS is_legal_entity BOOLEAN DEFAULT FALSE;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS sale_price_affiliated_discount_prc DOUBLE PRECISION;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS sale_price_wholesale_discount_prc DOUBLE PRECISION;
 `

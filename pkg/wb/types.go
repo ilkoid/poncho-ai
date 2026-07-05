@@ -565,15 +565,14 @@ type RealizationReportRow struct {
 
 	// Новые required-поля (swagger 13-finances.yaml, июль 2026). Без них — silent data
 	// loss: json.Unmarshal без DisallowUnknownFields молча пропускал бы эти ключи.
-	// Теги — snake_case по конвенции всего struct (endpoint /api/v5/supplier/reportDetailByPeriod
-	// отдаёт snake_case: sale_id, nm_id, rr_dt… — доказано 60 полями; swagger показывает
-	// camelCase как артефакт автогенерации). Если при интеграции выяснится, что эти
-	// конкретные поля приходят camelCase — переименовать только тег.
+	// Имена — из snake_case wire-схемы ответа reportDetailByPeriod (стр. 2150-2275 swagger),
+	// которая совпадает со всеми существующими полями. ВАЖНО: B2B-флаг в wire называется
+	// is_legal_entity (НЕ is_b2b — то camelCase-имя из параллельной референс-схемы swagger).
 	B2BCustomerTin                string  `json:"b2b_customer_tin,omitempty"`                 // ИНН B2B-клиента
 	OrderUID                      string  `json:"order_uid,omitempty"`                        // UID заказа (B2B)
-	IsB2b                         bool    `json:"is_b2b,omitempty"`                           // Признак B2B-сделки
-	SalePriceAffiliatedDiscountPrc float64 `json:"sale_price_affiliated_discount_prc,omitempty"` // Скидка аффилированной цены (%)
-	SalePriceWholesaleDiscountPrc float64 `json:"sale_price_wholesale_discount_prc,omitempty"` // Оптовая скидка (%)
+	IsLegalEntity                 bool    `json:"is_legal_entity,omitempty"`                  // Признак B2B-сделки (wire: is_legal_entity)
+	SalePriceAffiliatedDiscountPrc float64 `json:"sale_price_affiliated_discount_prc,omitempty"` // Скидка по подменному артикулу (%)
+	SalePriceWholesaleDiscountPrc float64 `json:"sale_price_wholesale_discount_prc,omitempty"` // Оптовая скидка для бизнеса (%)
 }
 
 // ReportDetailByPeriodRequest представляет запрос к API отчета реализации.

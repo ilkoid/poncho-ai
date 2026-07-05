@@ -205,7 +205,7 @@ func (r *PgSalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.Realization
 			nullFloat64(row.CashbackCommissionChange),
 			row.B2BCustomerTin,
 			row.OrderUID,
-			row.IsB2b,
+			row.IsLegalEntity,
 			nullFloat64(row.SalePriceAffiliatedDiscountPrc),
 			nullFloat64(row.SalePriceWholesaleDiscountPrc),
 		)
@@ -311,7 +311,7 @@ const (
 	    seller_promo_discount, sale_price_promocode_discount_prc,
 	    wibes_wb_discount_percent, loyalty_discount,
 	    cashback_amount, cashback_discount, cashback_commission_change,
-	    b2b_customer_tin, order_uid, is_b2b,
+	    b2b_customer_tin, order_uid, is_legal_entity,
 	    sale_price_affiliated_discount_prc, sale_price_wholesale_discount_prc
 	) VALUES `
 

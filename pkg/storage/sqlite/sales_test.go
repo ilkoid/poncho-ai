@@ -31,7 +31,7 @@ func TestSave_NewB2BFieldsRoundTrip(t *testing.T) {
 		Quantity:                         1,
 		B2BCustomerTin:                   "7707083893",
 		OrderUID:                         "b2b-order-uid-42",
-		IsB2b:                            true,
+		IsLegalEntity:                    true,
 		SalePriceAffiliatedDiscountPrc:   3.5,
 		SalePriceWholesaleDiscountPrc:    7.25,
 	}
@@ -41,17 +41,17 @@ func TestSave_NewB2BFieldsRoundTrip(t *testing.T) {
 	}
 
 	var (
-		tin       sql.NullString
-		orderUID  sql.NullString
-		isB2B     sql.NullInt64
-		affilPrc  sql.NullFloat64
-		wholPrc   sql.NullFloat64
+		tin          sql.NullString
+		orderUID     sql.NullString
+		isLegalEnt   sql.NullInt64
+		affilPrc     sql.NullFloat64
+		wholPrc      sql.NullFloat64
 	)
 	err = db.QueryRowContext(ctx,
-		`SELECT b2b_customer_tin, order_uid, is_b2b,
+		`SELECT b2b_customer_tin, order_uid, is_legal_entity,
 		        sale_price_affiliated_discount_prc, sale_price_wholesale_discount_prc
 		 FROM sales WHERE rrd_id = ?`, row.RrdID,
-	).Scan(&tin, &orderUID, &isB2B, &affilPrc, &wholPrc)
+	).Scan(&tin, &orderUID, &isLegalEnt, &affilPrc, &wholPrc)
 	if err != nil {
 		t.Fatalf("select back: %v", err)
 	}
@@ -61,8 +61,8 @@ func TestSave_NewB2BFieldsRoundTrip(t *testing.T) {
 	if !orderUID.Valid || orderUID.String != "b2b-order-uid-42" {
 		t.Errorf("order_uid = %v, want \"b2b-order-uid-42\"", orderUID)
 	}
-	if !isB2B.Valid || isB2B.Int64 != 1 {
-		t.Errorf("is_b2b = %v, want 1 (true)", isB2B)
+	if !isLegalEnt.Valid || isLegalEnt.Int64 != 1 {
+		t.Errorf("is_legal_entity = %v, want 1 (true)", isLegalEnt)
 	}
 	if !affilPrc.Valid || affilPrc.Float64 != 3.5 {
 		t.Errorf("sale_price_affiliated_discount_prc = %v, want 3.5", affilPrc)
@@ -87,13 +87,13 @@ func TestSave_ZeroB2BFieldsNullable(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	var affilPrc, wholPrc sql.NullFloat64
-	var isB2B sql.NullInt64
+	var isLegalEnt sql.NullInt64
 	_ = db.QueryRowContext(ctx,
-		`SELECT is_b2b, sale_price_affiliated_discount_prc, sale_price_wholesale_discount_prc
+		`SELECT is_legal_entity, sale_price_affiliated_discount_prc, sale_price_wholesale_discount_prc
 		 FROM sales WHERE rrd_id = ?`, row.RrdID,
-	).Scan(&isB2B, &affilPrc, &wholPrc)
+	).Scan(&isLegalEnt, &affilPrc, &wholPrc)
 
-	// is_b2b DEFAULT 0 — но INSERT передаёт 0 явно → 0, не NULL. Это ок (false).
+	// is_legal_entity DEFAULT 0 — но INSERT передаёт 0 явно → 0, не NULL. Это ок (false).
 	// Проценты идут через nullFloat() → 0 превращается в NULL.
 	if affilPrc.Valid {
 		t.Errorf("sale_price_affiliated_discount_prc = %v, want NULL (sparse)", affilPrc.Float64)
