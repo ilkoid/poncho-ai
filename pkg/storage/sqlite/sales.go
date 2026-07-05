@@ -43,8 +43,25 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 			product_discount_for_report, supplier_promo,
 			seller_promo_discount, sale_price_promocode_discount_prc,
 			wibes_wb_discount_percent, loyalty_discount,
-			cashback_amount, cashback_discount, cashback_commission_change
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			cashback_amount, cashback_discount, cashback_commission_change,
+			b2b_customer_tin, order_uid, is_b2b,
+			sale_price_affiliated_discount_prc, sale_price_wholesale_discount_prc
+		) VALUES (
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?,
+			?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?,
+			?, ?, ?, ?,
+			?, ?,
+			?, ?,
+			?, ?,
+			?, ?,
+			?, ?, ?,
+			?, ?, ?,
+			?, ?
+		)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare statement: %w", err)
@@ -56,6 +73,10 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 		isCancel := 0
 		if row.IsCancel {
 			isCancel = 1
+		}
+		isB2B := 0
+		if row.IsB2b {
+			isB2B = 1
 		}
 
 		var cancelDT sql.NullString
@@ -114,6 +135,11 @@ func (r *SQLiteSalesRepository) Save(ctx context.Context, rows []wb.RealizationR
 			nullFloat(row.CashbackAmount),
 			nullFloat(row.CashbackDiscount),
 			nullFloat(row.CashbackCommissionChange),
+			row.B2BCustomerTin,
+			row.OrderUID,
+			isB2B,
+			nullFloat(row.SalePriceAffiliatedDiscountPrc),
+			nullFloat(row.SalePriceWholesaleDiscountPrc),
 		)
 		if err != nil {
 			return fmt.Errorf("insert row rrd_id=%d: %w", row.RrdID, err)

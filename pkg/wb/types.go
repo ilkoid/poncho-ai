@@ -562,6 +562,18 @@ type RealizationReportRow struct {
 	StorageFee               float64 `json:"storage_fee,omitempty"`               // Хранение
 	Acceptance               float64 `json:"acceptance,omitempty"`                 // Приемка
 	GiID                     int     `json:"gi_id,omitempty"`                     // ID товара в складе
+
+	// Новые required-поля (swagger 13-finances.yaml, июль 2026). Без них — silent data
+	// loss: json.Unmarshal без DisallowUnknownFields молча пропускал бы эти ключи.
+	// Теги — snake_case по конвенции всего struct (endpoint /api/v5/supplier/reportDetailByPeriod
+	// отдаёт snake_case: sale_id, nm_id, rr_dt… — доказано 60 полями; swagger показывает
+	// camelCase как артефакт автогенерации). Если при интеграции выяснится, что эти
+	// конкретные поля приходят camelCase — переименовать только тег.
+	B2BCustomerTin                string  `json:"b2b_customer_tin,omitempty"`                 // ИНН B2B-клиента
+	OrderUID                      string  `json:"order_uid,omitempty"`                        // UID заказа (B2B)
+	IsB2b                         bool    `json:"is_b2b,omitempty"`                           // Признак B2B-сделки
+	SalePriceAffiliatedDiscountPrc float64 `json:"sale_price_affiliated_discount_prc,omitempty"` // Скидка аффилированной цены (%)
+	SalePriceWholesaleDiscountPrc float64 `json:"sale_price_wholesale_discount_prc,omitempty"` // Оптовая скидка (%)
 }
 
 // ReportDetailByPeriodRequest представляет запрос к API отчета реализации.

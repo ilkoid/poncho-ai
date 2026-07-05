@@ -150,7 +150,7 @@ func (r *PgSalesRepo) Exists(ctx context.Context, rrdID int) (bool, error) {
 const salesChunkSize = 500
 
 // saveSalesChunk saves up to 500 sales rows using a single multi-row INSERT.
-// 42 columns per row, ON CONFLICT (rrd_id) DO NOTHING.
+// 47 columns per row, ON CONFLICT (rrd_id) DO NOTHING.
 func (r *PgSalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.RealizationReportRow) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -203,6 +203,11 @@ func (r *PgSalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.Realization
 			nullFloat64(row.CashbackAmount),
 			nullFloat64(row.CashbackDiscount),
 			nullFloat64(row.CashbackCommissionChange),
+			row.B2BCustomerTin,
+			row.OrderUID,
+			row.IsB2b,
+			nullFloat64(row.SalePriceAffiliatedDiscountPrc),
+			nullFloat64(row.SalePriceWholesaleDiscountPrc),
 		)
 	}
 
@@ -287,7 +292,10 @@ func nullInt64(v int) *int64 {
 
 // Multi-row INSERT SQL fragments for sales table.
 const (
-	insertSaleRowCols = 42
+	// insertSaleRowCols MUST match the column count in insertSaleRowPrefixSQL and the
+	// arg count appended per row in saveSalesChunk. BuildMultiRowInsert generates
+	// $1..$N placeholders from this number; a mismatch is a runtime SQL error.
+	insertSaleRowCols = 47
 
 	insertSaleRowPrefixSQL = `INSERT INTO sales (
 	    rrd_id, realizationreport_id, nm_id, supplier_article, barcode,
@@ -302,7 +310,9 @@ const (
 	    product_discount_for_report, supplier_promo,
 	    seller_promo_discount, sale_price_promocode_discount_prc,
 	    wibes_wb_discount_percent, loyalty_discount,
-	    cashback_amount, cashback_discount, cashback_commission_change
+	    cashback_amount, cashback_discount, cashback_commission_change,
+	    b2b_customer_tin, order_uid, is_b2b,
+	    sale_price_affiliated_discount_prc, sale_price_wholesale_discount_prc
 	) VALUES `
 
 	insertSaleRowOnConflictSQL = `
