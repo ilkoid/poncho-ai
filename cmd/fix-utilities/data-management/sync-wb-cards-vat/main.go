@@ -75,6 +75,7 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "путь к конфигу")
 	dbPath := flag.String("db", "", "путь к базе (overrides config)")
 	apply := flag.Bool("apply", false, "применить изменения (default: dry-run)")
+	dryRun := flag.Bool("dry-run", false, "показать полный WB payload без отправки")
 	article := flag.String("article", "", "фильтр по артикулу поставщика")
 	nmID := flag.Int("nm-id", 0, "фильтр по nmID")
 	nds := flag.Int("nds", 0, "фильтр по ставке 1C (10 или 22)")
@@ -111,8 +112,10 @@ func main() {
 
 	// Print header
 	mode := "DRY-RUN"
-	if *apply {
+	if *apply && !*mock {
 		mode = "APPLY"
+	} else if *dryRun {
+		mode = "DRY-RUN (payload dump)"
 	}
 	printHeader(cfg, mode, *mock)
 
@@ -160,7 +163,7 @@ func main() {
 	fmt.Println()
 
 	// Run sync
-	result, err := RunSync(ctx, db, client, cfg, *apply && !*mock, cfg.Filters)
+	result, err := RunSync(ctx, db, client, cfg, *apply && !*mock, *dryRun, cfg.Filters)
 	if err != nil {
 		log.Fatalf("❌ Sync failed: %v", err)
 	}
@@ -220,6 +223,8 @@ Options:
   --config PATH     Путь к конфигу (default: config.yaml)
   --db PATH         Путь к базе (overrides config)
   --apply           Применить изменения (default: dry-run)
+  --dry-run         Показать полный WB payload (vendorCode/brand/.../sizes) без отправки.
+                    Проверка что rewrite безопасен (частичный payload обнулил бы карточку).
   --article VALUE   Фильтр по артикулу поставщика
   --nm-id VALUE     Фильтр по nmID
   --nds 10|22       Фильтр по ставке 1C
@@ -229,6 +234,9 @@ Options:
 Examples:
   # Dry-run: показать расхождения
   go run . --db /var/db/wb-sales.db
+
+  # Проверить полный payload для одной карточки перед --apply
+  go run . --nm-id 12345678 --dry-run --db /var/db/wb-sales.db
 
   # Фильтр по одному артикулу
   go run . --article 126210 --db /var/db/wb-sales.db

@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/cardupdate"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -53,6 +54,7 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, dryRun bool) e
 
 	sent := 0
 	failed := 0
+	updater := cardupdate.NewCardUpdater(db)
 
 	for i := 0; i < len(batch); i += batchSize {
 		end := i + batchSize
@@ -61,15 +63,20 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, dryRun bool) e
 		}
 		chunk := batch[i:end]
 
-		items := make([]wb.CardUpdateItem, len(chunk))
-		for j, r := range chunk {
-			items[j] = wb.CardUpdateItem{
-				NmID: r.nmID,
-				Characteristics: []wb.CardUpdateCharc{{
-					ID:    r.charID,
-					Value: r.mappedValue,
-				}},
+		items := make([]wb.CardUpdateItem, 0, len(chunk))
+		for _, r := range chunk {
+			item, err := buildMaterialPayload(ctx, updater, r)
+			if err != nil {
+				log.Printf("  ERROR build payload nm_id=%d: %v", r.nmID, err)
+				db.ExecContext(ctx, `UPDATE fix_material_upper SET status = 'error', error_msg = ? WHERE nm_id = ?`,
+					err.Error(), r.nmID)
+				failed++
+				continue
 			}
+			items = append(items, item)
+		}
+		if len(items) == 0 {
+			continue
 		}
 
 		if dryRun {
@@ -104,4 +111,25 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, dryRun bool) e
 
 	fmt.Printf("\nDone: %d sent, %d failed\n", sent, failed)
 	return nil
+}
+
+// buildMaterialPayload строит ПОЛНЫЙ CardUpdateItem с одной мутированной
+// характеристикой — «Материал верха» (char_id берётся из staging-строки).
+// Инвариант безопасного rewrite:
+// LoadFullCard (все поля) → ToUpdateItem (полный payload) → мутация только материала.
+// Частичный payload {NmID, Characteristics} обнулил бы карточку — WB делает полную замену.
+func buildMaterialPayload(ctx context.Context, u *cardupdate.CardUpdater, r applyRow) (wb.CardUpdateItem, error) {
+	card, err := u.LoadFullCard(ctx, r.nmID)
+	if err != nil {
+		return wb.CardUpdateItem{}, fmt.Errorf("load full card nm_id=%d: %w", r.nmID, err)
+	}
+	item := cardupdate.ToUpdateItem(card)
+	for i, c := range item.Characteristics {
+		if c.ID == r.charID {
+			item.Characteristics[i].Value = r.mappedValue
+			return item, nil
+		}
+	}
+	item.Characteristics = append(item.Characteristics, wb.CardUpdateCharc{ID: r.charID, Value: r.mappedValue})
+	return item, nil
 }

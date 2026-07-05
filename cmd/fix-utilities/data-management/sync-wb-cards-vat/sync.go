@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/cardupdate"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -53,7 +54,10 @@ type SyncClient interface {
 }
 
 // RunSync — основная функция синхронизации.
-func RunSync(ctx context.Context, db *sql.DB, client SyncClient, cfg *Config, apply bool, filters Filters) (*SyncResult, error) {
+//
+// apply=true  — отправить полные payload в WB API (безопасный rewrite через cardupdate).
+// dryRun=true — построить полные payload и дампнуть их (без отправки); apply приоритетнее.
+func RunSync(ctx context.Context, db *sql.DB, client SyncClient, cfg *Config, apply, dryRun bool, filters Filters) (*SyncResult, error) {
 	start := time.Now()
 	result := &SyncResult{}
 
@@ -97,10 +101,10 @@ func RunSync(ctx context.Context, db *sql.DB, client SyncClient, cfg *Config, ap
 	// 6. Вывести таблицу
 	printTable(rows, result, apply, cfg)
 
-	// 7. Применить если --apply
-	if apply && result.ToUpdate > 0 {
+	// 7. Применить если --apply, или задампить payload если --dry-run.
+	if (apply || dryRun) && result.ToUpdate > 0 {
 		toUpdate := filterAction(rows, "SET", "UPDATE")
-		updated, errors, err := applyUpdates(ctx, client, toUpdate, cfg.Sync.BatchSize)
+		updated, errors, err := applyUpdates(ctx, db, client, toUpdate, cfg.Sync.BatchSize, apply && !dryRun)
 		if err != nil {
 			return nil, fmt.Errorf("apply updates: %w", err)
 		}
@@ -288,11 +292,18 @@ func filterAction(rows []NDSRow, actions ...string) []NDSRow {
 	return result
 }
 
-// applyUpdates отправляет батчи обновлений в WB API.
-func applyUpdates(ctx context.Context, client SyncClient, rows []NDSRow, batchSize int) (int, int, error) {
+// applyUpdates строит ПОЛНЫЕ payload обновлений и либо отправляет их в WB API
+// (send=true), либо дампит как JSON (send=false, dry-run).
+//
+// Безопасный rewrite: каждая карточка грузится целиком через cardupdate.LoadFullCard,
+// мутируется только характеристика НДС (vatCharID), и отправляется полный payload
+// (vendorCode/brand/title/description/dimensions/characteristics/sizes). Частичный
+// payload {NmID, Characteristics} обнулил бы карточку — WB делает полную замену.
+func applyUpdates(ctx context.Context, db *sql.DB, client SyncClient, rows []NDSRow, batchSize int, send bool) (int, int, error) {
 	total := len(rows)
 	updated := 0
 	errors := 0
+	updater := cardupdate.NewCardUpdater(db)
 
 	for i := 0; i < total; i += batchSize {
 		end := i + batchSize
@@ -301,32 +312,65 @@ func applyUpdates(ctx context.Context, client SyncClient, rows []NDSRow, batchSi
 		}
 		batch := rows[i:end]
 
-		items := make([]wb.CardUpdateItem, len(batch))
-		for j, r := range batch {
-			items[j] = wb.CardUpdateItem{
-				NmID: r.NmID,
-				Characteristics: []wb.CardUpdateCharc{
-					{ID: vatCharID, Value: fmt.Sprintf("%d", r.OneCNDS)},
-				},
+		items := make([]wb.CardUpdateItem, 0, len(batch))
+		for _, r := range batch {
+			item, err := buildNDSPayload(ctx, updater, r)
+			if err != nil {
+				log.Printf("  ERROR build payload nm_id=%d: %v", r.NmID, err)
+				errors++
+				continue
 			}
+			items = append(items, item)
+		}
+		if len(items) == 0 {
+			continue
+		}
+
+		if !send {
+			payload, _ := json.MarshalIndent(items, "", "  ")
+			fmt.Printf("\n--- Batch %d-%d/%d (%d cards) ---\n%s\n", i+1, end, total, len(items), payload)
+			updated += len(items)
+			continue
 		}
 
 		fmt.Printf("  Batch %d-%d/%d... ", i+1, end, total)
-
 		_, errorText, err := client.UpdateCards(ctx, wb.CardsBaseURL, 10, 5, items)
 		if err != nil {
-			errors += len(batch)
+			errors += len(items)
 			fmt.Printf("ERROR: %s\n", err)
 			if errorText != "" {
 				log.Printf("  WB API error: %s", errorText)
 			}
 			continue
 		}
-		updated += len(batch)
+		updated += len(items)
 		fmt.Println("OK")
 	}
 
+	if !send {
+		fmt.Printf("\nDry-run: %d payloads dumped, %d errors. Use --apply to send.\n", updated, errors)
+	}
 	return updated, errors, nil
+}
+
+// buildNDSPayload строит ПОЛНЫЙ CardUpdateItem с одной мутированной характеристикой —
+// НДС (char_id vatCharID). Инвариант безопасного rewrite:
+// LoadFullCard (все поля) → ToUpdateItem (полный payload) → мутация только НДС.
+func buildNDSPayload(ctx context.Context, u *cardupdate.CardUpdater, r NDSRow) (wb.CardUpdateItem, error) {
+	card, err := u.LoadFullCard(ctx, r.NmID)
+	if err != nil {
+		return wb.CardUpdateItem{}, fmt.Errorf("load full card: %w", err)
+	}
+	item := cardupdate.ToUpdateItem(card)
+	newVal := fmt.Sprintf("%d", r.OneCNDS)
+	for i, c := range item.Characteristics {
+		if c.ID == vatCharID {
+			item.Characteristics[i].Value = newVal
+			return item, nil
+		}
+	}
+	item.Characteristics = append(item.Characteristics, wb.CardUpdateCharc{ID: vatCharID, Value: newVal})
+	return item, nil
 }
 
 // printTable выводит таблицу расхождений.
