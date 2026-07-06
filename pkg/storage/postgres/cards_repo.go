@@ -127,7 +127,7 @@ func (r *PgCardsRepo) saveCardsChunk(ctx context.Context, chunk []wb.ProductCard
 		args = append(args,
 			f.Card.NmID, f.Card.ImtID, f.Card.NmUUID, f.Card.SubjectID, f.Card.SubjectName,
 			f.Card.VendorCode, f.Card.Brand, f.Card.Title, f.Card.Description,
-			f.Card.NeedKiz, f.Card.Video,
+			f.Card.NeedKiz, f.Card.KizMarked, f.Card.Video,
 			f.WholesaleEnabled, f.WholesaleQuantum,
 			f.DimLength, f.DimWidth, f.DimHeight, f.DimWeight, f.DimIsValid,
 			f.Card.CreatedAt, f.Card.UpdatedAt,
@@ -215,12 +215,12 @@ const cardsChunkSize = 500
 // downloaded_at is passed as a formatted TEXT parameter ($21),
 // matching the column's TEXT type.
 const (
-	insertCardCols = 21 // $1-$21 (includes downloaded_at as $21)
+	insertCardCols = 22 // $1-$22 (includes downloaded_at as $22)
 
 	insertCardPrefixSQL = `INSERT INTO cards (
     nm_id, imt_id, nm_uuid, subject_id, subject_name,
     vendor_code, brand, title, description,
-    need_kiz, video,
+    need_kiz, kiz_marked, video,
     wholesale_enabled, wholesale_quantum,
     dim_length, dim_width, dim_height, dim_weight_brutto, dim_is_valid,
     created_at, updated_at, downloaded_at
@@ -237,6 +237,7 @@ ON CONFLICT (nm_id) DO UPDATE SET
     title = EXCLUDED.title,
     description = EXCLUDED.description,
     need_kiz = EXCLUDED.need_kiz,
+    kiz_marked = EXCLUDED.kiz_marked,
     video = EXCLUDED.video,
     wholesale_enabled = EXCLUDED.wholesale_enabled,
     wholesale_quantum = EXCLUDED.wholesale_quantum,

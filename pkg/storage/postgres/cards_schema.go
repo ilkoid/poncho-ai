@@ -40,8 +40,8 @@ CREATE TABLE IF NOT EXISTS cards (
 
     -- Flags and media
     need_kiz BOOLEAN NOT NULL DEFAULT FALSE,
-    -- kiz_marked: WB принимает в /content/v2/cards/update, но НЕ возвращает в чтении.
-    -- NULL = неизвестно (опускаем поле в payload), TRUE/FALSE = явное значение.
+    -- kiz_marked: WB ВОЗВРАЩАЕТ в /content/v2/get/cards/list (nullable:false) и
+    -- ПРИНИМАЕТ в /content/v2/cards/update (default:false). Разбирается даунлоадером cards.
     kiz_marked BOOLEAN,
     video TEXT NOT NULL DEFAULT '',
 

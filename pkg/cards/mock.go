@@ -99,6 +99,7 @@ func (m *MockCardsSource) populate(cardCount int) {
 			Title:       fmt.Sprintf("%s %s %s", brand, subject, color),
 			Description: fmt.Sprintf("Описание товара %d. Качественный материал.", i),
 			NeedKiz:     i%3 == 0,
+			KizMarked:   i%5 == 0,
 
 			Photos: []wb.ProductPhoto{
 				{

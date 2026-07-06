@@ -18,11 +18,11 @@ const (
 INSERT OR REPLACE INTO cards (
 	nm_id, imt_id, nm_uuid, subject_id, subject_name,
 	vendor_code, brand, title, description,
-	need_kiz, video,
+	need_kiz, kiz_marked, video,
 	wholesale_enabled, wholesale_quantum,
 	dim_length, dim_width, dim_height, dim_weight_brutto, dim_is_valid,
 	created_at, updated_at, downloaded_at
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`
 
 	// Photo insert
 	insertPhotoSQL = `
@@ -179,7 +179,7 @@ func (r *SQLiteSalesRepository) saveCardsChunk(ctx context.Context, chunk []wb.P
 		_, err := cardStmt.ExecContext(ctx,
 			card.NmID, card.ImtID, card.NmUUID, card.SubjectID, card.SubjectName,
 			card.VendorCode, card.Brand, card.Title, card.Description,
-			boolToInt(card.NeedKiz), card.Video,
+			boolToInt(card.NeedKiz), boolToInt(card.KizMarked), card.Video,
 			wholesaleEnabled, wholesaleQuantum,
 			dimLength, dimWidth, dimHeight, dimWeight, dimIsValid,
 			card.CreatedAt, card.UpdatedAt,

@@ -325,6 +325,7 @@ type ProductCard struct {
 	Title           string                `json:"title"`
 	Description     string                `json:"description"`
 	NeedKiz         bool                  `json:"needKiz"`
+	KizMarked       bool                 `json:"kizMarked"` // подтверждение маркировки «Честный ЗНАК» (true = продавец подтвердил, что код нанесён)
 	Photos          []ProductPhoto        `json:"photos"`
 	Video           string                `json:"video"`
 	Wholesale       *CardWholesale        `json:"wholesale"`
