@@ -91,8 +91,12 @@ paths:
       summary: Список отчётов реализации
       operationId: postV1SalesReportsList
       description: |
-        <div class="description_token">Метод доступен по <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">токенам</a>:<strong> Персональный</strong>,<strong> Сервисный</strong> 
-            </div>
+
+        <div class="description_token">
+            Метод <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">доступен</a> по
+                <strong>Персональному</strong> токену, 
+                <strong>Сервисному</strong> токену
+        </div>
 
         Метод возвращает список отчётов релизации по формату [таблицы отчётов](https://seller.wildberries.ru/suppliers-mutual-settlements).
         <br><br>
@@ -144,8 +148,12 @@ paths:
       summary: Детализации к отчётам реализации по ID отчётов
       operationId: postV1SalesReportsDetailedReportId
       description: |
-        <div class="description_token">Метод доступен по <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">токенам</a>:<strong> Персональный</strong>,<strong> Сервисный</strong> 
-            </div>
+
+        <div class="description_token">
+            Метод <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">доступен</a> по
+                <strong>Персональному</strong> токену, 
+                <strong>Сервисному</strong> токену
+        </div>
 
         Метод возвращает детализации к [отчётам реализации](https://seller.wildberries.ru/suppliers-mutual-settlements) по ID отчётов.
         <br><br>
@@ -187,6 +195,8 @@ paths:
           $ref: '#/components/responses/response400FinancialReports'
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
   /api/finance/v1/sales-reports/detailed:
@@ -242,11 +252,18 @@ paths:
           $ref: '#/components/responses/response400FinancialReports'
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
   /api/v5/supplier/reportDetailByPeriod:
     servers:
       - url: https://statistics-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://statistics-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       deprecated: true
       x-readonly-method: true
@@ -362,8 +379,12 @@ paths:
       summary: Список отчётов об издержках на приём платежей
       operationId: postV1AcquiringList
       description: |
-        <div class="description_token">Метод доступен по <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">токенам</a>:<strong> Персональный</strong>,<strong> Сервисный</strong> 
-            </div>
+
+        <div class="description_token">
+            Метод <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">доступен</a> по
+                <strong>Персональному</strong> токену, 
+                <strong>Сервисному</strong> токену
+        </div>
 
         Метод возвращает список отчётов об издержках на приём платежей по формату [таблицы отчётов](https://seller.wildberries.ru/suppliers-mutual-settlements/reports-implementations/acquiring-reports).
 
@@ -413,8 +434,12 @@ paths:
       summary: Детализации к отчётам об издержках на приём платежей по ID отчётов
       operationId: postV1AcquiringDetailedReportId
       description: |
-        <div class="description_token">Метод доступен по <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">токенам</a>:<strong> Персональный</strong>,<strong> Сервисный</strong> 
-            </div>
+
+        <div class="description_token">
+            Метод <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">доступен</a> по
+                <strong>Персональному</strong> токену, 
+                <strong>Сервисному</strong> токену
+        </div>
 
         Метод возвращает детализации к [отчётам об издержках на приём платежей](https://seller.wildberries.ru/suppliers-mutual-settlements/reports-implementations/acquiring-reports) по ID отчётов.
 
@@ -454,6 +479,8 @@ paths:
           $ref: '#/components/responses/response400FinancialReports'
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
   /api/finance/v1/acquiring/detailed:
@@ -472,8 +499,12 @@ paths:
       summary: Детализации к отчётам об издержках на приём платежей за период
       operationId: postV1AcquiringDetailed
       description: |
-        <div class="description_token">Метод доступен по <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">токенам</a>:<strong> Персональный</strong>,<strong> Сервисный</strong> 
-            </div>
+
+        <div class="description_token">
+            Метод <a href="/openapi/api-information#tag/Avtorizaciya/Pravila-ispolzovaniya-tokenov-dostupa-k-API">доступен</a> по
+                <strong>Персональному</strong> токену, 
+                <strong>Сервисному</strong> токену
+        </div>
 
         Метод возвращает детализации к [отчётам об издержках на приём платежей](https://seller.wildberries.ru/suppliers-mutual-settlements/reports-implementations/acquiring-reports) за указанный период.
 
@@ -505,6 +536,8 @@ paths:
           $ref: '#/components/responses/response400FinancialReports'
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/documents/categories:
@@ -543,6 +576,8 @@ paths:
                 $ref: '#/components/schemas/GetCategories'
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/documents/list:
@@ -1236,6 +1271,7 @@ components:
         - articleSubstitution
         - salePriceAffiliatedDiscountPrc
         - salePriceWholesaleDiscountPrc
+        - b2bCustomerTin
         - orderUid
         - srid
       properties:
@@ -1603,6 +1639,10 @@ components:
           type: number
           description: Оптовая скидка для бизнеса, %
           example: 0
+        b2bCustomerTin:
+          type: string
+          description: ИНН B2B-покупателя
+          example: '010101010101'
         orderUid:
           type: string
           description: |
@@ -2229,6 +2269,10 @@ components:
           type: number
           description: Оптовая скидка для бизнеса, %
           example: 0
+        b2b_customer_tin:
+          type: string
+          description: ИНН B2B-покупателя
+          example: '010101010101'
   responses:
     '401':
       description: Не авторизован

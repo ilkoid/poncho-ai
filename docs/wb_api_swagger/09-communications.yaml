@@ -15,6 +15,8 @@ info:
       3. [Чатами с покупателями](/openapi/user-communication#tag/Chat-s-pokupatelyami)
       4. [Заявками покупателей на возврат](/openapi/user-communication#tag/Vozvraty-pokupatelyami)
 
+    Вы можете протестировать методы общения с покупателями в [песочнице](/sandbox). Также в песочнице доступны [специальные методы](/docs/openapi-other/sandbox-environment#tag/Voprosy-i-otzyvy) для управления тестовыми вопросами и отзывами
+
     </div>
 
     <div class="description_ref">
@@ -38,6 +40,11 @@ paths:
   /api/v1/new-feedbacks-questions:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -109,7 +116,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
@@ -118,6 +125,11 @@ paths:
   /api/v1/questions/count-unanswered:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -183,7 +195,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
@@ -192,6 +204,11 @@ paths:
   /api/v1/questions/count:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -269,7 +286,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 IsAnsweredErr400:
                   $ref: '#/components/examples/IsAnsweredErr400'
@@ -286,7 +303,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
@@ -295,6 +312,11 @@ paths:
   /api/v1/questions:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -499,7 +521,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr400:
                   $ref: '#/components/examples/FeedbackErr400'
@@ -512,7 +534,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
@@ -643,7 +665,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr400:
                   $ref: '#/components/examples/FeedbackErr400'
@@ -656,7 +678,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
@@ -665,15 +687,29 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr404:
                   $ref: '#/components/examples/FeedbackErr404'
+        '422':
+          description: Ошибка обработки параметров запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
+              examples:
+                ResponsePatchQuestion:
+                  $ref: '#/components/examples/ResponsePatchQuestion'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/question:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -749,7 +785,7 @@ paths:
                             description: Дата и время создания ответа
                       productDetails:
                         type: object
-                        description: Product information
+                        description: Item information
                         properties:
                           nmId:
                             type: integer
@@ -823,7 +859,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
@@ -832,7 +868,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 responseGetQuestionByIdErrEx:
                   $ref: '#/components/examples/ResponseGetQuestionByIdErrEx'
@@ -841,6 +877,11 @@ paths:
   /api/v1/feedbacks/count-unanswered:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -907,7 +948,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
@@ -916,6 +957,11 @@ paths:
   /api/v1/feedbacks/count:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -993,7 +1039,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 IsAnsweredErr400:
                   $ref: '#/components/examples/IsAnsweredErr400'
@@ -1010,7 +1056,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
@@ -1019,6 +1065,11 @@ paths:
   /api/v1/feedbacks:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -1188,7 +1239,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr400:
                   $ref: '#/components/examples/FeedbackErr400'
@@ -1201,7 +1252,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
@@ -1210,6 +1261,11 @@ paths:
   /api/v1/feedbacks/answer:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     post:
       x-readonly-method: false
       x-category: questionsandfeedback
@@ -1338,6 +1394,11 @@ paths:
   /api/v1/feedbacks/order/return:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     post:
       x-readonly-method: false
       x-category: questionsandfeedback
@@ -1402,7 +1463,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr400:
                   $ref: '#/components/examples/ResponseDoNotGetFeedback400'
@@ -1419,7 +1480,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 responseInaccessibleBackGoodError422:
                   $ref: '#/components/examples/responseInaccessibleBackGoodError422'
@@ -1430,6 +1491,11 @@ paths:
   /api/v1/feedback:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -1530,7 +1596,7 @@ paths:
                             - `none` - не обработан (новый)
                             - `wbRu` - обработан
                       productDetails:
-                        description: Product information
+                        description: Item information
                         type: object
                         properties:
                           nmId:
@@ -1731,7 +1797,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 ResponseGetFeedbackByIdErrEx:
                   $ref: '#/components/examples/ResponseGetFeedbackByIdErrEx'
@@ -1740,6 +1806,11 @@ paths:
   /api/v1/feedbacks/archive:
     servers:
       - url: https://feedbacks-api.wildberries.ru
+        description: |
+          **Prod**
+      - url: https://feedbacks-api-sandbox.wildberries.ru
+        description: |
+          **Sandbox**
     get:
       x-readonly-method: true
       x-category: questionsandfeedback
@@ -1881,7 +1952,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr400:
                   $ref: '#/components/examples/FeedbackErr400'
@@ -1894,10 +1965,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/responsefeedbackErr'
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
               examples:
                 FeedbackErr403:
                   $ref: '#/components/examples/FeedbackErr403'
+        '422':
+          description: Ошибка обработки параметров запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/responseFeedbackQuestionErr'
+              examples:
+                ResponseGetFeedbackArchive:
+                  $ref: '#/components/examples/ResponseGetFeedbackArchive'
         '429':
           $ref: '#/components/responses/429'
   /api/feedbacks/v1/pins:
@@ -2031,6 +2111,8 @@ paths:
                 origin: pin-open-api
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
     post:
@@ -2097,6 +2179,8 @@ paths:
                 title: Bad Request
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '403':
           description: Доступ запрещён
           content:
@@ -2181,6 +2265,8 @@ paths:
                 title: Bad Request
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
   /api/feedbacks/v1/pins/count:
@@ -2293,6 +2379,8 @@ paths:
                 origin: pin-open-api
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
   /api/feedbacks/v1/pins/limits:
@@ -2331,6 +2419,8 @@ paths:
                   - $ref: '#/components/schemas/openapi.SellerLimitsResponse'
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/seller/chats:
@@ -2428,7 +2518,6 @@ paths:
                       message:
                         attachments:
                           goodCard:
-                            date: '2023-10-18T11:46:01.528526Z'
                             nmID: 12345678
                             price: 500
                             priceCurrency: RUB
@@ -2830,6 +2919,8 @@ paths:
           $ref: '#/components/responses/Error400GetClaims'
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/claim:
@@ -2866,6 +2957,8 @@ paths:
           $ref: '#/components/responses/Error400PatchClaim'
         '401':
           $ref: '#/components/responses/401'
+        '402':
+          $ref: '#/components/responses/402'
         '429':
           $ref: '#/components/responses/429'
 components:
@@ -2978,6 +3071,22 @@ components:
         errorText: Невозможно получить отзыв по id
         additionalErrors: null
         requestId: 87a2fe4d-d28b-4bae-b824-c0f498c72702
+    ResponseGetFeedbackArchive:
+      description: Не удалось получить архивные отзывы по фильтру
+      value:
+        data: null
+        error: true
+        errorText: Не удалось получить архивные отзывы по фильтру
+        additionalErrors: null
+        requestId: 87a2fe4d-d28b-4bae-b824-c0f498c72702
+    ResponsePatchQuestion:
+      description: Не удалось отредактировать вопрос
+      value:
+        data: null
+        error: true
+        errorText: Не удалось отредактировать вопрос
+        additionalErrors: null
+        requestId: 87a2fe4d-d28b-4bae-b824-c0f498c72702
     ResponseDoNotGetFeedback400:
       description: Неправильный запрос
       value:
@@ -3018,7 +3127,7 @@ components:
         detail:
           type: string
           description: Детали ошибки
-    responsefeedbackErr:
+    responseFeedbackQuestionErr:
       type: object
       properties:
         data:
@@ -3247,7 +3356,7 @@ components:
           description: Имя покупателя
           example: Иван
         goodCard:
-          $ref: '#/components/schemas/GoodCard'
+          $ref: '#/components/schemas/Listing'
         lastMessage:
           description: Последнее сообщение в чате
           allOf:
@@ -3322,7 +3431,7 @@ components:
       description: Вложения
       properties:
         goodCard:
-          $ref: '#/components/schemas/GoodCard'
+          $ref: '#/components/schemas/Listing'
         files:
           type: array
           description: Файлы
@@ -3362,13 +3471,10 @@ components:
         size:
           type: integer
           description: Размер файла в байтах
-    GoodCard:
+    Listing:
       type: object
       description: Информация о заказе
       properties:
-        date:
-          type: string
-          description: Дата заказа
         nmID:
           type: integer
           description: Артикул WB
@@ -3393,7 +3499,7 @@ components:
               - [Детализации к отчётам об издержках на приём платежей за период](./financial-reports-and-accounting#tag/Finansovye-otchyoty/operation/postV1AcquiringDetailed)
         size:
           type: string
-          description: Размер товара, соответствует `wbSize` в [карточке товара](./work-with-products#tag/Kartochki-tovarov/paths/~1content~1v2~1get~1cards~1list/post)
+          description: Размер товара, соответствует `wbSize` в [карточке товара](./work-with-products#tag/listings/paths/~1content~1v2~1get~1cards~1list/post)
     LastMessage:
       type: object
       example:
