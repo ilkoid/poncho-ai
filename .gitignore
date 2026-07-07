@@ -155,6 +155,8 @@ cmd/data-analyzers/check-db-freshness/check-db-freshness
 /1c_mktpl_mapping
 /build-ma-snapshots
 /build-ma-sku-snapshots
+cmd/data-maintenance/pg-maintenance/pg-maintenance
+/pg-maintenance
 
 # Stray sqlite parameter file
 "?mode=ro"
