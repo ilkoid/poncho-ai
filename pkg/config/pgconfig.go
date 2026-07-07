@@ -11,7 +11,7 @@
 //   - PG_PWD         — PostgreSQL password (named via storage.pg_password_env)
 //
 // Two environments (see CLAUDE.md → "PostgreSQL setup"): local dev (RYZEN-ILKOID)
-// defaults to 192.168.10.7:15432 / postgres; prod VPS in 10.120.16.* uses arm_ai_admin
+// defaults to 192.168.10.7:15432 / postgres; prod VPS at 10.120.24.155 uses arm_ai_admin
 // via env (PGHOST/PGPORT/PGUSER set on the prod machine / download-all.sh).
 package config
 
@@ -179,7 +179,7 @@ func injectPassword(dsn, passwordEnv string) (string, error) {
 //   - password: from $PG_PWD (caller must inject via injectPassword)
 //   - sslmode: disable
 //
-// Prod VPS (10.120.16.*) overrides host/port/user via env (PGHOST/PGPORT/PGUSER set
+// Prod VPS (10.120.24.155) overrides host/port/user via env (PGHOST/PGPORT/PGUSER set
 // in the machine profile / download-all.sh); password still from $PG_PWD (per-machine value).
 // The database name is passed in by the caller (postgresDSN passes the already-resolved
 // V2StorageConfig.PgDatabase, which GetDefaults overrides via $PGDATABASE). The returned

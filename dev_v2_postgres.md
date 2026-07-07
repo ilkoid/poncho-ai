@@ -108,7 +108,7 @@ func createCardsWriter(ctx, cfg config.V2StorageConfig) (cards.CardsWriter, func
 pg_dsn non-empty → used as-is
 pg_dsn empty     → BuildPgDSN() from: host (PGHOST || "192.168.10.7"), port (PGPORT || "15432"),
                     user (PGUSER || "postgres"), password (os.Getenv(pg_password_env)), database (pg_database)
-                    [prod VPS 10.120.16.* overrides via env: arm_ai_admin@…:5432]
+                    [prod VPS 10.120.24.155 overrides via env: arm_ai_admin@…:5432]
 ```
 
 ### 1.4. pgxpool — Native PostgreSQL Driver
