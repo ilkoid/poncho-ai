@@ -222,10 +222,10 @@ Mapping: `onec_prices(good_guid) → onec_goods(guid) → article → cards.vend
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | S3 storage |
 | `OPENROUTER_API_KEY` | OpenRouter (LLM gateway for analyzers) |
 | `ONEC_API_URL` / `ONEC_PIM_URL` | 1C/PIM catalog APIs |
-| `PGHOST` / `PGPORT` | PostgreSQL host/port (default `10.120.24.155:5432`) |
-| `PGUSER` / `PGDATABASE` | PostgreSQL user (default `arm_ai_admin`) / database (overrides `pg_database`) |
-| `PG_ADMIN` / `PG_USER` | PostgreSQL admin user `arm_ai_admin` (write) / RO user `arm_ai_ro` (read) |
-| `PG_PWD` / `PG_USER_PWD` | Password for `PG_ADMIN` (`arm_ai_admin`) / `PG_USER` (`arm_ai_ro`) |
+| `PGHOST` / `PGPORT` | PostgreSQL host/port. **Local dev default `192.168.10.7:15432`**; prod VPS (10.120.16.*) `…:5432` via env |
+| `PGUSER` / `PGDATABASE` | PostgreSQL user (**local `postgres`** / prod `arm_ai_admin`) / database (overrides `pg_database`) |
+| `PG_ADMIN` / `PG_USER` | Prod write user `arm_ai_admin` / RO user `arm_ai_ro` (local dev uses superuser `postgres`) |
+| `PG_PWD` / `PG_USER_PWD` | Password for write user (`$PG_PWD`, per-machine value) / RO user (`$PG_USER_PWD`) |
 
 ## Compact Instructions
 When compacting, preserve: goal, changed files, failing command, current hypothesis, test results, next exact command.
@@ -256,7 +256,19 @@ cmd/.../<domain>-v2/main.go → CLI driver: config → backend switch → DI →
 - `dllog.PrintHeader()` + `dllog.Progress()` + `dllog.Done()` — one line per page, no `fmt.Printf` in `pkg/`
 - **DiscardWriter pattern:** `--mock` mode must create DiscardWriter (zero DB interaction), NOT open a real database. Writer creation goes INSIDE the else branch — see `download-wb-orders-v2/main.go` for reference
 
-**PostgreSQL setup:** host/port from `$PGHOST`/`$PGPORT` (default `10.120.24.155:5432`), default user `arm_ai_admin` (`$PG_ADMIN`, override via `$PGUSER`), password from `$PG_PWD`, databases: `wb_data_prod` / `wb_data_test`. RO access via `$PG_USER`=`arm_ai_ro` (`$PG_USER_PWD`).
+**PostgreSQL setup — TWO VPS, different defaults (agent: check both):**
+
+| | Local dev (RYZEN-ILKOID) | Prod VPS |
+|---|---|---|
+| host:port | `192.168.10.7:15432` | `10.120.16.X:5432` |
+| write user | `postgres` | `arm_ai_admin` |
+| password | `$PG_PWD` | `$PG_PWD` (per-machine value) |
+| DB | `wb_data_prod` / `wb_data_test` | same |
+| how reached | **code default** (`pgconfig.go`, `download-all.sh`) | env override (`PGHOST`/`PGPORT`/`PGUSER` in machine profile) |
+
+**How to tell which env you're on:** run `hostname` (`RYZEN-ILKOID` → local dev); check `$PGHOST`/`$PGUSER`; if unsure, try `PGPASSWORD="$PG_PWD" psql -h 192.168.10.7 -p 15432 -U postgres -d wb_data_prod -c "SELECT 1"` — if unreachable, you're likely on the prod VPS (set `PGHOST=10.120.16.X PGUSER=arm_ai_admin PGPORT=5432`). `download-all.sh` / `download-snapshots.sh` use `${PGHOST:-192.168.10.7}` / `${PGPORT:-15432}` / `${PGUSER:-postgres}` — they respect a pre-set env (prod profile) and default to local. RO access (prod): `$PG_USER`=`arm_ai_ro` (`$PG_USER_PWD`).
+
+**Caveat:** ~8 v2 downloader `config.yaml` still hardcode `pg_host: 10.120.24.155` (YAML beats the code default by precedence env>YAML>default). Running those downloaders directly without `$PGHOST` in env still hits the old host — on local this is masked by `download-all.sh` exporting `PGHOST`.
 
 **Migration status:**
 

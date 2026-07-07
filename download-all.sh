@@ -11,6 +11,12 @@
 # Два прогона: сначала PostgreSQL, потом SQLite.
 # Чтобы запустить только один бэкенд — закомментируй весь блок Pass 1 или Pass 2.
 
+# PG connection (env-respect): prod VPS экспортирует PGHOST/PGPORT/PGUSER в своём profile;
+# по умолчанию — local dev 192.168.10.7:15432 / postgres. См. CLAUDE.md → "PostgreSQL setup".
+export PGHOST="${PGHOST:-192.168.10.7}"
+export PGPORT="${PGPORT:-15432}"
+export PGUSER="${PGUSER:-postgres}"
+
 PONCHO="$(cd "$(dirname "$0")" && pwd)"
 C="$PONCHO/cmd/.configs/download-all"
 DAYS="${1:-}"

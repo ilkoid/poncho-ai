@@ -17,6 +17,9 @@ PONCHO="$(cd "$(dirname "$0")" && pwd)"
 C="$PONCHO/cmd/.configs/download-all"
 
 START=$SECONDS
+export PGHOST="${PGHOST:-192.168.10.7}"
+export PGPORT="${PGPORT:-15432}"
+export PGUSER="${PGUSER:-postgres}"
 
 ###############################################################################
 #  PASS 1: PostgreSQL

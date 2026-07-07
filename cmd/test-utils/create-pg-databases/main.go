@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	defaultHost = "10.120.24.155"
-	defaultPort = "5432"
-	defaultUser = "arm_ai_admin"
+	defaultHost = "192.168.10.7"
+	defaultPort = "15432"
+	defaultUser = "postgres"
 	pwdEnvVar   = "PG_PWD"
 
 	maintenanceDB = "postgres"
