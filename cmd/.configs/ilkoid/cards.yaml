@@ -4,7 +4,7 @@
 # db_path is overridden by ilkoid.sh's --db (absolute fixer.db path).
 
 wb:
-  api_key: ""  # use WB_API_KEY env var (cards.api_key_env below)
+  api_key: "WB_API_CONTENT_KEY"  # use WB_API_KEY env var (cards.api_key_env below)
   timeout: "60s"
 
 cards:

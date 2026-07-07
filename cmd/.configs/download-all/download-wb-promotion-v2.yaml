@@ -6,7 +6,7 @@ wb:
 
 promotion_v2:
   db_path: "/var/db/wb-sales.db"
-  days: 7
+  days: 3
   statuses: [9]
   skip_bids: false
   skip_normquery: false
