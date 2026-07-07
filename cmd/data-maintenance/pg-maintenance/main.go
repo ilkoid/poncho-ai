@@ -135,6 +135,29 @@ func main() {
 
 	db := pool.DB()
 
+	// Maintenance ops (VACUUM/REINDEX) routinely exceed the 5min statement_timeout
+	// that NewPool applies as a bulk-INSERT safety net for downloaders. Hold one
+	// pooled connection for the whole run and lift the timeout so these ops can
+	// run to completion.
+	//
+	// Why a held connection (not db.Exec on the pool): pgxpool's (*Pool).Exec may
+	// serve each call from a different backend, so a SET + VACUUM issued as two
+	// separate db.Exec calls is not guaranteed to land on the same connection.
+	// VACUUM also can't run inside a transaction block → use SET (session scope),
+	// not SET LOCAL (which lives only inside a transaction).
+	conn, err := db.Acquire(ctx)
+	if err != nil {
+		dllog.Error("acquire connection: %v", err)
+		os.Exit(1)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, "SET statement_timeout = 0"); err != nil {
+		dllog.Error("disable statement_timeout: %v", err)
+		os.Exit(1)
+	}
+	dllog.Log("statement_timeout lifted for maintenance run (VACUUM/REINDEX may run long)")
+
 	// All tables in maintenance order
 	allTables := make([]string, 0, len(HeavyUpdateTables)+len(AppendOnlyTables)+len(PromotionTables))
 	allTables = append(allTables, HeavyUpdateTables...)
@@ -152,14 +175,14 @@ func main() {
 		}
 
 		// ANALYZE — update planner statistics
-		if _, err := db.Exec(ctx, fmt.Sprintf("ANALYZE %s", table)); err != nil {
+		if _, err := conn.Exec(ctx, fmt.Sprintf("ANALYZE %s", table)); err != nil {
 			dllog.Error("%s: ANALYZE failed: %v", table, err)
 			errors++
 			continue
 		}
 
 		// VACUUM — reclaim dead tuples (non-FULL, non-blocking)
-		if _, err := db.Exec(ctx, fmt.Sprintf("VACUUM %s", table)); err != nil {
+		if _, err := conn.Exec(ctx, fmt.Sprintf("VACUUM %s", table)); err != nil {
 			dllog.Error("%s: VACUUM failed: %v", table, err)
 			errors++
 			continue
@@ -168,7 +191,7 @@ func main() {
 		extra := ""
 		// REINDEX — only for heavy-update tables when flag is set
 		if *reindex && isHeavyUpdate(table) {
-			if _, err := db.Exec(ctx, fmt.Sprintf("REINDEX TABLE %s", table)); err != nil {
+			if _, err := conn.Exec(ctx, fmt.Sprintf("REINDEX TABLE %s", table)); err != nil {
 				dllog.Error("%s: REINDEX failed: %v", table, err)
 				errors++
 				continue
