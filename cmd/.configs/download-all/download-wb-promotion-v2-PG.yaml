@@ -6,26 +6,26 @@ wb:
 
 promotion_v2:
   db_path: "/var/db/wb-sales.db"
-  days: 7
+  days: 3
   statuses: [9]
   skip_bids: true
-  skip_normquery: true
+  skip_normquery: false
   skip_recommendations: true
   skip_finance: false
-  skip_calendar: true
-  skip_budgets: true
+  skip_calendar: false
+  skip_budgets: false
   skip_min_bids: false
   changed_days: 0  # 0 = auto-detect from last run, >0 = manual N-day window
-  calendar_days_past: 14
-  calendar_days_future: 14
+  calendar_days_past: 7
+  calendar_days_future: 7
   rate_limits:
     normquery: 300
     normquery_burst: 5
     normquery_api: 300
     normquery_api_burst: 5
-    normquery_stats: 7 # у wb 10/min, но мы будем осторожнее, т.к. это может быть более тяжелый эндпоинт
+    normquery_stats: 8 # у wb 10/min, но мы будем осторожнее, т.к. это может быть более тяжелый эндпоинт
     normquery_stats_burst: 1
-    normquery_stats_api: 7 # у wb 10/min, но мы будем осторожнее, т.к. это может быть более тяжелый эндпоинт
+    normquery_stats_api: 8 # у wb 10/min, но мы будем осторожнее, т.к. это может быть более тяжелый эндпоинт
     normquery_stats_api_burst: 1
     bid_rec: 5
     bid_rec_burst: 1
