@@ -85,4 +85,29 @@ describe('dedupeBySeen', () => {
     const out = dedupeBySeen(bundle(), freshSeen()); // brand-new snapshot
     expect(out.competitor_cards).toHaveLength(1); // not deduped against the previous snapshot
   });
+
+  it('keeps the same nm|page across DIFFERENT queries/regions (regression: cross-query dedup)', () => {
+    // Bug: the positions dedup key used to be `${nm_id}|${page}`, omitting query_id + region_dest.
+    // Popular nms re-rank on the same page across many similar queries → Q2..N positions were dropped
+    // → reports showed "only the first query". The natural key is (query_id, region_dest, page, nm_id);
+    // within-query /search re-fires (identical key) are still deduped.
+    const pos = (query_id: number, region_dest: number | null, nm_id: number, page: number) =>
+      ({
+        snapshot_ts: S, query_id, region_dest, page, position: 1, nm_id, name: 'A', brand: 'A',
+        supplier_id: 1, panel_promo_id: null, price_basic: 0, price_product: 0, rating: 0, feedbacks: 0,
+      });
+    const d: Decoded = {
+      ...bundle(),
+      search_positions: [
+        pos(1, 8038, 111, 1), // Q1, region 8038, nm 111, page 1
+        pos(2, 8038, 111, 1), // Q2 — same nm, same page, same region, DIFFERENT query → distinct
+        pos(1, 8038, 111, 1), // Q1 re-fire → identical key → dropped
+        pos(1, 77, 111, 1), // Q1 — same nm+page, DIFFERENT region → distinct
+      ],
+    };
+    const out = dedupeBySeen(d, freshSeen());
+    expect(out.search_positions).toHaveLength(3); // Q1@8038, Q2@8038, Q1@77 — only the re-fire dropped
+    const keys = out.search_positions.map((r) => `${r.query_id}|${r.region_dest}`);
+    expect(keys).toEqual(expect.arrayContaining(['1|8038', '2|8038', '1|77']));
+  });
 });

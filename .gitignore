@@ -69,8 +69,9 @@ Thumbs.db
 tmp/
 temp/
 
-# Database files directory
-db/
+# Database files directory (anchored to repo root — an unanchored "db/" also ignored
+# extensions/poncho-wb-parser/src/db/, hiding the extension's DB layer from git)
+/db/
 
 # Build artifacts
 dist/
