@@ -20,6 +20,10 @@ export interface VisibilityRow {
   // NOTE: this is PANEL membership, NOT a per-item CPC signal — one panel id can cover most of a
   // query's results (observed: id 1041330 × 167 of 200). A definitive per-item ad flag needs a
   // dedicated recon pass; until then "promo_id != null" means "in a promo panel", not "is an ad".
+  // GAP: a per-item CPC ad signal requires cross-referencing panel_promo_id with vitrine_ads (the
+  // OРД/erid banners) and the WB /catalog/v2/list promo fields in a dedicated recon pass — tracked
+  // separately. This report exposes what we DEFINITELY know: panel membership (here) + distinct
+  // banners/advertisers from vitrine_ads (summary.banners / summary.banner_advertisers).
   promo_id: number | null;
   pos_a: number | null;
   pos_b: number | null;
@@ -40,6 +44,8 @@ export interface VisibilityReport {
     deteriorated: number;
     promo_panels: number; // distinct promo-panel ids observed in snapshot A
     promo_covered: number; // nm_ids in snapshot A sitting under any promo panel
+    banners: number; // distinct erid in vitrine_ads (snapshot A) — real OРД-marked banners
+    banner_advertisers: number; // distinct advertiser_inn in vitrine_ads (snapshot A)
   };
 }
 
@@ -131,6 +137,19 @@ export async function buildVisibility(
   const promo_panels = new Set(aPromo.map((b) => b.promo_id)).size;
   const promo_covered = aPromo.length;
 
+  // Honest ad signal: distinct OРД banners + advertisers from vitrine_ads (snapshot A). This is the
+  // real "how many ads" number — panel_promo_id above is panel MEMBERSHIP, not per-item CPC.
+  const adColl =
+    queryId != null
+      ? db.vitrine_ads.where('[query_id+snapshot_ts]').equals([queryId, snapshotA])
+      : db.vitrine_ads.where('snapshot_ts').equals(snapshotA);
+  const erids = new Set<string>();
+  const advertisers = new Set<string>();
+  await adColl.each((a) => {
+    if (a.erid) erids.add(a.erid);
+    if (a.advertiser_inn) advertisers.add(a.advertiser_inn);
+  });
+
   return {
     snapshot_a: snapshotA,
     snapshot_b: snapshotB,
@@ -145,6 +164,8 @@ export async function buildVisibility(
       deteriorated,
       promo_panels,
       promo_covered,
+      banners: erids.size,
+      banner_advertisers: advertisers.size,
     },
   };
 }

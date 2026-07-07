@@ -26,17 +26,24 @@ describe('toCSV', () => {
 const vis: VisibilityReport = {
   snapshot_a: 'A', snapshot_b: null, query_id: 1,
   rows: [{ nm_id: 111, name: 'Кроссовки Nike', brand: 'Nike', supplier_id: 900, supplier_name: 'ООО Рога', is_focus: true, promo_id: null, pos_a: 5, pos_b: null, delta: null }],
-  summary: { total_a: 1, total_b: 0, appeared: 0, disappeared: 0, improved: 0, deteriorated: 0, promo_panels: 0, promo_covered: 0 },
+  summary: { total_a: 1, total_b: 0, appeared: 0, disappeared: 0, improved: 0, deteriorated: 0, promo_panels: 0, promo_covered: 0, banners: 0, banner_advertisers: 0 },
 };
 
 describe('report → table converters', () => {
-  it('visibility → table with name + supplier_name columns', () => {
+  it('visibility → Видимость (promo_panel column) + Сводка (banners in summary)', () => {
     const t = visibilityToTables(vis);
+    expect(t[0]!.name).toBe('Видимость');
     expect(t[0]!.columns).toContain('nm_id');
-    expect(t[0]!.columns).toContain('name');
     expect(t[0]!.columns).toContain('supplier_name');
+    expect(t[0]!.columns).toContain('promo_panel'); // renamed from 'promo' (panel, not per-item ad)
+    expect(t[0]!.columns).not.toContain('promo');
     expect(t[0]!.rows[0]).toContain(111);
     expect(t[0]!.rows[0]).toContain('ООО Рога');
+    // second sheet = summary, surfaces the honest banners signal
+    expect(t[1]!.name).toBe('Сводка');
+    const metrics = t[1]!.rows.map((r) => r[0]);
+    expect(metrics).toContain('banners (erid)');
+    expect(metrics).toContain('banner_advertisers (inn)');
   });
 
   it('competitors → table with brand_count + avg_price converted to rubles', () => {

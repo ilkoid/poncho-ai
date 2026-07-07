@@ -6,13 +6,18 @@
 //     cosmetic accent only — does not filter/exclude any collected data. Empty = no highlight.
 //   - detail_k: how many top cards (by position) to open per query for /detail capture
 //     (per-wh stocks + promotions). >0 = top-N; <=0 = unlimited (all). Default 8.
+//   - report_filter: structured drill-down filter (price band, brand include/exclude, rating floor,
+//     etc.) applied to ALREADY-COMPUTED report rows before render. Does NOT affect collection/write.
 
 import type { ConstructorConfig } from '../querygen/static';
 import { DEFAULT_CONSTRUCTOR } from '../querygen/static';
+import type { ReportFilter } from '../reports/filters';
+import { DEFAULT_REPORT_FILTER } from '../reports/filters';
 
 const KEY_CONSTRUCTOR = 'constructor';
 const KEY_HIGHLIGHT_BRANDS = 'highlight_brands';
 const KEY_DETAIL_K = 'detail_k';
+const KEY_REPORT_FILTER = 'report_filter';
 export const DEFAULT_DETAIL_K = 8;
 
 /** Load the constructor config, falling back to the default for any missing field. */
@@ -53,4 +58,17 @@ export async function loadDetailK(): Promise<number> {
 
 export async function saveDetailK(n: number): Promise<void> {
   await chrome.storage.local.set({ [KEY_DETAIL_K]: n });
+}
+
+/** Structured report filter (price band, brand include/exclude, rating/feedbacks floors, supplier_id
+ *  include/exclude). Applied to computed report rows before render — never affects collection/write.
+ *  Survives SW death + restart. Falls back to DEFAULT_REPORT_FILTER for any missing field. */
+export async function loadReportFilter(): Promise<ReportFilter> {
+  const s = await chrome.storage.local.get(KEY_REPORT_FILTER).catch(() => ({}) as Record<string, unknown>);
+  const v = (s[KEY_REPORT_FILTER] ?? null) as Partial<ReportFilter> | null;
+  return { ...DEFAULT_REPORT_FILTER, ...(v ?? {}) };
+}
+
+export async function saveReportFilter(f: ReportFilter): Promise<void> {
+  await chrome.storage.local.set({ [KEY_REPORT_FILTER]: f });
 }
