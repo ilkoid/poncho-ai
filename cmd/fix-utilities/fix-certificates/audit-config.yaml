@@ -1,0 +1,74 @@
+# audit-config.yaml — конфиг для аудита сертификатов через fix-certificates.
+# Используется скриптом audit-certificates.sh в корне репо.
+#
+# Какие паттерны ловит фиксер (cmd/fix-utilities/fix-certificates/README.md):
+#   --reconcile : сертификат в WB уже есть, но расходится с 1С
+#                 → (б) тип swap: сертификат/декларация лежат в неправильном char_id
+#                 → (в) срок протух: end-date в WB старый, в 1С новый
+#                 → + замена номера, если номер в WB не совпадает с 1С
+#   --stage     : сертификата в WB нет, а в 1С есть
+#                 → (а) пропуск: заполнить пустые cert/decl характеристики
+#
+# ⚠ kizMarked-риск при --apply: WB POST /content/v2/cards/update ПОЛНОСТЬЮ
+#   перезаписывает карточку. Поле подтверждения маркировки «Честный ЗНАК»
+#   (kizMarked) переносится в payload ТОЛЬКО если в cards.kiz_marked стоит явное
+#   значение (0/1). Для существующих карточек колонка по умолчанию NULL (WB не
+#   возвращает kizMarked в чтении) → поле опускается → WB ставит default false →
+#   маркированная карточка (needKiz=true) может провалить модерацию.
+#   Список маркированных кандидатов: SELECT nm_id,vendor_code,subject_name FROM
+#   cards WHERE need_kiz=1 AND kiz_marked IS NULL. Memory: cardupdate_kizmarked_gap.
+#   → Начинай --apply с НЕ-маркированных (Шапки, Носки) или с type-swap (мало),
+#     либо предварительно заполни cards.kiz_marked для суженного scope.
+#
+# ⚠ reference_date ЧЕРЕЗ YAML НЕ РАБОТАЕТ — в Config (config.go) нет такого поля.
+#   Дата задаётся только флагом --date DD.MM.YYYY (default: сегодня).
+#   Сертификаты с certificate_end раньше этой даты ПРОПУСКАЮТСЯ.
+#   Скрипт audit-certificates.sh передаёт --date <сегодня>.
+
+db_path: "/var/db/wb-sales.db"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Фильтры карточек (pkg/filter). AND между полями, OR внутри списков.
+#
+# По умолчанию аудит идёт по ВСЕМУ парку (in_stock: false) — чтобы видеть
+# отклонения и на снятых товарах. Для постепенного фикса сузь scope тут
+# (vendor_codes / subject / seasons / onec_type / category_level*) и поставь
+# in_stock: true, чтобы не чинить мёртвые карточки.
+# ─────────────────────────────────────────────────────────────────────────────
+filters:
+  nm_ids: []                # конкретные nm_id (для теста на 1 карточке)
+  vendor_codes: []          # список артикулов под точечный фикс
+  allowed_years: []         # год из позиций 2-3 артикула (напр. [23, 24])
+  exclude_lengths: [5, 6]   # исключить короткие артикулы
+  exclude_vendor_codes: []  # артефакты: 1С≠ФСА, WB отвергает апдейт — проверить список!
+  # vendor_code_prefix: "1"     # первая цифра артикула
+  subject: ""               # точное subject_name (case-insensitive), напр. "Шапки"
+  # subject_ids: []
+  # seasons: ["зима"]
+  in_stock: false           # ← false = аудит по всем; true = только с остатками (для фикса)
+  # onec_type: ["Обувь"]        # 1C тип: Обувь/Одежда/Аксессуары
+  # category_level1: ["Женская"]
+  # category_level2: ["Кроссовки"]
+  # active_only: true           # исключить заблокированные в 1C
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WB Content API (POST /content/v2/cards/update, swagger: 100/min burst 5).
+# Эти параметры влияют только на --apply (не на аудит). Консервативно.
+# ─────────────────────────────────────────────────────────────────────────────
+wb_update:
+  batch_size: 5             # карточек на один API-запрос (1 = отладка)
+  rate_per_min: 8           # желаемый rate (req/min)
+  rate_burst: 2             # burst для rate limiter
+  api_floor_per_min: 5      # recovery floor после 429 (req/min)
+  api_floor_burst: 1        # burst для api floor
+  interval_seconds: 8       # пауза между батчами (15 = мягче, медленнее)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Фильтрация корзинных карточек (trash endpoint).
+# Без этого корзинная nm_id в батче убивает весь батч 400-й ошибкой при --apply.
+# На этапе --stage/--reconcile исключает «корзинные» карточки из staging.
+# ─────────────────────────────────────────────────────────────────────────────
+trash_filter:
+  enabled: true             # false = пропустить запрос к trash API
+  rate_per_min: 100
+  rate_burst: 5
