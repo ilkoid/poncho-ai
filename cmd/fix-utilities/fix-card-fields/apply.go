@@ -127,7 +127,7 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg *Config, d
 
 // buildSmartMergePayload constructs the WB API update payload with full characteristic preservation.
 func buildSmartMergePayload(ctx context.Context, db *sql.DB, r stagingRow, protectedSet map[int]bool) (wb.CardUpdateItem, error) {
-	brand, title, desc, dims, err := loadCardFields(ctx, db, r.NmID)
+	brand, title, desc, dims, kizMarked, err := loadCardFields(ctx, db, r.NmID)
 	if err != nil {
 		return wb.CardUpdateItem{}, fmt.Errorf("load card fields: %w", err)
 	}
@@ -193,6 +193,7 @@ func buildSmartMergePayload(ctx context.Context, db *sql.DB, r stagingRow, prote
 		Dimensions:      &dims,
 		Characteristics: finalChars,
 		Sizes:           sizes,
+		KizMarked:       kizMarked,
 	}, nil
 }
 

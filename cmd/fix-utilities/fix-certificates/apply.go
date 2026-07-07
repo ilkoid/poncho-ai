@@ -132,7 +132,7 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg cardupdate
 // buildSmartMergePayload constructs the full WB API update payload with complete card preservation.
 // This is the CRITICAL function — it ensures ALL card fields are sent, not just the changed ones.
 func buildSmartMergePayload(ctx context.Context, db *sql.DB, r stagingRow) (wb.CardUpdateItem, error) {
-	brand, title, desc, dims, err := loadCardFields(ctx, db, r.NmID)
+	brand, title, desc, dims, kizMarked, err := loadCardFields(ctx, db, r.NmID)
 	if err != nil {
 		return wb.CardUpdateItem{}, fmt.Errorf("load card fields: %w", err)
 	}
@@ -205,6 +205,7 @@ func buildSmartMergePayload(ctx context.Context, db *sql.DB, r stagingRow) (wb.C
 		Dimensions:      &dims,
 		Characteristics: finalChars,
 		Sizes:           sizes,
+		KizMarked:       kizMarked,
 	}, nil
 }
 

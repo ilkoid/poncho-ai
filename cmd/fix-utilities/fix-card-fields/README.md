@@ -18,6 +18,19 @@ WB API (`POST /content/v2/cards/update`) **полностью перезапис
 1. **Проход 1**: Все текущие характеристики итерируются. Целевые — заменяются, остальные — передаются как есть, protected — всегда без изменений
 2. **Проход 2**: Новые характеристики (отсутствовали в карточке) добавляются
 3. `title`, `description`, `sizes` — всегда включены в payload без изменений
+4. `kizMarked` — подтверждение маркировки «Честный ЗНАК». Переносится из `cards.kiz_marked` (3-value logic, см. «Известные ограничения»)
+
+### Известные ограничения
+
+- **`kizMarked` и NULL.** WB `POST /content/v2/cards/update` полностью перезаписывает карточку. Поле подтверждения маркировки «Честный ЗНАК» (`kizMarked`) переносится в payload из `cards.kiz_marked` как `*bool` (3-value logic):
+  - `cards.kiz_marked = 1` → `"kizMarked":true` (подтверждение сохранено)
+  - `cards.kiz_marked = 0` → `"kizMarked":false` (явный отказ)
+  - `cards.kiz_marked IS NULL` → поле опускается → WB применяет default `false`
+- **WB НЕ возвращает `kizMarked` в `/content/v2/get/cards/list`**, поэтому для большинства существующих карточек колонка `NULL`. Apply на маркированной карточке (`need_kiz=1`) с `NULL` сбросит подтверждение в ЛК WB. Перед `--apply` проверьте пересечение:
+  ```sql
+  SELECT nm_id, vendor_code, subject_name FROM cards WHERE need_kiz=1 AND kiz_marked IS NULL;
+  ```
+  Для суженного scope предзаполните `cards.kiz_marked` вручную (источник истины — ЛК WB продавца) либо начните apply с НЕ-маркированных категорий. Memory: `cardupdate_kizmarked_gap`.
 
 ### Защита системных полей
 

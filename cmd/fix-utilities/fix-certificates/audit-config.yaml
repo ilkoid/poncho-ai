@@ -10,15 +10,18 @@
 #                 → (а) пропуск: заполнить пустые cert/decl характеристики
 #
 # ⚠ kizMarked-риск при --apply: WB POST /content/v2/cards/update ПОЛНОСТЬЮ
-#   перезаписывает карточку. Поле подтверждения маркировки «Честный ЗНАК»
-#   (kizMarked) переносится в payload ТОЛЬКО если в cards.kiz_marked стоит явное
-#   значение (0/1). Для существующих карточек колонка по умолчанию NULL (WB не
-#   возвращает kizMarked в чтении) → поле опускается → WB ставит default false →
-#   маркированная карточка (needKiz=true) может провалить модерацию.
-#   Список маркированных кандидатов: SELECT nm_id,vendor_code,subject_name FROM
-#   cards WHERE need_kiz=1 AND kiz_marked IS NULL. Memory: cardupdate_kizmarked_gap.
+#   перезаписывает карточку. Начиная с kizMarked-fix фиксер несёт в payload
+#   подтверждение маркировки «Честный ЗНАК» из cards.kiz_marked как *bool
+#   (3-value logic: 1→true, 0→false). Но WB НЕ возвращает kizMarked в чтении
+#   /content/v2/get/cards/list → для существующих карточек колонка по умолчанию
+#   NULL → поле опускается → WB применяет default false → маркированная карточка
+#   (needKiz=true) может провалить модерацию.
+#   Список маркированных кандидатов с неизвестным kiz_marked:
+#   SELECT nm_id,vendor_code,subject_name FROM cards WHERE need_kiz=1 AND kiz_marked IS NULL.
+#   Memory: cardupdate_kizmarked_gap.
 #   → Начинай --apply с НЕ-маркированных (Шапки, Носки) или с type-swap (мало),
-#     либо предварительно заполни cards.kiz_marked для суженного scope.
+#     либо предзаполни cards.kiz_marked=1 для суженного scope (фиксер теперь
+#     подхватит это значение, в отличие от прежней версии, которая его теряла).
 #
 # ⚠ reference_date ЧЕРЕЗ YAML НЕ РАБОТАЕТ — в Config (config.go) нет такого поля.
 #   Дата задаётся только флагом --date DD.MM.YYYY (default: сегодня).
