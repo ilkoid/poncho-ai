@@ -1,16 +1,24 @@
 # wb-scraper-collector — приёмник данных из браузерного расширения WB Scraper.
 #
 # Не вызывает WB API напрямую: запросы к витрине делает расширение в реальном
-# браузере (обход антибота). Коллектор раздаёт цели (GET /targets), принимает
-# перехваты (POST /capture), декодирует и пишет в БД. См. план iridescent-shimmying-bee.md.
-# БД всегда /tmp для тестов; prod-пути (/var/db) — только запуск пользователя.
+# браузере (обход антибота). Две модели работы:
+#   - v1 (extensions/wb-scraper/): коллектор раздаёт цели (GET /targets), принимает
+#     перехваты (POST /capture), сам декодирует → SQLite.
+#   - v2 (extensions/poncho-wb-parser/): расширение строит цели и декодирует card.json
+#     само, шлёт готовый снимок через POST /snapshot → PostgreSQL (replace-by-snapshot).
+#     См. inst.md (актуальный v2-рецепт) и RUNBOOK.md.
+# БД: SQLite — /tmp для тестов (prod-пути /var/db — только запуск пользователя);
+# PostgreSQL — только wb_data_test (никогда prod).
 
 # --- Хранилище (config.V2StorageConfig; dual-backend, как в v2-загрузчиках) ---
 storage:
   backend: "sqlite"               # "sqlite" | "postgres"
   db_path: "/tmp/wbscraper.db"    # SQLite-файл. ENV override: $SQLITE_PATH
   pg_dsn: ""                      # опц.: полный DSN, перекрывает pg_database/host/port
-  pg_database: "wb_data_prod"     # только backend=postgres. ENV: $PGDATABASE
+  pg_database: "wb_data_test"      # только backend=postgres. ENV: $PGDATABASE
+                                   # ВНИМАНИЕ: только wb_data_test (никогда prod).
+                                   # Этот сборщик — test-only; prod-пути (/var/db,
+                                   # wb_data_prod) открывает только пользователь вручную.
   pg_password_env: "PG_PWD"       # имя env-переменной с паролем PG
 
 # --- HTTP-сервер (расширение стучится сюда; только loopback) ---

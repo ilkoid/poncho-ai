@@ -1,12 +1,26 @@
 # WB-Scraper Collector — Run Book
 
-Two-process system: a **browser extension** (`extensions/wb-scraper/`, live WB
-session, human-pace capture, MV3 service worker) + this **Go collector** (loopback
-HTTP server, target queue, decode → SQLite/PostgreSQL, report).
+Two-process system: a **browser extension** (live WB session, human-pace capture,
+MV3 service worker) + this **Go collector** (loopback HTTP server, target queue,
+decode → SQLite/PostgreSQL, report).
 
 The extension — not this binary — makes the storefront requests, from a real
-logged-in browser (the anti-bot bypass). The collector hands out targets
-(`GET /targets`) and receives the intercepted responses (`POST /capture`).
+logged-in browser (the anti-bot bypass). Two extension generations talk to this
+one collector over different endpoints:
+
+- **v1 — `extensions/wb-scraper/`** (plain JS, MV3): **pull-driven**. The collector
+  hands out targets (`GET /targets`); the extension navigates, intercepts WB
+  responses, and pushes the raw bodies (`POST /capture`); the collector decodes
+  and persists. SQLite or PostgreSQL backend.
+- **v2 — `extensions/poncho-wb-parser/`** (TypeScript + Vite + Dexie, MV3):
+  **push-driven**. Builds its own targets, decodes `card.json` itself, persists to
+  a local Dexie DB, then pushes a **fully-decoded snapshot** via `POST /snapshot`
+  (one HTTP call per session). **PostgreSQL-only** (SQLite backend answers 501):
+  replace-by-`snapshot_ts` semantics, so retries are idempotent. v2 does NOT use
+  `/targets` or `/capture`. See `inst.md` for the canonical v2 recipe.
+
+> Canonical source: plan `iridescent-shimmying-bee.md`. This file is the operator
+> map; the plan is the architecture. For v2, `inst.md` is the quick recipe.
 
 > Canonical source: plan `iridescent-shimmying-bee.md`. This file is the operator
 > map; the plan is the architecture.
@@ -16,11 +30,13 @@ logged-in browser (the anti-bot bypass). The collector hands out targets
 - Go 1.25; the repo builds (`go build ./...`).
 - Chromium/Edge **logged into WB** (real cookies/region — the whole point of the
   bypass; the extension is indistinguishable from a human).
-- Extension loaded unpacked from `extensions/wb-scraper/` (requires Stage 6:
-  `host_permissions` += `http://127.0.0.1/*`). Without Stage 6 the collector still
-  runs and is curl-testable; the extension just cannot reach it yet.
+- v1: extension loaded unpacked from `extensions/wb-scraper/` (`host_permissions`
+  includes `http://127.0.0.1/*`). v2: `extensions/poncho-wb-parser/` — build first
+  (`cd extensions/poncho-wb-parser && npm install && npm run build`), then load
+  unpacked from `dist/`; configure the collector URL in the dashboard → Settings
+  (default `http://127.0.0.1:7780`).
 - For PostgreSQL: `$PGHOST/$PGPORT/$PG_PWD/$PGDATABASE` set, database `wb_data_test`
-  (NOT `wb_data_prod`).
+  (NOT `wb_data_prod`). v2's `POST /snapshot` is PG-only.
 
 ## B. Build
 
@@ -72,10 +88,43 @@ sqlite3 /tmp/wbscraper.db "select q.season,count(*) from search_queries q \
 
 ## E. PostgreSQL live session
 
-As D, but `--backend postgres`, database from `$PGDATABASE` (`wb_data_test`),
-password from `$PG_PWD`. Tables are created by `PgWbscraperRepo.InitSchema`
-(`BIGSERIAL`/`BIGINT`/`BOOLEAN`, `$1..$n` placeholders, `ON CONFLICT(query) DO
-UPDATE SET query=EXCLUDED.query RETURNING query_id` one-shot upsert).
+As D, but `--backend postgres`, database from `$PGDATABASE` (`wb_data_test` —
+NEVER `wb_data_prod`), password from `$PG_PWD`. Tables are created by
+`PgWbscraperRepo.InitSchema` (`BIGSERIAL`/`BIGINT`/`BOOLEAN`, `$1..$n` placeholders,
+`ON CONFLICT(query) DO UPDATE SET query=EXCLUDED.query RETURNING query_id` one-shot
+upsert). This is the **required backend for v2 `/snapshot`**: SQLite answers 501.
+
+The committed config (`cmd/.configs/download-all/wb-scraper-collector.yaml`)
+already points at `wb_data_test`. `InitSchema` is idempotent and runs the v2
+migrations on each start, so a `name` column (and the cartesian-axis columns) are
+added to an existing DB via `ADD COLUMN IF NOT EXISTS`.
+
+**`POST /snapshot` (v2 only)** — push a fully-decoded session snapshot. Body is the
+`SnapshotDump` envelope (13 keys): `generated_at`, `snapshot`, `counts`, plus
+`search_queries` and the 11 fact-table arrays. The handler upserts queries
+(browser Dexie `query_id` → server `BIGSERIAL` via query text; unknown browser ids
+map to NULL), remaps every fact row's `query_id`, then `ReplaceSnapshot` runs in
+one transaction: `DELETE` all rows of `snapshot_ts` across the 11 fact tables, then
+bulk-`INSERT`. A re-push of the same `snapshot_ts` yields the same row set
+(idempotent — retries are safe). Response: per-table counts keyed
+`positions/ads/cards/prices/details/stocks/meta/options/compositions/sizes/colors`.
+
+### card.json content tables (Этап A/B — v2-only)
+
+Five fact tables are populated ONLY by the v2 `/snapshot` path; v1 `/capture`
+never writes them:
+
+| Table | Scope |
+|-------|-------|
+| `competitor_card_meta` | per-nm scalars: vendor code, subject ids, brand, media, description, kinds, … |
+| `competitor_card_options` | EAV — one product characteristic per row (Состав / Цвет / Покрой / …) |
+| `competitor_card_compositions` | material components (хлопок 60% / полиэстер 40%) |
+| `competitor_card_sizes` | one cell of the card.json size grid (prop_name=prop_value per tech_size) |
+| `competitor_card_colors` | color-variant nm_ids |
+
+The v2 extension also populates `name` (product title) on `search_positions` and
+`competitor_cards`; v1 `/capture` leaves `name` empty (it is decoded and stored
+only on the v2 path).
 
 ## F. Report (single-file HTML) — Stage 7
 
@@ -93,9 +142,12 @@ Not implemented in this build; `--report-only` prints an explicit notice.
 final buffer flush → exit. The extension sees `done:true` (or sends `POST /done`)
 and ends its loop.
 
-## H. HTTP contract (frozen at Stage 5)
+## H. HTTP contract
 
 All endpoints on the loopback address (`127.0.0.1:7780` by default). JSON in/out.
+The v1 contract (`/targets`, `/capture`, `/done`, `/state`) is consumed by the
+`wb-scraper` extension; `POST /snapshot` is the v2 `poncho-wb-parser` path
+(documented in §E).
 
 **`GET /targets?n=<int>`** — pull a target batch.
 ```json
@@ -157,11 +209,19 @@ shutdown) — not per capture.
 
 ## K. Safety (per CLAUDE.md)
 
-- DB always `/tmp/*.db` (or `wb_data_test` for PG). **Never `/var/db`** — production
-  is READ-ONLY in any mode.
+- DB: SQLite under `/tmp/*.db`; PostgreSQL `wb_data_test` (**NEVER** `wb_data_prod`,
+  **NEVER** `/var/db` — production is READ-ONLY in any mode). The committed config
+  already targets `wb_data_test`; override via `$PGDATABASE` only to another test DB.
 - The collector **does not call the WB API** (the extension does, in-browser) → the
   "mass writes to WB API are forbidden" rule is satisfied by architecture: there is
   no WB Content API client in this binary.
+
+**Known limitations:**
+- `competitor_card_prices.delivery_days` is a dead column — it exists in the schema
+  but no producer (v1 `/capture` or v2 `/snapshot`) ever fills it, so it is always
+  NULL. Delivery timing lives on `competitor_card_stocks.time1/time2`, captured fully.
+- `search_positions.name` and `competitor_cards.name` (product title) are populated
+  only by v2 `/snapshot`; v1 `/capture` leaves them `''`.
 
 ## L. Smoke test (no extension, no DB)
 

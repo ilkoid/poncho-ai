@@ -157,6 +157,7 @@ type SearchPosition struct {
 	Page         int        `json:"page"`
 	Position     int        `json:"position"`
 	NmID         int64      `json:"nm_id"`
+	Name         string     `json:"name"` // product title (WB products[].name); empty on v1 /capture
 	Brand        string     `json:"brand"`
 	SupplierID   *int64     `json:"supplier_id"`
 	PanelPromoID *int64     `json:"panel_promo_id"` // non-nil = this listing is an ad
@@ -187,6 +188,7 @@ type CompetitorCard struct {
 	SnapshotTs   SnapshotTs `json:"snapshot_ts"`
 	QueryID      int64      `json:"query_id"`
 	NmID         int64      `json:"nm_id"`
+	Name         string     `json:"name"` // product title (WB products[].name); empty on v1 /capture
 	Brand        string     `json:"brand"`
 	Supplier     string     `json:"supplier"`
 	SupplierID   *int64     `json:"supplier_id"`

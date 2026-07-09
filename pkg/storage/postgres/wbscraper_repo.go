@@ -74,7 +74,7 @@ RETURNING query_id`
 
 // SaveStorefrontPositions appends a batch of search-result ranking rows.
 func (r *PgWbscraperRepo) SaveStorefrontPositions(ctx context.Context, rows []wbscraper.SearchPosition) (int, error) {
-	return wbscraperPgInsertAll(ctx, r.pool, pgInsertSearchPositionPrefix, 13, rows, pgSearchPositionArgs)
+	return wbscraperPgInsertAll(ctx, r.pool, pgInsertSearchPositionPrefix, 14, rows, pgSearchPositionArgs)
 }
 
 // SaveVitrineAds appends a batch of banner-ad rows.
@@ -84,7 +84,7 @@ func (r *PgWbscraperRepo) SaveVitrineAds(ctx context.Context, rows []wbscraper.V
 
 // SaveCompetitorCards appends a batch of core card rows.
 func (r *PgWbscraperRepo) SaveCompetitorCards(ctx context.Context, rows []wbscraper.CompetitorCard) (int, error) {
-	return wbscraperPgInsertAll(ctx, r.pool, pgInsertCompetitorCardPrefix, 14, rows, pgCompetitorCardArgs)
+	return wbscraperPgInsertAll(ctx, r.pool, pgInsertCompetitorCardPrefix, 15, rows, pgCompetitorCardArgs)
 }
 
 // SaveCompetitorCardPrices appends a batch of per-size price rows.
@@ -130,7 +130,7 @@ func (r *PgWbscraperRepo) ReplaceSnapshot(ctx context.Context, snapshot wbscrape
 
 	// Each insert runs on the tx (pgExecer) via the shared helper. Counts capture
 	// rows actually inserted; on the first error we stop and return counts + err.
-	counts["positions"], err = wbscraperPgInsertAll(ctx, tx, pgInsertSearchPositionPrefix, 13, d.SearchPositions, pgSearchPositionArgs)
+	counts["positions"], err = wbscraperPgInsertAll(ctx, tx, pgInsertSearchPositionPrefix, 14, d.SearchPositions, pgSearchPositionArgs)
 	if err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("positions: %w", err)
 	}
@@ -138,7 +138,7 @@ func (r *PgWbscraperRepo) ReplaceSnapshot(ctx context.Context, snapshot wbscrape
 	if err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("ads: %w", err)
 	}
-	counts["cards"], err = wbscraperPgInsertAll(ctx, tx, pgInsertCompetitorCardPrefix, 14, d.CompetitorCards, pgCompetitorCardArgs)
+	counts["cards"], err = wbscraperPgInsertAll(ctx, tx, pgInsertCompetitorCardPrefix, 15, d.CompetitorCards, pgCompetitorCardArgs)
 	if err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("cards: %w", err)
 	}
@@ -198,7 +198,7 @@ var wbscraperSnapshotTables = []string{
 // appends the empty conflict string). Column order MUST match each args mapper below.
 const (
 	pgInsertSearchPositionPrefix = `INSERT INTO search_positions (
-    snapshot_ts, query_id, region_dest, page, position, nm_id, brand, supplier_id, panel_promo_id,
+    snapshot_ts, query_id, region_dest, page, position, nm_id, name, brand, supplier_id, panel_promo_id,
     price_basic, price_product, rating, feedbacks
 ) VALUES `
 
@@ -207,7 +207,7 @@ const (
 ) VALUES `
 
 	pgInsertCompetitorCardPrefix = `INSERT INTO competitor_cards (
-    snapshot_ts, query_id, nm_id, brand, supplier, supplier_id, rating, feedbacks, pics, weight, volume, colors, subject_id, panel_promo_id
+    snapshot_ts, query_id, nm_id, name, brand, supplier, supplier_id, rating, feedbacks, pics, weight, volume, colors, subject_id, panel_promo_id
 ) VALUES `
 
 	pgInsertCompetitorCardPricePrefix = `INSERT INTO competitor_card_prices (
@@ -253,7 +253,7 @@ const (
 
 func pgSearchPositionArgs(p wbscraper.SearchPosition) []any {
 	return []any{
-		string(p.SnapshotTs), wbscraper.QueryIDValue(p.QueryID), p.RegionDest, p.Page, p.Position, p.NmID,
+		string(p.SnapshotTs), wbscraper.QueryIDValue(p.QueryID), p.RegionDest, p.Page, p.Position, p.NmID, p.Name,
 		p.Brand, p.SupplierID, p.PanelPromoID, p.PriceBasic, p.PriceProduct, p.Rating, p.Feedbacks,
 	}
 }
@@ -267,7 +267,7 @@ func pgVitrineAdArgs(a wbscraper.VitrineAd) []any {
 
 func pgCompetitorCardArgs(c wbscraper.CompetitorCard) []any {
 	return []any{
-		string(c.SnapshotTs), wbscraper.QueryIDValue(c.QueryID), c.NmID, c.Brand, c.Supplier, c.SupplierID,
+		string(c.SnapshotTs), wbscraper.QueryIDValue(c.QueryID), c.NmID, c.Name, c.Brand, c.Supplier, c.SupplierID,
 		c.Rating, c.Feedbacks, c.Pics, c.Weight, c.Volume, c.Colors, c.SubjectID, c.PanelPromoID,
 	}
 }

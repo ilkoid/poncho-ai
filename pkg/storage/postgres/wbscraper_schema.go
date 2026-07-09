@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS search_positions (
     page          INTEGER NOT NULL DEFAULT 0,
     position      INTEGER NOT NULL DEFAULT 0,
     nm_id         BIGINT NOT NULL DEFAULT 0,
+    name          TEXT NOT NULL DEFAULT '',   -- product title (v2 /snapshot only; '' on v1)
     brand         TEXT NOT NULL DEFAULT '',
     supplier_id   BIGINT,
     panel_promo_id BIGINT,
@@ -80,6 +81,7 @@ CREATE TABLE IF NOT EXISTS competitor_cards (
     snapshot_ts   TEXT NOT NULL,
     query_id      BIGINT,
     nm_id         BIGINT NOT NULL DEFAULT 0,
+    name          TEXT NOT NULL DEFAULT '',  -- product title (v2 /snapshot only; '' on v1)
     brand         TEXT NOT NULL DEFAULT '',
     supplier      TEXT NOT NULL DEFAULT '',
     supplier_id   BIGINT,
@@ -225,13 +227,17 @@ CREATE INDEX IF NOT EXISTS idx_cccl_nm_ts ON competitor_card_colors(nm_id, snaps
 
 // wbscraperMigrations extends existing search_queries rows with the v2 cartesian-axis
 // columns (a fresh DB gets them via CREATE TABLE above; an existing DB does not —
-// CREATE TABLE IF NOT EXISTS leaves it untouched). Idempotent at startup
+// CREATE TABLE IF NOT EXISTS leaves it untouched). It also adds the v2-only product
+// title column `name` to search_positions and competitor_cards, which the v2 /snapshot
+// extension populates (v1 /capture leaves it ''). Idempotent at startup
 // (ADD COLUMN IF NOT EXISTS), mirroring cardsMigrations (cards_schema.go).
 const wbscraperMigrations = `
-ALTER TABLE search_queries ADD COLUMN IF NOT EXISTS brand    TEXT NOT NULL DEFAULT '';
-ALTER TABLE search_queries ADD COLUMN IF NOT EXISTS material TEXT NOT NULL DEFAULT '';
-ALTER TABLE search_queries ADD COLUMN IF NOT EXISTS purpose  TEXT NOT NULL DEFAULT '';
-ALTER TABLE search_queries ADD COLUMN IF NOT EXISTS comment  TEXT NOT NULL DEFAULT '';
+ALTER TABLE search_queries     ADD COLUMN IF NOT EXISTS brand    TEXT NOT NULL DEFAULT '';
+ALTER TABLE search_queries     ADD COLUMN IF NOT EXISTS material TEXT NOT NULL DEFAULT '';
+ALTER TABLE search_queries     ADD COLUMN IF NOT EXISTS purpose  TEXT NOT NULL DEFAULT '';
+ALTER TABLE search_queries     ADD COLUMN IF NOT EXISTS comment  TEXT NOT NULL DEFAULT '';
+ALTER TABLE search_positions   ADD COLUMN IF NOT EXISTS name     TEXT NOT NULL DEFAULT '';
+ALTER TABLE competitor_cards   ADD COLUMN IF NOT EXISTS name     TEXT NOT NULL DEFAULT '';
 `
 
 // initWbscraperSchema creates the wb-scraper tables in PostgreSQL, then runs the
