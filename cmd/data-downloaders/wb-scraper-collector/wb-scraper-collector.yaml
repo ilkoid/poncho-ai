@@ -1,0 +1,73 @@
+# wb-scraper-collector — приёмник данных из браузерного расширения WB Scraper.
+#
+# Не вызывает WB API напрямую: запросы к витрине делает расширение в реальном
+# браузере (обход антибота). Коллектор раздаёт цели (GET /targets), принимает
+# перехваты (POST /capture), декодирует и пишет в БД. См. план iridescent-shimmying-bee.md.
+# БД всегда /tmp для тестов; prod-пути (/var/db) — только запуск пользователя.
+
+# --- Хранилище (config.V2StorageConfig; dual-backend, как в v2-загрузчиках) ---
+storage:
+  backend: "postgres"               # "sqlite" | "postgres"
+#  db_path: "/tmp/wbscraper.db"    # SQLite-файл. ENV override: $SQLITE_PATH
+  pg_dsn: ""                      # опц.: полный DSN, перекрывает pg_database/host/port
+  pg_database: "wb_data_prod"     # только backend=postgres. ENV: $PGDATABASE
+  pg_password_env: "PG_PWD"       # имя env-переменной с паролем PG
+
+# --- HTTP-сервер (расширение стучится сюда; только loopback) ---
+server:
+  host: "127.0.0.1"
+  port: 7780
+  read_timeout: "30s"
+  write_timeout: "30s"
+  # IP-allowlist на ВСЕ маршруты (включая v2 POST /snapshot, который тащит весь
+  # снимок витрины). Пусто = allow all (безопасно ТОЛЬКО за firewall/NAT при
+  # loopback-биндине). Точные IP или CIDR; клиентский IP берётся из RemoteAddr.
+  # allowed_ips:
+  #   - "127.0.0.1"
+  #   - "10.0.0.0/8"
+
+# --- Источник целей (что расширение будет парсить) ---
+generator:
+  kind: "static"                  # "static" (конструктор ниже) | "llm" (заглушка, future)
+
+  # Конструктор: декартово произведение subject × gender × season × age.
+  # "" в списке = «без этого атрибута» (пропустить измерение для тех комбинаций).
+  # Склейка нетривиальных токенов через пробел → поисковый запрос, дедуп.
+  # Значения — точные WB-фразы, редактируются вручную под ассортимент.
+  constructor:
+    subjects:                     # СИД-список предметов WB (якорь запроса)
+      - "бейсболки"
+      
+    gender:                       # измерение «пол»
+      - "для девочки"
+
+    season:                       # измерение «сезон / повод»
+      - "летние"
+
+    age:                          # измерение «возраст»
+      - ""
+
+    max_queries: 300              # предохранитель: обрезать декартово до N
+    dedup: true                   # убирать дубликаты склеек
+
+  # LLM-секция (kind: "llm", future — генерация запросов под цель через pkg/llm).
+  # llm:
+  #   provider: "zai"             # pkg/llm Provider (zai/openrouter/openai)
+  #   prompt_file: ""             # источник промпта (pkg/prompts: File→Default→API→DB)
+
+# --- Поведение сбора (серверная часть) ---
+collect:
+  batch_targets: 50               # сколько целей отдавать на один GET /targets
+  flush_interval: "2s"            # частота сброса буфера capture'ов в БД
+  # Темп навигации, MAX_PAGES, DETAIL_K — живут в расширении (offscreen.js), тут не дублируются.
+
+# --- Отчёт (single-file HTML) ---
+report:
+  enabled: true                   # генерировать wb-competitors-<ts>.html после сессии
+  out_dir: "/tmp"                 # куда класть файл
+  snapshot_lookback: "24h"        # тащить в отчёт данные за последние N (по snapshot_ts)
+
+# --- Ручной обход конструктора (дебаг / точечный сбор) ---
+# targets:                        # если задано — перекрывает generator.constructor
+#   - "кроссовки детские для мальчика"
+#   - "17401163"                  # nmId → карточка товара
