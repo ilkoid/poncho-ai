@@ -18,6 +18,10 @@ const KEY_CONSTRUCTOR = 'constructor';
 const KEY_HIGHLIGHT_BRANDS = 'highlight_brands';
 const KEY_DETAIL_K = 'detail_k';
 const KEY_REPORT_FILTER = 'report_filter';
+const KEY_SERVER_URL = 'server_url';
+// Exported: the SW's storage.onChanged listener filters on this key to rebuild the alarms schedule
+// when the user edits the times in the dashboard (the other KEY_* are config.ts-private).
+export const KEY_SCHEDULE_TIMES = 'schedule_times';
 export const DEFAULT_DETAIL_K = 8;
 
 /** Load the constructor config, falling back to the default for any missing field. */
@@ -71,4 +75,31 @@ export async function loadReportFilter(): Promise<ReportFilter> {
 
 export async function saveReportFilter(f: ReportFilter): Promise<void> {
   await chrome.storage.local.set({ [KEY_REPORT_FILTER]: f });
+}
+
+/** Go collector base URL for snapshot push (POST ${url}/snapshot). Empty (default) = browser-only
+ *  mode — the extension keeps everything in Dexie and ships nothing. Survives SW death + restart.
+ *  Trailing slashes are stripped at the push site. Falls back to '' on any storage error so the
+ *  push silently no-ops rather than throwing in a context without storage access. */
+export async function loadServerUrl(): Promise<string> {
+  const s = await chrome.storage.local.get(KEY_SERVER_URL).catch(() => ({}) as Record<string, unknown>);
+  const v = s[KEY_SERVER_URL];
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+export async function saveServerUrl(url: string): Promise<void> {
+  await chrome.storage.local.set({ [KEY_SERVER_URL]: url.trim() });
+}
+
+/** Daily collect times as "HH:MM" strings (e.g. ["11:00","17:00","21:00"]). Empty = no schedule
+ *  (collect only via the dashboard button). Survives SW death + restart. Validated/normalized at
+ *  the settings layer (parseScheduleTimes) before saving. */
+export async function loadScheduleTimes(): Promise<string[]> {
+  const s = await chrome.storage.local.get(KEY_SCHEDULE_TIMES).catch(() => ({}) as Record<string, unknown>);
+  const v = s[KEY_SCHEDULE_TIMES];
+  return Array.isArray(v) ? (v as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+}
+
+export async function saveScheduleTimes(times: string[]): Promise<void> {
+  await chrome.storage.local.set({ [KEY_SCHEDULE_TIMES]: times });
 }

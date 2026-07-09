@@ -57,6 +57,96 @@ export interface WBProductListResponse {
   products?: (WBProduct | null)[] | null;
 }
 
+/** One characteristic from the card.json `options[]` array (Состав / Цвет / Покрой / …). */
+export interface WBCardOption {
+  name?: string;
+  value?: string;
+  charc_type?: number;
+  is_variable?: boolean;
+  variable_values?: unknown; // string[] typically
+}
+
+/** One material component from the card.json `compositions[]` array (хлопок 60% / полиэстер 40%). */
+export interface WBCardComposition {
+  name?: string;
+}
+
+/** One row of the card.json `sizes_table.values[]`: a tech size with its measurement cells. */
+export interface WBCardSizeValue {
+  tech_size?: string;
+  chrt_id?: number;
+  details?: (string | number | null)[] | null; // parallel to sizes_table.details_props
+}
+
+/** The card.json `sizes_table` — a sparse size grid: column headers (details_props) × rows (values). */
+export interface WBCardSizeTable {
+  details_props?: (string | null)[];
+  values?: (WBCardSizeValue | null)[] | null;
+}
+
+/** One color-variant from card.json `full_colors[]` (the bare `colors[]` carries the same nm_ids as numbers). */
+export interface WBCardFullColor {
+  nm_id?: number;
+}
+
+/** One group from card.json `grouped_options[]` — partitions the flat `options[]` by group_name. */
+export interface WBCardOptionGroup {
+  group_name?: string;
+  options?: (WBCardOption | null)[] | null;
+}
+
+export interface WBCardSelling {
+  brand_name?: string;
+  brand_hash?: string;
+  supplier_id?: number;
+}
+
+export interface WBCardMedia {
+  photo_count?: number;
+  has_video?: boolean;
+}
+
+export interface WBCardData {
+  subject_id?: number;
+  subject_root_id?: number;
+  chrt_ids?: number[];
+}
+
+/** The flat product-content object served as a STATIC file at
+ *  `basket-{N}.wbbasket.ru/vol{a}/part{b}/{nmId}/info/ru/card.json` — description, characteristics
+ *  (options), composition, размерная сетка, colors, brand/media. Distinct from WBProduct: there is
+ *  no `products[]` wrapper — the WHOLE body IS one product's content. All fields optional (decode
+ *  reads defensively). Этап A captures EVERY known scalar/array; certificate / data.chrt_ids /
+ *  kinds_id are intentionally omitted (variable-shape / redundant — see decode/content.ts note). */
+export interface WBCardContent {
+  imt_id?: number;
+  nm_id?: number;
+  imt_name?: string; // product title
+  slug?: string;
+  vendor_code?: string;
+  subj_name?: string;
+  subj_root_name?: string;
+  description?: string;
+  markdown_description?: string;
+  need_kiz?: boolean;
+  create_date?: string;
+  update_date?: string;
+  options?: (WBCardOption | null)[] | null;
+  compositions?: (WBCardComposition | null)[] | null;
+  sizes_table?: WBCardSizeTable | null;
+  colors?: (number | null)[] | null; // color-variant nm_ids (bare array)
+  full_colors?: (WBCardFullColor | null)[] | null;
+  nm_colors_names?: string;
+  contents?: string; // комплектация ("Рубашка 1 шт")
+  kinds?: (string | null)[] | null;
+  has_seller_recommendations?: boolean;
+  user_flags?: number;
+  selling?: WBCardSelling;
+  media?: WBCardMedia;
+  data?: WBCardData;
+  grouped_options?: (WBCardOptionGroup | null)[] | null;
+}
+
 /** One banner from banners-website v2/banners or a shelfs/search slot. */
 export interface WBBanner {
   href?: string;

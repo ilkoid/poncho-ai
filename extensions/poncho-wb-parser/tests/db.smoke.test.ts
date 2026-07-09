@@ -1,4 +1,4 @@
-// tests/db.smoke.test.ts — S1 DoD: the Dexie DB opens with exactly the 7 stores, and a basic
+// tests/db.smoke.test.ts — S1 DoD: the Dexie DB opens with exactly the 9 stores, and a basic
 // round-trip (autoinc PK + read-back) works under fake-indexeddb. Validates the storage layer
 // before the decode port lands in S2.
 
@@ -6,14 +6,19 @@ import { describe, it, expect } from 'vitest';
 import { db } from '../src/db/dexie';
 
 describe('PonchoDB schema (S1)', () => {
-  it('opens with exactly 7 object stores', async () => {
-    // any read forces the DB open + version(1) upgrade that creates the stores
+  it('opens with exactly 12 object stores', async () => {
+    // any read forces the DB open + version upgrades that create the stores
     await db.search_queries.count();
     const stores = db.tables.map((t) => t.name).sort();
     expect(stores).toEqual(
       [
+        'competitor_card_colors',
+        'competitor_card_compositions',
         'competitor_card_details',
+        'competitor_card_meta',
+        'competitor_card_options',
         'competitor_card_prices',
+        'competitor_card_sizes',
         'competitor_card_stocks',
         'competitor_cards',
         'search_positions',

@@ -48,6 +48,11 @@ export interface Decoded {
   competitor_card_prices: CompetitorCardPrice[];
   competitor_card_details: CompetitorCardDetail[];
   competitor_card_stocks: CompetitorCardStock[];
+  competitor_card_meta: CompetitorCardMeta[];
+  competitor_card_options: CompetitorCardOption[];
+  competitor_card_compositions: CompetitorCardComposition[];
+  competitor_card_sizes: CompetitorCardSize[];
+  competitor_card_colors: CompetitorCardColor[];
 }
 
 export interface SearchPosition {
@@ -134,3 +139,91 @@ export interface CompetitorCardStock {
   time1: number | null;
   time2: number | null;
 }
+
+/** Per-nm scalar content from the wbbasket.ru card.json CDN file (1 row per nm per snapshot).
+ *  vendor_code = артикул продавца (год выпуска = символы 2-3); need_kiz = маркировка. Joins on nm_id.
+ *  Этап A: expanded to capture EVERY known scalar of card.json (title, brand, media, subject ids,
+ *  colors name, contents, kinds, seller-recommendation flag) — nothing dropped. Nullable numerics
+ *  stay `number | null` (Dexie compound-index rule — never undefined). */
+export interface CompetitorCardMeta {
+  id?: number;
+  snapshot_ts: SnapshotTs;
+  query_id: number | null;
+  nm_id: number;
+  vendor_code: string; // артикул продавца
+  subj_name: string; // человекочитаемая категория (WB subject)
+  subj_root_name: string; // корневая категория
+  description: string; // полное описание (markdown_description при наличии)
+  need_kiz: number; // 1 = требуется маркировка, 0 = нет
+  create_date: string; // ISO создания карточки ('' если нет)
+  update_date: string; // ISO обновления ('' если нет)
+  imt_id: number | null; // WB imt (родительский артукул карточки)
+  imt_name: string; // название товара (заголовок карточки)
+  slug: string; // URL-slug товара
+  brand_name: string; // selling.brand_name
+  brand_hash: string; // selling.brand_hash
+  supplier_id: number | null; // selling.supplier_id
+  photo_count: number; // media.photo_count
+  has_video: number; // media.has_video (0/1)
+  subject_id: number | null; // data.subject_id (числовой ID категории)
+  subject_root_id: number | null; // data.subject_root_id
+  nm_colors_names: string; // имена цветов (скаляр из card.json)
+  contents: string; // комплектация ("Рубашка 1 шт")
+  has_seller_recommendations: number; // 0/1
+  user_flags: number;
+  kinds: string; // JSON-text массив (rawJSONOrEmpty), '' если нет
+}
+
+/** One product characteristic (Состав / Цвет / Покрой / …) from card.json `options[]` — N rows per
+ *  nm per snapshot. variable_values = JSON-массив значений для варьируемых характеристик ('' если нет).
+ *  group_name — раздел из grouped_options[] («Основная информация» / «Дополнительная информация»). */
+export interface CompetitorCardOption {
+  id?: number;
+  snapshot_ts: SnapshotTs;
+  query_id: number | null;
+  nm_id: number;
+  char_name: string; // "Состав" / "Цвет" / "Покрой" …
+  char_value: string; // "хлопок 60%; полиэстер 40%"
+  charc_type: number; // WB charc_type (1 = обычная характеристика)
+  is_variable: number; // 1 = варьируется (есть variable_values), 0 = нет
+  variable_values: string; // JSON-массив значений (rawJSONOrEmpty), '' если нет
+  group_name: string; // группа из grouped_options[] ('' если без группы)
+}
+
+/** One material component from card.json `compositions[]` (хлопок 60% / полиэстер 40%). N rows per nm
+ *  per snapshot; `ord` preserves the on-card order. */
+export interface CompetitorCardComposition {
+  id?: number;
+  snapshot_ts: SnapshotTs;
+  query_id: number | null;
+  nm_id: number;
+  name: string; // "хлопок 60%"
+  ord: number; // позиция в compositions[]
+}
+
+/** One cell of the card.json size grid: a single measurement (prop_name=prop_value) for one tech_size.
+ *  Built by zipping sizes_table.details_props[i] × values[k].details[i]. Empty cells are skipped
+ *  (a sparse grid cell conveys no data and would only bloat the table). */
+export interface CompetitorCardSize {
+  id?: number;
+  snapshot_ts: SnapshotTs;
+  query_id: number | null;
+  nm_id: number;
+  tech_size: string; // "128" / "42" …
+  chrt_id: number | null; // WB размерный chrt_id
+  prop_name: string; // "RU" / "Рост, см" / "Обхват груди, в см" …
+  prop_value: string; // "128" / "63.6" …
+  prop_order: number; // индекс в details_props[]
+}
+
+/** One color-variant nm_id from card.json colors[]/full_colors[] (другие цвета того же товара).
+ *  N rows per nm per snapshot; `ord` preserves the on-card order. */
+export interface CompetitorCardColor {
+  id?: number;
+  snapshot_ts: SnapshotTs;
+  query_id: number | null;
+  nm_id: number;
+  color_nm_id: number; // nm_id варианта цвета
+  ord: number; // позиция в colors[]
+}
+

@@ -38,6 +38,8 @@ function bundle(
   return {
     search_positions: [], vitrine_ads: [],
     competitor_cards: cards, competitor_card_prices: prices, competitor_card_details: details, competitor_card_stocks: stocks,
+    competitor_card_meta: [], competitor_card_options: [],
+    competitor_card_compositions: [], competitor_card_sizes: [], competitor_card_colors: [],
   };
 }
 
@@ -60,18 +62,29 @@ describe('dropCascadeCards', () => {
     expect(out.competitor_cards.map((c) => c.nm_id)).toEqual([555]);
   });
 
-  it('drops the cascade children (prices/details/stocks) together with the card', () => {
-    const d = bundle(
-      [card(28, 111), card(28, 999)],
-      [price(28, 111), price(28, 999)],
-      [detail(28, 111), detail(28, 999)],
-      [stock(28, 111), stock(28, 999)],
-    );
+  it('drops the cascade children (prices/details/stocks/compositions/sizes/colors) together with the card', () => {
+    const comp = (qid: number | null, nm: number) => ({ snapshot_ts: SNAP, query_id: qid, nm_id: nm, name: 'хлопок', ord: 0 });
+    const sz = (qid: number | null, nm: number) => ({ snapshot_ts: SNAP, query_id: qid, nm_id: nm, tech_size: '42', chrt_id: null, prop_name: 'RU', prop_value: '42', prop_order: 0 });
+    const clr = (qid: number | null, nm: number) => ({ snapshot_ts: SNAP, query_id: qid, nm_id: nm, color_nm_id: 777, ord: 0 });
+    const d: Decoded = {
+      ...bundle(
+        [card(28, 111), card(28, 999)],
+        [price(28, 111), price(28, 999)],
+        [detail(28, 111), detail(28, 999)],
+        [stock(28, 111), stock(28, 999)],
+      ),
+      competitor_card_compositions: [comp(28, 111), comp(28, 999)],
+      competitor_card_sizes: [sz(28, 111), sz(28, 999)],
+      competitor_card_colors: [clr(28, 111), clr(28, 999)],
+    };
     const out = dropCascadeCards(d, new Set([111]));
     expect(out.competitor_cards.map((c) => c.nm_id)).toEqual([111]);
     expect(out.competitor_card_prices.map((p) => p.nm_id)).toEqual([111]);
     expect(out.competitor_card_details.map((p) => p.nm_id)).toEqual([111]);
     expect(out.competitor_card_stocks.map((p) => p.nm_id)).toEqual([111]);
+    expect(out.competitor_card_compositions.map((p) => p.nm_id)).toEqual([111]);
+    expect(out.competitor_card_sizes.map((p) => p.nm_id)).toEqual([111]);
+    expect(out.competitor_card_colors.map((p) => p.nm_id)).toEqual([111]);
   });
 
   it('leaves search_positions and vitrine_ads untouched', () => {

@@ -130,7 +130,7 @@ async function runTarget(t: Target): Promise<void> {
       sendProgress({ target: t, phase: `detail ${nm}` });
       await sendToSw({ type: 'NAVIGATE', target: { ...t, kind: 'card', query: '', url: detailUrl(nm) } });
       if (stopped) break;
-      await sleep(1000 + rand(2000)); // let /detail + /list fire
+      await sleep(1000 + rand(2000)); // let /detail + /list + card.json (wbbasket CDN content) fire
     }
   }
   sendProgress({ target: t, phase: 'done' });
@@ -181,6 +181,11 @@ async function decodeAndPersist(it: Intercept): Promise<void> {
   counts.competitor_card_prices += fresh.competitor_card_prices.length;
   counts.competitor_card_details += fresh.competitor_card_details.length;
   counts.competitor_card_stocks += fresh.competitor_card_stocks.length;
+  counts.competitor_card_meta += fresh.competitor_card_meta.length;
+  counts.competitor_card_options += fresh.competitor_card_options.length;
+  counts.competitor_card_compositions += fresh.competitor_card_compositions.length;
+  counts.competitor_card_sizes += fresh.competitor_card_sizes.length;
+  counts.competitor_card_colors += fresh.competitor_card_colors.length;
   await persistDecoded(fresh);
 }
 

@@ -38,6 +38,11 @@ export interface FactCounts {
   competitor_card_prices: number;
   competitor_card_details: number;
   competitor_card_stocks: number;
+  competitor_card_meta: number;
+  competitor_card_options: number;
+  competitor_card_compositions: number;
+  competitor_card_sizes: number;
+  competitor_card_colors: number;
 }
 
 export const EMPTY_COUNTS: FactCounts = {
@@ -47,6 +52,11 @@ export const EMPTY_COUNTS: FactCounts = {
   competitor_card_prices: 0,
   competitor_card_details: 0,
   competitor_card_stocks: 0,
+  competitor_card_meta: 0,
+  competitor_card_options: 0,
+  competitor_card_compositions: 0,
+  competitor_card_sizes: 0,
+  competitor_card_colors: 0,
 };
 
 /** Messages addressed TO the service worker. */
@@ -72,3 +82,9 @@ export type FromOffscreen =
   | { type: 'GET_NMIDS'; limit: number } // → reply { nmids: number[] }
   | { type: 'COLLECT_DONE' }
   | { type: 'PROGRESS'; target?: Target; phase: string; counts: FactCounts };
+
+/** Broadcast (SW → dashboard) summarizing a snapshot shipment attempt. Fired by the SW after a
+ *  push (on COLLECT_DONE) or a sweep retry. status 'shipped' = landed on the server (counts set);
+ *  'skipped' = browser-only mode (no URL); 'failed' = network/HTTP error (stays queued for retry). */
+export type ShipmentMsg =
+  | { type: 'SHIPMENT'; snapshot: string; status: 'shipped' | 'skipped' | 'failed'; counts?: Record<string, number>; error?: string };

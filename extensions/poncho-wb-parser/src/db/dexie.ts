@@ -21,8 +21,13 @@
 import Dexie, { type Table } from 'dexie';
 import type {
   CompetitorCard,
+  CompetitorCardColor,
+  CompetitorCardComposition,
   CompetitorCardDetail,
+  CompetitorCardMeta,
+  CompetitorCardOption,
   CompetitorCardPrice,
+  CompetitorCardSize,
   CompetitorCardStock,
   SearchPosition,
   SearchQuery,
@@ -37,6 +42,11 @@ export class PonchoDB extends Dexie {
   competitor_card_prices!: Table<CompetitorCardPrice, number>;
   competitor_card_details!: Table<CompetitorCardDetail, number>;
   competitor_card_stocks!: Table<CompetitorCardStock, number>;
+  competitor_card_meta!: Table<CompetitorCardMeta, number>;
+  competitor_card_options!: Table<CompetitorCardOption, number>;
+  competitor_card_compositions!: Table<CompetitorCardComposition, number>;
+  competitor_card_sizes!: Table<CompetitorCardSize, number>;
+  competitor_card_colors!: Table<CompetitorCardColor, number>;
 
   constructor() {
     super('poncho_wb_parser');
@@ -63,6 +73,27 @@ export class PonchoDB extends Dexie {
     // existing rows get brand='' auto-magically via the SearchQuery default — no data migration).
     this.version(3).stores({
       search_queries: '++query_id, &query, subject, brand, gender, season, age, material, purpose',
+    });
+    // v4: two new fact tables for competitor characteristics captured from the wbbasket.ru card.json
+    // CDN file. Adding NEW stores in a new version is safe (existing stores untouched, new ones
+    // created empty). Indexes mirror the other competitor_card_* tables (access by nm across
+    // snapshots, by query within a snapshot); options additionally indexes char_name for "all
+    // Состав values" lookups.
+    this.version(4).stores({
+      competitor_card_meta: '++id, [nm_id+snapshot_ts], [query_id+snapshot_ts], snapshot_ts, query_id, nm_id',
+      competitor_card_options: '++id, [nm_id+snapshot_ts], [query_id+snapshot_ts], snapshot_ts, query_id, nm_id, char_name',
+    });
+    // v5: three more card.json EAV tables for full content capture (Этап A): materials composition,
+    // size grid, color variants. Same safe add-new-stores upgrade (existing stores untouched).
+    // Indexes mirror the other competitor_card_* tables; sizes additionally indexes tech_size +
+    // prop_name ("all Рост values"), colors indexes color_nm_id.
+    this.version(5).stores({
+      competitor_card_compositions:
+        '++id, [nm_id+snapshot_ts], [query_id+snapshot_ts], snapshot_ts, query_id, nm_id',
+      competitor_card_sizes:
+        '++id, [nm_id+snapshot_ts], [query_id+snapshot_ts], snapshot_ts, query_id, nm_id, tech_size, prop_name',
+      competitor_card_colors:
+        '++id, [nm_id+snapshot_ts], [query_id+snapshot_ts], snapshot_ts, query_id, nm_id, color_nm_id',
     });
   }
 }

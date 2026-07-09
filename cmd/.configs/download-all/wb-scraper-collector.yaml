@@ -19,6 +19,12 @@ server:
   port: 7780
   read_timeout: "30s"
   write_timeout: "30s"
+  # IP-allowlist на ВСЕ маршруты (включая v2 POST /snapshot, который тащит весь
+  # снимок витрины). Пусто = allow all (безопасно ТОЛЬКО за firewall/NAT при
+  # loopback-биндине). Точные IP или CIDR; клиентский IP берётся из RemoteAddr.
+  # allowed_ips:
+  #   - "127.0.0.1"
+  #   - "10.0.0.0/8"
 
 # --- Источник целей (что расширение будет парсить) ---
 generator:

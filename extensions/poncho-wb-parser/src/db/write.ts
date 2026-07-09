@@ -38,13 +38,23 @@ export async function persistDecoded(d: Decoded): Promise<number> {
   await bulkAdd(db.competitor_card_prices, d.competitor_card_prices);
   await bulkAdd(db.competitor_card_details, d.competitor_card_details);
   await bulkAdd(db.competitor_card_stocks, d.competitor_card_stocks);
+  await bulkAdd(db.competitor_card_meta, d.competitor_card_meta);
+  await bulkAdd(db.competitor_card_options, d.competitor_card_options);
+  await bulkAdd(db.competitor_card_compositions, d.competitor_card_compositions);
+  await bulkAdd(db.competitor_card_sizes, d.competitor_card_sizes);
+  await bulkAdd(db.competitor_card_colors, d.competitor_card_colors);
   return (
     d.search_positions.length +
     d.vitrine_ads.length +
     d.competitor_cards.length +
     d.competitor_card_prices.length +
     d.competitor_card_details.length +
-    d.competitor_card_stocks.length
+    d.competitor_card_stocks.length +
+    d.competitor_card_meta.length +
+    d.competitor_card_options.length +
+    d.competitor_card_compositions.length +
+    d.competitor_card_sizes.length +
+    d.competitor_card_colors.length
   );
 }
 
@@ -58,6 +68,11 @@ export async function clearFacts(): Promise<void> {
     db.competitor_card_prices.clear(),
     db.competitor_card_details.clear(),
     db.competitor_card_stocks.clear(),
+    db.competitor_card_meta.clear(),
+    db.competitor_card_options.clear(),
+    db.competitor_card_compositions.clear(),
+    db.competitor_card_sizes.clear(),
+    db.competitor_card_colors.clear(),
   ]);
 }
 
@@ -80,10 +95,26 @@ export interface SeenKeys {
   details: Set<number>; // nm_id
   prices: Set<string>; // `${nm_id}|${size_name}|${wh_id}`
   stocks: Set<string>; // `${nm_id}|${size_name}|${wh_id}`
+  meta: Set<number>; // nm_id (1 meta row per nm per snapshot)
+  options: Set<string>; // `${nm_id}|${char_name}` (one value per characteristic per nm)
+  compositions: Set<string>; // `${nm_id}|${name}` (one row per material component per nm)
+  sizes: Set<string>; // `${nm_id}|${tech_size}|${prop_name}` (one cell per size-grid coordinate)
+  colors: Set<string>; // `${nm_id}|${color_nm_id}` (one row per color variant per nm)
 }
 
 export function freshSeen(): SeenKeys {
-  return { positions: new Set(), cards: new Set(), details: new Set(), prices: new Set(), stocks: new Set() };
+  return {
+    positions: new Set(),
+    cards: new Set(),
+    details: new Set(),
+    prices: new Set(),
+    stocks: new Set(),
+    meta: new Set(),
+    options: new Set(),
+    compositions: new Set(),
+    sizes: new Set(),
+    colors: new Set(),
+  };
 }
 
 /** Return a new Decoded with already-seen rows dropped (first wins), recording new keys into
@@ -124,6 +155,35 @@ export function dedupeBySeen(d: Decoded, seen: SeenKeys): Decoded {
       const k = szKey(r);
       if (seen.stocks.has(k)) return false;
       seen.stocks.add(k);
+      return true;
+    }),
+    competitor_card_meta: d.competitor_card_meta.filter((r) => {
+      if (seen.meta.has(r.nm_id)) return false;
+      seen.meta.add(r.nm_id);
+      return true;
+    }),
+    competitor_card_options: d.competitor_card_options.filter((r) => {
+      const k = `${r.nm_id}|${r.char_name}`;
+      if (seen.options.has(k)) return false;
+      seen.options.add(k);
+      return true;
+    }),
+    competitor_card_compositions: d.competitor_card_compositions.filter((r) => {
+      const k = `${r.nm_id}|${r.name}`;
+      if (seen.compositions.has(k)) return false;
+      seen.compositions.add(k);
+      return true;
+    }),
+    competitor_card_sizes: d.competitor_card_sizes.filter((r) => {
+      const k = `${r.nm_id}|${r.tech_size}|${r.prop_name}`;
+      if (seen.sizes.has(k)) return false;
+      seen.sizes.add(k);
+      return true;
+    }),
+    competitor_card_colors: d.competitor_card_colors.filter((r) => {
+      const k = `${r.nm_id}|${r.color_nm_id}`;
+      if (seen.colors.has(k)) return false;
+      seen.colors.add(k);
       return true;
     }),
   };

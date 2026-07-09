@@ -6,14 +6,18 @@
 import { defineManifest } from '@crxjs/vite-plugin';
 
 const wbMatch = '*://*.wildberries.ru/*';
+// wbbasket.ru = WB static CDN; serves card.json (competitor characteristics) at
+// /vol{a}/part{b}/{nmId}/info/ru/card.json. The injector reads the page's own fetch of this file;
+// the host_permission is defensive (in case Chrome gates the cloned-body read by origin).
+const cdnMatch = '*://*.wbbasket.ru/*';
 
 export default defineManifest({
   manifest_version: 3,
   name: 'Poncho WB Parser',
   version: '0.1.0',
-  description: 'Browser-only WB storefront parser (visibility, competitor map, prices & stocks). v2 of wb-scraper — no Go backend.',
-  permissions: ['tabs', 'scripting', 'storage', 'downloads', 'offscreen', 'activeTab'],
-  host_permissions: [wbMatch],
+  description: 'WB storefront parser (visibility, competitor map, prices & stocks, full card.json). Browser-only by default; optional push to a Go collector (PostgreSQL) + daily chrome.alarms schedule. v2 of wb-scraper.',
+  permissions: ['tabs', 'scripting', 'storage', 'downloads', 'offscreen', 'activeTab', 'alarms'],
+  host_permissions: [wbMatch, cdnMatch],
   background: {
     service_worker: 'src/background/sw.ts',
     type: 'module',

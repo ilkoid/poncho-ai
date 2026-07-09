@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"log"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -84,6 +85,7 @@ func main() {
 		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DisplayDB()},
 		dllog.HeaderField{Key: "Generator", Value: cfg.Generator.Kind},
 		dllog.HeaderField{Key: "Addr", Value: addrOrConfig(*addrFlag, cfg.Server)},
+		dllog.HeaderField{Key: "AllowedIPs", Value: allowedIPsLabel(cfg.Server.AllowedIPs)},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
@@ -127,6 +129,7 @@ func main() {
 		ReadTimeout:   mustDuration("server.read_timeout", cfg.Server.ReadTimeout),
 		WriteTimeout:  mustDuration("server.write_timeout", cfg.Server.WriteTimeout),
 		DryRun:        *dryRun,
+		AllowedIPs:    cfg.Server.AllowedIPs,
 	}
 
 	addr := addrOrConfig(*addrFlag, cfg.Server)
@@ -237,6 +240,16 @@ func addrOrConfig(addrFlag string, srv wbscraper.ServerConfig) string {
 		return addrFlag
 	}
 	return fmt.Sprintf("%s:%d", srv.Host, srv.Port)
+}
+
+// allowedIPsLabel renders the IP allowlist for the startup header: "all" when empty
+// (the allow-all loopback default — surfaced loudly so a wide binding is visible),
+// otherwise the comma-joined entries.
+func allowedIPsLabel(ips []string) string {
+	if len(ips) == 0 {
+		return "all (empty allowlist — loopback only)"
+	}
+	return strings.Join(ips, ", ")
 }
 
 // mustDuration parses a config duration string, failing fast on a malformed value

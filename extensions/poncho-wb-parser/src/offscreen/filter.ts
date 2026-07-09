@@ -30,5 +30,10 @@ export function dropCascadeCards(d: Decoded, positionNm: ReadonlySet<number>): D
     competitor_card_prices: d.competitor_card_prices.filter((r) => keep(r.query_id, r.nm_id)),
     competitor_card_details: d.competitor_card_details.filter((r) => keep(r.query_id, r.nm_id)),
     competitor_card_stocks: d.competitor_card_stocks.filter((r) => keep(r.query_id, r.nm_id)),
+    competitor_card_meta: d.competitor_card_meta.filter((r) => keep(r.query_id, r.nm_id)),
+    competitor_card_options: d.competitor_card_options.filter((r) => keep(r.query_id, r.nm_id)),
+    competitor_card_compositions: d.competitor_card_compositions.filter((r) => keep(r.query_id, r.nm_id)),
+    competitor_card_sizes: d.competitor_card_sizes.filter((r) => keep(r.query_id, r.nm_id)),
+    competitor_card_colors: d.competitor_card_colors.filter((r) => keep(r.query_id, r.nm_id)),
   };
 }

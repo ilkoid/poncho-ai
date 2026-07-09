@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { dedupeBySeen, freshSeen } from '../src/db/write';
-import type { Decoded } from '../src/db/types';
+import type { CompetitorCardColor, CompetitorCardComposition, CompetitorCardMeta, CompetitorCardOption, CompetitorCardSize, Decoded } from '../src/db/types';
 
 const S = '2026-07-02T17:54:05Z';
 
@@ -35,6 +35,11 @@ function bundle(): Decoded {
       { snapshot_ts: S, query_id: 1, nm_id: 10, size_name: '42', wh_id: 507, qty: 3, time1: 1, time2: 2 },
       { snapshot_ts: S, query_id: 1, nm_id: 10, size_name: '42', wh_id: 507, qty: 3, time1: 1, time2: 2 },
     ],
+    competitor_card_meta: [],
+    competitor_card_options: [],
+    competitor_card_compositions: [],
+    competitor_card_sizes: [],
+    competitor_card_colors: [],
   };
 }
 
@@ -109,5 +114,32 @@ describe('dedupeBySeen', () => {
     expect(out.search_positions).toHaveLength(3); // Q1@8038, Q2@8038, Q1@77 — only the re-fire dropped
     const keys = out.search_positions.map((r) => `${r.query_id}|${r.region_dest}`);
     expect(keys).toEqual(expect.arrayContaining(['1|8038', '2|8038', '1|77']));
+  });
+
+  it('dedups competitor_card_meta by nm_id, options by nm_id|char_name, and the 3 new EAV tables by their natural keys', () => {
+    const opt = (nm_id: number, char_name: string): CompetitorCardOption =>
+      ({ snapshot_ts: S, query_id: 1, nm_id, char_name, char_value: 'v', charc_type: 1, is_variable: 0, variable_values: '', group_name: '' });
+    const meta = (nm_id: number): CompetitorCardMeta =>
+      ({ snapshot_ts: S, query_id: 1, nm_id, vendor_code: 'V', subj_name: '', subj_root_name: '', description: '', need_kiz: 0, create_date: '', update_date: '', imt_id: null, imt_name: '', slug: '', brand_name: '', brand_hash: '', supplier_id: null, photo_count: 0, has_video: 0, subject_id: null, subject_root_id: null, nm_colors_names: '', contents: '', has_seller_recommendations: 0, user_flags: 0, kinds: '' });
+    const comp = (nm_id: number, name: string): CompetitorCardComposition =>
+      ({ snapshot_ts: S, query_id: 1, nm_id, name, ord: 0 });
+    const sz = (nm_id: number, tech_size: string, prop_name: string): CompetitorCardSize =>
+      ({ snapshot_ts: S, query_id: 1, nm_id, tech_size, chrt_id: null, prop_name, prop_value: 'v', prop_order: 0 });
+    const clr = (nm_id: number, color_nm_id: number): CompetitorCardColor =>
+      ({ snapshot_ts: S, query_id: 1, nm_id, color_nm_id, ord: 0 });
+    const d: Decoded = {
+      ...bundle(),
+      competitor_card_meta: [meta(10), meta(10), meta(11)],
+      competitor_card_options: [opt(10, 'Состав'), opt(10, 'Состав'), opt(10, 'Цвет'), opt(11, 'Состав')],
+      competitor_card_compositions: [comp(10, 'хлопок'), comp(10, 'хлопок'), comp(10, 'полиэстер'), comp(11, 'хлопок')],
+      competitor_card_sizes: [sz(10, '42', 'RU'), sz(10, '42', 'RU'), sz(10, '42', 'Рост'), sz(11, '42', 'RU')],
+      competitor_card_colors: [clr(10, 1), clr(10, 1), clr(10, 2), clr(11, 1)],
+    };
+    const out = dedupeBySeen(d, freshSeen());
+    expect(out.competitor_card_meta).toHaveLength(2); // nm 10 (once) + nm 11
+    expect(out.competitor_card_options).toHaveLength(3); // 10|Состав, 10|Цвет, 11|Состав
+    expect(out.competitor_card_compositions).toHaveLength(3); // 10|хлопок, 10|полиэстер, 11|хлопок
+    expect(out.competitor_card_sizes).toHaveLength(3); // 10|42|RU, 10|42|Рост, 11|42|RU
+    expect(out.competitor_card_colors).toHaveLength(3); // 10|1, 10|2, 11|1
   });
 });

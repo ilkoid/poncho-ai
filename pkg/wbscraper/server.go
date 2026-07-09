@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,13 +17,24 @@ import (
 // tableCounts tallies rows per fact table. It is the shape of the "counts" object
 // in /state and of flush summaries, and accumulates across flushes for the lifetime
 // of one session. JSON field names are the short table labels (not the SQL names).
+//
+// The five content fields (Meta/Options/Compositions/Sizes/Colors) are v2-only:
+// the v1 /capture Decode never produces them, so they stay 0 on that path. The v2
+// /snapshot path reports its counts via ReplaceSnapshot's map return, not here —
+// but the fields exist so countDecoded/mergeDecoded treat all 11 slices uniformly
+// (no silent drops if a content row ever reaches the buffer).
 type tableCounts struct {
-	Positions int `json:"positions"`
-	Ads       int `json:"ads"`
-	Cards     int `json:"cards"`
-	Prices    int `json:"prices"`
-	Details   int `json:"details"`
-	Stocks    int `json:"stocks"`
+	Positions    int `json:"positions"`
+	Ads          int `json:"ads"`
+	Cards        int `json:"cards"`
+	Prices       int `json:"prices"`
+	Details      int `json:"details"`
+	Stocks       int `json:"stocks"`
+	Meta         int `json:"meta"`
+	Options      int `json:"options"`
+	Compositions int `json:"compositions"`
+	Sizes        int `json:"sizes"`
+	Colors       int `json:"colors"`
 }
 
 // add mutates the receiver, adding each field of o (used to fold flush results into
@@ -34,11 +46,17 @@ func (c *tableCounts) add(o tableCounts) {
 	c.Prices += o.Prices
 	c.Details += o.Details
 	c.Stocks += o.Stocks
+	c.Meta += o.Meta
+	c.Options += o.Options
+	c.Compositions += o.Compositions
+	c.Sizes += o.Sizes
+	c.Colors += o.Colors
 }
 
 // total returns the sum across all fact tables (rows handled this session/flush).
 func (c tableCounts) total() int {
-	return c.Positions + c.Ads + c.Cards + c.Prices + c.Details + c.Stocks
+	return c.Positions + c.Ads + c.Cards + c.Prices + c.Details + c.Stocks +
+		c.Meta + c.Options + c.Compositions + c.Sizes + c.Colors
 }
 
 // ServerOptions configures the collector HTTP server. Primitives are resolved from
@@ -69,6 +87,14 @@ type ServerOptions struct {
 	// DryRun switches flush from Writer persistence to stdout printing — decode and
 	// queue logic run unchanged, so it exercises the whole pipeline minus the DB.
 	DryRun bool
+
+	// AllowedIPs is the IP allowlist applied to EVERY route via the ipFilter
+	// middleware (the snapshot server may bind beyond loopback). Empty = allow all
+	// (the loopback dev default — safe only behind a firewall/NAT). Entries are
+	// matched as exact IPs ("10.0.0.4") or CIDR ranges ("10.0.0.0/8"); the client
+	// IP is taken from r.RemoteAddr (host:port). The v2 /snapshot push carries the
+	// full storefront dataset, so this is the single network-layer defense.
+	AllowedIPs []string
 }
 
 // Server is the loopback HTTP collector. It owns the authoritative target queue
@@ -87,6 +113,9 @@ type Server struct {
 	addr string
 	w    Writer
 	opts ServerOptions
+
+	// allowedIPs is immutable after construction — read without the lock.
+	allowedIPs []string
 
 	// snapshot/sessionID are immutable after construction — read without the lock.
 	snapshot  SnapshotTs
@@ -114,11 +143,12 @@ func NewServer(ctx context.Context, addr string, w Writer, targets []Target, opt
 		opts.SessionID = sessionIDFromSnapshot(opts.Snapshot)
 	}
 	s := &Server{
-		addr:      addr,
-		w:         w,
-		opts:      opts,
-		snapshot:  opts.Snapshot,
-		sessionID: opts.SessionID,
+		addr:       addr,
+		w:          w,
+		opts:       opts,
+		allowedIPs: opts.AllowedIPs,
+		snapshot:   opts.Snapshot,
+		sessionID:  opts.SessionID,
 	}
 	if err := s.fillQueue(ctx, targets); err != nil {
 		return nil, err
@@ -207,13 +237,37 @@ func (s *Server) Run(ctx context.Context) error {
 
 // routes builds the server's mux. A fresh ServeMux (not DefaultMux) keeps the
 // server self-contained and testable with httptest, with no global registration.
+// Chain (outer → inner): ipFilter (IP allowlist) → cors (preflight + ACAO for the
+// extension's cross-origin fetch) → mux. ipFilter is outermost so an unlisted IP is
+// 403'd before any CORS header leaks the route's existence.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/targets", s.handleTargets)
 	mux.HandleFunc("/capture", s.handleCapture)
 	mux.HandleFunc("/done", s.handleDone)
 	mux.HandleFunc("/state", s.handleState)
-	return mux
+	mux.HandleFunc("/snapshot", s.handleSnapshot)
+	return s.ipFilter(s.cors(mux))
+}
+
+// cors lets the browser extension's service worker POST /snapshot cross-origin. An
+// MV3 SW fetch to a URL not covered by host_permissions is CORS-regulated, and a
+// POST with Content-Type: application/json triggers a preflight — so the server must
+// answer OPTIONS and send Access-Control-Allow-Origin on the actual response, or the
+// push is blocked before it ever lands. The server is internal/loopback, so ACAO:*
+// is safe; ipFilter (outer) still gates WHO may call. No credentials are used.
+func (s *Server) cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Access-Control-Allow-Origin", "*")
+		h.Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET")
+		h.Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ----------------------------------------------------------------------------
@@ -324,6 +378,215 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		CapturesReceived: caps,
 		Counts:           counts,
 	})
+}
+
+// ----------------------------------------------------------------------------
+// POST /snapshot — v2 push path (poncho-wb-parser extension → server)
+// ----------------------------------------------------------------------------
+
+// snapshotDump is the JSON wire shape pushed by the extension's dumpSnapshot
+// (export/json-dump.ts): the fully-decoded fact rows for ONE snapshot_ts, plus the
+// search_queries referenced. 1:1 with the TS SnapshotDump interface (the extension
+// decodes card.json; the server does NOT re-decode — it persists what it receives).
+type snapshotDump struct {
+	GeneratedAt                string                      `json:"generated_at"`
+	Snapshot                   string                      `json:"snapshot"`
+	Counts                     map[string]int              `json:"counts"`
+	SearchQueries              []SearchQuery               `json:"search_queries"`
+	SearchPositions            []SearchPosition            `json:"search_positions"`
+	VitrineAds                 []VitrineAd                 `json:"vitrine_ads"`
+	CompetitorCards            []CompetitorCard            `json:"competitor_cards"`
+	CompetitorCardPrices       []CompetitorCardPrice       `json:"competitor_card_prices"`
+	CompetitorCardDetails      []CompetitorCardDetail      `json:"competitor_card_details"`
+	CompetitorCardStocks       []CompetitorCardStock       `json:"competitor_card_stocks"`
+	CompetitorCardMeta         []CompetitorCardMeta        `json:"competitor_card_meta"`
+	CompetitorCardOptions      []CompetitorCardOption      `json:"competitor_card_options"`
+	CompetitorCardCompositions []CompetitorCardComposition `json:"competitor_card_compositions"`
+	CompetitorCardSizes        []CompetitorCardSize        `json:"competitor_card_sizes"`
+	CompetitorCardColors       []CompetitorCardColor       `json:"competitor_card_colors"`
+}
+
+// handleSnapshot accepts one fully-decoded snapshot from the extension and persists
+// it atomically via ReplaceSnapshot (DELETE+INSERT scoped to one snapshot_ts). The
+// browser's query_id space (Dexie autoinc) ≠ the server's (BIGSERIAL), so the query
+// text is re-resolved: each SearchQuery is upserted to obtain a stable server id,
+// then every fact row's QueryID is remapped browser→server (NoQuery stays 0→NULL).
+//
+// ReplaceSnapshot is the SnapshotReplacer interface — PostgreSQL-only in this build.
+// A backend that does not implement it (SQLite) gets 501; --mock/--dry-run (DiscardWriter)
+// implement it so the transport is exercisable without a database.
+func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody{"POST required"})
+		return
+	}
+
+	sr, ok := s.w.(SnapshotReplacer)
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, errorBody{"snapshot replace not supported by this backend (PostgreSQL required)"})
+		return
+	}
+
+	var dump snapshotDump
+	if err := json.NewDecoder(r.Body).Decode(&dump); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody{"decode snapshot body: " + err.Error()})
+		return
+	}
+
+	snap := SnapshotTs(dump.Snapshot)
+	if snap == "" {
+		snap = s.snapshot // fall back to the session stamp; an empty snapshot_ts would key nothing
+	}
+
+	// Re-resolve query text → server QueryID and build the browser→server remap.
+	// The dump's SearchQueries carry the BROWSER query_id (Dexie ++); each is upserted
+	// by text so identical text maps to one server id across snapshots (UNIQUE).
+	remap := make(map[int64]int64, len(dump.SearchQueries))
+	for _, q := range dump.SearchQueries {
+		if q.Query == "" {
+			continue
+		}
+		serverQID, err := s.w.UpsertQuery(r.Context(), q)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorBody{"upsert query: " + err.Error()})
+			return
+		}
+		remap[q.QueryID] = serverQID
+	}
+
+	d := Decoded{
+		SearchPositions:            dump.SearchPositions,
+		VitrineAds:                 dump.VitrineAds,
+		CompetitorCards:            dump.CompetitorCards,
+		CompetitorCardPrices:       dump.CompetitorCardPrices,
+		CompetitorCardDetails:      dump.CompetitorCardDetails,
+		CompetitorCardStocks:       dump.CompetitorCardStocks,
+		CompetitorCardMeta:         dump.CompetitorCardMeta,
+		CompetitorCardOptions:      dump.CompetitorCardOptions,
+		CompetitorCardCompositions: dump.CompetitorCardCompositions,
+		CompetitorCardSizes:        dump.CompetitorCardSizes,
+		CompetitorCardColors:       dump.CompetitorCardColors,
+	}
+	remapSnapshotQueryIDs(&d, remap)
+
+	counts, err := sr.ReplaceSnapshot(r.Context(), snap, d)
+	if err != nil {
+		dllog.Error("snapshot replace failed (snapshot=%s): %v", snap, err)
+		writeJSON(w, http.StatusInternalServerError, errorBody{"replace snapshot: " + err.Error()})
+		return
+	}
+
+	dllog.Log("snapshot: snapshot=%s queries=%d positions=%d cards=%d meta=%d compositions=%d sizes=%d colors=%d",
+		snap, len(remap), counts["positions"], counts["cards"], counts["meta"], counts["compositions"], counts["sizes"], counts["colors"])
+	writeJSON(w, http.StatusOK, snapshotResponse{Snapshot: string(snap), Counts: counts})
+}
+
+// remapSnapshotQueryIDs rewrites every fact row's QueryID from the browser id space
+// to the server id space using the remap table. A browser QueryID absent from remap
+// (dump did not carry its query text — shouldn't happen) is reset to NoQuery (0→NULL)
+// rather than left as an id that violates the search_queries FK by convention.
+// NoQuery (0) rows stay 0. In-place; the slices are already non-aliased from the dump.
+func remapSnapshotQueryIDs(d *Decoded, remap map[int64]int64) {
+	rewrite := func(qid int64) int64 {
+		if qid == NoQuery {
+			return NoQuery
+		}
+		if serverQID, ok := remap[qid]; ok {
+			return serverQID
+		}
+		return NoQuery
+	}
+	for i := range d.SearchPositions {
+		d.SearchPositions[i].QueryID = rewrite(d.SearchPositions[i].QueryID)
+	}
+	for i := range d.VitrineAds {
+		d.VitrineAds[i].QueryID = rewrite(d.VitrineAds[i].QueryID)
+	}
+	for i := range d.CompetitorCards {
+		d.CompetitorCards[i].QueryID = rewrite(d.CompetitorCards[i].QueryID)
+	}
+	for i := range d.CompetitorCardPrices {
+		d.CompetitorCardPrices[i].QueryID = rewrite(d.CompetitorCardPrices[i].QueryID)
+	}
+	for i := range d.CompetitorCardDetails {
+		d.CompetitorCardDetails[i].QueryID = rewrite(d.CompetitorCardDetails[i].QueryID)
+	}
+	for i := range d.CompetitorCardStocks {
+		d.CompetitorCardStocks[i].QueryID = rewrite(d.CompetitorCardStocks[i].QueryID)
+	}
+	for i := range d.CompetitorCardMeta {
+		d.CompetitorCardMeta[i].QueryID = rewrite(d.CompetitorCardMeta[i].QueryID)
+	}
+	for i := range d.CompetitorCardOptions {
+		d.CompetitorCardOptions[i].QueryID = rewrite(d.CompetitorCardOptions[i].QueryID)
+	}
+	for i := range d.CompetitorCardCompositions {
+		d.CompetitorCardCompositions[i].QueryID = rewrite(d.CompetitorCardCompositions[i].QueryID)
+	}
+	for i := range d.CompetitorCardSizes {
+		d.CompetitorCardSizes[i].QueryID = rewrite(d.CompetitorCardSizes[i].QueryID)
+	}
+	for i := range d.CompetitorCardColors {
+		d.CompetitorCardColors[i].QueryID = rewrite(d.CompetitorCardColors[i].QueryID)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// ipFilter — IP allowlist middleware (single network-layer defense for /snapshot)
+// ----------------------------------------------------------------------------
+
+// ipFilter gates every request on the configured AllowedIPs. Empty allowlist = allow
+// all (the loopback dev default — documented as safe only behind a firewall). A
+// non-empty list requires an exact IP match OR membership in a listed CIDR range;
+// the client IP is the host part of r.RemoteAddr. Mismatch → 403.
+func (s *Server) ipFilter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.allowed(r) {
+			writeJSON(w, http.StatusForbidden, errorBody{"ip not allowed: " + hostOnly(r.RemoteAddr)})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// allowed reports whether the request's client IP passes the allowlist. Empty list =
+// allow all. Each entry is tried as a CIDR first (covers ranges), then as a bare IP.
+// Parse failures of an entry are skipped (a malformed config line never grants access).
+func (s *Server) allowed(r *http.Request) bool {
+	if len(s.allowedIPs) == 0 {
+		return true
+	}
+	clientIP := net.ParseIP(hostOnly(r.RemoteAddr))
+	if clientIP == nil {
+		return false
+	}
+	for _, entry := range s.allowedIPs {
+		if _, cidr, err := net.ParseCIDR(entry); err == nil {
+			if cidr.Contains(clientIP) {
+				return true
+			}
+			continue
+		}
+		if net.ParseIP(entry) != nil && net.ParseIP(entry).Equal(clientIP) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostOnly strips the :port from a host:port RemoteAddr. Falls back to the input
+// unchanged if SplitHostPort fails (e.g. an already-bare IP), so ParseIP still gets a
+// chance.
+func hostOnly(remoteAddr string) string {
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+	return remoteAddr
+}
+
+type snapshotResponse struct {
+	Snapshot string         `json:"snapshot"`
+	Counts   map[string]int `json:"counts"`
 }
 
 // ----------------------------------------------------------------------------
@@ -511,12 +774,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // countDecoded maps a Decoded bundle to its per-table counts.
 func countDecoded(d Decoded) tableCounts {
 	return tableCounts{
-		Positions: len(d.SearchPositions),
-		Ads:       len(d.VitrineAds),
-		Cards:     len(d.CompetitorCards),
-		Prices:    len(d.CompetitorCardPrices),
-		Details:   len(d.CompetitorCardDetails),
-		Stocks:    len(d.CompetitorCardStocks),
+		Positions:    len(d.SearchPositions),
+		Ads:          len(d.VitrineAds),
+		Cards:        len(d.CompetitorCards),
+		Prices:       len(d.CompetitorCardPrices),
+		Details:      len(d.CompetitorCardDetails),
+		Stocks:       len(d.CompetitorCardStocks),
+		Meta:         len(d.CompetitorCardMeta),
+		Options:      len(d.CompetitorCardOptions),
+		Compositions: len(d.CompetitorCardCompositions),
+		Sizes:        len(d.CompetitorCardSizes),
+		Colors:       len(d.CompetitorCardColors),
 	}
 }
 
@@ -533,6 +801,11 @@ func mergeDecoded(dst *Decoded, src Decoded) {
 	dst.CompetitorCardPrices = append(dst.CompetitorCardPrices, src.CompetitorCardPrices...)
 	dst.CompetitorCardDetails = append(dst.CompetitorCardDetails, src.CompetitorCardDetails...)
 	dst.CompetitorCardStocks = append(dst.CompetitorCardStocks, src.CompetitorCardStocks...)
+	dst.CompetitorCardMeta = append(dst.CompetitorCardMeta, src.CompetitorCardMeta...)
+	dst.CompetitorCardOptions = append(dst.CompetitorCardOptions, src.CompetitorCardOptions...)
+	dst.CompetitorCardCompositions = append(dst.CompetitorCardCompositions, src.CompetitorCardCompositions...)
+	dst.CompetitorCardSizes = append(dst.CompetitorCardSizes, src.CompetitorCardSizes...)
+	dst.CompetitorCardColors = append(dst.CompetitorCardColors, src.CompetitorCardColors...)
 }
 
 // sessionIDFromSnapshot reduces a SnapshotTs to its digits — a stable, meaningful

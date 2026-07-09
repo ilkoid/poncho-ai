@@ -4,7 +4,18 @@
 
 import { upsertQueries } from '../db/upsert';
 import { cartesian, parseTextarea, type ConstructorConfig } from '../querygen/static';
-import { loadConstructor, saveConstructor, loadHighlightBrands, saveHighlightBrands, loadDetailK, saveDetailK } from '../storage/config';
+import { loadConstructor, saveConstructor, loadHighlightBrands, saveHighlightBrands, loadDetailK, saveDetailK, loadServerUrl, saveServerUrl, loadScheduleTimes, saveScheduleTimes } from '../storage/config';
+import { enqueueShipment, shipPending } from '../export/push';
+import { listSnapshots } from '../reports/snapshots';
+import { parseScheduleTimes } from '../background/schedule';
+
+/** Russian pluralization of "снимок" (1 снимок / 2 снимка / 5 снимков). Used by the push button. */
+function snaps(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  const form = mod10 === 1 && mod100 !== 11 ? 'снимок' : mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20) ? 'снимка' : 'снимков';
+  return `${n} ${form}`;
+}
 
 /** Read the 7 textareas + the comment input + knobs into a ConstructorConfig. Exported because the
  *  collect-tab "Собрать по поиску" button reads the SAME form (tabs are display:none, the DOM lives
@@ -113,6 +124,57 @@ export async function initSettings(): Promise<void> {
       const el = document.getElementById('storage-estimate');
       if (el) el.textContent = granted ? '✓ Постоянное хранилище предоставлено.' : '✗ Браузер отклонил запрос (нельзя детерминированно — зависит от настроек сайта).';
     }
+  });
+
+  // server URL for snapshot push (POST ${url}/snapshot). Empty = browser-only (push disabled).
+  const srvUrl = await loadServerUrl();
+  setVal('server-url', srvUrl);
+  document.getElementById('server-url-save')?.addEventListener('click', async () => {
+    const url = ((document.getElementById('server-url') as HTMLInputElement | null)?.value ?? '').trim();
+    await saveServerUrl(url);
+    const el = document.getElementById('server-url-result');
+    if (el) el.textContent = url ? `✓ снимки будут уходить на ${url}/snapshot после каждого сбора` : '✓ режим «только браузер» — отправка на сервер выключена';
+  });
+  // push the pending queue immediately (manual sweep) — useful after setting a URL for the first
+  // time or retrying after a server outage. The SW's automatic COLLECT_DONE / start sweep covers
+  // the normal path; this button is the explicit "ship now" control.
+  document.getElementById('server-url-push')?.addEventListener('click', async () => {
+    const el = document.getElementById('server-url-result');
+    if (el) el.textContent = 'отправляю…';
+    // Rebuild the queue from Dexie FIRST: snapshots that finished collecting but aren't queued (they
+    // completed before a server URL was set, or were drained by the old skip logic) are folded back
+    // in via listSnapshots(). Then shipPending pushes everything. The server's replace-by-snapshot
+    // makes re-pushing an already-shipped snapshot safe — DELETE WHERE snapshot_ts first, no
+    // duplicates — so this is a true "ship everything I've collected". Tradeoff: re-clicking re-pushes
+    // all Dexie snapshots (cheap at test scale, idempotent).
+    const all = await listSnapshots();
+    for (const snap of all) await enqueueShipment(snap);
+    const url = await loadServerUrl();
+    const results = await shipPending();
+    if (el) {
+      if (!url) {
+        el.textContent = all.length ? `URL сервера не задан — ${snaps(all.length)} ждут в очереди. Задайте URL и повторите.` : 'URL сервера не задан — собранных снимков нет.';
+      } else if (results.length === 0) {
+        el.textContent = 'нет собранных снимков для отправки';
+      } else {
+        const shipped = results.filter((r) => r.shipped).length;
+        const failed = results.filter((r) => !r.ok).length;
+        el.textContent = `обработано ${results.length}: отправлено ${shipped}, ошибок ${failed}` + (failed ? ' (остались в очереди, повтор позже)' : '');
+      }
+    }
+  });
+
+  // daily collect schedule (chrome.alarms). One HH:MM per line; parsed + validated before save.
+  // Saving triggers the SW's storage.onChanged listener → rebuildSchedule (creates one daily alarm
+  // per time). Empty = manual-only (no scheduled collects).
+  const schedRaw = await loadScheduleTimes();
+  setVal('schedule-times', schedRaw.join('\n'));
+  document.getElementById('schedule-times-save')?.addEventListener('click', async () => {
+    const text = (document.getElementById('schedule-times') as HTMLTextAreaElement | null)?.value ?? '';
+    const times = parseScheduleTimes(text);
+    await saveScheduleTimes(times);
+    const el = document.getElementById('schedule-times-result');
+    if (el) el.textContent = times.length ? `✓ расписание: ${times.join(', ')} (ежедневно, будильники перестроены)` : '✓ расписание пусто — сбор только вручную';
   });
 }
 

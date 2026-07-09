@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { Decode } from '../src/decode';
+import { classify } from '../src/decode/kind';
 import { mockIntercepts } from '../src/storage/mock';
 import type { Intercept, SnapshotTs } from '../src/db/types';
 
@@ -218,10 +219,26 @@ describe('Decode — robustness', () => {
   });
 });
 
+describe('classify — card_content', () => {
+  // The wbbasket.ru card.json path is the only pattern anchored on a static file; it must tolerate a
+  // trailing query string (WB appends cache-busters / version params to its endpoints — see /detail),
+  // or classify silently returns null and the capture is dropped with no error.
+  const base = 'https://basket-25.wbbasket.ru/vol4453/part445378/445378637/info/ru/card.json';
+  it('matches the canonical card.json URL', () => {
+    expect(classify(base)).toBe('card_content');
+  });
+  it('matches with a trailing ?cache-buster (regression: the `$` anchor used to miss this)', () => {
+    expect(classify(`${base}?v=123`)).toBe('card_content');
+  });
+  it('does NOT match a non-card.json wbbasket path', () => {
+    expect(classify('https://basket-25.wbbasket.ru/vol1/part1/111/photos/small.webp')).toBeNull();
+  });
+});
+
 describe('mockIntercepts', () => {
   it('decodes to the expected rows', () => {
     const caps = mockIntercepts();
-    expect(caps).toHaveLength(2);
+    expect(caps).toHaveLength(3);
     const dSearch = Decode(caps[0]!, ts);
     expect(dSearch.search_positions).toHaveLength(2);
     expect(dSearch.search_positions[0]!.position).toBe(101);
@@ -232,5 +249,21 @@ describe('mockIntercepts', () => {
     expect(dCard.competitor_cards).toHaveLength(1);
     expect(dCard.competitor_card_stocks).toHaveLength(1);
     expect(dCard.competitor_card_details).toHaveLength(1);
+    const dContent = Decode(caps[2]!, ts); // wbbasket.ru card.json CDN
+    expect(dContent.competitor_card_meta).toHaveLength(1);
+    expect(dContent.competitor_card_meta[0]!.vendor_code).toBe('22123456');
+    expect(dContent.competitor_card_meta[0]!.imt_name).toBe('Кроссовки беговые мужские');
+    expect(dContent.competitor_card_meta[0]!.brand_name).toBe('Nike');
+    expect(dContent.competitor_card_meta[0]!.photo_count).toBe(6);
+    expect(dContent.competitor_card_options).toHaveLength(3);
+    const color = dContent.competitor_card_options.find((o) => o.char_name === 'Цвет')!;
+    expect(color.is_variable).toBe(1);
+    expect(color.group_name).toBe('Основная информация'); // resolved from grouped_options[]
+    // Этап A — materials / size grid / color variants
+    expect(dContent.competitor_card_compositions).toHaveLength(1);
+    expect(dContent.competitor_card_compositions[0]!.name).toBe('текстиль 100%');
+    expect(dContent.competitor_card_sizes).toHaveLength(3); // (39,RU),(39,Длина),(40,RU) — empty cell dropped
+    expect(dContent.competitor_card_colors).toHaveLength(2);
+    expect(dContent.competitor_card_colors.map((c) => c.color_nm_id)).toEqual([111, 222333]);
   });
 });

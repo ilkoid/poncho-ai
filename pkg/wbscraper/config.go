@@ -35,6 +35,11 @@ type ServerConfig struct {
 	// ReadTimeout / WriteTimeout are duration strings ("30s"); empty → default.
 	ReadTimeout  string `yaml:"read_timeout"`
 	WriteTimeout string `yaml:"write_timeout"`
+	// AllowedIPs is the IP allowlist applied to every route (exact IP or CIDR).
+	// Empty (default) = allow all — safe for the loopback dev binding; set
+	// explicitly when binding beyond loopback (the v2 /snapshot push carries the
+	// full storefront dataset, so this is the single network-layer gate).
+	AllowedIPs []string `yaml:"allowed_ips"`
 }
 
 // GeneratorConfig selects the target source. kind "static" uses the constructor

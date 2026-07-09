@@ -72,6 +72,27 @@
           <p class="hint">Браузер может очистить IndexedDB под давлением квоты (~940 МБ на сессию 300 запросов). Persist защищает от этого.</p>
         </div>
         <div class="panel">
+          <h3>Сброс снимков на сервер</h3>
+          <label class="field">URL Go-коллектора (оставьте пустым = только браузер)
+            <input id="server-url" type="text" placeholder="http://127.0.0.1:7780" />
+          </label>
+          <div class="row tight mt-2">
+            <button id="server-url-save" class="btn-secondary">Сохранить</button>
+            <button id="server-url-push" class="btn-secondary">Отправить сейчас</button>
+          </div>
+          <p id="server-url-result" class="hint"></p>
+        </div>
+        <div class="panel">
+          <h3>Расписание сбора</h3>
+          <label class="field">Времена запуска (одно на строку, HH:MM)
+            <textarea id="schedule-times" rows="4" placeholder="11:00&#10;17:00&#10;21:00"></textarea>
+          </label>
+          <div class="row tight mt-2">
+            <button id="schedule-times-save" class="btn-secondary">Сохранить</button>
+          </div>
+          <p id="schedule-times-result" class="hint"></p>
+        </div>
+        <div class="panel">
           <h3>Инструкция (3 шага)</h3>
           <ol class="steps">
             <li>Заполните конструктор выше → «Сохранить». При желании задайте «Фильтр по бренду» для подсветки в отчётах.</li>

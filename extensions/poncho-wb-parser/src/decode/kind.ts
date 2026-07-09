@@ -6,11 +6,12 @@
 // /v\d+/. Re-verify after WB layout changes. Order matters: card_detail before card_list is safe
 // (distinct paths); the first matching pattern wins.
 
-export type CaptureKind = 'search' | 'brand' | 'card_list' | 'card_detail' | 'ad';
+export type CaptureKind = 'search' | 'brand' | 'card_list' | 'card_detail' | 'card_content' | 'ad';
 
 const COLLECT_PATTERNS: { kind: CaptureKind; re: RegExp }[] = [
   { kind: 'card_detail', re: /\/__internal\/card\/cards\/v\d+\/detail\b/i }, // ONE card: chars/dimensions/per-wh qty
   { kind: 'card_list', re: /\/__internal\/card\/cards\/v\d+\/list\b/i }, // batch hydration (search shape, no chars)
+  { kind: 'card_content', re: /\/info\/ru\/card\.json\b/i }, // static CDN: characteristics (basket-{N}.wbbasket.ru); \b tolerates ?cache-buster
   { kind: 'search', re: /\/__internal\/search\/exactmatch\/[^/]+\/common\/v\d+\/search\b/i }, // positions
   { kind: 'ad', re: /(\/__internal\/banners\/shelfs\/search|banners-website\.wildberries\.ru)/i }, // banners/erid
   { kind: 'brand', re: /\/__internal\/catalog\/brands\/v\d+\/(catalog|filters)\b/i }, // brand page

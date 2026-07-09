@@ -1,6 +1,7 @@
 // src/inject/injector.ts — runs in the page's MAIN world (same context as WB's own JS).
 // Port of extensions/wb-scraper/src/inject.js: wraps window.fetch + XMLHttpRequest to capture every
-// request to *.wildberries.ru and forward metadata (+ parsed JSON body) to the ISOLATED bridge via
+// request to *.wildberries.ru (storefront APIs) and *.wbbasket.ru (the card.json content CDN) and
+// forward metadata (+ parsed JSON body) to the ISOLATED bridge via
 // postMessage. Mode-agnostic: it emits everything; the SW classifies (recon=keep all / collect=
 // match COLLECT_PATTERNS). Marker is 'PONCHO_INJECT' (distinct from v1's 'WB_SCRAPER') so the two
 // extensions don't cross-capture when both are loaded.
@@ -14,7 +15,9 @@
   if ((window as WindowWithFlag)[FLAG]) return;
   (window as WindowWithFlag)[FLAG] = true;
 
-  const WB_HOST = /(^|\.)wildberries\.ru$/i;
+  // Hosts we capture: *.wildberries.ru (storefront APIs) AND *.wbbasket.ru (the static CDN that
+  // serves card.json — product description/characteristics — at /vol{a}/part{b}/{nmId}/info/ru/card.json).
+  const WB_HOST = /(^|\.)(wildberries|wbbasket)\.ru$/i;
 
   const isWbUrl = (u: string): boolean => {
     try {

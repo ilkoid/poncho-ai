@@ -13,9 +13,11 @@ import { db } from '../db/dexie';
 import { classify } from '../decode/kind';
 import { mockIntercepts } from '../storage/mock';
 import { buildTargets } from '../querygen/targets';
-import { loadDetailK } from '../storage/config';
+import { KEY_SCHEDULE_TIMES, loadDetailK } from '../storage/config';
+import { enqueueShipment, shipPending, type PushResult } from '../export/push';
+import { isScheduledAlarm, rebuildSchedule } from './schedule';
 import type { Intercept, SnapshotTs } from '../db/types';
-import type { CollectSource, FromOffscreen, ToSW } from '../messages';
+import type { CollectSource, FromOffscreen, ShipmentMsg, ToSW } from '../messages';
 
 // ---------- rebirth-recoverable runtime state ----------
 let mode: 'collect' | 'idle' = 'idle';
@@ -160,11 +162,12 @@ chrome.runtime.onMessage.addListener((msg: ToSW | FromOffscreen | unknown, _send
       }
       return true; // async reply
 
-    case 'COLLECT_DONE': // from offscreen
+    case 'COLLECT_DONE': // from offscreen — ship the finished snapshot to the Go collector
       running = false;
       mode = 'idle';
       void chrome.storage.local.set({ mode }).catch(() => {});
       console.log('[Poncho] collect loop finished');
+      void finishCollect().catch((e) => console.warn('[Poncho] shipment', e));
       return;
 
     case 'CLEAR_ALL':
@@ -176,6 +179,12 @@ chrome.runtime.onMessage.addListener((msg: ToSW | FromOffscreen | unknown, _send
 });
 
 async function startCollect(collect: CollectSource, ts: string): Promise<void> {
+  // Guard against overlapping runs: a scheduled alarm firing during a manual collect (or a
+  // double-click) must NOT clobber the in-flight session — skip silently instead.
+  if (running || mode === 'collect') {
+    console.warn('[Poncho] collect already running — skipping this start');
+    return;
+  }
   const targets = await buildTargets(collect);
   if (targets.length === 0) {
     console.warn('[Poncho] COLLECT_START with no targets — nothing to do (constructor source lands in S4)');
@@ -185,7 +194,7 @@ async function startCollect(collect: CollectSource, ts: string): Promise<void> {
   mode = 'collect';
   snapshotTs = ts;
   currentQueryId = null;
-  await chrome.storage.local.set({ mode, currentQueryId }).catch(() => {});
+  await chrome.storage.local.set({ mode, currentQueryId, activeSnapshotTs: ts }).catch(() => {});
   const detailK = await loadDetailK(); // SW context has proven chrome.storage access (unlike offscreen)
   await ensureOffscreen();
   await sendToOffscreen({ type: 'COLLECT_LOOP', targets, snapshotTs: ts, detailK });
@@ -195,13 +204,89 @@ async function runMock(ts: string): Promise<void> {
   running = true;
   mode = 'collect';
   snapshotTs = ts;
-  await chrome.storage.local.set({ mode }).catch(() => {});
+  await chrome.storage.local.set({ mode, activeSnapshotTs: ts }).catch(() => {});
   await ensureOffscreen();
   await sendToOffscreen({ type: 'MOCK_DECODE', intercepts: mockIntercepts(), snapshotTs: ts });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[Poncho] WB Parser installed (v0.1.0)');
+  // Build the daily alarms from the saved schedule (covers both fresh install and version update).
+  // Alarms persist across SW death afterwards; storage.onChanged rebuilds them on any schedule edit.
+  void rebuildSchedule().catch((e) => console.warn('[Poncho] schedule rebuild', e));
 });
 
+// ---------- scheduled collects (chrome.alarms → startCollect) ----------
+// A scheduled alarm fires daily; onAlarm is a wakeable event that restarts the SW to run the same
+// collect chain as the dashboard button. startCollect's guard skips if a session is already running.
+chrome.alarms.onAlarm.addListener((a) => {
+  if (!isScheduledAlarm(a.name)) return;
+  const ts = new Date().toISOString();
+  console.log(`[Poncho] scheduled collect fired (${a.name}) → snapshot ${ts}`);
+  void startCollect({ source: 'constructor' }, ts).catch((e) => console.warn('[Poncho] scheduled collect', e));
+});
+
+// Rebuild the alarms when the user edits the schedule in the dashboard. storage.onChanged is a
+// wakeable event, so this rebuilds even if the SW was idle when the save happened.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[KEY_SCHEDULE_TIMES]) {
+    void rebuildSchedule().catch((e) => console.warn('[Poncho] schedule rebuild', e));
+  }
+});
+
+// ---------- snapshot shipment (→ Go collector POST /snapshot) ----------
+// On COLLECT_DONE the just-finished snapshot is enqueued for shipment then pushed; failures stay
+// queued and are retried on the next COLLECT_DONE and on SW start (sweep). Browser-only when no
+// server URL is configured — pushSnapshot no-ops then, and the snapshot leaves the queue at once.
+
+/** Enqueue the finished session's snapshot, clear the active marker, then push the whole queue. */
+async function finishCollect(): Promise<void> {
+  const s = await chrome.storage.local.get('activeSnapshotTs').catch(() => ({}) as Record<string, unknown>);
+  const snap = (s.activeSnapshotTs as string | null) ?? null;
+  if (snap) {
+    await enqueueShipment(snap);
+    await chrome.storage.local.remove('activeSnapshotTs').catch(() => {});
+  }
+  await shipAndBroadcast();
+}
+
+/** Push every pending snapshot, broadcasting a SHIPMENT message per result so the dashboard can
+ *  surface "снимок отправлен" / retry status. shipPending already removes successes + skips from
+ *  the queue; this only adds the broadcast + console logging on top. */
+async function shipAndBroadcast(): Promise<void> {
+  const results = await shipPending();
+  for (const r of results) {
+    broadcastShipment(r);
+  }
+}
+
+function broadcastShipment(r: PushResult): void {
+  const status: ShipmentMsg['status'] = r.shipped ? 'shipped' : r.ok ? 'skipped' : 'failed';
+  const msg: ShipmentMsg = { type: 'SHIPMENT', snapshot: r.snapshot, status };
+  if (r.counts) msg.counts = r.counts;
+  if (r.error) msg.error = r.error;
+  if (status === 'shipped') {
+    const total = r.counts ? Object.values(r.counts).reduce((a, b) => a + b, 0) : 0;
+    console.log(`[Poncho] snapshot shipped: ${r.snapshot} (${total} rows)`);
+  } else if (status === 'failed') {
+    console.warn(`[Poncho] snapshot shipment failed (will retry): ${r.snapshot} — ${r.error}`);
+  } // 'skipped' (no server URL) is silent — browser-only mode is the default
+  void chrome.runtime.sendMessage(msg).catch(() => {});
+}
+
+/** On SW rebirth, recover any snapshot that finished but never shipped: an activeSnapshotTs that
+ *  lingers while we are NOT actively collecting means the SW died in the narrow window before
+ *  finishCollect enqueued it. Fold it into the pending queue, then push everything. */
+async function sweepPendingShipments(): Promise<void> {
+  const s = await chrome.storage.local.get(['mode', 'activeSnapshotTs']).catch(() => ({}) as Record<string, unknown>);
+  const m = (s.mode as 'collect' | 'idle' | undefined) ?? 'idle';
+  const active = (s.activeSnapshotTs as string | null) ?? null;
+  if (active && m !== 'collect') {
+    await enqueueShipment(active);
+    await chrome.storage.local.remove('activeSnapshotTs').catch(() => {});
+  }
+  await shipAndBroadcast();
+}
+
 console.log('[Poncho] service worker started');
+void sweepPendingShipments().catch((e) => console.warn('[Poncho] shipment sweep', e));

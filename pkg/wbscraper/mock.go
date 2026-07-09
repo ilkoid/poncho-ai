@@ -29,6 +29,12 @@ type DiscardWriter struct {
 	savedPrices     int
 	savedDetails    int
 	savedStocks     int
+	// v2 content tables (only written via ReplaceSnapshot; v1 /capture never fills them).
+	savedMeta         int
+	savedOptions      int
+	savedCompositions int
+	savedSizes        int
+	savedColors       int
 }
 
 // NewDiscardWriter creates a no-op writer for mock mode.
@@ -98,6 +104,42 @@ func (w *DiscardWriter) SaveCompetitorCardStocks(_ context.Context, rows []Compe
 	return len(rows), nil
 }
 
+// ReplaceSnapshot counts every fact row across all 11 tables but never writes —
+// the SnapshotReplacer implementation for --mock/--dry-run. Idempotent by
+// construction (there is no DB to delete-then-reinsert): two pushes of the same
+// bundle return identical counts, exercising the extension's push path end-to-end
+// without storage. Returns the per-table map keyed by the short labels (matches the
+// real repo's return so callers cannot tell the backends apart).
+func (w *DiscardWriter) ReplaceSnapshot(_ context.Context, _ SnapshotTs, d Decoded) (map[string]int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	counts := map[string]int{
+		"positions":    len(d.SearchPositions),
+		"ads":          len(d.VitrineAds),
+		"cards":        len(d.CompetitorCards),
+		"prices":       len(d.CompetitorCardPrices),
+		"details":      len(d.CompetitorCardDetails),
+		"stocks":       len(d.CompetitorCardStocks),
+		"meta":         len(d.CompetitorCardMeta),
+		"options":      len(d.CompetitorCardOptions),
+		"compositions": len(d.CompetitorCardCompositions),
+		"sizes":        len(d.CompetitorCardSizes),
+		"colors":       len(d.CompetitorCardColors),
+	}
+	w.savedPositions += counts["positions"]
+	w.savedVitrineAds += counts["ads"]
+	w.savedCards += counts["cards"]
+	w.savedPrices += counts["prices"]
+	w.savedDetails += counts["details"]
+	w.savedStocks += counts["stocks"]
+	w.savedMeta += counts["meta"]
+	w.savedOptions += counts["options"]
+	w.savedCompositions += counts["compositions"]
+	w.savedSizes += counts["sizes"]
+	w.savedColors += counts["colors"]
+	return counts, nil
+}
+
 // SavedQueries returns the number of distinct query texts upserted.
 func (w *DiscardWriter) SavedQueries() int {
 	w.mu.Lock()
@@ -148,8 +190,11 @@ func (w *DiscardWriter) SavedCompetitorCardStocks() int {
 }
 
 // Compile-time assertion that DiscardWriter satisfies Writer (Stage 3 storage
-// adapters carry the same assertion).
+// adapters carry the same assertion) AND SnapshotReplacer (so --mock/--dry-run
+// exercise the v2 /snapshot path; the real SQLite adapter does NOT satisfy the
+// latter — it is PostgreSQL-only).
 var _ Writer = (*DiscardWriter)(nil)
+var _ SnapshotReplacer = (*DiscardWriter)(nil)
 
 // MockIntercepts returns synthetic captures (one search + one card_detail) for
 // unit-testing Decode and the server loop without the browser extension or fixture

@@ -18,17 +18,27 @@ export interface SnapshotDump {
   competitor_card_prices: unknown[];
   competitor_card_details: unknown[];
   competitor_card_stocks: unknown[];
+  competitor_card_meta: unknown[];
+  competitor_card_options: unknown[];
+  competitor_card_compositions: unknown[];
+  competitor_card_sizes: unknown[];
+  competitor_card_colors: unknown[];
 }
 
-/** Read every captured row for one snapshot (all 6 fact tables) + the queries referenced in it. */
+/** Read every captured row for one snapshot (all 11 fact tables) + the queries referenced in it. */
 export async function dumpSnapshot(snapshot: string): Promise<SnapshotDump> {
-  const [sp, va, cc, cp, cd, cs] = await Promise.all([
+  const [sp, va, cc, cp, cd, cs, cm, co, ccn, csz, ccl] = await Promise.all([
     db.search_positions.where('snapshot_ts').equals(snapshot).toArray(),
     db.vitrine_ads.where('snapshot_ts').equals(snapshot).toArray(),
     db.competitor_cards.where('snapshot_ts').equals(snapshot).toArray(),
     db.competitor_card_prices.where('snapshot_ts').equals(snapshot).toArray(),
     db.competitor_card_details.where('snapshot_ts').equals(snapshot).toArray(),
     db.competitor_card_stocks.where('snapshot_ts').equals(snapshot).toArray(),
+    db.competitor_card_meta.where('snapshot_ts').equals(snapshot).toArray(),
+    db.competitor_card_options.where('snapshot_ts').equals(snapshot).toArray(),
+    db.competitor_card_compositions.where('snapshot_ts').equals(snapshot).toArray(),
+    db.competitor_card_sizes.where('snapshot_ts').equals(snapshot).toArray(),
+    db.competitor_card_colors.where('snapshot_ts').equals(snapshot).toArray(),
   ]);
 
   // resolve the query texts for every query_id that appears in this snapshot's rows
@@ -52,6 +62,11 @@ export async function dumpSnapshot(snapshot: string): Promise<SnapshotDump> {
       competitor_card_prices: cp.length,
       competitor_card_details: cd.length,
       competitor_card_stocks: cs.length,
+      competitor_card_meta: cm.length,
+      competitor_card_options: co.length,
+      competitor_card_compositions: ccn.length,
+      competitor_card_sizes: csz.length,
+      competitor_card_colors: ccl.length,
     },
     search_queries: queries,
     search_positions: sp,
@@ -60,6 +75,11 @@ export async function dumpSnapshot(snapshot: string): Promise<SnapshotDump> {
     competitor_card_prices: cp,
     competitor_card_details: cd,
     competitor_card_stocks: cs,
+    competitor_card_meta: cm,
+    competitor_card_options: co,
+    competitor_card_compositions: ccn,
+    competitor_card_sizes: csz,
+    competitor_card_colors: ccl,
   };
 }
 

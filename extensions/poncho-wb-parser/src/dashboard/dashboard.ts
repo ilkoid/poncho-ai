@@ -35,6 +35,11 @@ const LABELS: Record<keyof FactCounts, string> = {
   competitor_card_prices: 'Цены',
   competitor_card_details: 'Детали',
   competitor_card_stocks: 'Остатки',
+  competitor_card_meta: 'Реквизиты',
+  competitor_card_options: 'Характеристики',
+  competitor_card_compositions: 'Материалы',
+  competitor_card_sizes: 'Размерная сетка',
+  competitor_card_colors: 'Цвета-варианты',
 };
 
 async function renderCounts(): Promise<void> {
@@ -47,7 +52,12 @@ async function renderCounts(): Promise<void> {
     db.competitor_card_prices.count(),
     db.competitor_card_details.count(),
     db.competitor_card_stocks.count(),
-  ]).catch(() => [0, 0, 0, 0, 0, 0] as const);
+    db.competitor_card_meta.count(),
+    db.competitor_card_options.count(),
+    db.competitor_card_compositions.count(),
+    db.competitor_card_sizes.count(),
+    db.competitor_card_colors.count(),
+  ]).catch(() => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] as const);
   const keys = Object.keys(LABELS) as (keyof FactCounts)[];
   host.innerHTML = entries
     .map((n, i) => `<div class="count-card"><div class="n">${n}</div><div class="lbl">${LABELS[keys[i]!]}</div></div>`)
@@ -79,9 +89,13 @@ function logLine(line: string): void {
 }
 
 interface ProgressMsg {
-  type: 'PROGRESS' | 'COLLECT_DONE';
+  type: 'PROGRESS' | 'COLLECT_DONE' | 'SHIPMENT';
   phase?: string;
   counts?: FactCounts;
+  // SHIPMENT-only fields (broadcast from the SW after a snapshot push / sweep retry)
+  snapshot?: string;
+  status?: 'shipped' | 'skipped' | 'failed';
+  error?: string;
 }
 
 chrome.runtime.onMessage.addListener((msg: unknown) => {
@@ -89,7 +103,7 @@ chrome.runtime.onMessage.addListener((msg: unknown) => {
   const m = msg as ProgressMsg;
   if (m.type === 'PROGRESS') {
     const c = m.counts;
-    const total = c ? c.search_positions + c.vitrine_ads + c.competitor_cards + c.competitor_card_prices + c.competitor_card_details + c.competitor_card_stocks : 0;
+    const total = c ? c.search_positions + c.vitrine_ads + c.competitor_cards + c.competitor_card_prices + c.competitor_card_details + c.competitor_card_stocks + c.competitor_card_meta + c.competitor_card_options + c.competitor_card_compositions + c.competitor_card_sizes + c.competitor_card_colors : 0;
     logLine(`${m.phase ?? 'progress'} — всего строк: ${total}`);
     void renderCounts();
   } else if (m.type === 'COLLECT_DONE') {
@@ -97,6 +111,15 @@ chrome.runtime.onMessage.addListener((msg: unknown) => {
     logLine('✓ сбор завершён');
     void refreshPickers();
     void renderCounts();
+  } else if (m.type === 'SHIPMENT') {
+    // SW broadcast after a snapshot push (on COLLECT_DONE) or a sweep retry
+    if (m.status === 'shipped') {
+      const total = m.counts ? Object.values(m.counts).reduce((a, b) => a + b, 0) : 0;
+      logLine(`↗ снимок отправлен на сервер: ${m.snapshot} (${total} строк)`);
+    } else if (m.status === 'failed') {
+      logLine(`⚠ снимок не отправлен ${m.snapshot}: ${m.error ?? ''} (повтор позже)`);
+    }
+    // 'skipped' (browser-only, no URL) is intentionally silent — the default mode
   }
 });
 
