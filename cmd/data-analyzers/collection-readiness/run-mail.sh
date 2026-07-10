@@ -48,7 +48,22 @@ case "$MODE" in
 		go run . --mock "${COMMON[@]}"
 		;;
 	real)
-		echo ">>> Реальный отчёт (seasons=${SEASONS} collections='${COLLECTIONS}') из wb_data_prod → ${OUT}"
+		# PG-подключение строится из env (BuildPgDSN: PGHOST/PGPORT/PGUSER + пароль из
+		# $PG_PWD); в config.yaml полей host/user нет. Без PGUSER утилита молча берёт
+		# дефолт 'postgres' и падает на auth — проверяем явно и fail-fast.
+		miss=()
+		for v in PGHOST PGPORT PGUSER PG_PWD; do
+			[ -z "${!v:-}" ] && miss+=("$v")
+		done
+		if [ "${#miss[@]}" -gt 0 ]; then
+			echo "ОШИБКА: не заданы PG-переменные: ${miss[*]}" >&2
+			echo "Экспортируйте перед запуском (prod-VPS):" >&2
+			echo "  export PGUSER=arm_ai_admin        # под существующий \$PG_PWD (пароль arm_ai_admin)" >&2
+			echo "  # PGHOST/PGPORT/PGDATABASE/PG_PWD обычно уже в профиле машины" >&2
+			echo "Проверка: PGPASSWORD=\"\$PG_PWD\" psql -h \"\$PGHOST\" -p \"\$PGPORT\" -U \"\$PGUSER\" -d \"\${PGDATABASE:-wb_data_prod}\" -c 'SELECT 1'" >&2
+			exit 1
+		fi
+		echo ">>> Реальный отчёт (seasons=${SEASONS} collections='${COLLECTIONS}') из ${PGDATABASE:-wb_data_prod} @ ${PGHOST}:${PGPORT} (user=${PGUSER}) → ${OUT}"
 		go run . "${COMMON[@]}"
 		;;
 	*)
