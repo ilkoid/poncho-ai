@@ -60,20 +60,23 @@ exclude_lengths: [6, 7]
 # секрет — пароль: ${SMTP_PASSWORD} разворачивается pkg/config.LoadYAML (os.ExpandEnv),
 # т.е. берётся из env-переменной SMTP_PASSWORD. На VPS: `export SMTP_PASSWORD=...`.
 #
-# tls_mode: implicit  = неявный TLS на 465 (smtps://), как у сисадминов.
-#           starttls  = plain → STARTTLS (порт 587).
+# tls_mode: implicit  = неявный TLS на 465 (smtps://). На этом relay (MS Exchange,
+#                       exch01.office.playtoday.ru) НЕ работает — сервер не поднимает TLS на 465
+#                       («tls: first record does not look like a TLS handshake»). НЕ возвращать!
+#           starttls  = plain → STARTTLS на 587. ✓ РАБОЧИЙ режим для этого relay (сертификат
+#                       mdag.playtoday.ru, Let's Encrypt; AUTH LOGIN для it_service@playtoday.ru).
 #           none      = без шифрования (только локальный тест-сервер).
 # tls_certcheck: false = НЕ проверять сертификат сервера (= "tls_certcheck off").
 email:
   enabled: false
   smtp:
     host: 10.120.11.31
-    port: 465
+    port: 587
     from: poncho.ai@playtoday.ru        # обратный адрес (envelope + header From)
     username: it_service@playtoday.ru   # логин для SMTP AUTH
     password: ${SMTP_PASSWORD}          # из env (export SMTP_PASSWORD=...)
     auth: true
-    tls_mode: implicit
+    tls_mode: starttls
     tls_certcheck: false
     keepbcc: false                      # Bcc скрыты в заголовках письма
     timeout: 30s
