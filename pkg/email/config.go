@@ -10,6 +10,7 @@ package email
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -42,16 +43,17 @@ type Config struct {
 //	tls_certcheck off -> TLSCertCheck: false (skip cert verification)
 //	keepbcc off     -> KeepBCC: false (Bcc recipients stay hidden in headers)
 type SMTPConfig struct {
-	Host         string        `yaml:"host"`          // SMTP server address (required)
-	Port         int           `yaml:"port"`          // SMTP server port, 1..65535 (required)
-	Timeout      time.Duration `yaml:"timeout"`       // connect/send timeout (required)
-	From         string        `yaml:"from"`          // envelope + header From address (required)
-	Username     string        `yaml:"username"`      // SMTP auth login (required)
-	Password     string        `yaml:"password"`      // SMTP auth password, ${SMTP_PASSWORD} (required)
-	Auth         bool          `yaml:"auth"`          // perform SMTP AUTH when true
-	TLSMode      string        `yaml:"tls_mode"`      // implicit | starttls | none (required)
-	TLSCertCheck bool          `yaml:"tls_certcheck"` // verify server TLS cert when true
-	KeepBCC      bool          `yaml:"keepbcc"`       // include Bcc in message headers when true
+	Host          string        `yaml:"host"`           // SMTP server address (required)
+	Port          int           `yaml:"port"`           // SMTP server port, 1..65535 (required)
+	Timeout       time.Duration `yaml:"timeout"`        // connect/send timeout (required)
+	From          string        `yaml:"from"`           // envelope + header From address (required)
+	Username      string        `yaml:"username"`       // SMTP auth login (required)
+	Password      string        `yaml:"password"`       // SMTP auth password, ${SMTP_PASSWORD} (required)
+	Auth          bool          `yaml:"auth"`           // perform SMTP AUTH when true
+	AuthMechanism string        `yaml:"auth_mechanism"` // plain (default) | login (MS Exchange и др., не принимающие AUTH PLAIN → 504)
+	TLSMode       string        `yaml:"tls_mode"`       // implicit | starttls | none (required)
+	TLSCertCheck  bool          `yaml:"tls_certcheck"`  // verify server TLS cert when true
+	KeepBCC       bool          `yaml:"keepbcc"`        // include Bcc in message headers when true
 }
 
 // Recipients is the default recipient list applied to every message when the
@@ -88,6 +90,11 @@ func (c Config) Validate() error {
 	case tlsModeImplicit, tlsModeStartTLS, tlsModeNone:
 	default:
 		return fmt.Errorf("email config: smtp.tls_mode must be one of implicit|starttls|none, got %q", s.TLSMode)
+	}
+	switch strings.ToLower(s.AuthMechanism) {
+	case "", "plain", "login": // пусто = plain (по умолчанию)
+	default:
+		return fmt.Errorf("email config: smtp.auth_mechanism must be one of plain|login, got %q", s.AuthMechanism)
 	}
 	if len(c.Recipients.To) == 0 {
 		return fmt.Errorf("email config: recipients.to must contain at least one address")

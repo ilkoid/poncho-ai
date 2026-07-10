@@ -100,7 +100,7 @@ func (s *Sender) deliver(ctx context.Context, raw []byte, to, cc, bcc []string) 
 	defer func() { _ = cleanup() }()
 
 	if sm.Auth {
-		if err := client.Auth(smtp.PlainAuth("", sm.Username, sm.Password, sm.Host)); err != nil {
+		if err := client.Auth(selectAuth(sm)); err != nil {
 			return fmt.Errorf("auth: %w", err)
 		}
 	}

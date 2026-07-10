@@ -76,6 +76,7 @@ email:
     username: it_service@playtoday.ru   # логин для SMTP AUTH
     password: ${SMTP_PASSWORD}          # из env (export SMTP_PASSWORD=...)
     auth: true
+    auth_mechanism: login              # MS Exchange: после STARTTLS только AUTH LOGIN (на PLAIN → 504)
     tls_mode: starttls
     tls_certcheck: false
     keepbcc: false                      # Bcc скрыты в заголовках письма
