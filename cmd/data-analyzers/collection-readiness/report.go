@@ -176,7 +176,10 @@ func exportXLSX(rows []Row, path string, collections, seasons []string, photos m
 		// координатам). excelize v2.10.1 умеет писать только PlaceOverCells; cell-embedded
 		// (Place in Cell / =IMAGE(), которые сортируются) — только чтение (writer'а нет).
 		// Поэтому файл выходит уже пресортированным (ORDER BY collection, article) — при ручной
-		// пересортировке в Excel миниатюры оторвутся от строк. Известное ограничение, на будущее.
+		// пересортировке в Excel миниатюры оторвутся от строк. То же касается автофильтра на шапке
+		// (см. ниже): дропдаун делает Sort/Filter заметнее, но корень тот же — плавающие рисунки не
+		// привязаны к строкам. В режиме embed_photos=false (--no-photos) фильтр/сортировка работают
+		// без ограничений. Известное ограничение, на будущее.
 		if embed && r.HasWBCard() && r.NmID != nil {
 			if photoBytes, ok := photos[*r.NmID]; ok && len(photoBytes) > 0 {
 				photoCell, _ := excelize.CoordinatesToCellName(photoColIndex(), row)
@@ -246,6 +249,17 @@ func exportXLSX(rows []Row, path string, collections, seasons []string, photos m
 		TopLeftCell: "B2",
 		ActivePane:  "bottomRight",
 	})
+
+	// Автофильтр на шапке (строка 1): дропдауны для фильтра/сортировки прямо в Excel.
+	// Диапазон A1:<последняя колонка><последняя строка> покрывает шапку + все данные; Excel
+	// вешает стрелки на первую строку диапазона (шапку). Не ставим на пустой лист (len(rows)==0).
+	if len(rows) > 0 {
+		lastCol, _ := excelize.ColumnNumberToName(ncol) // 27 → "AA"
+		lastRow := len(rows) + 1
+		if err := f.AutoFilter(sheet, fmt.Sprintf("A1:%s%d", lastCol, lastRow), nil); err != nil {
+			return err
+		}
+	}
 
 	// Сводный лист.
 	addFunnelSummary(f, rows, collections, seasons)

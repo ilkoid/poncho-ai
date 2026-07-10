@@ -84,6 +84,9 @@ email:
   recipients:
     to:
       - "kashparov.i@playtoday.ru"
+      - "malyutkin.m@playtoday.ru"
+      - "akulina.y@playtoday.ru"
+      - "lobosov.a@playtoday.ru"
     # cc:
     #   - "another@playtoday.ru"
     # bcc:
@@ -92,5 +95,9 @@ email:
   body: |
     Добрый день.
 
-    Во вложении — отчёт готовности карточек по коллекции.
-    Файл сформирован автоматически утилитой collection-readiness (poncho-ai).
+    Во вложении — отчёт готовности карточек WB по коллекции Школа в сравнении с ситуацией в 1С и на складе WMS.
+
+    Файл сформирован автоматически утилитой Collection-readiness 
+    
+    С уважением,
+    poncho-ai
