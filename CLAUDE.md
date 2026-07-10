@@ -197,6 +197,15 @@ All utilities in `cmd/` (fix-utilities, data-downloaders, data-analyzers) MUST s
 
 No utility should ever require a real API key or live database to test its logic.
 
+## Cron Safety Rules
+
+**⚠ ВСЕГДА БЭКАПИЙ crontab ПЕРЕД ЛЮБЫМИ ПРАВКАМИ.** Crontab пользователя (`crontab -l`) **НЕ входит в git-репозиторий** — там живут ночные загрузчики (`download-all-pg.sh` @ 00:05), `fix-dims.sh`, отчёты. Потеря строк = молчаливый сбой ночного обновления данных.
+
+- Перед добавлением/изменением/удалением строк: `crontab -l > /tmp/crontab.bak` (НЕ использовать путь с trailing slash в редиректе — bash создаст директорию вместо файла и бэкап будет пустым).
+- Вносить изменения ТОЛЬКО через полный пересбор в temp-файл: выгрузить → отредактировать → `crontab <file>`. Никогда не вызывать `crontab <файл_с_одной_новой_строкой>` — это **затрёт весь crontab**, оставив только содержимое файла.
+- После установки **обязательно** показать `crontab -l` и сверить, что все прежние записи на месте.
+- Учитывать механику cron: `%` в строке экранируется (`\%`); `$(date +\%Y-\%m-\%d)` раскрывается `/bin/sh -c`.
+
 ## Testing
 - Unit: `mockHTTPClient` for wb.Client internals, `MockClient`/`MockPromotionClient` for downloader logic
 - E2E: `SnapshotDBClient` reads from SQLite instead of API — `wb.NewSnapshotDBClient("e2e-snapshot.db")`
