@@ -1,0 +1,92 @@
+# collection-readiness — конфигурация отчёта готовности карточек по коллекции.
+#
+# Утилита собирает из PostgreSQL (wb_data_prod) сводку готовности карточек:
+#   1С (товар) → nmID на WB → остатки/склады → заказы/выкупы → карточный рейтинг.
+# Аномалии (товар в 1С есть, nmID не создан; заблокирован в 1С, но жив на WB)
+# подсвечиваются автоматически.
+#
+# Источник: одна база wb_data_prod (проверено: все домены наполнены).
+# Только SELECT — запись в БД не производится.
+#
+# Приоритет: CLI флаг > config.yaml > defaults
+
+# ─── Фильтр ассортимента 1С ────────────────────────────────
+# collections и seasons комбинируются через AND (OR внутри каждого списка).
+# Хотя бы один из фильтров должен быть задан.
+#
+# seasons — матчит ОБА поля onec_goods: season (функциональный сезон ткани) OR
+# collection_season (коммерческая коллекция). collection_season на 77% пуст, поэтому
+# одно поле слишком узко (теряет «School boys/girls YYYY»).
+#   'Школа': season=2880, collection_season=1439, union=2917.
+seasons:
+  - "Школа"
+
+# collections — точные значения onec_goods.collection (напр. "CLASSIC 2026 girls Tween").
+# collections: []
+
+
+# ─── Источник данных (PostgreSQL) ──────────────────────────
+storage:
+  backend: "postgres"
+  pg_database: "wb_data_prod"     # рабочая база с реальными данными
+  pg_password_env: "PG_PWD"       # env var с паролем (per-machine)
+  # pg_dsn: ""                    # полный DSN (опционально, перекрывает env)
+  # db_path: ""                   # (только для backend: sqlite)
+
+# ─── Лимиты ────────────────────────────────────────────────
+# Максимум строк в отчёте (0 = все).
+limit: 0
+
+# ─── Экспорт ───────────────────────────────────────────────
+# Путь к XLSX. Пусто → report-<slug-первой-коллекции>-YYYYMMDD.xlsx в текущей папке.
+xlsx: ""
+
+# Встраивать миниатюры WB (card_photos.tm, 100×75 JPEG) в колонку A.
+# true: самодостаточный файл (~6-12MB), сборка качает ~2.6k фото с CDN WB (+30-60с).
+# false (--no-photos): только колонка-ссылка (~300KB), нужен интернет для просмотра.
+embed_photos: true
+
+# Исключить артикулы заданных длин (точное совпадение; аналог exclude_lengths в
+# даунлоадерах/фиксёрах). 6-значные = легаси-нумерация (дают мусорный «год» 2081/2083/2094
+# по символам 2-3 артикула), 7-значные = старая нумерация — «совсем старые».
+# [] = не фильтровать (CLI: --exclude-lengths переопределяет).
+exclude_lengths: [6, 7]
+
+# ─── Отправка отчёта по почте ──────────────────────────────
+# После генерации xlsx файл можно отправить вложением через pkg/email (SMTP).
+# Срабатывает, когда enabled: true ИЛИ передан флаг --mail.
+#
+# Подключение SMTP вшито literal значениями (повторяет test-smtp.sh). Единственный
+# секрет — пароль: ${SMTP_PASSWORD} разворачивается pkg/config.LoadYAML (os.ExpandEnv),
+# т.е. берётся из env-переменной SMTP_PASSWORD. На VPS: `export SMTP_PASSWORD=...`.
+#
+# tls_mode: implicit  = неявный TLS на 465 (smtps://), как у сисадминов.
+#           starttls  = plain → STARTTLS (порт 587).
+#           none      = без шифрования (только локальный тест-сервер).
+# tls_certcheck: false = НЕ проверять сертификат сервера (= "tls_certcheck off").
+email:
+  enabled: false
+  smtp:
+    host: 10.120.11.31
+    port: 465
+    from: poncho.ai@playtoday.ru        # обратный адрес (envelope + header From)
+    username: it_service@playtoday.ru   # логин для SMTP AUTH
+    password: ${SMTP_PASSWORD}          # из env (export SMTP_PASSWORD=...)
+    auth: true
+    tls_mode: implicit
+    tls_certcheck: false
+    keepbcc: false                      # Bcc скрыты в заголовках письма
+    timeout: 30s
+  recipients:
+    to:
+      - "kashparov.i@playtoday.ru"
+    # cc:
+    #   - "another@playtoday.ru"
+    # bcc:
+    #   - "hidden@playtoday.ru"
+  subject: "Готовность карточек — Школа"
+  body: |
+    Добрый день.
+
+    Во вложении — отчёт готовности карточек по коллекции.
+    Файл сформирован автоматически утилитой collection-readiness (poncho-ai).
