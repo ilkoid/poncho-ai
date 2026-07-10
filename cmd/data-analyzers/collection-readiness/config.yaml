@@ -72,7 +72,7 @@ email:
   smtp:
     host: 10.120.11.31
     port: 587
-    from: poncho.ai@playtoday.ru        # обратный адрес (envelope + header From)
+    from: it_service@playtoday.ru       # обратный адрес (envelope + header From)
     username: it_service@playtoday.ru   # логин для SMTP AUTH
     password: ${SMTP_PASSWORD}          # из env (export SMTP_PASSWORD=...)
     auth: true
