@@ -11,6 +11,7 @@
 | [dev_v2_postgres.md](dev_v2_postgres.md) | PostgreSQL адаптер (dual-backend, SQL cheat sheet) | Доменный (для PG — побеждает downloader) |
 | [dev_v3_scrub.md](dev_v3_scrub.md) | Миграция загрузчиков на v3 (превентивный scrub, декоратор Writer) | Доменный (для v3-scrub — побеждает v2) |
 | [dev_swagger_reusable_packages.md](dev_swagger_reusable_packages.md) | WB API write-утилиты, sandbox, песочницы | Доменный (для WB write — побеждает) |
+| [dev_data_layers.md](dev_data_layers.md) | Слои данных PG (сырые/аналитические/рекомендательные + action-loop, hybrid-схемы) | Доменный (для слоёв данных / материализованных представлений — побеждает v2_postgres) |
 
 **Правило:** более специфичный документ побеждает более общий.
 

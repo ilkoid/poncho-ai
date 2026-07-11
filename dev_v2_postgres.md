@@ -7,6 +7,7 @@
 **Связанные документы:**
 - [dev_v2_downloader.md](dev_v2_downloader.md) — **обязательный prerequisite**: v2 архитектура (Source/Writer), mock/dry-run, общие антипаттерны
 - [dev_manifest.md](dev_manifest.md) — Port & Adapter (Rule 6), pkg/ vs cmd/
+- [dev_data_layers.md](dev_data_layers.md) — слои данных PG (raw/analytical/recommendation + action-loop); **ортогонален** этому доку (тут — механика Writer одного домена, там — организация данных по слоям)
 - [dev_best_practices.md](dev_best_practices.md) — общие паттерны, Rule 0: Code Reuse First
 
 ---
