@@ -19,6 +19,28 @@ PONCHO="$(cd "$(dirname "$0")" && pwd)"
 C="$PONCHO/cmd/.configs/download-all"
 DAYS="${1:-}"
 
+# ── Load .env if present (local-run support; harmless on VPS where env is exported) ──
+if [ -f "$PONCHO/.env" ]; then
+  set -a
+  . "$PONCHO/.env"
+  set +a
+fi
+
+# ── Single-instance lock (portable: mkdir is atomic on macOS & Linux; flock is macOS-absent) ──
+LOCKDIR="$PONCHO/.download-all.lock"
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+  echo "SKIP: другой прогон уже идёт (lock: $LOCKDIR)" >&2
+  exit 0
+fi
+trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
+
+# ── Fail fast if PG is unreachable (default 192.168.10.7:15432 unless overridden via .env) ──
+PG_HOST="${PGHOST}"; PG_PORT="${PGPORT}"
+if ! nc -z -w 5 "$PG_HOST" "$PG_PORT" 2>/dev/null; then
+  echo "FAIL: PostgreSQL $PG_HOST:$PG_PORT недоступен. Проверь PGHOST/PGPORT/PG_PWD в $PONCHO/.env" >&2
+  exit 1
+fi
+
 START=$SECONDS
 
 ###############################################################################
