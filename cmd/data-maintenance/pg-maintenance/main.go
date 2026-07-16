@@ -17,11 +17,15 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/dllog"
 	"github.com/ilkoid/poncho-ai/pkg/storage/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // HeavyUpdateTables are candidates for REINDEX — they receive frequent
@@ -42,6 +46,7 @@ var HeavyUpdateTables = []string{
 
 	// Phase 4: Stock & Logistics
 	"stocks_daily_warehouses", "warehouse_remains",
+	"stock_products", // 33-col ON CONFLICT DO UPDATE per snapshot_date+nm_id (4 secondary indexes → bloat)
 	"stock_history_reports", "stock_history_daily", "stock_history_metrics",
 	"supplies", "supply_goods", "supply_packages",
 	"wb_warehouses", "wb_transit_tariffs",
@@ -56,14 +61,32 @@ var HeavyUpdateTables = []string{
 	"search_positions_daily", "search_queries_daily",
 	"nm_report_downloads",
 	"measurement_penalties",
+
+	// Phase 7: WB Scraper snapshots
+	"search_queries", // DIMENSION upserted via ON CONFLICT (query) DO UPDATE on every /snapshot push
 }
 
-// AppendOnlyTables rarely get UPDATE — only INSERT.
-// VACUUM ANALYZE is sufficient; REINDEX is never needed.
+// AppendOnlyTables rarely get UPDATE — only INSERT, or DELETE+INSERT (snapshot replacement).
+// VACUUM ANALYZE is sufficient; REINDEX is never needed because the write pattern
+// generates dead tuples but not the per-row UPDATE churn that bloats indexes.
 var AppendOnlyTables = []string{
 	"sales",
 	"service_records",
 	"products", // dimension table, updated rarely
+
+	// wbscraper fact tables: written by ReplaceSnapshot (DELETE WHERE snapshot_ts + INSERT per push).
+	// DELETE+INSERT creates dead tuples (VACUUM reclaims them) but not index bloat from UPDATEs.
+	"search_positions",
+	"vitrine_ads",
+	"competitor_cards",
+	"competitor_card_prices",
+	"competitor_card_details",
+	"competitor_card_stocks",
+	"competitor_card_meta",
+	"competitor_card_options",
+	"competitor_card_compositions",
+	"competitor_card_sizes",
+	"competitor_card_colors",
 }
 
 // PromotionTables are promotion/normquery reference tables.
@@ -85,6 +108,7 @@ func main() {
 	database := flag.String("database", "", "Override database name from config")
 	dryRun := flag.Bool("dry-run", false, "Print what would be done without executing")
 	reindex := flag.Bool("reindex", false, "Include REINDEX TABLE for heavy-update tables")
+	tablesFlag := flag.String("tables", "", "Comma-separated table names to maintain (default: all). Unknown names are warned, not fatal.")
 	flag.Parse()
 
 	if *configPath == "" {
@@ -93,7 +117,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	// Graceful shutdown on SIGINT/SIGTERM. Note: PG cannot interrupt a running
+	// VACUUM/REINDEX mid-statement on a cancelled Go context — the in-flight
+	// statement runs to completion, then ctx.Err() between iterations exits the
+	// loop. Partial completion still reports the per-table error count.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	start := time.Now()
 
 	// Load config
@@ -125,7 +155,9 @@ func main() {
 		dllog.HeaderField{Key: "Reindex", Value: fmt.Sprintf("%v", *reindex)},
 	)
 
-	// Connect
+	// Connect. Dry-run also connects: it's a full rehearsal (PG reachable, creds
+	// valid, statement_timeout lifted) minus the VACUUM/ANALYZE/REINDEX execution —
+	// a cron pre-flight that catches "PG down" before the real run.
 	pool, err := postgres.NewPool(ctx, dsn)
 	if err != nil {
 		dllog.Error("connect: %v", err)
@@ -163,16 +195,65 @@ func main() {
 	allTables = append(allTables, HeavyUpdateTables...)
 	allTables = append(allTables, AppendOnlyTables...)
 	allTables = append(allTables, PromotionTables...)
+
+	// Optional --tables filter: keep only requested names, warn about typos.
+	// Lets you point VACUUM at one heavy table (e.g. stock_products) between full runs
+	// instead of waiting for the whole 74-table cycle.
+	if *tablesFlag != "" {
+		want := make(map[string]struct{})
+		for _, t := range strings.Split(*tablesFlag, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				want[t] = struct{}{}
+			}
+		}
+		known := make(map[string]struct{}, len(allTables))
+		for _, t := range allTables {
+			known[t] = struct{}{}
+		}
+		filtered := make([]string, 0, len(want))
+		for t := range want {
+			if _, ok := known[t]; ok {
+				filtered = append(filtered, t)
+			} else {
+				dllog.Error("--tables: %q is not a known maintenance table (skipped)", t)
+			}
+		}
+		// Preserve canonical phase order, not the comma-list order.
+		ordered := make([]string, 0, len(filtered))
+		for _, t := range allTables {
+			if _, ok := want[t]; ok {
+				ordered = append(ordered, t)
+			}
+		}
+		allTables = ordered
+		if len(allTables) == 0 {
+			dllog.Error("--tables: no matching tables after filter")
+			os.Exit(1)
+		}
+	}
 	total := len(allTables)
 
 	dllog.Log("Maintaining %d tables...", total)
 
 	var errors int
 	for i, table := range allTables {
+		// Honor SIGINT/SIGTERM between tables (PG can't interrupt an in-flight VACUUM).
+		if err := ctx.Err(); err != nil {
+			dllog.Error("interrupted before %s: %v", table, err)
+			break
+		}
+
 		if *dryRun {
 			dllog.Progress(i+1, total, table, "ANALYZE + VACUUM"+reindexSuffix(*reindex, table), start)
 			continue
 		}
+
+		// Snapshot dead-tuple count before VACUUM for observability.
+		// pg_stat_user_tables is updated lazily by PG, so reclaimed may read 0 even
+		// when VACUUM reclaimed tuples on a prior run — this is a PG stats quirk,
+		// not a bug in the utility.
+		deadBefore := readDeadTuples(ctx, conn, table)
 
 		// ANALYZE — update planner statistics
 		if _, err := conn.Exec(ctx, fmt.Sprintf("ANALYZE %s", table)); err != nil {
@@ -188,7 +269,8 @@ func main() {
 			continue
 		}
 
-		extra := ""
+		extra := reclaimSuffix(deadBefore, readDeadTuples(ctx, conn, table))
+
 		// REINDEX — only for heavy-update tables when flag is set
 		if *reindex && isHeavyUpdate(table) {
 			if _, err := conn.Exec(ctx, fmt.Sprintf("REINDEX TABLE %s", table)); err != nil {
@@ -196,12 +278,16 @@ func main() {
 				errors++
 				continue
 			}
-			extra = " + REINDEX"
+			extra += " + REINDEX"
 		}
 
 		dllog.Progress(i+1, total, table, "ANALYZE + VACUUM"+extra, start)
 	}
 
+	if ctx.Err() != nil {
+		dllog.Error("interrupted: %d/%d tables maintained, %d errors", len(allTables), total, errors)
+		os.Exit(1)
+	}
 	if errors > 0 {
 		dllog.Error("%d tables had errors", errors)
 		os.Exit(1)
@@ -210,14 +296,48 @@ func main() {
 	dllog.Done(time.Since(start), "%d tables maintained", total)
 }
 
+// readDeadTuples returns the current n_dead_tup for a table, or -1 if unavailable
+// (stats not collected / NULL on a freshly-created table / query error).
+// VACUUM VERBOSE would write to the server log, not the client, so we read
+// pg_stat_user_tables directly — the only client-visible source of this metric.
+func readDeadTuples(ctx context.Context, conn *pgxpool.Conn, table string) int64 {
+	var dead *int64
+	if err := conn.QueryRow(ctx,
+		"SELECT n_dead_tup FROM pg_stat_user_tables WHERE relname = $1", table,
+	).Scan(&dead); err != nil || dead == nil {
+		return -1
+	}
+	return *dead
+}
+
+// reclaimSuffix formats the dead-tuple delta for the progress line.
+// Returns "" when pre-stats were unavailable (→ no honest number to show).
+func reclaimSuffix(deadBefore, deadAfter int64) string {
+	if deadBefore < 0 {
+		return ""
+	}
+	reclaimed := deadBefore
+	if deadAfter >= 0 {
+		reclaimed = deadBefore - deadAfter
+	}
+	return fmt.Sprintf(" (reclaimed %d dead tuples)", reclaimed)
+}
+
+// heavyUpdateSet is the lookup backing isHeavyUpdate. Built once at package init
+// from HeavyUpdateTables so membership checks are O(1) (the old linear scan was a
+// stylistic smell rather than a real cost, but the map is the idiomatic form).
+var heavyUpdateSet = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(HeavyUpdateTables))
+	for _, t := range HeavyUpdateTables {
+		m[t] = struct{}{}
+	}
+	return m
+}()
+
 // isHeavyUpdate returns true if the table is in the HeavyUpdate list.
 func isHeavyUpdate(table string) bool {
-	for _, t := range HeavyUpdateTables {
-		if t == table {
-			return true
-		}
-	}
-	return false
+	_, ok := heavyUpdateSet[table]
+	return ok
 }
 
 // reindexSuffix returns a display suffix for dry-run mode.
