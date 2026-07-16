@@ -108,6 +108,7 @@ func main() {
 	database := flag.String("database", "", "Override database name from config")
 	dryRun := flag.Bool("dry-run", false, "Print what would be done without executing")
 	reindex := flag.Bool("reindex", false, "Include REINDEX TABLE for heavy-update tables")
+	full := flag.Bool("full", false, "Use VACUUM FULL (rewrites table file, returns space to OS, ACCESS EXCLUSIVE lock)")
 	tablesFlag := flag.String("tables", "", "Comma-separated table names to maintain (default: all). Unknown names are warned, not fatal.")
 	flag.Parse()
 
@@ -153,7 +154,16 @@ func main() {
 		dllog.HeaderField{Key: "Database", Value: cfg.Storage.PgDatabase},
 		dllog.HeaderField{Key: "Dry-run", Value: fmt.Sprintf("%v", *dryRun)},
 		dllog.HeaderField{Key: "Reindex", Value: fmt.Sprintf("%v", *reindex)},
+		dllog.HeaderField{Key: "Full", Value: fmt.Sprintf("%v", *full)},
 	)
+
+	// VACUUM FULL takes an ACCESS EXCLUSIVE lock per table — the table is fully
+	// unavailable for the duration. Intended for rare manual runs in a maintenance
+	// window, not the nightly cycle. Print a loud warning so the operator notices
+	// it on the console/log even if --full was set accidentally.
+	if *full && !*dryRun {
+		dllog.Error("⚠ VACUUM FULL: each table takes ACCESS EXCLUSIVE lock and is unavailable until done")
+	}
 
 	// Connect. Dry-run also connects: it's a full rehearsal (PG reachable, creds
 	// valid, statement_timeout lifted) minus the VACUUM/ANALYZE/REINDEX execution —
@@ -245,7 +255,13 @@ func main() {
 		}
 
 		if *dryRun {
-			dllog.Progress(i+1, total, table, "ANALYZE + VACUUM"+reindexSuffix(*reindex, table), start)
+			op := "VACUUM"
+			if *full {
+				op = "VACUUM FULL"
+			} else if *reindex && isHeavyUpdate(table) {
+				op += " + REINDEX"
+			}
+			dllog.Progress(i+1, total, table, "ANALYZE + "+op, start)
 			continue
 		}
 
@@ -254,6 +270,10 @@ func main() {
 		// when VACUUM reclaimed tuples on a prior run — this is a PG stats quirk,
 		// not a bug in the utility.
 		deadBefore := readDeadTuples(ctx, conn, table)
+		sizeBefore := int64(-1)
+		if *full {
+			sizeBefore = readTableSize(ctx, conn, table)
+		}
 
 		// ANALYZE — update planner statistics
 		if _, err := conn.Exec(ctx, fmt.Sprintf("ANALYZE %s", table)); err != nil {
@@ -262,17 +282,40 @@ func main() {
 			continue
 		}
 
-		// VACUUM — reclaim dead tuples (non-FULL, non-blocking)
-		if _, err := conn.Exec(ctx, fmt.Sprintf("VACUUM %s", table)); err != nil {
-			dllog.Error("%s: VACUUM failed: %v", table, err)
+		// VACUUM — reclaim dead tuples. Plain VACUUM marks dead tuples reusable
+		// but does NOT shrink the on-disk file. VACUUM FULL rewrites the table,
+		// returns space to the OS, and rebuilds indexes — at the cost of an
+		// ACCESS EXCLUSIVE lock for the duration (intended for a maintenance window).
+		vacuumStmt := "VACUUM"
+		if *full {
+			vacuumStmt = "VACUUM FULL"
+		}
+		if _, err := conn.Exec(ctx, fmt.Sprintf("%s %s", vacuumStmt, table)); err != nil {
+			dllog.Error("%s: %s failed: %v", table, vacuumStmt, err)
 			errors++
 			continue
 		}
 
-		extra := reclaimSuffix(deadBefore, readDeadTuples(ctx, conn, table))
+		// After VACUUM FULL the rows have physically moved → re-ANALYZE so the
+		// planner sees fresh stats. Plain VACUUM doesn't relocate rows, so this is
+		// FULL-only.
+		if *full {
+			if _, err := conn.Exec(ctx, fmt.Sprintf("ANALYZE %s", table)); err != nil {
+				dllog.Error("%s: post-FULL ANALYZE failed: %v", table, err)
+				errors++
+				continue
+			}
+		}
 
-		// REINDEX — only for heavy-update tables when flag is set
-		if *reindex && isHeavyUpdate(table) {
+		extra := reclaimSuffix(deadBefore, readDeadTuples(ctx, conn, table))
+		if *full {
+			extra += sizeSuffix(sizeBefore, readTableSize(ctx, conn, table))
+		}
+
+		// REINDEX — only for heavy-update tables when --reindex is set AND we did
+		// NOT run VACUUM FULL (FULL already rebuilds every index of the table, so
+		// a separate REINDEX would just redo work).
+		if *reindex && isHeavyUpdate(table) && !*full {
 			if _, err := conn.Exec(ctx, fmt.Sprintf("REINDEX TABLE %s", table)); err != nil {
 				dllog.Error("%s: REINDEX failed: %v", table, err)
 				errors++
@@ -281,7 +324,11 @@ func main() {
 			extra += " + REINDEX"
 		}
 
-		dllog.Progress(i+1, total, table, "ANALYZE + VACUUM"+extra, start)
+		opLabel := "VACUUM"
+		if *full {
+			opLabel = "VACUUM FULL"
+		}
+		dllog.Progress(i+1, total, table, "ANALYZE + "+opLabel+extra, start)
 	}
 
 	if ctx.Err() != nil {
@@ -323,6 +370,50 @@ func reclaimSuffix(deadBefore, deadAfter int64) string {
 	return fmt.Sprintf(" (reclaimed %d dead tuples)", reclaimed)
 }
 
+// readTableSize returns pg_total_relation_size (table + indexes + TOAST) in bytes,
+// or -1 if unavailable. Only meaningful for VACUUM FULL, since plain VACUUM does
+// not shrink the on-disk file. Uses $1::regclass — safe because table comes from
+// a hardcoded list (--tables names are validated against that same list).
+func readTableSize(ctx context.Context, conn *pgxpool.Conn, table string) int64 {
+	var size *int64
+	if err := conn.QueryRow(ctx, "SELECT pg_total_relation_size($1::regclass)", table).Scan(&size); err != nil || size == nil {
+		return -1
+	}
+	return *size
+}
+
+// sizeSuffix formats the on-disk size delta for the VACUUM FULL progress line.
+// Returns "" when the before-size was unavailable.
+func sizeSuffix(sizeBefore, sizeAfter int64) string {
+	if sizeBefore < 0 {
+		return ""
+	}
+	freed := sizeBefore
+	if sizeAfter >= 0 {
+		freed = sizeBefore - sizeAfter
+	}
+	return fmt.Sprintf(", freed %s", humanBytes(freed))
+}
+
+// humanBytes renders a byte count as a compact human-readable string (B/KB/MB/GB).
+func humanBytes(b int64) string {
+	const (
+		kb = 1 << 10
+		mb = 1 << 20
+		gb = 1 << 30
+	)
+	switch {
+	case b >= gb:
+		return fmt.Sprintf("%.2f GB", float64(b)/float64(gb))
+	case b >= mb:
+		return fmt.Sprintf("%.2f MB", float64(b)/float64(mb))
+	case b >= kb:
+		return fmt.Sprintf("%.2f KB", float64(b)/float64(kb))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
 // heavyUpdateSet is the lookup backing isHeavyUpdate. Built once at package init
 // from HeavyUpdateTables so membership checks are O(1) (the old linear scan was a
 // stylistic smell rather than a real cost, but the map is the idiomatic form).
@@ -338,12 +429,4 @@ var heavyUpdateSet = func() map[string]struct{} {
 func isHeavyUpdate(table string) bool {
 	_, ok := heavyUpdateSet[table]
 	return ok
-}
-
-// reindexSuffix returns a display suffix for dry-run mode.
-func reindexSuffix(doReindex bool, table string) string {
-	if doReindex && isHeavyUpdate(table) {
-		return " + REINDEX"
-	}
-	return ""
 }
