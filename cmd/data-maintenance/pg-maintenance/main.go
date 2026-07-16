@@ -61,32 +61,20 @@ var HeavyUpdateTables = []string{
 	"search_positions_daily", "search_queries_daily",
 	"nm_report_downloads",
 	"measurement_penalties",
-
-	// Phase 7: WB Scraper snapshots
-	"search_queries", // DIMENSION upserted via ON CONFLICT (query) DO UPDATE on every /snapshot push
 }
 
-// AppendOnlyTables rarely get UPDATE — only INSERT, or DELETE+INSERT (snapshot replacement).
+// AppendOnlyTables rarely get UPDATE — only INSERT.
 // VACUUM ANALYZE is sufficient; REINDEX is never needed because the write pattern
 // generates dead tuples but not the per-row UPDATE churn that bloats indexes.
+//
+// NOTE: wbscraper fact tables (search_positions, vitrine_ads, competitor_cards,
+// competitor_card_*) are intentionally NOT here. That pipeline's schema lives only
+// in the test DB (wb_data_test) per AGENTS.md — it is never created in prod, so
+// listing them here made the prod maintenance run fail on SQLSTATE 42P01.
 var AppendOnlyTables = []string{
 	"sales",
 	"service_records",
 	"products", // dimension table, updated rarely
-
-	// wbscraper fact tables: written by ReplaceSnapshot (DELETE WHERE snapshot_ts + INSERT per push).
-	// DELETE+INSERT creates dead tuples (VACUUM reclaims them) but not index bloat from UPDATEs.
-	"search_positions",
-	"vitrine_ads",
-	"competitor_cards",
-	"competitor_card_prices",
-	"competitor_card_details",
-	"competitor_card_stocks",
-	"competitor_card_meta",
-	"competitor_card_options",
-	"competitor_card_compositions",
-	"competitor_card_sizes",
-	"competitor_card_colors",
 }
 
 // PromotionTables are promotion/normquery reference tables.
@@ -200,6 +188,19 @@ func main() {
 	}
 	dllog.Log("statement_timeout lifted for maintenance run (VACUUM/REINDEX may run long)")
 
+	// Snapshot the set of tables that actually exist in this database's public
+	// schema. The maintenance lists are authored against the *designed* schema, but
+	// not every target DB has every table — e.g. wbscraper fact tables live only
+	// in the test DB (wb_data_test), and a freshly-cloned prod may be missing a
+	// table a not-yet-deployed loader creates. Without this filter, ANALYZE hits
+	// SQLSTATE 42P01 on any missing relation and the whole run exits non-zero.
+	// One round-trip via pg_tables (same catalog the stats helpers below rely on).
+	existingTables, err := loadExistingTables(ctx, conn)
+	if err != nil {
+		dllog.Error("load table catalog: %v", err)
+		os.Exit(1)
+	}
+
 	// All tables in maintenance order
 	allTables := make([]string, 0, len(HeavyUpdateTables)+len(AppendOnlyTables)+len(PromotionTables))
 	allTables = append(allTables, HeavyUpdateTables...)
@@ -208,7 +209,7 @@ func main() {
 
 	// Optional --tables filter: keep only requested names, warn about typos.
 	// Lets you point VACUUM at one heavy table (e.g. stock_products) between full runs
-	// instead of waiting for the whole 74-table cycle.
+	// instead of waiting for the whole cycle.
 	if *tablesFlag != "" {
 		want := make(map[string]struct{})
 		for _, t := range strings.Split(*tablesFlag, ",") {
@@ -242,6 +243,17 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	// Drop tables that don't exist in THIS database. A missing table is logged as
+	// info (not an error): the catalog is the source of truth, and "we don't have
+	// that table here" is normal for test-only schemas (wbscraper) or partially-
+	// migrated prod. This keeps the nightly cron green instead of failing the run.
+	kept, missing := filterExistingTables(allTables, existingTables)
+	for _, m := range missing {
+		dllog.Log("skip %q: not present in database %q", m, cfg.Storage.PgDatabase)
+	}
+	allTables = kept
+
 	total := len(allTables)
 
 	dllog.Log("Maintaining %d tables...", total)
@@ -368,6 +380,44 @@ func reclaimSuffix(deadBefore, deadAfter int64) string {
 		reclaimed = deadBefore - deadAfter
 	}
 	return fmt.Sprintf(" (reclaimed %d dead tuples)", reclaimed)
+}
+
+// loadExistingTables returns the set of table names present in the public schema
+// of the connected database. Used to skip maintenance entries whose backing
+// relation isn't there (test-only schemas like wbscraper, not-yet-migrated prod).
+// One round-trip; returns an empty (non-nil) map on a database with no tables.
+func loadExistingTables(ctx context.Context, conn *pgxpool.Conn) (map[string]struct{}, error) {
+	rows, err := conn.Query(ctx, "SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+// filterExistingTables returns the subset of want that exists in have, preserving
+// the canonical order of want, plus the names that were missing (also in want
+// order). Pure function: the DB lookup happens in loadExistingTables, so this is
+// unit-testable without a live connection.
+func filterExistingTables(want []string, have map[string]struct{}) (kept, missing []string) {
+	kept = make([]string, 0, len(want))
+	missing = make([]string, 0)
+	for _, t := range want {
+		if _, ok := have[t]; ok {
+			kept = append(kept, t)
+		} else {
+			missing = append(missing, t)
+		}
+	}
+	return kept, missing
 }
 
 // readTableSize returns pg_total_relation_size (table + indexes + TOAST) in bytes,
