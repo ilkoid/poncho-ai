@@ -119,11 +119,18 @@ func main() {
 		wbClient.SetRateLimit("sales",
 			cfg.WB.RateLimit, cfg.WB.BurstLimit,
 			cfg.WB.RateLimit, cfg.WB.BurstLimit)
+		// Источник продаж переведён с отключённого reportDetailByPeriod
+		// (statistics-api, 15.07.2026) на finance endpoint. Лимит у него жёстче
+		// — 1 req/min (персональный токен), поэтому настраиваем адаптивный
+		// лимитер под его собственный ToolID, используемый в SalesReportDetailedPage.
+		wbClient.SetRateLimit("finance_sales_report",
+			cfg.WB.RateLimit, cfg.WB.BurstLimit,
+			cfg.WB.RateLimit, cfg.WB.BurstLimit)
 		wbClient.SetAdaptiveParams(
 			cfg.Download.AdaptiveRecoverAfter,
 			cfg.Download.AdaptiveProbeAfter,
 			cfg.Download.MaxBackoffSeconds)
-		source = wbClient
+		source = sales.NewFinanceSalesSource(wbClient)
 	}
 
 	opts := sales.DownloadOptions{
