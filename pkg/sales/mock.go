@@ -110,8 +110,18 @@ func (w *DiscardWriter) Save(_ context.Context, rows []wb.RealizationReportRow) 
 	return nil
 }
 
+// SavePlain — для mock режима эквивалентно Save (считаем строки).
+func (w *DiscardWriter) SavePlain(ctx context.Context, rows []wb.RealizationReportRow) error {
+	return w.Save(ctx, rows)
+}
+
 // SaveServiceRecords is a no-op for mock mode.
 func (w *DiscardWriter) SaveServiceRecords(_ context.Context, _ []wb.RealizationReportRow) error {
+	return nil
+}
+
+// SaveServiceRecordsPlain — no-op, как и SaveServiceRecords.
+func (w *DiscardWriter) SaveServiceRecordsPlain(_ context.Context, _ []wb.RealizationReportRow) error {
 	return nil
 }
 

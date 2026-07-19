@@ -517,3 +517,17 @@ func (r *SQLiteSalesRepository) CountServiceRecords(ctx context.Context) (int, e
 	}
 	return count, nil
 }
+
+// SavePlain — алиас на Save для SQLite. В SQLite insert-путь использует
+// INSERT OR IGNORE, что уже близко к plain-INSERT по cost; отдельный plain-вариант
+// не даёт выигрыша (нет PG-style upsert-arbitration). Реализация = Save.
+// Существует, чтобы SQLiteSalesRepository удовлетворял расширенному интерфейсу
+// sales.SalesWriter (SavePlain/SaveServiceRecordsPlain для PG-rewrite-mode).
+func (r *SQLiteSalesRepository) SavePlain(ctx context.Context, rows []wb.RealizationReportRow) error {
+	return r.Save(ctx, rows)
+}
+
+// SaveServiceRecordsPlain — алиас на SaveServiceRecords (см. комментарий SavePlain).
+func (r *SQLiteSalesRepository) SaveServiceRecordsPlain(ctx context.Context, rows []wb.RealizationReportRow) error {
+	return r.SaveServiceRecords(ctx, rows)
+}

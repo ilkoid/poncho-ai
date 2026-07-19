@@ -106,11 +106,14 @@ CREATE TABLE IF NOT EXISTS sales (
 );
 
 -- Indexes (matching SQLite schema)
-CREATE INDEX IF NOT EXISTS idx_sales_nm_id ON sales(nm_id);
+-- NOTE: idx_sales_nm_id и idx_sales_rrd_id удалены как дубликаты
+-- (см. dropRedundantSalesIndexes в salesMigrations / salesDropRedundantIndexes):
+--   - idx_sales_rrd_id — 100% дубликат B-tree индекса, который PG создаёт
+--     для rrd_id BIGINT UNIQUE NOT NULL.
+--   - idx_sales_nm_id — покрыт leftmost-prefix'ом составного idx_sales_nm_sale_dt.
 CREATE INDEX IF NOT EXISTS idx_sales_sale_dt ON sales(sale_dt);
 CREATE INDEX IF NOT EXISTS idx_sales_delivery_method ON sales(delivery_method);
 CREATE INDEX IF NOT EXISTS idx_sales_rr_dt ON sales(rr_dt);
-CREATE INDEX IF NOT EXISTS idx_sales_rrd_id ON sales(rrd_id);
 CREATE INDEX IF NOT EXISTS idx_sales_barcode ON sales(barcode);
 CREATE INDEX IF NOT EXISTS idx_sales_cancel_doctype ON sales(is_cancel, doc_type_name);
 CREATE INDEX IF NOT EXISTS idx_sales_nm_sale_dt ON sales(nm_id, sale_dt);
@@ -218,6 +221,19 @@ ALTER TABLE sales ADD COLUMN IF NOT EXISTS sale_price_affiliated_discount_prc DO
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS sale_price_wholesale_discount_prc DOUBLE PRECISION;
 `
 
+// salesDropRedundantIndexes удаляет два индекса, которые дублируют другие:
+//   - idx_sales_rrd_id  → дубликат implicit UNIQUE-индекса на rrd_id BIGINT UNIQUE NOT NULL
+//   - idx_sales_nm_id   → покрыт составным idx_sales_nm_sale_dt (nm_id, sale_dt)
+//
+// Idempotent (DROP INDEX IF EXISTS). Применяется к существующей wb_data_prod;
+// на свежей БД CREATE INDEX этих индексов уже не выполняет (см. salesSchemaSQL).
+// Каждый индекс пишет по B-tree entry на каждую вставляемую строку —
+// 2 индекса × ~700k строк/прогон = ~1.4M лишних index-insert'ов.
+const salesDropRedundantIndexes = `
+DROP INDEX IF EXISTS idx_sales_rrd_id;
+DROP INDEX IF EXISTS idx_sales_nm_id;
+`
+
 // serviceRecordsMigrations widens INTEGER columns to BIGINT for service_records.
 // Executed AFTER initServiceRecordsSchema() creates the table.
 // Safe: INTEGER→BIGINT is a widening conversion — no data loss.
@@ -237,6 +253,9 @@ func initSalesSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	if _, err := pool.Exec(ctx, salesMigrations); err != nil {
 		return fmt.Errorf("sales migrations (int4→bigint): %w", err)
+	}
+	if _, err := pool.Exec(ctx, salesDropRedundantIndexes); err != nil {
+		return fmt.Errorf("sales drop redundant indexes: %w", err)
 	}
 	return nil
 }

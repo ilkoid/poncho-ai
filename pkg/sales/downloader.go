@@ -216,7 +216,16 @@ func (d *Downloader) saveRows(ctx context.Context, rows []wb.RealizationReportRo
 	if d.opts.SkipServiceRecords && len(serviceRows) > 0 {
 		d.progress("  ⏭️  Пропущено %d служебных записей", len(serviceRows))
 	} else if len(serviceRows) > 0 {
-		if err := d.writer.SaveServiceRecords(ctx, serviceRows); err != nil {
+		// В rewrite-режиме диапазон уже удалён (downloadPeriod:115-136),
+		// конфликты по rrd_id невозможны → plain INSERT без ON CONFLICT
+		// даёт ~1.3–2x на write-пути. В resume-режиме нужен upsert.
+		var err error
+		if d.opts.Rewrite {
+			err = d.writer.SaveServiceRecordsPlain(ctx, serviceRows)
+		} else {
+			err = d.writer.SaveServiceRecords(ctx, serviceRows)
+		}
+		if err != nil {
 			return fmt.Errorf("save service records: %w", err)
 		}
 	}
@@ -243,7 +252,15 @@ func (d *Downloader) saveRows(ctx context.Context, rows []wb.RealizationReportRo
 	}
 
 	if len(toSave) > 0 {
-		if err := d.writer.Save(ctx, toSave); err != nil {
+		// В rewrite-режиме диапазон уже удалён (downloadPeriod:115-136),
+		// конфликты по rrd_id невозможны → plain INSERT без ON CONFLICT.
+		var err error
+		if d.opts.Rewrite {
+			err = d.writer.SavePlain(ctx, toSave)
+		} else {
+			err = d.writer.Save(ctx, toSave)
+		}
+		if err != nil {
 			return fmt.Errorf("save sales: %w", err)
 		}
 	}

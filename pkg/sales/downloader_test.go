@@ -50,11 +50,17 @@ func (m *mockWriter) Save(_ context.Context, rows []wb.RealizationReportRow) err
 	m.saved = append(m.saved, rows...)
 	return nil
 }
+func (m *mockWriter) SavePlain(ctx context.Context, rows []wb.RealizationReportRow) error {
+	return m.Save(ctx, rows)
+}
 func (m *mockWriter) SaveServiceRecords(_ context.Context, rows []wb.RealizationReportRow) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.svcSaved = append(m.svcSaved, rows...)
 	return nil
+}
+func (m *mockWriter) SaveServiceRecordsPlain(ctx context.Context, rows []wb.RealizationReportRow) error {
+	return m.SaveServiceRecords(ctx, rows)
 }
 func (m *mockWriter) Exists(_ context.Context, rrdID int) (bool, error) {
 	m.mu.Lock()

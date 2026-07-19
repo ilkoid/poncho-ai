@@ -98,7 +98,21 @@ func (r *PgSalesRepo) Save(ctx context.Context, rows []wb.RealizationReportRow) 
 	if len(rows) == 0 {
 		return nil
 	}
+	return r.saveSalesBatch(ctx, rows, false /* plain */)
+}
 
+// SavePlain — plain INSERT без ON CONFLICT для rewrite-режима.
+// DeleteSalesByDateRange уже очистил диапазон, конфликты по rrd_id невозможны;
+// пропуск upsert-arbitration даёт ~1.3–2x на write-пути.
+func (r *PgSalesRepo) SavePlain(ctx context.Context, rows []wb.RealizationReportRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return r.saveSalesBatch(ctx, rows, true /* plain */)
+}
+
+// saveSalesBatch чанкует rows и пишет чанки через saveSalesChunk(plain).
+func (r *PgSalesRepo) saveSalesBatch(ctx context.Context, rows []wb.RealizationReportRow, plain bool) error {
 	for i := 0; i < len(rows); i += salesChunkSize {
 		end := i + salesChunkSize
 		if end > len(rows) {
@@ -106,7 +120,7 @@ func (r *PgSalesRepo) Save(ctx context.Context, rows []wb.RealizationReportRow) 
 		}
 		chunk := rows[i:end]
 
-		if err := r.saveSalesChunk(ctx, chunk); err != nil {
+		if err := r.saveSalesChunk(ctx, chunk, plain); err != nil {
 			return fmt.Errorf("save sales chunk at offset %d: %w", i, err)
 		}
 	}
@@ -119,7 +133,20 @@ func (r *PgSalesRepo) SaveServiceRecords(ctx context.Context, rows []wb.Realizat
 	if len(rows) == 0 {
 		return nil
 	}
+	return r.saveServiceRecordsBatch(ctx, rows, false /* plain */)
+}
 
+// SaveServiceRecordsPlain — аналог SavePlain для service_records
+// (rewrite-режим: DeleteServiceRecordsByDateRange уже очистил диапазон).
+func (r *PgSalesRepo) SaveServiceRecordsPlain(ctx context.Context, rows []wb.RealizationReportRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return r.saveServiceRecordsBatch(ctx, rows, true /* plain */)
+}
+
+// saveServiceRecordsBatch чанкует rows и пишет чанки через saveServiceRecordsChunk(plain).
+func (r *PgSalesRepo) saveServiceRecordsBatch(ctx context.Context, rows []wb.RealizationReportRow, plain bool) error {
 	for i := 0; i < len(rows); i += salesChunkSize {
 		end := i + salesChunkSize
 		if end > len(rows) {
@@ -127,7 +154,7 @@ func (r *PgSalesRepo) SaveServiceRecords(ctx context.Context, rows []wb.Realizat
 		}
 		chunk := rows[i:end]
 
-		if err := r.saveServiceRecordsChunk(ctx, chunk); err != nil {
+		if err := r.saveServiceRecordsChunk(ctx, chunk, plain); err != nil {
 			return fmt.Errorf("save service records chunk at offset %d: %w", i, err)
 		}
 	}
@@ -150,8 +177,9 @@ func (r *PgSalesRepo) Exists(ctx context.Context, rrdID int) (bool, error) {
 const salesChunkSize = 500
 
 // saveSalesChunk saves up to 500 sales rows using a single multi-row INSERT.
-// 47 columns per row, ON CONFLICT (rrd_id) DO NOTHING.
-func (r *PgSalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.RealizationReportRow) error {
+// 47 columns per row. При plain=true — без ON CONFLICT (rewrite-режим:
+// диапазон уже удалён, конфликты невозможны).
+func (r *PgSalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.RealizationReportRow, plain bool) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -211,8 +239,15 @@ func (r *PgSalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.Realization
 		)
 	}
 
-	query := insertSaleRowFullChunkSQL
-	if len(chunk) < salesChunkSize {
+	var query string
+	switch {
+	case plain && len(chunk) == salesChunkSize:
+		query = insertSaleRowFullChunkPlainSQL
+	case plain:
+		query = BuildMultiRowInsert(insertSaleRowPrefixSQL, "", len(chunk), insertSaleRowCols)
+	case len(chunk) == salesChunkSize:
+		query = insertSaleRowFullChunkSQL
+	default:
 		query = BuildMultiRowInsert(insertSaleRowPrefixSQL, insertSaleRowOnConflictSQL, len(chunk), insertSaleRowCols)
 	}
 
@@ -223,8 +258,8 @@ func (r *PgSalesRepo) saveSalesChunk(ctx context.Context, chunk []wb.Realization
 }
 
 // saveServiceRecordsChunk saves up to 500 service records using a single multi-row INSERT.
-// 24 columns per row, ON CONFLICT (rrd_id) DO NOTHING.
-func (r *PgSalesRepo) saveServiceRecordsChunk(ctx context.Context, chunk []wb.RealizationReportRow) error {
+// 24 columns per row. При plain=true — без ON CONFLICT (rewrite-режим).
+func (r *PgSalesRepo) saveServiceRecordsChunk(ctx context.Context, chunk []wb.RealizationReportRow, plain bool) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -261,8 +296,15 @@ func (r *PgSalesRepo) saveServiceRecordsChunk(ctx context.Context, chunk []wb.Re
 		)
 	}
 
-	query := insertServiceRecFullChunkSQL
-	if len(chunk) < salesChunkSize {
+	var query string
+	switch {
+	case plain && len(chunk) == salesChunkSize:
+		query = insertServiceRecFullChunkPlainSQL
+	case plain:
+		query = BuildMultiRowInsert(insertServiceRecPrefixSQL, "", len(chunk), insertServiceRecCols)
+	case len(chunk) == salesChunkSize:
+		query = insertServiceRecFullChunkSQL
+	default:
 		query = BuildMultiRowInsert(insertServiceRecPrefixSQL, insertServiceRecOnConflictSQL, len(chunk), insertServiceRecCols)
 	}
 
@@ -321,6 +363,10 @@ const (
 
 var insertSaleRowFullChunkSQL = BuildMultiRowInsert(insertSaleRowPrefixSQL, insertSaleRowOnConflictSQL, salesChunkSize, insertSaleRowCols)
 
+// insertSaleRowFullChunkPlainSQL — тот же полноразмерный чанк, но без ON CONFLICT.
+// Используется в rewrite-режиме (SavePlain), где конфликты невозможны.
+var insertSaleRowFullChunkPlainSQL = BuildMultiRowInsert(insertSaleRowPrefixSQL, "", salesChunkSize, insertSaleRowCols)
+
 // Multi-row INSERT SQL fragments for service_records table.
 const (
 	insertServiceRecCols = 24
@@ -340,6 +386,9 @@ const (
 )
 
 var insertServiceRecFullChunkSQL = BuildMultiRowInsert(insertServiceRecPrefixSQL, insertServiceRecOnConflictSQL, salesChunkSize, insertServiceRecCols)
+
+// insertServiceRecFullChunkPlainSQL — без ON CONFLICT (rewrite-режим).
+var insertServiceRecFullChunkPlainSQL = BuildMultiRowInsert(insertServiceRecPrefixSQL, "", salesChunkSize, insertServiceRecCols)
 
 // Ensure pgx.Tx satisfies our needs (used in chunk methods).
 var _ pgx.Tx = (pgx.Tx)(nil)

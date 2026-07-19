@@ -30,6 +30,22 @@ func TestBuildMultiRowInsert_MultipleRowsMultipleCols(t *testing.T) {
 	}
 }
 
+// TestBuildMultiRowInsert_EmptyOnConflict покрывает plain-INSERT путь
+// (rewrite-mode в PgSalesRepo.SavePlain): ON CONFLICT не нужен, т.к.
+// диапазон уже удалён и конфликты по rrd_id невозможны. Проверяем, что
+// пустой onConflict не оставляет мусора в запросе.
+func TestBuildMultiRowInsert_EmptyOnConflict(t *testing.T) {
+	got := BuildMultiRowInsert("INSERT INTO t (a,b) VALUES ", "", 2, 2)
+	want := "INSERT INTO t (a,b) VALUES ($1, $2), ($3, $4) "
+	if got != want {
+		t.Errorf("got\n%q\nwant\n%q", got, want)
+	}
+	// Явно: никакого ON CONFLICT в plain-варианте быть не должно.
+	if strings.Contains(got, "ON CONFLICT") {
+		t.Errorf("plain INSERT must NOT contain ON CONFLICT, got: %s", got)
+	}
+}
+
 func TestBuildMultiRowInsert_PlaceholderNumbering(t *testing.T) {
 	// Verify that placeholders are numbered sequentially across rows.
 	const rows, cols = 5, 4
