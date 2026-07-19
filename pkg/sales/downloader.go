@@ -268,6 +268,15 @@ func (d *Downloader) saveRows(ctx context.Context, rows []wb.RealizationReportRo
 	res.Rows += len(toSave)
 	res.Pages++
 
+	// Per-page прогресс: печатаем сразу после записи, чтобы пользователь
+	// не видел «немого» окна между страницами (finance endpoint ~1 req/min,
+	// без этого лог выглядит зависшим на 10+ минут).
+	pageMsg := fmt.Sprintf("  📄 page %d: %d sales saved", res.Pages, len(toSave))
+	if !d.opts.SkipServiceRecords && len(serviceRows) > 0 {
+		pageMsg += fmt.Sprintf(" + %d service records", len(serviceRows))
+	}
+	d.progress("%s", pageMsg) // %s обёртка: pageMsg уже отформатирован
+
 	res.ProcessingTime += time.Since(procStart)
 
 	return nil

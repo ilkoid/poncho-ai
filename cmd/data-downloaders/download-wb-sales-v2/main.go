@@ -155,10 +155,22 @@ func main() {
 
 	result, err := dl.Run(ctx, ranges, cfg.Download.Resume, cfg.Download.Rewrite)
 	if err != nil {
+		stop()                // отменяем ctx до cleanup, чтобы разблокировать
+		cleanup()             // ожидающие горутины pgxpool/limiter
 		log.Fatalf("download failed: %v", err)
 	}
 
 	dllog.Done(result.Duration, "%d rows, %d periods", result.TotalRows, result.PeriodsCount)
+
+	// Явный выход: после Done процесс должен завершиться немедленно.
+	// Без os.Exit Go runtime ждёт фоновых горутин pgxpool (health-check,
+	// idle-conn reaper) и HTTP Transport (keep-alive до IdleConnTimeout=90s),
+	// из-за чего утилита «не выходит в shell» после печати done.
+	// stop() отменяет ctx (разблокирует time.After в адаптивном лимитере),
+	// cleanup() закрывает pool — затем os.Exit(0) форсирует выход.
+	stop()
+	cleanup()
+	os.Exit(0)
 }
 
 // resolveDateRange determines the download period with priority:
