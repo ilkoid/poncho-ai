@@ -45,7 +45,7 @@
 | **Скачивалка** | `download-wb-sales` |
 | **Параметры** | `dateFrom`, `dateTo`, `limit=100000`, `rrdid` (курсор пагинации) |
 | **Rate limit** | 6 req/min |
-| **API-ключ** | `WB_STAT_API_KEY` |
+| **API-ключ** | `WB_STAT` |
 
 **Ключевые поля для расчёта MA:**
 

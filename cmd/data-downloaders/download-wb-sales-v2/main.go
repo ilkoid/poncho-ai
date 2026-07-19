@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -126,6 +127,14 @@ func main() {
 		wbClient.SetRateLimit("finance_sales_report",
 			cfg.WB.RateLimit, cfg.WB.BurstLimit,
 			cfg.WB.RateLimit, cfg.WB.BurstLimit)
+		// Fallback-токен для finance endpoint: шлюз s2s-finance отвергает
+		// statistics-scoped WB_STAT (api_key в конфиге) с 401 "token scope
+		// not allowed". При такой ошибке SalesReportDetailedPage переключится
+		// на WB_API_KEY — главный токен с большим scope (см. pkg/wb/client.go
+		// SetFinanceKey / sendFinanceRequest).
+		if fallback := os.Getenv("WB_API_KEY"); fallback != "" {
+			wbClient.SetFinanceKey(fallback)
+		}
 		wbClient.SetAdaptiveParams(
 			cfg.Download.AdaptiveRecoverAfter,
 			cfg.Download.AdaptiveProbeAfter,

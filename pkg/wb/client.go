@@ -158,6 +158,12 @@ type HTTPClient interface {
 type Client struct {
 	apiKey        string
 	calendarKey   string // API key for calendar endpoints (dp-calendar-api.wildberries.ru)
+	// financeKey — fallback-токен для finance endpoint (finance-api.wildberries.ru).
+	// Шлюз s2s-finance отвергает statistics-scoped WB_STAT по scope-проверке с 401
+	// "token scope not allowed". При такой ошибке SalesReportDetailedPage
+	// переключается на financeKey (обычно главный WB_API_KEY с большим scope).
+	financeKey    string
+	useFinanceKey bool // выставляется в true после первого 401 "token scope not allowed"
 	httpClient    HTTPClient // Интерфейс вместо конкретного типа для testability
 	retryAttempts int        // Количество retry попыток
 
@@ -197,6 +203,17 @@ func (c *Client) IsDemoKey() bool {
 // (dp-calendar-api.wildberries.ru). If not set, calendar methods use the default apiKey.
 func (c *Client) SetCalendarKey(key string) *Client {
 	c.calendarKey = key
+	return c
+}
+
+// SetFinanceKey sets an alternative API key used as a fallback for the
+// finance endpoint (finance-api.wildberries.ru). The s2s-finance gateway
+// rejects the statistics-scoped token (WB_STAT) with 401 "token scope not
+// allowed"; on such a response SalesReportDetailedPage switches to this key
+// for all subsequent requests in this client's lifetime. Typically the main
+// WB_API_KEY (multi-scope) is passed here.
+func (c *Client) SetFinanceKey(key string) *Client {
+	c.financeKey = key
 	return c
 }
 

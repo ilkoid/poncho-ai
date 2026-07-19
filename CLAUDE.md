@@ -144,11 +144,11 @@ Recovery cycle: `desired` → 429 triggers backoff → `api floor` (after 5 OKs)
 - ToolID mismatch (`SetRateLimit("tool_A")` + `Get("tool_B")`) creates separate limiter with no adaptive state
 - Analytics v3 API: **3 req/min** — most restrictive endpoint (shared with Seller Analytics v2 search-report)
 - `client.IsDemoKey()` returns true for `demo_key`, enables mock responses
-- API keys are separate: `WB_API_KEY` (content/analytics/ad), `WB_API_FEEDBACK_KEY` (feedbacks), `WB_STAT_API_KEY` (statistics), WB_API_CONTENT_KEY (только контент)
+- API keys are separate: `WB_API_KEY` (content/analytics/ad; также fallback для finance endpoint при 401 "token scope not allowed"), `WB_API_FEEDBACK_KEY` (feedbacks), `WB_STAT` (statistics: orders/opsales), WB_API_CONTENT_KEY (только контент)
 - Seller Analytics v2 (`seller-analytics-api.wildberries.ru`): search-report endpoints, 3 req/min
 - Promotion V2 normquery stats: **10 req/min** (stricter than list/bids/minus at 5/sec)
 - Date columns in `sales` table use `_dt` suffix: `order_dt`, `sale_dt`, `rr_dt` (not `sale_date`)
-- Statistics API ToolIDs: `wb_orders` (orders), `wb_opsales` (operational sales) — both use `WB_STAT_API_KEY`, 1 req/min
+- Statistics API ToolIDs: `wb_orders` (orders), `wb_opsales` (operational sales) — both use `WB_STAT`, 1 req/min
 - **`doRequest()` bypass = 429 flood:** `SalesPage()` and `OrdersPage()` must track `lastRequestTime` + call `adaptiveRecoverOK()`. Without these, `burst=10` token bucket allows rapid fire that triggers 429 on every page after the first. Any new `*Page()` method that does direct `c.httpClient.Do()` MUST replicate the two-level guard from `doRequest()` (token bucket + min interval check)
 - год выпуска (производства) товара определяется по 2 и 3 символам в артикуле продавца, например: 12345678 -> 2023 год
 - в API WB при обновлении карточки товара при записи нужно передавать ВСЕ ПОЛЯ! Иначе, которые не передал, они обнулятся. Это критический момент для любых проверок утилит!
@@ -165,7 +165,7 @@ Three separate data sources for sales, each with different timing and purpose:
 
 - `orders` = earliest signal (cart/checkout), `opsales` = preliminary sales/returns, `sales` = final financial realization
 - **Do NOT confuse** `operational_sales` table (operational) with `sales` table (financial) — they come from different APIs
-- All three use `WB_STAT_API_KEY` for orders/opsales, `WB_API_ANALYTICS_AND_PROMO_KEY` for financial reports
+- All three use `WB_STAT` for orders/opsales; financial `sales` (POST finance-api.wildberries.ru/api/finance/v1/sales-reports/detailed, замена отключённого `reportDetailByPeriod`) стартует с `WB_STAT` и при 401 "token scope not allowed" переключается на `WB_API_KEY` (fallback через `wb.Client.SetFinanceKey`, см. `pkg/wb/finance_reports.go`)
 
 ## WB API Safety Rules
 
@@ -224,7 +224,7 @@ Mapping: `onec_prices(good_guid) → onec_goods(guid) → article → cards.vend
 | `WB_API_KEY` | WB Content, Analytics, Advertising APIs |
 | `WB_API_ANALYTICS_AND_PROMO_KEY` | Analytics + Advertising (alternative, preferred for downloaders) |
 | `WB_API_FEEDBACK_KEY` | WB Feedbacks API (separate key) |
-| `WB_STAT_API_KEY` | WB Statistics API |
+| `WB_STAT` | WB Statistics API (orders, opsales); также стартовый токен для sales-finance |
 | `WB_API_MARKET_KEY` | WB Calendar API (dp-calendar-api, for promotion calendar) |
 | `OZON_CLIENT_ID` | Ozon Seller API Client-Id header (all endpoints) |
 | `OZON_API_KEY` | Ozon Seller API Api-Key header (single key for all 456 endpoints) |
