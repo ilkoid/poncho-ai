@@ -158,12 +158,13 @@ type HTTPClient interface {
 type Client struct {
 	apiKey        string
 	calendarKey   string // API key for calendar endpoints (dp-calendar-api.wildberries.ru)
-	// financeKey — fallback-токен для finance endpoint (finance-api.wildberries.ru).
-	// Шлюз s2s-finance отвергает statistics-scoped WB_STAT по scope-проверке с 401
-	// "token scope not allowed". При такой ошибке SalesReportDetailedPage
-	// переключается на financeKey (обычно главный WB_API_KEY с большим scope).
+	// financeKey — токен для finance endpoint (finance-api.wildberries.ru).
+	// Шлюз s2s-finance отвергает statistics-scoped apiKey по scope-проверке
+	// с 401 "token scope not allowed". Если ключ задан — SalesReportDetailedPage
+	// шлёт запросы сразу с ним, без предварительной попытки с apiKey (каждый
+	// лишний запрос под тем же seller-UUID насыщает глобальный лимит продавца).
+	// Обычно сюда передают главный WB_API_KEY с широким scope.
 	financeKey    string
-	useFinanceKey bool // выставляется в true после первого 401 "token scope not allowed"
 	httpClient    HTTPClient // Интерфейс вместо конкретного типа для testability
 	retryAttempts int        // Количество retry попыток
 
@@ -206,12 +207,12 @@ func (c *Client) SetCalendarKey(key string) *Client {
 	return c
 }
 
-// SetFinanceKey sets an alternative API key used as a fallback for the
-// finance endpoint (finance-api.wildberries.ru). The s2s-finance gateway
-// rejects the statistics-scoped token (WB_STAT) with 401 "token scope not
-// allowed"; on such a response SalesReportDetailedPage switches to this key
-// for all subsequent requests in this client's lifetime. Typically the main
-// WB_API_KEY (multi-scope) is passed here.
+// SetFinanceKey sets the API key used for the finance endpoint
+// (finance-api.wildberries.ru). When set, SalesReportDetailedPage sends all
+// requests with this key immediately — the statistics-scoped apiKey would be
+// rejected by the s2s-finance gateway with 401 "token scope not allowed", and
+// each rejected attempt still counts toward the seller's global rate limit.
+// Typically the main WB_API_KEY (multi-scope) is passed here.
 func (c *Client) SetFinanceKey(key string) *Client {
 	c.financeKey = key
 	return c

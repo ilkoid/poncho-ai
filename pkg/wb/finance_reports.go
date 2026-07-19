@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -188,11 +187,10 @@ func (c *Client) SalesReportDetailedPage(
 		return nil, fmt.Errorf("marshal body: %w", err)
 	}
 
-	// Fallback на главный токен при 401 "token scope not allowed":
-	// s2s-finance отвергает statistics-scoped WB_STAT. После первой такой
-	// ошибки переключаемся на financeKey (обычно WB_API_KEY) до конца
-	// жизни клиента. Максимум 2 попытки: исходный ключ → fallback.
-	resp, body, _, err := c.sendFinanceRequest(ctx, u.String(), bodyJSON)
+	// Токен выбирается в sendFinanceRequest: если задан financeKey —
+	// шлём сразу с ним (без двойного запроса, который насыщает глобальный
+	// лимит продавца). См. sendFinanceRequest.
+	resp, body, err := c.sendFinanceRequest(ctx, u.String(), bodyJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -266,85 +264,47 @@ func (c *Client) SalesReportDetailedPage(
 	}, nil
 }
 
-// sendFinanceRequest выполняет POST к finance endpoint с автоматическим
-// переключением токена при 401 "token scope not allowed". Возвращает ответ,
-// прочитанное тело и флаг usedFallback (true, если запрос был повторен с
-// financeKey). Вызывающий обязан закрыть resp.Body.
+// sendFinanceRequest выполняет POST к finance endpoint. Возвращает ответ и
+// прочитанное тело; вызывающий обязан закрыть resp.Body.
 //
-// Логика переключения:
-//   - Если useFinanceKey уже выставлен (предыдущий 401) — сразу шлём с financeKey.
-//   - Иначе шлём с apiKey; при 401 scope-ошибке и непустом financeKey
-//     выставляем useFinanceKey=true, логируем переключение и шлём повторно.
-//   - Любой другой не-OK статус (включая повторный 401 с fallback) возвращаем
-//     как есть — финальную обработку делает SalesReportDetailedPage.
-func (c *Client) sendFinanceRequest(ctx context.Context, url string, bodyJSON []byte) (*http.Response, []byte, bool, error) {
-	const maxAttempts = 2
-	usedFallback := false
+// Выбор токена:
+//   - financeKey задан → используем его сразу (один запрос, без двойного).
+//     Так WB-шлюз s2s-finance не отвергает statistics-scoped apiKey и не
+//     насыщается лишним запросом под глобальный лимит продавца.
+//   - financeKey не задан → откат к apiKey (прежнее поведение).
+//
+// Рантайм-переключение по 401 намеренно убрано: каждый дополнительный запрос
+// под тем же seller-UUID ухудшает ситуацию с глобальным лимитом (429
+// "Limited by global limiter, per seller").
+func (c *Client) sendFinanceRequest(ctx context.Context, url string, bodyJSON []byte) (*http.Response, []byte, error) {
+	c.mu.RLock()
+	key := c.apiKey
+	if c.financeKey != "" {
+		key = c.financeKey
+	}
+	c.mu.RUnlock()
 
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		c.mu.RLock()
-		useFin := c.useFinanceKey && c.financeKey != ""
-		c.mu.RUnlock()
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyJSON))
+	if err != nil {
+		return nil, nil, err
+	}
+	httpReq.Header.Set("Authorization", key)
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
 
-		key := c.apiKey
-		if useFin {
-			key = c.financeKey
-			usedFallback = true
-		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyJSON))
-		if err != nil {
-			return nil, nil, false, err
-		}
-		httpReq.Header.Set("Authorization", key)
-		httpReq.Header.Set("Accept", "application/json")
-		httpReq.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.httpClient.Do(httpReq)
-		if err != nil {
-			return nil, nil, usedFallback, fmt.Errorf("http request failed: %w", err)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			resp.Body.Close()
-			return nil, nil, usedFallback, fmt.Errorf("read body: %w", err)
-		}
-
-		// 401 "token scope not allowed" / origin s2s-finance — переключаем токен.
-		if isFinanceScopeError(resp.StatusCode, body) && !useFin && c.financeKey != "" {
-			resp.Body.Close() // тело вычитано, соединение возвращаем в пул
-			c.mu.Lock()
-			c.useFinanceKey = true
-			c.mu.Unlock()
-			fmt.Fprintf(os.Stderr,
-				"⚠️  401 token scope not allowed for finance endpoint, switching to fallback API key (attempt %d)\n",
-				attempt+1)
-			continue
-		}
-
-		// resp.Body уже дочитан, но оставляем его открытым: вызывающий код
-		// (SalesReportDetailedPage) держит defer resp.Body.Close() и читает
-		// из body []byte, а не из resp.Body. Закрытие ниже после проверки 204/429
-		// в вызывающем безопасно: io.ReadAll уже завершился.
-		return resp, body, usedFallback, nil
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("http request failed: %w", err)
 	}
 
-	// Не должно случаться: maxAttempts=2, но на всякий случай — последняя попытка.
-	return nil, nil, usedFallback, fmt.Errorf("finance request: max attempts exhausted")
-}
-
-// isFinanceScopeError возвращает true для 401 ответов, где WB-шлюз явно
-// указал на несовпадение scope токена и сервиса finance. Шлюз s2s-finance
-// помечает это либо detail'ом "token scope not allowed", либо origin'ом
-// "s2s-finance" в теле ошибки.
-func isFinanceScopeError(statusCode int, body []byte) bool {
-	if statusCode != http.StatusUnauthorized {
-		return false
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		resp.Body.Close()
+		return nil, nil, fmt.Errorf("read body: %w", err)
 	}
-	s := string(body)
-	return strings.Contains(s, "token scope not allowed") ||
-		strings.Contains(s, "s2s-finance")
+	// resp.Body уже дочитан, но оставляем открытым: SalesReportDetailedPage
+	// держит defer resp.Body.Close() и работает с body []byte.
+	return resp, body, nil
 }
 
 // SalesReportDetailedIterator перебирает все страницы детализации за период

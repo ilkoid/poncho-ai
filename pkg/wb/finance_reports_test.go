@@ -198,11 +198,12 @@ func floatEq(a, b float64) bool {
 	return math.Abs(a-b) < 1e-9
 }
 
-// TestSalesReportDetailedPage_FallbackOn401Scope проверяет, что при первом
-// 401 "token scope not allowed" клиент переключается на financeKey и повторяет
-// запрос. Реальный сценарий: WB_STAT отвергнут шлюзом s2s-finance, дальше идёт
-// главный WB_API_KEY.
-func TestSalesReportDetailedPage_FallbackOn401Scope(t *testing.T) {
+// TestSalesReportDetailedPage_FinanceKeyUsedImmediately проверяет, что при
+// заданном SetFinanceKey запрос уходит СРАЗУ с этим ключом — без
+// предварительной попытки с apiKey. Это критично: каждый лишний запрос под
+// тем же seller-UUID насыщает глобальный лимит продавца (429
+// "Limited by global limiter, per seller").
+func TestSalesReportDetailedPage_FinanceKeyUsedImmediately(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		auths    []string
@@ -213,23 +214,8 @@ func TestSalesReportDetailedPage_FallbackOn401Scope(t *testing.T) {
 		mu.Lock()
 		auths = append(auths, r.Header.Get("Authorization"))
 		reqCount++
-		count := reqCount
 		mu.Unlock()
 
-		if count == 1 {
-			// Первый запрос: эмуляция 401 от шлюза s2s-finance.
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = io.WriteString(w, `{
-				"title": "unauthorized",
-				"detail": "token scope not allowed",
-				"origin": "s2s-finance",
-				"status": 401
-			}`)
-			return
-		}
-
-		// Второй запрос: успех с одной строкой.
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `[{"rrdId":42,"nmId":1,"vendorCode":"X1"}]`)
 	}))
@@ -245,82 +231,36 @@ func TestSalesReportDetailedPage_FallbackOn401Scope(t *testing.T) {
 		t.Fatalf("SalesReportDetailedPage: %v", err)
 	}
 
-	if got, want := reqCount, 2; got != want {
-		t.Errorf("request count = %d, want %d", got, want)
+	// Ровно один запрос — никаких двойных попыток.
+	if got, want := reqCount, 1; got != want {
+		t.Errorf("request count = %d, want %d (no double-request)", got, want)
 	}
-	if len(auths) != 2 {
-		t.Fatalf("auths recorded = %d, want 2", len(auths))
+	if len(auths) != 1 {
+		t.Fatalf("auths recorded = %d, want 1", len(auths))
 	}
-	if auths[0] != "WB_STAT" {
-		t.Errorf("first Authorization = %q, want WB_STAT", auths[0])
+	if auths[0] != "WB_API_KEY_value" {
+		t.Errorf("Authorization = %q, want WB_API_KEY_value (financeKey first)", auths[0])
 	}
-	if auths[1] != "WB_API_KEY_value" {
-		t.Errorf("fallback Authorization = %q, want WB_API_KEY_value", auths[1])
-	}
-	if !c.useFinanceKey {
-		t.Errorf("useFinanceKey = false after 401, want true")
-	}
-	if len(page.Rows) != 1 {
-		t.Fatalf("page.Rows = %d, want 1", len(page.Rows))
-	}
-	if page.Rows[0].RrdID != 42 {
-		t.Errorf("RrdID = %d, want 42", page.Rows[0].RrdID)
+	if len(page.Rows) != 1 || page.Rows[0].RrdID != 42 {
+		t.Errorf("unexpected page rows: %+v", page.Rows)
 	}
 }
 
-// TestSalesReportDetailedPage_FallbackExhausted проверяет, что при повторном
-// 401 уже с fallback-ключом возвращается ошибка (без зацикливания).
-// useFinanceKey остаётся true — клиент «запомнил» переключение.
-func TestSalesReportDetailedPage_FallbackExhausted(t *testing.T) {
+// TestSalesReportDetailedPage_NoFinanceKeyUsesApiKey проверяет откат к apiKey,
+// когда financeKey не задан. Это поведение для вызывающих, которые не знают о
+// finance endpoint (никаких регрессий для остальных потребителей *wb.Client).
+func TestSalesReportDetailedPage_NoFinanceKeyUsesApiKey(t *testing.T) {
 	var (
-		mu       sync.Mutex
-		auths    []string
-		reqCount int
+		mu    sync.Mutex
+		auths []string
 	)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		auths = append(auths, r.Header.Get("Authorization"))
-		reqCount++
-		mu.Unlock()
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = io.WriteString(w, `{"detail":"token scope not allowed","origin":"s2s-finance","status":401}`)
-	}))
-	defer srv.Close()
-
-	c := New("WB_STAT")
-	c.SetFinanceKey("WB_API_KEY_value")
-	c.SetHTTPClient(srv.Client())
-
-	_, err := c.SalesReportDetailedPage(context.Background(), srv.URL, 1, 1,
-		SalesReportsDetailedReq{DateFrom: "2026-07-18", DateTo: "2026-07-18"})
-	if err == nil {
-		t.Fatal("expected error on 401 fallback exhausted, got nil")
-	}
-
-	if got, want := reqCount, 2; got != want {
-		t.Errorf("request count = %d, want %d (no infinite loop)", got, want)
-	}
-	if !c.useFinanceKey {
-		t.Errorf("useFinanceKey = false after 401, want true")
-	}
-}
-
-// TestSalesReportDetailedPage_NoFallbackKeyWithoutFinanceKey проверяет, что
-// без SetFinanceKey клиент не пытается ретраить 401, а сразу возвращает ошибку.
-func TestSalesReportDetailedPage_NoFallbackKeyWithoutFinanceKey(t *testing.T) {
-	var reqCount int
-	var mu sync.Mutex
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		reqCount++
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = io.WriteString(w, `{"detail":"token scope not allowed","origin":"s2s-finance","status":401}`)
+		_, _ = io.WriteString(w, `[{"rrdId":1,"nmId":1}]`)
 	}))
 	defer srv.Close()
 
@@ -329,37 +269,10 @@ func TestSalesReportDetailedPage_NoFallbackKeyWithoutFinanceKey(t *testing.T) {
 
 	_, err := c.SalesReportDetailedPage(context.Background(), srv.URL, 1, 1,
 		SalesReportsDetailedReq{DateFrom: "2026-07-18", DateTo: "2026-07-18"})
-	if err == nil {
-		t.Fatal("expected 401 error, got nil")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if got, want := reqCount, 1; got != want {
-		t.Errorf("request count = %d, want %d (no retry without fallback key)", got, want)
-	}
-}
-
-// TestIsFinanceScopeError покрывает распознавание 401-scope ответов.
-func TestIsFinanceScopeError(t *testing.T) {
-	cases := []struct {
-		name      string
-		status    int
-		body      string
-		wantScope bool
-	}{
-		{"scope detail", 401, `{"detail":"token scope not allowed"}`, true},
-		{"origin s2s-finance", 401, `{"origin":"s2s-finance"}`, true},
-		{"real wb response", 401, `{"title":"unauthorized","detail":"token scope not allowed","origin":"s2s-finance","status":401}`, true},
-		{"other 401", 401, `{"detail":"invalid token"}`, false},
-		{"403 forbidden", 403, `{"detail":"forbidden"}`, false},
-		{"200 ok", 200, `[]`, false},
-		{"empty body 401", 401, ``, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := isFinanceScopeError(tc.status, []byte(tc.body))
-			if got != tc.wantScope {
-				t.Errorf("isFinanceScopeError(%d, %q) = %v, want %v",
-					tc.status, tc.body, got, tc.wantScope)
-			}
-		})
+	if len(auths) != 1 || auths[0] != "WB_STAT" {
+		t.Errorf("Authorization = %v, want [WB_STAT] (apiKey fallback)", auths)
 	}
 }
