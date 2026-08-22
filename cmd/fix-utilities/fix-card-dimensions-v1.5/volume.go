@@ -41,3 +41,15 @@ func applyVolumeFilter(rows []sqlite.DimensionAggRow, cfg VolumeConfig) []sqlite
 func effectiveDims(l, w, h, paddingCm float64) (float64, float64, float64) {
 	return math.Ceil(l + paddingCm), math.Ceil(w + paddingCm), math.Ceil(h + paddingCm)
 }
+
+// applyOnlyNewFilter оставляет только карточки с полностью нулевыми габаритами
+// WB (L=W=H=вес=0) — то же определение NEW, что показывает --compare.
+func applyOnlyNewFilter(rows []sqlite.DimensionAggRow) []sqlite.DimensionAggRow {
+	out := make([]sqlite.DimensionAggRow, 0, len(rows))
+	for _, r := range rows {
+		if r.OldLength == 0 && r.OldWidth == 0 && r.OldHeight == 0 && r.OldWeight == 0 {
+			out = append(out, r)
+		}
+	}
+	return out
+}

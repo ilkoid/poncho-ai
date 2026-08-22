@@ -36,6 +36,9 @@ func runCompare(ctx context.Context, db *sql.DB, cfg *Config) error {
 	if cfg.Volume.PaddingCm > 0 {
 		fmt.Printf("padding: +%.1f см — колонка 1C показывает ceil(замер + padding), т.е. что запишет stage --force\n", cfg.Volume.PaddingCm)
 	}
+	if cfg.OnlyNew {
+		fmt.Println("only-new: только карточки с полностью нулевыми габаритами WB")
+	}
 	fmt.Println("ΔVol: + = объём 1С больше WB")
 	fmt.Println()
 
@@ -63,6 +66,12 @@ func runCompare(ctx context.Context, db *sql.DB, cfg *Config) error {
 		before := len(filtered)
 		filtered = applyVolumeFilter(filtered, cfg.Volume)
 		fmt.Printf("volume filter: %d → %d cards\n", before, len(filtered))
+	}
+
+	if cfg.OnlyNew {
+		before := len(filtered)
+		filtered = applyOnlyNewFilter(filtered)
+		fmt.Printf("only-new filter: %d → %d cards\n", before, len(filtered))
 	}
 
 	if len(filtered) == 0 {

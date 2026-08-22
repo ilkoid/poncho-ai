@@ -92,6 +92,18 @@ func TestEffectiveDims(t *testing.T) {
 	}
 }
 
+func TestApplyOnlyNewFilter(t *testing.T) {
+	rows := []sqlite.DimensionAggRow{
+		{OldLength: 0, OldWidth: 0, OldHeight: 0, OldWeight: 0, NewLength: 40, NewWidth: 30, NewHeight: 10}, // NEW — оставить
+		{OldLength: 32, OldWidth: 0, OldHeight: 0, OldWeight: 0, NewLength: 40},                              // частично нулевые — убрать
+		{OldLength: 32, OldWidth: 24, OldHeight: 5, OldWeight: 0.4, NewLength: 40},                           // заполненные — убрать
+	}
+	got := applyOnlyNewFilter(rows)
+	if len(got) != 1 || got[0].NewLength != 40 {
+		t.Fatalf("ожидалась только NEW-строка, получено %d строк", len(got))
+	}
+}
+
 func TestVolumeConfigNormalized(t *testing.T) {
 	if v, err := (VolumeConfig{}).normalized(); err != nil || v.Direction != "any" {
 		t.Fatalf("пустая секция: ожидался any без ошибки, получено %q err=%v", v.Direction, err)

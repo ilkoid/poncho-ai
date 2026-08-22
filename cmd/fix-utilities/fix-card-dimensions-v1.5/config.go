@@ -48,6 +48,7 @@ func (v VolumeConfig) normalized() (VolumeConfig, error) {
 
 type Config struct {
 	DBPath   string                    `yaml:"db_path"`
+	OnlyNew  bool                      `yaml:"only_new"` // только карточки с полностью нулевыми габаритами WB (NEW)
 	Filters  filter.Filter             `yaml:"filters"`
 	WBUpdate cardupdate.WBUpdateConfig `yaml:"wb_update"`
 	Compare  CompareConfig             `yaml:"compare"`
