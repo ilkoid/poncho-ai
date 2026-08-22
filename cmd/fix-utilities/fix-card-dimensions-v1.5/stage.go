@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/ilkoid/poncho-ai/pkg/filter"
@@ -38,7 +37,8 @@ type stagedDimRow struct {
 	ErrorMsg   string
 }
 
-func runStage(ctx context.Context, db *sql.DB, f *filter.Filter, force bool) (int, error) {
+func runStage(ctx context.Context, db *sql.DB, cfg *Config, force bool) (int, error) {
+	f := &cfg.Filters
 	label := "fix-card-dimensions: stage"
 	if force {
 		label += " [FORCE]"
@@ -72,6 +72,15 @@ func runStage(ctx context.Context, db *sql.DB, f *filter.Filter, force bool) (in
 	filtered := applyFilters(aggRows, f)
 	fmt.Printf("in-memory filter: %d → %d cards\n", len(aggRows), len(filtered))
 
+	// Volume-фильтр — только для force-режима (перезапись существующих габаритов):
+	// обычный stage заполняет пустые карточки независимо от направления.
+	if force && cfg.Volume.Direction != "any" {
+		before := len(filtered)
+		filtered = applyVolumeFilter(filtered, cfg.Volume)
+		fmt.Printf("volume filter (direction=%s, margin=%.0f%%, Δ≥%.0f cm³): %d → %d cards\n",
+			cfg.Volume.Direction, cfg.Volume.MarginPct, cfg.Volume.MinDeltaCm3, before, len(filtered))
+	}
+
 	filtered, err = applySQLFilters(ctx, db, filtered, f)
 	if err != nil {
 		return 0, fmt.Errorf("apply sql filters: %w", err)
@@ -101,10 +110,11 @@ func runStage(ctx context.Context, db *sql.DB, f *filter.Filter, force bool) (in
 	defer stmt.Close()
 
 	for _, r := range filtered {
+		newL, newW, newH := effectiveDims(r.NewLength, r.NewWidth, r.NewHeight, cfg.Volume.PaddingCm)
 		_, err := stmt.ExecContext(ctx,
 			r.NmID, r.VendorCode,
 			r.OldLength, r.OldWidth, r.OldHeight, r.OldWeight,
-			math.Ceil(r.NewLength), math.Ceil(r.NewWidth), math.Ceil(r.NewHeight), r.NewWeight,
+			newL, newW, newH, r.NewWeight,
 		)
 		if err != nil {
 			return 0, fmt.Errorf("insert staging row nm_id=%d: %w", r.NmID, err)

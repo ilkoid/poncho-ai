@@ -1,0 +1,15 @@
+# ============================================================================
+# 1C Data Downloader v2 — локальный кеш для fix-card-dimensions-v1.5
+#
+# Используется скриптом prepare-fix-dims.sh: путь к БД скрипт дублирует
+# флагом --db, здесь указан тот же путь для запуска без скрипта.
+# ============================================================================
+onec:
+  api_url: ${ONEC_API_URL}
+  pim_url: ${ONEC_PIM_URL}
+
+storage:
+  backend: "sqlite"
+  db_path: "${HOME}/dev/fix-dims.db"
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

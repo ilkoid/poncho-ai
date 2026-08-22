@@ -73,7 +73,7 @@ func main() {
 		}
 		defer dbConn.Close()
 
-		count, err := runStage(ctx, dbConn, &cfg.Filters, *force)
+		count, err := runStage(ctx, dbConn, cfg, *force)
 		if err != nil {
 			log.Fatalf("stage: %v", err)
 		}
@@ -100,7 +100,7 @@ func main() {
 		}
 		defer dbConn.Close()
 
-		if err := runCompare(ctx, dbConn, &cfg.Filters, cfg.Compare); err != nil {
+		if err := runCompare(ctx, dbConn, cfg); err != nil {
 			log.Fatalf("compare: %v", err)
 		}
 

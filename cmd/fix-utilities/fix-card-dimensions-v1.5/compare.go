@@ -10,7 +10,6 @@ import (
 	"sort"
 	"text/tabwriter"
 
-	"github.com/ilkoid/poncho-ai/pkg/filter"
 	"github.com/ilkoid/poncho-ai/pkg/storage/sqlite"
 )
 
@@ -19,17 +18,28 @@ type compareRow struct {
 	NmID        int
 	VendorCode  string
 	WB_L, WB_W, WB_H, WB_Wt float64
-	OC_L, OC_W, OC_H, OC_Wt float64
-	DeltaVol    float64
+	OC_L, OC_W, OC_H, OC_Wt float64 // 1C: эффективные габариты ceil(замер + padding) — то, что запишет stage
+	DeltaVol    float64              // знаковая: + = объём сырого замера 1С больше объёма WB
 	DeltaWeight float64
 	VolFlag     bool
 	WtFlag      bool
 	IsNew       bool // all WB dims are zero
 }
 
-func runCompare(ctx context.Context, db *sql.DB, f *filter.Filter, cfg CompareConfig) error {
+func runCompare(ctx context.Context, db *sql.DB, cfg *Config) error {
 	fmt.Println("=== fix-card-dimensions: compare (WB vs 1C) ===")
-	fmt.Printf("tolerance: volume ≥ %.0f cm³, weight ≥ %.3f kg\n\n", cfg.ToleranceCm3, cfg.ToleranceKg)
+	fmt.Printf("tolerance: volume ≥ %.0f cm³, weight ≥ %.3f kg\n", cfg.Compare.ToleranceCm3, cfg.Compare.ToleranceKg)
+	if cfg.Volume.Direction != "any" {
+		fmt.Printf("volume filter: direction=%s, margin=%.0f%%, min Δ=%.0f cm³ (по сырым замерам 1С)\n",
+			cfg.Volume.Direction, cfg.Volume.MarginPct, cfg.Volume.MinDeltaCm3)
+	}
+	if cfg.Volume.PaddingCm > 0 {
+		fmt.Printf("padding: +%.1f см — колонка 1C показывает ceil(замер + padding), т.е. что запишет stage --force\n", cfg.Volume.PaddingCm)
+	}
+	fmt.Println("ΔVol: + = объём 1С больше WB")
+	fmt.Println()
+
+	f := &cfg.Filters
 
 	aggRows, err := getAllAggregatedDimensions(ctx, db)
 	if err != nil {
@@ -49,6 +59,12 @@ func runCompare(ctx context.Context, db *sql.DB, f *filter.Filter, cfg CompareCo
 	}
 	fmt.Printf("sql filter: → %d cards\n", len(filtered))
 
+	if cfg.Volume.Direction != "any" {
+		before := len(filtered)
+		filtered = applyVolumeFilter(filtered, cfg.Volume)
+		fmt.Printf("volume filter: %d → %d cards\n", before, len(filtered))
+	}
+
 	if len(filtered) == 0 {
 		fmt.Println("no cards passed filters")
 		return nil
@@ -60,23 +76,25 @@ func runCompare(ctx context.Context, db *sql.DB, f *filter.Filter, cfg CompareCo
 	return nil
 }
 
-func computeDeltas(aggRows []sqlite.DimensionAggRow, cfg CompareConfig) []compareRow {
+func computeDeltas(aggRows []sqlite.DimensionAggRow, cfg *Config) []compareRow {
 	var result []compareRow
 
 	for _, r := range aggRows {
 		volWB := r.OldLength * r.OldWidth * r.OldHeight
 		volOC := r.NewLength * r.NewWidth * r.NewHeight
-		deltaVol := math.Abs(volWB - volOC)
+		deltaVol := volOC - volWB // сырые замеры, без padding
 		deltaWt := math.Abs(r.OldWeight - r.NewWeight)
 
-		volFlag := deltaVol > cfg.ToleranceCm3
-		wtFlag := deltaWt > cfg.ToleranceKg
+		volFlag := math.Abs(deltaVol) > cfg.Compare.ToleranceCm3
+		wtFlag := deltaWt > cfg.Compare.ToleranceKg
 		isNew := r.OldLength == 0 && r.OldWidth == 0 && r.OldHeight == 0 && r.OldWeight == 0
 
 		// Show card if volume OR weight exceeds threshold.
 		if !volFlag && !wtFlag {
 			continue
 		}
+
+		eL, eW, eH := effectiveDims(r.NewLength, r.NewWidth, r.NewHeight, cfg.Volume.PaddingCm)
 
 		result = append(result, compareRow{
 			NmID:       r.NmID,
@@ -85,15 +103,15 @@ func computeDeltas(aggRows []sqlite.DimensionAggRow, cfg CompareConfig) []compar
 			WB_W:       r.OldWidth,
 			WB_H:       r.OldHeight,
 			WB_Wt:      r.OldWeight,
-			OC_L:       r.NewLength,
-			OC_W:       r.NewWidth,
-			OC_H:       r.NewHeight,
+			OC_L:       eL,
+			OC_W:       eW,
+			OC_H:       eH,
 			OC_Wt:      r.NewWeight,
-			DeltaVol:    deltaVol,
+			DeltaVol:   deltaVol,
 			DeltaWeight: deltaWt,
-			VolFlag:     volFlag,
-			WtFlag:      wtFlag,
-			IsNew:       isNew,
+			VolFlag:    volFlag,
+			WtFlag:     wtFlag,
+			IsNew:      isNew,
 		})
 	}
 
@@ -112,8 +130,8 @@ func printCompareReport(w io.Writer, rows []compareRow) {
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 
-	fmt.Fprintln(tw, "nm_id\tvendor_code\tWB (L×W×H)\t1C (L×W×H)\tΔVol cm³\tWB W kg\t1C W kg\tΔWt kg\tFlags")
-	fmt.Fprintln(tw, "─────\t───────────\t──────────\t──────────\t────────\t───────\t───────\t───────\t─────")
+	fmt.Fprintln(tw, "nm_id\tvendor_code\tWB (L×W×H)\t1C (L×W×H)\tΔVol± cm³\tWB W kg\t1C W kg\tΔWt kg\tFlags")
+	fmt.Fprintln(tw, "─────\t───────────\t──────────\t──────────\t─────────\t───────\t───────\t───────\t─────")
 
 	var volCount, wtCount, newCount int
 
@@ -136,7 +154,7 @@ func printCompareReport(w io.Writer, rows []compareRow) {
 			newCount++
 		}
 
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%.0f\t%.3f\t%.3f\t%+.3f\t%s\n",
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%+.0f\t%.3f\t%.3f\t%+.3f\t%s\n",
 			r.NmID, r.VendorCode, wbDims, ocDims, r.DeltaVol,
 			r.WB_Wt, r.OC_Wt, deltaWt, flags)
 	}
