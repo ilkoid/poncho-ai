@@ -42,12 +42,13 @@ func effectiveDims(l, w, h, paddingCm float64) (float64, float64, float64) {
 	return math.Ceil(l + paddingCm), math.Ceil(w + paddingCm), math.Ceil(h + paddingCm)
 }
 
-// applyOnlyNewFilter оставляет только карточки с полностью нулевыми габаритами
-// WB (L=W=H=вес=0) — то же определение NEW, что показывает --compare.
+// applyOnlyNewFilter оставляет только карточки с нулевыми размерами WB
+// (L=W=H=0). Вес не важен: карточка с нулевыми размерами и заполненным весом
+// всё равно требует заполнения габаритов — то же определение NEW, что в --compare.
 func applyOnlyNewFilter(rows []sqlite.DimensionAggRow) []sqlite.DimensionAggRow {
 	out := make([]sqlite.DimensionAggRow, 0, len(rows))
 	for _, r := range rows {
-		if r.OldLength == 0 && r.OldWidth == 0 && r.OldHeight == 0 && r.OldWeight == 0 {
+		if r.OldLength == 0 && r.OldWidth == 0 && r.OldHeight == 0 {
 			out = append(out, r)
 		}
 	}

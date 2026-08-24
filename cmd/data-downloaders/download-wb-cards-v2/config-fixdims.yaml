@@ -12,8 +12,8 @@ wb:
 
 cards:
   api_key_env: "WB_API_CONTENT_KEY"  # Env var с API ключом Content API
-  rate_limit: 100            # Запросов в минуту (swagger: 100/min)
-  burst_limit: 5             # Burst для rate limiter
+  rate_limit: 90            # Запросов в минуту (swagger: 100/min)
+  burst_limit: 4             # Burst для rate limiter
   adaptive_probe_after: 10   # OK-ответов до probe desired rate после 429
   max_backoff_seconds: 60    # Максимальный backoff при 429
 

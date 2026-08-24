@@ -84,7 +84,7 @@ func runStage(ctx context.Context, db *sql.DB, cfg *Config, force bool) (int, er
 	if cfg.OnlyNew {
 		before := len(filtered)
 		filtered = applyOnlyNewFilter(filtered)
-		fmt.Printf("only-new filter (полностью нулевые габариты WB): %d → %d cards\n", before, len(filtered))
+		fmt.Printf("only-new filter (нулевые размеры WB, вес не важен): %d → %d cards\n", before, len(filtered))
 	}
 
 	filtered, err = applySQLFilters(ctx, db, filtered, f)

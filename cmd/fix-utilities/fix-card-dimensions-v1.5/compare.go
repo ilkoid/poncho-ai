@@ -37,7 +37,7 @@ func runCompare(ctx context.Context, db *sql.DB, cfg *Config) error {
 		fmt.Printf("padding: +%.1f см — колонка 1C показывает ceil(замер + padding), т.е. что запишет stage --force\n", cfg.Volume.PaddingCm)
 	}
 	if cfg.OnlyNew {
-		fmt.Println("only-new: только карточки с полностью нулевыми габаритами WB")
+		fmt.Println("only-new: только карточки с нулевыми размерами WB (L×W×H=0, вес не важен)")
 	}
 	fmt.Println("ΔVol: + = объём 1С больше WB")
 	fmt.Println()
@@ -96,7 +96,7 @@ func computeDeltas(aggRows []sqlite.DimensionAggRow, cfg *Config) []compareRow {
 
 		volFlag := math.Abs(deltaVol) > cfg.Compare.ToleranceCm3
 		wtFlag := deltaWt > cfg.Compare.ToleranceKg
-		isNew := r.OldLength == 0 && r.OldWidth == 0 && r.OldHeight == 0 && r.OldWeight == 0
+		isNew := r.OldLength == 0 && r.OldWidth == 0 && r.OldHeight == 0
 
 		// Show card if volume OR weight exceeds threshold.
 		if !volFlag && !wtFlag {

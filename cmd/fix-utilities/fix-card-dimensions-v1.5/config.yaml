@@ -42,7 +42,7 @@ compare:
 #   min_delta_cm3: 1200   # и абсолютная дельта минимум N см³ (AND с margin_pct)
 #   padding_cm: 2         # запись: +N см к каждой оси, WB получит ceil(замер + padding)
 
-# only_new: true   # только карточки с полностью нулевыми габаритами WB ([NEW] в compare)
+# only_new: true   # только карточки с нулевыми размерами WB L×W×H=0, вес не важен ([NEW] в compare)
 
 # WB API update settings
 wb_update:
