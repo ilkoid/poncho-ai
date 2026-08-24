@@ -1,0 +1,39 @@
+# Конфиг v2-загрузчика FBS-заданий (PG-only домен).
+# Фазы: fbs_orders → fbs_orders_status(+log) → order_feed.
+# Сваггер: docs/wb_api_swagger/03-orders-fbs.yaml, 11-analytics.yaml (order-feed).
+
+wb:
+  # Marketplace API (v3 orders/status) обычно принимает content-ключ;
+  # при 401/403 загрузчик сам повторит с WB_API_KEY.
+  api_key: ""                    # literal-ключ (не коммитить!)
+  api_key_env: "WB_API_CONTENT_KEY"
+  timeout: "15m"
+
+fbs:
+  # ---- Фаза 1: сборочные задания ----
+  days: 90                       # глубина API /api/v3/orders (максимум 3 месяца)
+  # from: "2026-07-24"           # точная дата начала (приоритет над days)
+  # to: "2026-08-23"             # точная дата конца (включительно)
+
+  # ---- Фаза 2: статусы (гарантия полноты) ----
+  # Безусловно обновляются задания моложе окна; незакрытые задания — любого возраста.
+  status_window_days: 90
+
+  # ---- Фаза 3: лента заказов ----
+  feed_enabled: true             # false = отключить (или флаг --no-feed)
+  feed_days: 7                   # глубина ленты по дате текущего статуса (максимум 31)
+
+  # ---- Rate limits ----
+  # Swagger: v3 задания+статусы — общий бакет 300 req/min, burst 20, интервал 200 мс.
+  # Ставим консервативно; 4XX считается за 10 запросов.
+  rate_limit: 120                # desired, req/min
+  burst: 20
+  # Swagger: order-feed 1 req/min (basic-токен 2 req/24h — если упрётся, отключите feed).
+  feed_rate_limit: 1
+  feed_burst: 1
+
+storage:
+  backend: "postgres"            # PG-only домен
+  pg_dsn: ""                     # пусто = собрать из env (PGHOST/PGPORT/PGUSER/PG_PWD)
+  pg_database: "wb_data_prod"    # wb_data_test для тестов!
+  pg_password_env: "PG_PWD"

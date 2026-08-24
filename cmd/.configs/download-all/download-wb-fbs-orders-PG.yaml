@@ -1,0 +1,24 @@
+# download-all конфиг FBS-заданий (прод). Локальный вариант: config.yaml рядом с main.go.
+# Фазы: fbs_orders → fbs_orders_status(+log) → order_feed.
+# Сваггер: docs/wb_api_swagger/03-orders-fbs.yaml, 11-analytics.yaml (order-feed).
+
+wb:
+  api_key: ""
+  api_key_env: "WB_API_CONTENT_KEY"   # при 401/403 загрузчик сам повторит с WB_API_KEY
+  timeout: "15m"
+
+fbs:
+  days: 90                 # --days из download-all.sh переопределяет (инкрементальные прогоны)
+  status_window_days: 90   # безусловное обновление статусов; незакрытые — любого возраста
+  feed_enabled: true
+  feed_days: 7
+  rate_limit: 120          # swagger: 300 req/min общий бакет v3 (консервативно)
+  burst: 20
+  feed_rate_limit: 1       # swagger: order-feed 1 req/min
+  feed_burst: 1
+
+storage:
+  backend: "postgres"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
