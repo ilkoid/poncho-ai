@@ -46,7 +46,7 @@ go.work.sum
 docs/*
 !docs/wb_api_swagger/
 !docs/ozon_api_swagger/
-/reports/
+reports/
 plans/
 examples/
 screenshots/
@@ -170,6 +170,10 @@ cmd/data-downloaders/download-all-articles/ЗАГРУЗКИ/
 
 # Python virtual environment (with dot)
 .venv/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
 
 # PDF documents (generated from markdown)
 *.pdf

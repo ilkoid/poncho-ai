@@ -20,6 +20,14 @@
   - Runs non-fatal `git pull` before downloads
   - Runs MA builder after downloads
 
+## .env — канонический источник секретов
+- Файл `/Users/ilkoid/dev/poncho-ai/.env` — **единственный** источник env-секретов проекта (`PG_PWD`, `WB_API_KEY`, `WB_API_CONTENT_KEY`, `WB_STAT`, `KEEPER_PWD`, …). В `.gitignore` (строки 5-6: `.env`, `.env.*`) — никогда не коммитить.
+- **Формат (shell, не POSIX/docker):** `export VAR='значение'` — с `export` и в **одинарных** кавычках (одинарные критичны для `!`, `@`, `$`, которые встречаются в WB-ключах и паролях). В файле 26 переменных, все в этом формате, консистентно.
+- **Загрузка в шелле / skill'е / psql / Go-утилите:** `set -a; source /Users/ilkoid/dev/poncho-ai/.env; set +a`. **Не полагаться на `~/.zshrc`** — он НЕ исполняется в `zsh -c` (non-interactive), там `PG_PWD` пуст, даже если в интерактивной сессии он есть.
+- **Проверка наличия переменной (двойная!):** сначала `grep VAR .env` (в **файле**), потом `printenv VAR` (в **env**). Отрицательный результат `printenv` НЕ означает отсутствия переменной — она может быть просто не загружена в текущий env. Перед любым выводом «переменной нет» — проверь файл.
+- **Пароль PG передаётся через `PGPASSWORD="$PG_PWD" psql ...`**, не аргументом команды — чтобы не светился в `ps`. Сам `.env` тоже не выводить в лог/чат (только ключи и длину значений).
+- **Длинный SQL с кириллицей/`$$`:** клади в `/tmp/q.sql` через `cat > /tmp/q.sql <<'SQL' ... SQL` и вызывай `psql -f /tmp/q.sql`, а не `-c "..."` — `-c` ломается на тройном экранировании zsh + psql + SQL.
+
 ## Components Beyond the Go WB Utilities
 The pipeline scripts above do NOT touch these — they are standalone tools introduced in recent commits. The scraper stack pairs a browser extension with a local Go collector.
 
@@ -121,6 +129,22 @@ cmd/.../download-<domain>-v2/ → flags → config → switch backend → DI →
 - **YAGNI for light domains:** cards/stocks/prices (~30k records, 3-5 min) — full reload, `ON CONFLICT` upsert, no cursor/resume. Resume justified only for sales (millions, hours). Hard-won lesson: cursor persistence for cards added ~100 lines AND caused loss of 391 cards on `--resume`.
 - Step-by-step migration (file layout, SQL cheat sheet, checklist) → `dev_v2_postgres.md`. **On PG-specific questions it OVERRIDES `dev_v2_downloader.md`.**
 
+## WB API Swagger (LOCAL — read first, do NOT google)
+- **The full official WB OpenAPI spec is checked into the repo at `docs/wb_api_swagger/`** (13 YAML files, split per domain). Before querying the web (`dev.wildberries.ru`, GitHub mirrors, web search) for any WB API question — field semantics, endpoint params, response schema, rate limits, error codes — **grep the local YAML first**. The web portal is behind anti-bot and often returns a challenge page instead of JSON; community mirrors drift and miss fields. Local is authoritative and offline.
+- **Search by endpoint path**, e.g. `grep -n "supplier/orders" docs/wb_api_swagger/*.yaml`. File map (by domain):
+  - `02-items.yaml` — cards / content (карточки товаров, характеристики)
+  - `03-orders-fbs.yaml`, `04-orders-dbw.yaml`, `05-orders-dbs.yaml`, `06-in-store-pickup.yaml`, `07-orders-fbw.yaml` — fulfillment orders (FBS/DBW/DBS/PVZ/FBW)
+  - `08-promotion.yaml` — advertising / promotion-v2 / search funnel
+  - `09-communications.yaml` — feedbacks / questions
+  - `10-rates.yaml` — tariffs / box dimensions
+  - `11-analytics.yaml` — analytics (sales funnel, search visibility, ABC)
+  - `12-reports.yaml` — **Statistics API**: `/api/v1/supplier/orders` (Заказы), `/api/v1/supplier/sales` (Продажи), excise reports. This is the canonical source for `orders`/`sales`/`operational_sales` table semantics.
+  - `13-finances.yaml` — financial reports, supplier invoices
+- **Field-semantics examples (verified against these files, not memory):**
+  - `orders` table (endpoint `/api/v1/supplier/orders`, `12-reports.yaml`): `12-reports.yaml:66` states *«1 строка = 1 заказ = 1 сборочное задание = 1 единица товара»*, `srid` identifies the single unit. Field `gNumber` (`12-reports.yaml:2340`) = *«ID корзины покупателя. Заказы одной транзакции будут иметь одинаковый `gNumber`»* — despite the word «корзина», in this endpoint it groups **already-placed transactions** (the same `orderUid`/«ID группы сборочных заданий» concept from `04-orders-dbw.yaml:2220` and `13-finances.yaml:1649`). `OrdersItem` has NO `quantity` field — unit = row.
+  - When unsure whether a row is a unit, a line, or a customer order: find the endpoint's `description:` line and the field's `description:` line in YAML — WB's own wording settles it. Do not infer from Go struct names.
+- **Verification habit:** cite `file:line` from the local YAML when making a claim about WB semantics. Prefer this over `WebSearch`/`WebFetch` for anything present in `docs/wb_api_swagger/`. Use web only for endpoints/fields not in the local set (recently added API surface).
+
 ## WB Client / Downloader Gotchas
 - `wb.NewFromConfig(...)` creates client defaults but per-tool adaptive limiter behavior depends on explicit `SetRateLimit(toolID, ...)`.
 - `toolID` must match between limiter setup and request path usage; mismatches create separate limiter state.
@@ -185,3 +209,4 @@ Rule: more specific document overrides more general.
 - **PG ErrNoRows:** `pgx.ErrNoRows` (PG) and `sql.ErrNoRows` (SQLite) are different types — check with `errors.Is()`.
 - **PG UPSERT:** `INSERT OR REPLACE INTO` → `INSERT INTO ... ON CONFLICT (...) DO UPDATE SET col = EXCLUDED.col`. Chunk 500 records per transaction.
 - **Test DBs:** ALWAYS `--db /tmp/test-<domain>.db` in test commands, NEVER `/var/db/`.
+- **Локальная правка ZCode client bundle (read-only `psql`/libpq в plan mode):** на этой машине `/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs` пропатчен — `psql`/`pg_config`/`pg_isready` + `PG*` env добавлены в read-only allowlist бандла, чтобы plan mode пропускал read-only SQL-пробы. **Не в git** (машинно-специфично). Скрипт re-apply + док: `~/dev/zcode-tweaks/` (`patch-zcode-cjs.py`, `ZCODE_TWEAKS.md`). После обновления ZCode (оно перезаписывает бандл): `python3 ~/dev/zcode-tweaks/patch-zcode-cjs.py --check` (exit 0=ок, 2=`--apply`, 3=ручной ревуй). Не SQL-файрвол — дисциплина read-only на совести вызывающего. Альтернатива, переживающая обновления: MCP readonly-psql.
