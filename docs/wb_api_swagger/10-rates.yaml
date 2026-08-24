@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Тарифы
-  version: tariffs
+  version: rates
   description: |
     <div class="description_important">
       Узнать больше о тарифах можно в <a href="https://seller.wildberries.ru/instructions/ru/ru/material/fees-site-section">справочном центре</a>
@@ -10,29 +10,34 @@ info:
     <div class="api-block">
 
     В разделе описаны методы получения:
-      1. [Комиссий](/openapi/wb-tariffs#tag/Komissii)
-      2. [Тарифов на поставку](/openapi/wb-tariffs#tag/Tarify-na-postavku)
-      3. [Тарифов на остаток](/openapi/wb-tariffs#tag/Tarify-na-ostatok)
-      4. [Тарифов на возврат товаров продавцу](/openapi/wb-tariffs#tag/Stoimost-vozvrata-prodavcu)
+      1. [Комиссий](/openapi/wb-tariffs#tag/fees)
+      2. [Тарифов на поставку](/openapi/wb-tariffs#tag/supplyRates)
+      3. [Тарифов на остаток](/openapi/wb-tariffs#tag/stockRates)
+      4. [Тарифов на возврат товаров продавцу](/openapi/wb-tariffs#tag/returnCostToSeller)
 
     </div>
-  x-file-name: tariffs
+  x-file-name: rates
 security:
   - HeaderApiKey: []
 tags:
   - name: Комиссии
+    x-displayName: Комиссии
     description: ''
   - name: Тарифы на поставку
+    x-displayName: Тарифы на поставку
     description: ''
   - name: Тарифы на остаток
+    x-displayName: Тарифы на остаток
     description: ''
   - name: Стоимость возврата продавцу
+    x-displayName: Стоимость возврата продавцу
     description: ''
 paths:
   /api/v1/tariffs/commission:
     servers:
       - url: https://common-api.wildberries.ru
     get:
+      operationId: getV1TariffsCommission
       x-readonly-method: true
       x-category: commonapi
       summary: Комиссия по категориям товаров
@@ -42,7 +47,7 @@ paths:
         Метод возвращает данные о [комиссии](https://seller.wildberries.ru/dynamic-product-categories/commission) WB по [родительским категориям товаров](/openapi/work-with-products#tag/categoriesSubcategoriesAndCharacteristics/paths/~1content~1v2~1object~1parent~1all/get) согласно модели продаж.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/Vvedenie/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
 
 
         | Тип | Период | Лимит | Интервал | Всплеск |
@@ -61,22 +66,22 @@ paths:
             application/json:
               schema:
                 oneOf:
-                  - $ref: '#/components/schemas/Commission'
-                  - $ref: '#/components/schemas/CommissionChina'
-                  - $ref: '#/components/schemas/CommissionTurkey'
-                  - $ref: '#/components/schemas/CommissionUzbekistan'
-                  - $ref: '#/components/schemas/CommissionUAE'
+                  - $ref: '#/components/schemas/Fee'
+                  - $ref: '#/components/schemas/FeeChina'
+                  - $ref: '#/components/schemas/FeeTurkey'
+                  - $ref: '#/components/schemas/FeeUzbekistan'
+                  - $ref: '#/components/schemas/FeeUAE'
               examples:
-                Commission:
-                  $ref: '#/components/examples/Commission'
-                CommissionChina:
-                  $ref: '#/components/examples/CommissionChina'
-                CommissionTurkey:
-                  $ref: '#/components/examples/CommissionTurkey'
-                CommissionUzbekistan:
-                  $ref: '#/components/examples/CommissionUzbekistan'
-                CommissionUAE:
-                  $ref: '#/components/examples/CommissionUAE'
+                Fee:
+                  $ref: '#/components/examples/Fee'
+                FeeChina:
+                  $ref: '#/components/examples/FeeChina'
+                FeeTurkey:
+                  $ref: '#/components/examples/FeeTurkey'
+                FeeUzbekistan:
+                  $ref: '#/components/examples/FeeUzbekistan'
+                FeeUAE:
+                  $ref: '#/components/examples/FeeUAE'
         '400':
           description: Неправильный запрос
           content:
@@ -98,6 +103,7 @@ paths:
     servers:
       - url: https://common-api.wildberries.ru
     get:
+      operationId: getV1AcceptanceCoefficients
       x-readonly-method: true
       x-category: commonapi
       security:
@@ -106,14 +112,10 @@ paths:
         - Тарифы на поставку
       summary: Тарифы на поставку
       description: |
-        Метод возвращает [тарифы на поставку](https://seller.wildberries.ru/dynamic-product-categories) для конкретных складов на ближайшие 14 дней.
-
-        <div class="description_important">
-          Приёмка для поставки доступна только при сочетании: <br> <code>coefficient</code> — <code>0</code> или <code>1</code> <br> и <code>allowUnload</code> — <code>true</code>
-        </div>
+        Метод [временно отключён](https://dev.wildberries.ru/release-notes?id=570)
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/Vvedenie/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
 
 
         | Тип | Период | Лимит | Интервал | Всплеск |
@@ -165,12 +167,13 @@ paths:
     servers:
       - url: https://common-api.wildberries.ru
     get:
+      operationId: getV1TariffsBox
       x-readonly-method: true
       x-category: commonapi
       summary: Тарифы для коробов
       tags:
         - Тарифы на остаток
-      description: "Для остатков товаров, которые поставляются на\_склад в коробах, метод возвращает [тарифы](https://seller.wildberries.ru/dynamic-product-categories) на:\n  - доставку со склада или пункта приёма до покупателя\n  - доставку от покупателя до пункта приёма\n  - хранение на\_складе WB\n\n<div class=\"description_important\">\n  Тарифы для коробов совпадают с тарифами для <strong>Суперсейфа</strong>\n</div>\n\n<div class=\"description_limit\">\n<a href=\"/openapi/api-information#tag/Vvedenie/Limity-zaprosov\">Лимит запросов</a> на один аккаунт продавца:\n\n\n| Тип | Период | Лимит | Интервал | Всплеск |\n| --- | --- | --- | --- | --- |\n| Персональный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Сервисный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый с секретом | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый | 1 ч | 1 запрос | 1 ч | 1 запрос |\n</div>\n"
+      description: "Для остатков товаров, которые поставляются на\_склад в коробах, метод возвращает [тарифы](https://seller.wildberries.ru/dynamic-product-categories) на:\n  - доставку со склада или пункта приёма до покупателя\n  - доставку от покупателя до пункта приёма\n  - хранение на\_складе WB\n\n<div class=\"description_important\">\n  Тарифы для коробов совпадают с тарифами для <strong>Суперсейфа</strong>\n</div>\n\n<div class=\"description_limit\">\n<a href=\"/openapi/api-information#tag/introduction/Limity-zaprosov\">Лимит запросов</a> на один аккаунт продавца:\n\n\n| Тип | Период | Лимит | Интервал | Всплеск |\n| --- | --- | --- | --- | --- |\n| Персональный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Сервисный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый с секретом | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый | 1 ч | 1 запрос | 1 ч | 1 запрос |\n</div>\n"
       parameters:
         - $ref: '#/components/parameters/Date'
       responses:
@@ -179,7 +182,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TariffsBoxResponse'
+                $ref: '#/components/schemas/RatesBoxResponse'
         '400':
           description: Неправильный запрос
           content:
@@ -201,12 +204,13 @@ paths:
     servers:
       - url: https://common-api.wildberries.ru
     get:
+      operationId: getV1TariffsPallet
       x-readonly-method: true
       x-category: commonapi
       summary: Тарифы для монопаллет
       tags:
         - Тарифы на остаток
-      description: "Для товаров, которые поставляются на\_склад WB на\_монопаллетах, метод возвращает [стоимость](https://seller.wildberries.ru/dynamic-product-categories):\n  - доставки со склада до покупателя\n  - доставки от покупателя до склада\n  - хранения на\_складе WB\n\n<div class=\"description_important\">\n  Тарифы для монопаллет совпадают с тарифами для <strong>Поштучных паллет</strong>\n</div>\n\n<div class=\"description_limit\">\n<a href=\"/openapi/api-information#tag/Vvedenie/Limity-zaprosov\">Лимит запросов</a> на один аккаунт продавца:\n\n\n| Тип | Период | Лимит | Интервал | Всплеск |\n| --- | --- | --- | --- | --- |\n| Персональный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Сервисный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый с секретом | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый | 1 ч | 1 запрос | 1 ч | 1 запрос |\n</div>\n"
+      description: "Для товаров, которые поставляются на\_склад WB на\_монопаллетах, метод возвращает [стоимость](https://seller.wildberries.ru/dynamic-product-categories):\n  - доставки со склада до покупателя\n  - доставки от покупателя до склада\n  - хранения на\_складе WB\n\n<div class=\"description_important\">\n  Тарифы для монопаллет совпадают с тарифами для <strong>Поштучных паллет</strong>\n</div>\n\n<div class=\"description_limit\">\n<a href=\"/openapi/api-information#tag/introduction/Limity-zaprosov\">Лимит запросов</a> на один аккаунт продавца:\n\n\n| Тип | Период | Лимит | Интервал | Всплеск |\n| --- | --- | --- | --- | --- |\n| Персональный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Сервисный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый с секретом | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый | 1 ч | 1 запрос | 1 ч | 1 запрос |\n</div>\n"
       parameters:
         - $ref: '#/components/parameters/Date'
       responses:
@@ -215,7 +219,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TariffsPalletResponse'
+                $ref: '#/components/schemas/RatesPalletResponse'
         '400':
           description: Неправильный запрос
           content:
@@ -237,12 +241,13 @@ paths:
     servers:
       - url: https://common-api.wildberries.ru
     get:
+      operationId: getV1TariffsReturn
       x-readonly-method: true
       x-category: commonapi
       summary: "Тарифы на\_возврат"
       tags:
         - Стоимость возврата продавцу
-      description: "Метод возвращает [тарифы](https://seller.wildberries.ru/dynamic-product-categories/return-cost):\n  - на\_перевозку товаров со склада WB или из пункта приёма до продавца\n  - на\_обратную перевозку возвратов, которые не забрал продавец\n\n<div class=\"description_limit\">\n<a href=\"/openapi/api-information#tag/Vvedenie/Limity-zaprosov\">Лимит запросов</a> на один аккаунт продавца:\n\n\n| Тип | Период | Лимит | Интервал | Всплеск |\n| --- | --- | --- | --- | --- |\n| Персональный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Сервисный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый с секретом | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый | 1 ч | 1 запрос | 1 ч | 1 запрос |\n</div>\n"
+      description: "Метод возвращает [тарифы](https://seller.wildberries.ru/dynamic-product-categories/return-cost):\n  - на\_перевозку товаров со склада WB или из пункта приёма до продавца\n  - на\_обратную перевозку возвратов, которые не забрал продавец\n\n<div class=\"description_limit\">\n<a href=\"/openapi/api-information#tag/introduction/Limity-zaprosov\">Лимит запросов</a> на один аккаунт продавца:\n\n\n| Тип | Период | Лимит | Интервал | Всплеск |\n| --- | --- | --- | --- | --- |\n| Персональный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Сервисный | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый с секретом | 1 мин | 60 запросов | 1 сек | 5 запросов |\n| Базовый | 1 ч | 1 запрос | 1 ч | 1 запрос |\n</div>\n"
       parameters:
         - $ref: '#/components/parameters/Date'
       responses:
@@ -251,7 +256,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReturnTariffsResponse'
+                $ref: '#/components/schemas/ReturnRatesResponse'
         '400':
           description: Неправильный запрос
           content:
@@ -294,8 +299,8 @@ components:
         requestId: a6bdc2a4d2fde51c2036fa8af2483886
         origin: supply-api
       description: Значение параметра `warehouseIDs` не указано, или некорректно
-    Commission:
-      summary: Commission
+    Fee:
+      summary: Fee
       description: Комиссия
       value:
         report:
@@ -309,8 +314,8 @@ components:
             parentName: Бытовая техника
             subjectID: 6461
             subjectName: Оборудование зуботехническое
-    CommissionChina:
-      summary: CommissionChina
+    FeeChina:
+      summary: FeeChina
       description: Комиссия Китай
       value:
         report:
@@ -319,8 +324,8 @@ components:
             parentName: 国内设备
             subjectID: 6461
             subjectName: 牙齿矫正设备
-    CommissionTurkey:
-      summary: CommissionTurkey
+    FeeTurkey:
+      summary: FeeTurkey
       description: Комиссия Турция
       value:
         report:
@@ -329,8 +334,8 @@ components:
             parentName: Home appliance
             subjectID: 6461
             subjectName: Dental equipment
-    CommissionUzbekistan:
-      summary: CommissionUzbekistan
+    FeeUzbekistan:
+      summary: FeeUzbekistan
       description: Комиссия Узбекистан
       value:
         report:
@@ -341,8 +346,8 @@ components:
             parentName: Бытовая техника
             subjectID: 6461
             subjectName: Оборудование зуботехническое
-    CommissionUAE:
-      summary: CommissionUAE
+    FeeUAE:
+      summary: FeeUAE
       description: Комиссия ОАЭ
       value:
         report:
@@ -361,6 +366,7 @@ components:
       in: query
       name: date
       required: true
+      example: '2026-08-15'
       description: Дата в формате ГГГГ-ММ-ДД
       schema:
         type: string
@@ -376,7 +382,7 @@ components:
           - `en` — английский
           - `zh` — китайский
   schemas:
-    models.TariffsBoxResponse:
+    models.RatesBoxResponse:
       type: object
       properties:
         data:
@@ -443,13 +449,13 @@ components:
           example: 0,07
         geoName:
           type: string
-          description: "Страна, для РФ\_—\_округ"
-          example: Центральный федеральный округ
+          description: Местонахождение склада
+          example: Россия
         warehouseName:
           type: string
           description: Название склада
-          example: Коледино
-    models.TariffsPalletResponse:
+          example: Свой склад СГТ РФ
+    models.RatesPalletResponse:
       type: object
       properties:
         data:
@@ -501,8 +507,8 @@ components:
         warehouseName:
           type: string
           description: Название склада
-          example: Коледино
-    models.ReturnTariffsResponse:
+          example: СЦ Брест
+    models.ReturnRatesResponse:
       type: object
       properties:
         data:
@@ -606,7 +612,7 @@ components:
         warehouseName:
           type: string
           description: Название склада
-          example: Электросталь
+          example: Склад WB РФ
     models.ErrorModel:
       type: object
       properties:
@@ -640,7 +646,7 @@ components:
               - от `1` — множитель стоимости приёмки
         warehouseID:
           type: integer
-          description: ID склада. По нему можно получить [информацию о складе](./orders-fbw#tag/Informaciya-dlya-formirovaniya-postavok/paths/~1api~1v1~1warehouses/get)
+          description: ID склада. По нему можно получить [информацию о складе](./orders-fbw#tag/informationForFormingSupplies/operation/getV1Warehouses)
         warehouseName:
           type: string
           description: Название склада
@@ -696,22 +702,22 @@ components:
 
              - `true` — сортировочный центр (СЦ)
              - `false` — обычный
-    TariffsBoxResponse:
+    RatesBoxResponse:
       type: object
       properties:
         response:
-          $ref: '#/components/schemas/models.TariffsBoxResponse'
-    TariffsPalletResponse:
+          $ref: '#/components/schemas/models.RatesBoxResponse'
+    RatesPalletResponse:
       type: object
       properties:
         response:
-          $ref: '#/components/schemas/models.TariffsPalletResponse'
-    ReturnTariffsResponse:
+          $ref: '#/components/schemas/models.RatesPalletResponse'
+    ReturnRatesResponse:
       type: object
       properties:
         response:
-          $ref: '#/components/schemas/models.ReturnTariffsResponse'
-    Commission:
+          $ref: '#/components/schemas/models.ReturnRatesResponse'
+    Fee:
       additionalProperties: false
       type: object
       properties:
@@ -723,22 +729,22 @@ components:
             properties:
               kgvpBooking:
                 type: number
-                description: Комиссия по модели «Бронирование», %
+                description: Комиссия по модели **Бронирование**, %
               kgvpMarketplace:
                 type: number
-                description: Комиссия по модели «Маркетплейс» (`FBS`), %
+                description: Комиссия по модели **Маркетплейс** (`FBS`), %
               kgvpPickup:
                 type: number
-                description: Комиссия по модели «Самовывоз из магазина продавца» (`C&C`), %
+                description: Комиссия по модели **Самовывоз из магазина продавца** (`C&C`), %
               kgvpSupplier:
                 type: number
-                description: Комиссия по моделям «Витрина» (`DBS`) и «Курьер WB» (`DBW`), %
+                description: Комиссия по моделям **Витрина** (`DBS`) и **Курьер WB** (`DBW`), %
               kgvpSupplierExpress:
                 type: number
-                description: Комиссия по модели «Витрина экспресс» (`EDBS`), %
+                description: Комиссия по модели **Витрина экспресс** (`EDBS`), %
               paidStorageKgvp:
                 type: number
-                description: Комиссия по модели «Склад WB» (`FBW`), %
+                description: Комиссия по модели **Склад WB** (`FBW`), %
               parentID:
                 type: integer
                 description: ID родительской категории
@@ -751,7 +757,7 @@ components:
               subjectName:
                 type: string
                 description: Название предмета
-    CommissionChina:
+    FeeChina:
       type: object
       properties:
         report:
@@ -775,7 +781,7 @@ components:
               subjectName:
                 type: string
                 description: Название предмета
-    CommissionTurkey:
+    FeeTurkey:
       type: object
       properties:
         report:
@@ -799,7 +805,7 @@ components:
               subjectName:
                 type: string
                 description: Название предмета
-    CommissionUzbekistan:
+    FeeUzbekistan:
       type: object
       properties:
         report:
@@ -810,13 +816,13 @@ components:
             properties:
               kgvpMarketplaceUz:
                 type: number
-                description: Комиссия по модели «Маркетплейс» (`FBS`), %
+                description: Комиссия по модели **Маркетплейс** (`FBS`), %
               kgvpPaidStorageUz:
                 type: number
-                description: Комиссия по модели «Склад WB» (`FBW`), %
+                description: Комиссия по модели **Склад WB** (`FBW`), %
               kgvpSupplierUz:
                 type: number
-                description: Комиссия по модели «Витрина» (`DBS`), %
+                description: Комиссия по модели **Витрина** (`DBS`), %
               parentID:
                 type: integer
                 description: ID родительской категории
@@ -829,7 +835,7 @@ components:
               subjectName:
                 type: string
                 description: Название предмета
-    CommissionUAE:
+    FeeUAE:
       type: object
       properties:
         report:
@@ -922,7 +928,7 @@ components:
                 description: Заголовок ошибки
               detail:
                 type: string
-                description: Детали ошибки. Ошибка возвращается только сервисам из [Каталога решений для бизнеса](https://dev.wildberries.ru/business-solutions)
+                description: Детали ошибки. Ошибка возвращается только сервисам из [Каталога решений для бизнеса](/business-solutions)
           example:
             title: payment required
             detail: wb solution for business has insufficient funds on its balance. please top up the balance in the company's personal account https://dev.wildberries.ru/company
