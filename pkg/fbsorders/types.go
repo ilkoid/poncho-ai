@@ -73,6 +73,12 @@ type DownloadOptions struct {
 	// FeedDays — глубина ленты заказов в сутках (default: 7, максимум 31).
 	FeedDays int
 
+	// FeedMpOnly — сохранять из ленты только заказы склада продавца
+	// (is_mp=true: FBS/DBS). API не умеет фильтровать по модели выполнения,
+	// поэтому страницы качаются целиком, а не-FBS (FBW) отбрасываются до записи.
+	// nil/default = true (утилита FBS-доменная). false = писать все модели.
+	FeedMpOnly *bool
+
 	// DryRun пропускает все записи в БД.
 	DryRun bool
 

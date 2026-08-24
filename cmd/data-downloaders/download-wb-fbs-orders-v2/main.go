@@ -42,6 +42,7 @@ type FBSSection struct {
 	StatusWindowDays int    `yaml:"status_window_days"` // окно безусловного обновления статусов (default 90)
 	FeedEnabled      *bool  `yaml:"feed_enabled"`       // лента заказов (default true)
 	FeedDays         int    `yaml:"feed_days"`          // глубина ленты, ≤31 (default 7)
+	FeedMpOnly       *bool  `yaml:"feed_mp_only"`       // только FBS/DBS, без FBW (default true)
 	RateLimit        int    `yaml:"rate_limit"`         // desired для v3 endpoints (default 120)
 	BurstLimit       int    `yaml:"burst"`              // (default 20)
 	FeedRateLimit    int    `yaml:"feed_rate_limit"`    // desired для order-feed (default 1)
@@ -64,6 +65,7 @@ func main() {
 	days := flag.Int("days", 0, "Orders lookback days (overrides config)")
 	statusWindow := flag.Int("status-window-days", 0, "Status refresh window days (overrides config)")
 	noFeed := flag.Bool("no-feed", false, "Disable order-feed phase (overrides config)")
+	feedAllModels := flag.Bool("feed-all-models", false, "Save FBW rows too (default: FBS/DBS only, overrides config)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -90,6 +92,10 @@ func main() {
 	}
 	if *noFeed {
 		cfg.FBS.FeedEnabled = new(bool) // false
+	}
+	if *feedAllModels {
+		f := false
+		cfg.FBS.FeedMpOnly = &f
 	}
 
 	feedEnabled := cfg.FBS.FeedEnabled == nil || *cfg.FBS.FeedEnabled
@@ -126,6 +132,7 @@ func main() {
 		To:               cfg.FBS.To,
 		StatusWindowDays: cfg.FBS.StatusWindowDays,
 		DisableFeed:      !feedEnabled,
+		FeedMpOnly:       cfg.FBS.FeedMpOnly, // nil = default true (FBS/DBS only)
 		FeedDays:         cfg.FBS.FeedDays,
 		DryRun:           *dryRun,
 		OnProgress: func() func(string) {

@@ -12,6 +12,7 @@ fbs:
   status_window_days: 90   # безусловное обновление статусов; незакрытые — любого возраста
   feed_enabled: true
   feed_days: 7
+  feed_mp_only: true         # только FBS/DBS (is_mp=true); FBW отбрасывается до записи
   rate_limit: 120          # swagger: 300 req/min общий бакет v3 (консервативно)
   burst: 20
   feed_rate_limit: 1       # swagger: order-feed 1 req/min

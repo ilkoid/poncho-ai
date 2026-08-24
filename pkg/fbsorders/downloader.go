@@ -98,21 +98,36 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 		d.progress("фаза 3/3: лента заказов с %s (по дате текущего статуса)", feedFrom.Format("2006-01-02"))
 
 		feedPage := 0
+		mpOnly := d.opts.FeedMpOnly == nil || *d.opts.FeedMpOnly
 		_, err := d.source.OrderFeedIterator(ctx, feedFrom, func(page []wb.OrderFeedItem) error {
 			feedPage++
+			// API не фильтрует по модели выполнения: FBW-строки отбрасываем
+			// до записи (пагинация считается по исходному размеру страницы).
+			saved := page
+			skipped := 0
+			if mpOnly {
+				saved = make([]wb.OrderFeedItem, 0, len(page))
+				for _, it := range page {
+					if it.IsMp {
+						saved = append(saved, it)
+					}
+				}
+				skipped = len(page) - len(saved)
+			}
 			if d.opts.DryRun {
-				res.FeedRows += len(page)
-				d.progress("лента: страница %d — %d строк (dry-run)", feedPage, len(page))
+				res.FeedRows += len(saved)
+				d.progress("лента: страница %d — %d FBS-строк из %d (dry-run)", feedPage, len(saved), len(page))
 				return nil
 			}
-			n, err := d.writer.SaveOrderFeed(ctx, page)
+			n, err := d.writer.SaveOrderFeed(ctx, saved)
 			if err != nil {
 				return fmt.Errorf("save order feed: %w", err)
 			}
 			res.FeedRows += n
 			// Лента идёт со скоростью 1 страница/мин (лимит API): постраничный
 			// лог обязателен, иначе фаза minutes-long выглядит как висяк.
-			d.progress("лента: страница %d — %d строк (всего %d)", feedPage, n, res.FeedRows)
+			d.progress("лента: страница %d — %d строк, пропущено не-FBS %d (всего %d)",
+				feedPage, n, skipped, res.FeedRows)
 			return nil
 		})
 		if err != nil {

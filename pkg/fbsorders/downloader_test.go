@@ -269,6 +269,43 @@ func TestRun_DisableFeed(t *testing.T) {
 	}
 }
 
+// FeedMpOnly: по умолчанию сохраняются только строки склада продавца
+// (is_mp=true: FBS/DBS); FeedMpOnly=false пишет и FBW.
+func TestRun_FeedMpOnlyFilter(t *testing.T) {
+	orders, byID := makeOrders(5)
+	mixed := []wb.OrderFeedItem{
+		{Srid: "fbs-1", IsMp: true},
+		{Srid: "fbw-1", IsMp: false},
+		{Srid: "fbs-2", IsMp: true},
+		{Srid: "fbw-2", IsMp: false},
+	}
+
+	run := func(mpOnly *bool) (*DownloadResult, *memWriter) {
+		src := &fakeSource{orders: orders, statusesByID: byID, feed: mixed}
+		w := &memWriter{}
+		res, err := NewDownloader(src, w, DownloadOptions{Days: 1, FeedDays: 7, FeedMpOnly: mpOnly}).Run(context.Background())
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		return res, w
+	}
+
+	res, w := run(nil) // nil = дефолт FBS-only
+	if res.FeedRows != 2 || len(w.savedFeed) != 2 {
+		t.Fatalf("default FBS-only: FeedRows=%d saved=%d, want 2", res.FeedRows, len(w.savedFeed))
+	}
+	for _, it := range w.savedFeed {
+		if !it.IsMp {
+			t.Errorf("сохранена не-FBS строка: %+v", it)
+		}
+	}
+
+	res, w = run(new(bool)) // false = все модели
+	if res.FeedRows != 4 || len(w.savedFeed) != 4 {
+		t.Fatalf("all-models: FeedRows=%d saved=%d, want 4", res.FeedRows, len(w.savedFeed))
+	}
+}
+
 // resolveRange: From/To и Days, инклюзивный To.
 func TestResolveRange(t *testing.T) {
 	dl := NewDownloader(&fakeSource{}, &memWriter{}, DownloadOptions{Days: 90})

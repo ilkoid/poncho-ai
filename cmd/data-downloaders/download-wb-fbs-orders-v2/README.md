@@ -9,7 +9,7 @@
 |---|---|---|---|
 | 1 | `GET /api/v3/orders` — `docs/wb_api_swagger/03-orders-fbs.yaml:463` | `public.fbs_orders` | Сборочные задания (глубина 90 дн, окна по 30 дн, курсор `next`). `rid` == `srid` в orders/sales/finance |
 | 2 | `POST /api/v3/orders/status` — `03-orders-fbs.yaml:548` | `public.fbs_orders_status` + `fbs_orders_status_log` | Текущий статус (1:1) и журнал уникальных состояний `(order_id, supplier_status, wb_status)` с `first_seen`/`last_seen` |
-| 3 | `POST /api/analytics/v1/order-feed` — `11-analytics.yaml:1682` | `public.order_feed` | Лента заказов: `cancel_type` (причина отмены), география доставки, возвраты, `updated_at` текущего статуса. Окно ≤ 31 сут |
+| 3 | `POST /api/analytics/v1/order-feed` — `11-analytics.yaml:1682` | `public.order_feed` | Лента заказов: `cancel_type` (причина отмены), география доставки, возвраты, `updated_at` текущего статуса. Окно ≤ 31 сут. **Только FBS/DBS (`is_mp=true`)** — API не фильтрует по модели выполнения, FBW-строки качаются, но отбрасываются до записи (`feed_mp_only: false` / `--feed-all-models` — писать все) |
 
 Гарантия полноты статусов: каждый прогон опрашивает статусы **всех** заданий
 моложе `status_window_days` **плюс любых незакрытых** (wb_status не терминальный)
