@@ -8,9 +8,11 @@
 package primitives
 
 import (
+	"strconv"
+	"sync"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ilkoid/poncho-ai/pkg/events"
-	"sync"
 )
 
 // EventHandler manages event handling with pluggable renderers.
@@ -61,8 +63,8 @@ func NewEventHandler(sub events.Subscriber, vm *ViewportManager, sm *StatusBarMa
 // Default renderers:
 //   - EventThinking: "🤔 Thinking..."
 //   - EventThinkingChunk: (no output, used for streaming)
-//   - EventToolCall: "🔧 Calling: tool_name(args)"
-//   - EventToolResult: "✓ Result: tool_name (Xms)"
+//   - EventToolCall: "- tool_name(truncated args)"
+//   - EventToolResult: "- tool_name (duration)"
 //   - EventUserInterruption: "⏸️ Interruption (iteration N): message"
 //   - EventMessage: AI response (full content)
 //   - EventError: "❌ Error: message"
@@ -79,19 +81,23 @@ func (eh *EventHandler) registerDefaultRenderers() {
 		return "", lipgloss.Style{}
 	})
 
-	// EventToolCall: shows tool invocation
+	// EventToolCall: shows tool invocation with truncated args
 	eh.RegisterRenderer(events.EventToolCall, func(event events.Event) (string, lipgloss.Style) {
 		if data, ok := event.Data.(events.ToolCallData); ok {
-			return "- " + data.ToolName,
+			args := data.Args
+			if len(args) > 50 {
+				args = args[:47] + "..."
+			}
+			return "- " + data.ToolName + "(" + args + ")",
 				lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Dim gray
 		}
 		return "- calling...", lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	})
 
-	// EventToolResult: shows tool execution result
+	// EventToolResult: shows tool execution result with duration
 	eh.RegisterRenderer(events.EventToolResult, func(event events.Event) (string, lipgloss.Style) {
 		if data, ok := event.Data.(events.ToolResultData); ok {
-			return "- " + data.ToolName,
+			return "- " + data.ToolName + " (" + data.Duration.String() + ")",
 				lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // Dim gray
 		}
 		return "- done", lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
@@ -104,7 +110,7 @@ func (eh *EventHandler) registerDefaultRenderers() {
 			if len(msg) > 60 {
 				msg = msg[:57] + "..."
 			}
-			return "⏸️ Interruption (iteration " + string(rune('0'+data.Iteration)) + "): " + msg,
+			return "⏸️ Interruption (iteration " + strconv.Itoa(data.Iteration) + "): " + msg,
 				lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // Orange
 		}
 		return "⏸️ Interruption", lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
