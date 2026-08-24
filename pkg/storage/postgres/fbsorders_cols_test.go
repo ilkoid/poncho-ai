@@ -93,3 +93,22 @@ func TestLoadFBSStatusCandidatesSQL_CoversAllGaps(t *testing.T) {
 		}
 	}
 }
+
+// Утилита начинает с нуля: если таблицы стоят в легаси-облике (TEXT-даты),
+// инициализация обязана упасть с actionable-подсказкой, а не молчать
+// до первой записи невнятной ошибкой приведения типа.
+func TestLegacyFBSShapeError_MentionsDrop(t *testing.T) {
+	err := legacyFBSShapeError([]string{"fbs_orders.created_at (text)"})
+	if err == nil {
+		t.Fatal("legacyFBSShapeError returned nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"DROP TABLE public.fbs_orders, public.fbs_orders_status", // точная команда
+		"fbs_orders.created_at (text)",                           // какая колонка не та
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message missing %q:\n%s", want, msg)
+		}
+	}
+}

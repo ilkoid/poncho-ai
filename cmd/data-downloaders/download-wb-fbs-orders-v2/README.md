@@ -16,11 +16,18 @@
 любого возраста. Ошибка батча статусов прерывает прогон (выход с ошибкой) —
 молчаливых пропусков переходов не бывает. Сбой ленты — нефатален (`FeedErr`).
 
-Миграция прод-данных: `fbs_orders`/`fbs_orders_status` (TEXT-снапшот
-2026-08-16) мигрируются на месте — `created_at`/`downloaded_at` → TIMESTAMPTZ,
-добавляются ценовые/типовые колонки; статусы снапшота переносятся в журнал с
-`first_seen = 2026-08-16` (история не теряется). Анализатор
-`cmd/data-analyzers/fbs-orders-report/` работает без правок.
+Утилита начинает **с нуля**, без миграций: создаёт канонические таблицы
+(`TIMESTAMPTZ`-даты, `BIGINT`-ID). История журнала статусов начинается с первого
+прогона. В БД, где остались легаси-таблицы разового TEXT-снапшота 2026-08-16
+(`import-fbs-snapshot.sh`), инициализация падает с подсказкой; перед первым
+прогоном снимите их руками:
+
+```sql
+DROP TABLE public.fbs_orders, public.fbs_orders_status;
+```
+
+Анализатор `cmd/data-analyzers/fbs-orders-report/` работает поверх новых таблиц
+без правок (касты `created_at::timestamptz` валидны и на timestamptz).
 
 Не храним (осознанно): адрес покупателя и комментарий (PII, есть в API),
 `colorCode`, `offices[]`.
@@ -35,8 +42,9 @@ go run . --no-feed ...                             # без фазы ленты
 go run . --days 7 --status-window-days 30 ...      # инкрементальный прогон
 ```
 
-Env: `WB_API_CONTENT_KEY` (основной), `WB_API_KEY` (fallback при 401/403),
-`PG_PWD` + `PGHOST/PGPORT/PGUSER/PGDATABASE`.
+Env: `WB_API_KEY` (основной — marketplace-api/v3 его принимает; контент-ключ
+даёт 403 `scope is not allowed`, при 401/403 загрузчик сам повторит с
+`WB_API_CONTENT_KEY`), `PG_PWD` + `PGHOST/PGPORT/PGUSER/PGDATABASE`.
 
 Rate limits (swagger): v3 задания+статусы — общий бакет 300 req/min (ставим
 120), order-feed — 1 req/min. Если WB даст basic-режим ленты (2 req/24h) —

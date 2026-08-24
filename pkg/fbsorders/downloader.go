@@ -60,7 +60,9 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 	d.progress("фаза 1/3: задания FBS за %s .. %s (окна по 30 дней)",
 		from.Format("2006-01-02"), to.Format("2006-01-02"))
 
+	pages := 0
 	_, err = d.source.FBSOrdersIterator(ctx, from, to, func(page []wb.FBSOrder) error {
+		pages++
 		if d.opts.DryRun {
 			res.TotalOrders += len(page)
 			d.progress("dry-run: страница %d заданий пропущена", len(page))
@@ -71,6 +73,9 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 			return fmt.Errorf("save orders: %w", err)
 		}
 		res.TotalOrders += n
+		// Страницы идут ~1/с: постраничный лог — индикатор жизни фазы,
+		// иначе минуты тишины до итога выглядят как зависание.
+		d.progress("задания: страница %d — %d строк (всего %d)", pages, n, res.TotalOrders)
 		return nil
 	})
 	if err != nil {
@@ -92,9 +97,12 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 		feedFrom := time.Now().UTC().AddDate(0, 0, -d.opts.FeedDays)
 		d.progress("фаза 3/3: лента заказов с %s (по дате текущего статуса)", feedFrom.Format("2006-01-02"))
 
+		feedPage := 0
 		_, err := d.source.OrderFeedIterator(ctx, feedFrom, func(page []wb.OrderFeedItem) error {
+			feedPage++
 			if d.opts.DryRun {
 				res.FeedRows += len(page)
+				d.progress("лента: страница %d — %d строк (dry-run)", feedPage, len(page))
 				return nil
 			}
 			n, err := d.writer.SaveOrderFeed(ctx, page)
@@ -102,6 +110,9 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 				return fmt.Errorf("save order feed: %w", err)
 			}
 			res.FeedRows += n
+			// Лента идёт со скоростью 1 страница/мин (лимит API): постраничный
+			// лог обязателен, иначе фаза minutes-long выглядит как висяк.
+			d.progress("лента: страница %d — %d строк (всего %d)", feedPage, n, res.FeedRows)
 			return nil
 		})
 		if err != nil {

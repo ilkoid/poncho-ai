@@ -75,6 +75,17 @@ func Progress(batch, total int, label, msg string, start time.Time) {
 	fmt.Printf("%s [%s] %s: %s\n", ts, batchInfo, label, msg)
 }
 
+// ProgressDT prints a progress line with full date+time — для длинных
+// прогонов, пересекающих полночь, где одной минуты суток недостаточно.
+//
+//	dllog.ProgressDT(5, 0, "fbs", "лента: страница 5", start)
+//	→ 2026-08-25 01:12:52 [5] fbs: лента: страница 5
+func ProgressDT(batch, total int, label, msg string, start time.Time) {
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	batchInfo := formatBatch(batch, total, start)
+	fmt.Printf("%s [%s] %s: %s\n", ts, batchInfo, label, msg)
+}
+
 // Error prints a timestamped error line (red when terminal).
 //
 //	14:33:45 error: failed to save bids: disk full

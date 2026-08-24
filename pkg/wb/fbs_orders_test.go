@@ -238,13 +238,13 @@ func TestFBSOrdersIterator_StuckCursor(t *testing.T) {
 
 func TestOrderFeedIterator_SnapshotAndClamp(t *testing.T) {
 	mock := &mockHTTPClient{responses: []*mockResponse{
-		{status: 200, body: `{"snapshotTime": "2026-08-20T10:00:00Z", "currency": "RUB", "orders": [
+		{status: 200, body: `{"data": {"snapshotTime": "2026-08-20T10:00:00Z", "currency": "RUB", "orders": [
 			{"nmId": 1, "chrtId": 2, "srid": "s1", "createdAt": "2026-08-19T10:00:00Z",
 			 "updatedAt": "2026-08-20T09:00:00Z", "status": "buyout", "cancelType": null,
 			 "warehouseName": "Склад продавца", "warehouseRegion": "", "isMp": true,
 			 "destinationCity": "Москва", "destinationDistrict": "Центральный",
 			 "sellerPrice": 100, "isB2b": false}
-		]}`},
+		]}}`},
 	}}
 	c := New("test-key")
 	c.SetHTTPClient(mock)

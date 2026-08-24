@@ -133,7 +133,7 @@ func main() {
 			start := time.Now()
 			return func(msg string) {
 				step++
-				dllog.Progress(step, 0, "fbs", msg, start)
+				dllog.ProgressDT(step, 0, "fbs", msg, start)
 			}
 		}(),
 	}
@@ -150,14 +150,15 @@ func main() {
 		return
 	}
 
-	// Real API: основной ключ → при 401/403 один повтор с fallback-ключом
-	// (проверено bash-скриптом: content-ключ может не иметь scope на marketplace-api).
-	primary := resolveAPIKey(cfg, "")
-	fallback := resolveAPIKey(cfg, "WB_API_KEY")
+	// Real API: основной ключ → при 401/403 один повтор с другим ключом.
+	// Эмпирика: marketplace-api/v3 принимает WB_API_KEY (fetch-fbs-orders.sh,
+	// 2026-08-16); контент-ключ получает 403 "scope is not allowed" (2026-08-25).
+	primary := resolveAPIKey(cfg)
+	fallback := fallbackAPIKey(primary)
 
 	result, err := runWithKey(ctx, primary, cfg, writer, opts)
-	if err != nil && fallback != "" && fallback != primary && isAuthError(err) {
-		log.Printf("⚠️  основной ключ отклонён (401/403), повтор с WB_API_KEY")
+	if err != nil && fallback != "" && isAuthError(err) {
+		log.Printf("⚠️  основной ключ отклонён (401/403), повтор с fallback-ключом")
 		result, err = runWithKey(ctx, fallback, cfg, writer, opts)
 	}
 	if err != nil {
@@ -223,23 +224,25 @@ func createFBSWriter(ctx context.Context, cfg config.V2StorageConfig) (fbsorders
 	}
 }
 
-// resolveAPIKey: api_key (direct) > api_key_env > fallbackEnv.
-func resolveAPIKey(cfg *Config, fallbackEnv string) string {
+// resolveAPIKey: api_key (direct) > api_key_env (default WB_API_KEY).
+func resolveAPIKey(cfg *Config) string {
 	if cfg.WB.APIKey != "" {
 		return cfg.WB.APIKey
 	}
-	env := cfg.WB.APIKeyEnv
-	if env == "" && fallbackEnv != "" {
-		env = fallbackEnv
+	if cfg.WB.APIKeyEnv == "" {
+		return os.Getenv("WB_API_KEY")
 	}
-	if env == "" {
-		return ""
-	}
-	if v := os.Getenv(env); v != "" {
-		return v
-	}
-	if fallbackEnv != "" {
-		return os.Getenv(fallbackEnv)
+	return os.Getenv(cfg.WB.APIKeyEnv)
+}
+
+// fallbackAPIKey — любой ДРУГОЙ доступный ключ для повтора при 401/403.
+// Не зависит от api_key_env: если основной ключ взят из api_key_env,
+// прежняя схема возвращала его же и fallback молча не срабатывал.
+func fallbackAPIKey(primary string) string {
+	for _, env := range []string{"WB_API_KEY", "WB_API_CONTENT_KEY"} {
+		if v := os.Getenv(env); v != "" && v != primary {
+			return v
+		}
 	}
 	return ""
 }
@@ -251,7 +254,8 @@ func loadConfig(path string) (*Config, error) {
 	}
 	// Defaults
 	if cfg.WB.APIKeyEnv == "" {
-		cfg.WB.APIKeyEnv = "WB_API_CONTENT_KEY" // marketplace-api обычно принимает content-ключ
+		// marketplace-api/v3: WB_API_KEY работает, контент-ключ без scope (403).
+		cfg.WB.APIKeyEnv = "WB_API_KEY"
 	}
 	if cfg.FBS.Days == 0 {
 		cfg.FBS.Days = 90 // глубина API

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -14,11 +15,9 @@ import (
 //   - POST /api/v3/orders/status       — docs/wb_api_swagger/03-orders-fbs.yaml:548
 //   - POST /api/analytics/v1/order-feed — docs/wb_api_swagger/11-analytics.yaml:1682
 //
-// Особенность: таблицы fbs_orders / fbs_orders_status существуют в проде с 2026-08-16
-// как разовый TEXT-снапшот (import-fbs-snapshot.sh). Схема ниже мигрирует их на месте
-// (TEXT → TIMESTAMPTZ, новые колонки) с сохранением данных; на чистой БД создаёт сразу
-// правильные типы. Имена колонок существующих таблиц не меняются — анализатор
-// cmd/data-analyzers/fbs-orders-report продолжает работать без правок.
+// Утилита начинает с нуля: каноническая DDL, миграций нет. Если в БД остались
+// легаси-таблицы разового TEXT-снапшота 2026-08-16 (import-fbs-snapshot.sh),
+// инициализация падает с подсказкой снять их DROP'ом перед первым прогоном.
 const (
 	fbsOrdersSchemaSQL = `
 CREATE TABLE IF NOT EXISTS fbs_orders (
@@ -98,56 +97,56 @@ CREATE INDEX IF NOT EXISTS idx_order_feed_is_mp_updated ON order_feed(is_mp, upd
 CREATE INDEX IF NOT EXISTS idx_order_feed_status ON order_feed(status);
 CREATE INDEX IF NOT EXISTS idx_order_feed_nm ON order_feed(nm_id);
 `
-
-	// fbsOrdersMigrations приводит существующие TEXT-таблицы разового снапшота
-	// (2026-08-16) к каноническим типам. Идемпотентно: на свежей БД это no-op.
-	// NULLIF(...,'') — защита от пустых строк (в проде их нет, проверено 2026-08-23).
-	fbsOrdersTypeMigrations = `
-ALTER TABLE fbs_orders ALTER COLUMN created_at TYPE TIMESTAMPTZ USING NULLIF(created_at, '')::timestamptz;
-ALTER TABLE fbs_orders ALTER COLUMN downloaded_at DROP DEFAULT;
-ALTER TABLE fbs_orders ALTER COLUMN downloaded_at TYPE TIMESTAMPTZ USING NULLIF(downloaded_at, '')::timestamptz;
-ALTER TABLE fbs_orders ALTER COLUMN downloaded_at SET DEFAULT now();
-ALTER TABLE fbs_orders_status ALTER COLUMN downloaded_at DROP DEFAULT;
-ALTER TABLE fbs_orders_status ALTER COLUMN downloaded_at TYPE TIMESTAMPTZ USING NULLIF(downloaded_at, '')::timestamptz;
-ALTER TABLE fbs_orders_status ALTER COLUMN downloaded_at SET DEFAULT now();
-`
-
-	fbsOrdersColumnMigrations = `
-ALTER TABLE fbs_orders ADD COLUMN IF NOT EXISTS converted_price BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE fbs_orders ADD COLUMN IF NOT EXISTS currency_code INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE fbs_orders ADD COLUMN IF NOT EXISTS converted_currency_code INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE fbs_orders ADD COLUMN IF NOT EXISTS cargo_type SMALLINT NOT NULL DEFAULT 0;
-ALTER TABLE fbs_orders ADD COLUMN IF NOT EXISTS cross_border_type SMALLINT NOT NULL DEFAULT 0;
-ALTER TABLE fbs_orders ADD COLUMN IF NOT EXISTS scan_price BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE fbs_orders ADD COLUMN IF NOT EXISTS is_b2b BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE fbs_orders ADD COLUMN IF NOT EXISTS barcode TEXT NOT NULL DEFAULT '';
-`
-
-	// fbsStatusLogBackfill переносит статусы разового снапшота в журнал, чтобы
-	// история до появления загрузчика не потерялась (first_seen = downloaded_at снапшота).
-	// Выполняется один раз: пока журнал пуст.
-	fbsStatusLogBackfillSQL = `
-INSERT INTO fbs_orders_status_log (order_id, supplier_status, wb_status, is_cancellable, first_seen, last_seen)
-SELECT s.order_id, s.supplier_status, s.wb_status, s.is_cancellable, s.downloaded_at, s.downloaded_at
-FROM fbs_orders_status s
-WHERE NOT EXISTS (SELECT 1 FROM fbs_orders_status_log)
-ON CONFLICT (order_id, supplier_status, wb_status) DO NOTHING;
-`
 )
 
-// initFBSOrdersSchema создаёт/мигрирует таблицы FBS-заданий.
+// initFBSOrdersSchema создаёт таблицы FBS-заданий и проверяет, что они не легаси.
 func initFBSOrdersSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, fbsOrdersSchemaSQL); err != nil {
 		return fmt.Errorf("fbs orders schema: %w", err)
 	}
-	if _, err := pool.Exec(ctx, fbsOrdersTypeMigrations); err != nil {
-		return fmt.Errorf("fbs orders type migrations (text→timestamptz): %w", err)
+	return verifyFBSSchema(ctx, pool)
+}
+
+// verifyFBSSchema fail-fast: CREATE IF NOT EXISTS молчит, если таблицы уже есть,
+// а легаси-TEXT-облик разового снапшота уронит первую же запись невнятной ошибкой
+// приведения типа. Проверяем несущие timestamp-колонки и даём actionable-подсказку.
+func verifyFBSSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	rows, err := pool.Query(ctx, `
+		SELECT table_name || '.' || column_name, data_type
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND ( (table_name = 'fbs_orders'          AND column_name IN ('created_at', 'downloaded_at'))
+		     OR (table_name = 'fbs_orders_status'   AND column_name = 'downloaded_at') )`)
+	if err != nil {
+		return fmt.Errorf("verify fbs schema: %w", err)
 	}
-	if _, err := pool.Exec(ctx, fbsOrdersColumnMigrations); err != nil {
-		return fmt.Errorf("fbs orders column migrations: %w", err)
+	defer rows.Close()
+
+	var legacy []string
+	for rows.Next() {
+		var name, dataType string
+		if err := rows.Scan(&name, &dataType); err != nil {
+			return fmt.Errorf("verify fbs schema: scan: %w", err)
+		}
+		if dataType != "timestamp with time zone" {
+			legacy = append(legacy, fmt.Sprintf("%s (%s)", name, dataType))
+		}
 	}
-	if _, err := pool.Exec(ctx, fbsStatusLogBackfillSQL); err != nil {
-		return fmt.Errorf("fbs status log backfill: %w", err)
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("verify fbs schema: %w", err)
+	}
+	if len(legacy) > 0 {
+		return legacyFBSShapeError(legacy)
 	}
 	return nil
+}
+
+// legacyFBSShapeError — подсказка при обнаружении легаси-таблиц: единственное
+// действие, которое принимает утилита «с нуля», — ручной DROP перед прогоном.
+func legacyFBSShapeError(legacy []string) error {
+	return fmt.Errorf(
+		"fbs tables exist in legacy snapshot shape: %s\n"+
+			"утилита начинает с нуля и не мигрирует их; перед первым прогоном выполните:\n"+
+			"  DROP TABLE public.fbs_orders, public.fbs_orders_status;",
+		strings.Join(legacy, ", "))
 }

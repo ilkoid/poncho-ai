@@ -8,36 +8,36 @@ import (
 
 func TestFormatBatch(t *testing.T) {
 	tests := []struct {
-		name   string
-		cur    int
-		total  int
-		start  time.Time
-		want   []string // substrings that must appear
-		dont   []string // substrings that must NOT appear
+		name  string
+		cur   int
+		total int
+		start time.Time
+		want  []string // substrings that must appear
+		dont  []string // substrings that must NOT appear
 	}{
 		{
-			name:  "zero total shows count only",
-			cur:   5, total: 0,
+			name: "zero total shows count only",
+			cur:  5, total: 0,
 			want: []string{"5"},
 			dont: []string{"/", "ETA"},
 		},
 		{
-			name:  "with total shows fraction and percent",
-			cur:   5, total: 12,
+			name: "with total shows fraction and percent",
+			cur:  5, total: 12,
 			want: []string{"5/12", "41%"},
 			dont: []string{"ETA"},
 		},
 		{
-			name:  "with start time shows ETA",
-			cur:   5, total: 12,
+			name: "with start time shows ETA",
+			cur:  5, total: 12,
 			start: time.Now().Add(-30 * time.Second),
-			want: []string{"5/12", "41%", "ETA"},
+			want:  []string{"5/12", "41%", "ETA"},
 		},
 		{
-			name:  "complete shows 100%",
-			cur:   12, total: 12,
+			name: "complete shows 100%",
+			cur:  12, total: 12,
 			start: time.Now().Add(-2 * time.Minute),
-			want: []string{"12/12", "100%"},
+			want:  []string{"12/12", "100%"},
 		},
 	}
 
@@ -105,4 +105,9 @@ func TestDone_DoesNotPanic(t *testing.T) {
 func TestProgress_DoesNotPanic(t *testing.T) {
 	Progress(3, 10, "sales", "150 rows", time.Now().Add(-5*time.Second))
 	Progress(1, 0, "balance", "ok", time.Time{})
+}
+
+func TestProgressDT_DoesNotPanic(t *testing.T) {
+	ProgressDT(3, 10, "fbs", "лента: страница 3", time.Now().Add(-5*time.Second))
+	ProgressDT(1, 0, "fbs", "фаза 1/3", time.Time{})
 }

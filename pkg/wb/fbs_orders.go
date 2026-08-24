@@ -276,6 +276,12 @@ type orderFeedResponse struct {
 	Orders       []OrderFeedItem `json:"orders"`
 }
 
+// Тело ответа обёрнуто в {"data": {...}} — path-схема 200 у /api/analytics/v1/order-feed
+// (11-analytics.yaml). Без обёртки orders молча пустеют: 0 строк без ошибки.
+type orderFeedEnvelope struct {
+	Data orderFeedResponse `json:"data"`
+}
+
 // OrderFeedIterator итерирует по ленте заказов за период [from, now]
 // (по дате текущего статуса). Пагинация offset + snapshotTime из ПЕРВОГО ответа
 // (swagger: запросы одной выборки — с одним snapshotTime, иначе пропуски/дубли).
@@ -311,27 +317,28 @@ func (c *Client) OrderFeedIterator(
 		}
 		req.Pagination = &pg
 
-		var resp orderFeedResponse
+		var resp orderFeedEnvelope
 		if err := c.Post(ctx, OrderFeedToolID, OrderFeedBaseURL, rateLimit, burst,
 			"/api/analytics/v1/order-feed", req, &resp); err != nil {
 			return total, fmt.Errorf("order-feed page (offset=%d): %w", offset, err)
 		}
+		orders := resp.Data.Orders
 
 		// snapshotTime фиксируем только из первого ответа выборки.
 		if snapshotTime == "" {
-			snapshotTime = resp.SnapshotTime
+			snapshotTime = resp.Data.SnapshotTime
 		}
 
-		if len(resp.Orders) > 0 {
-			if err := callback(resp.Orders); err != nil {
+		if len(orders) > 0 {
+			if err := callback(orders); err != nil {
 				return total, err
 			}
-			total += len(resp.Orders)
+			total += len(orders)
 		}
 
-		if len(resp.Orders) < limit {
+		if len(orders) < limit {
 			return total, nil
 		}
-		offset += len(resp.Orders)
+		offset += len(orders)
 	}
 }

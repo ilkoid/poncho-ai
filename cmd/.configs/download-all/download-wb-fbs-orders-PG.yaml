@@ -4,7 +4,7 @@
 
 wb:
   api_key: ""
-  api_key_env: "WB_API_CONTENT_KEY"   # при 401/403 загрузчик сам повторит с WB_API_KEY
+  api_key_env: "WB_API_KEY"   # marketplace-api/v3: контент-ключ даёт 403 scope; fallback на WB_API_CONTENT_KEY автоматический
   timeout: "15m"
 
 fbs:
