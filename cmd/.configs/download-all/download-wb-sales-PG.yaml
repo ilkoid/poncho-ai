@@ -10,6 +10,7 @@ download:
   days: 7
   resume: false
   rewrite: true
+  skip_service_records: true # Пропускать служебные записи (логистика, штрафы) — не пишем в service_records
   adaptive_recover_after: 5
   adaptive_probe_after: 10
   max_backoff_seconds: 60
