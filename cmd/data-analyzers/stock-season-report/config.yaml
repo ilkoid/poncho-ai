@@ -1,0 +1,28 @@
+# stock-season-report — отчёт по остаткам WB в разрезе складов × сезонов.
+#
+# Утилита собирает из PostgreSQL (wb_data_prod) по срезу snapshot_date:
+#   stocks_daily_warehouses (склад × артикул × размер)
+#     → cards.nm_id → cards.vendor_code = onec_goods.article → onec_goods.season
+# Три типа остатков: на складе (quantity), в пути к клиенту (in_way_to_client),
+# в пути от клиента (in_way_from_client). Только штуки — денег тут нет (себестоимости
+# в базе нет, отдельная задача).
+#
+# Источник: одна база wb_data_prod. Только SELECT — запись в БД не производится.
+# Приоритет: CLI флаг > config.yaml > defaults.
+
+# ─── Дата среза ───────────────────────────────────────────
+# Пусто → последний доступный срез в stocks_daily_warehouses
+# (SELECT MAX(snapshot_date)). Ежедневные срезы есть с 2026-07-16.
+date: ""
+
+# ─── Источник данных (PostgreSQL) ──────────────────────────
+storage:
+  backend: "postgres"
+  pg_database: "wb_data_prod"     # рабочая база с реальными данными
+  pg_password_env: "PG_PWD"       # env var с паролем (per-machine)
+  # pg_dsn: ""                    # полный DSN (опционально, перекрывает env)
+  # db_path: ""                   # (только для backend: sqlite)
+
+# ─── Экспорт ───────────────────────────────────────────────
+# Путь к XLSX. Пусто → reports/stock-season-<date>.xlsx.
+xlsx: ""

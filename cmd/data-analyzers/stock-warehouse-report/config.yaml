@@ -1,0 +1,30 @@
+# stock-warehouse-report — остатки FBO (склады WB) → XLSX, по листу на каждый склад.
+#
+# Утилита собирает из PostgreSQL (wb_data_prod) по срезу snapshot_date:
+#   stocks_daily_warehouses (склад WB × nm_id × chrt_id/SKU × 3 типа остатков)
+#     LEFT JOIN cards      (по nm_id  → vendor_code/brand/subject_name)
+#     LEFT JOIN card_sizes (по chrt_id → tech_size/wb_size + skus_json со штрихкодами)
+# Три типа остатков в отдельных колонках: свободный (quantity), в пути к клиенту
+# (in_way_to_client), в пути от клиента (in_way_from_client) + колонка «Итого».
+# Источник данных — именно FBO/склады WB (endpoint /api/analytics/v1/stocks-report/
+# wb-warehouses); склады продавца (FBS) сюда не пишутся.
+#
+# Источник: одна база wb_data_prod. Только SELECT — запись в БД не производится.
+# Приоритет: CLI флаг > config.yaml > defaults.
+
+# ─── Дата среза ───────────────────────────────────────────
+# Пусто → последний доступный срез в stocks_daily_warehouses
+# (SELECT MAX(snapshot_date)).
+date: ""
+
+# ─── Источник данных (PostgreSQL) ──────────────────────────
+storage:
+  backend: "postgres"
+  pg_database: "wb_data_prod"     # рабочая база с реальными данными
+  pg_password_env: "PG_PWD"       # env var с паролем (per-machine)
+  # pg_dsn: ""                    # полный DSN (опционально, перекрывает env)
+  # db_path: ""                   # (только для backend: sqlite)
+
+# ─── Экспорт ───────────────────────────────────────────────
+# Путь к XLSX. Пусто → reports/stock-by-warehouse-<date>.xlsx.
+xlsx: ""
