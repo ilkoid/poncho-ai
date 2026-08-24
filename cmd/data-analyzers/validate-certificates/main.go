@@ -450,7 +450,7 @@ func truncate(s string, maxLen int) string {
 
 // mockValidate generates deterministic fake results for --mock mode.
 func mockValidate(certs []CertRecord) []ValidationResult {
-	fmt.Println("  Режим --mock: генерация тестовых результатов\n")
+	fmt.Println("  Режим --mock: генерация тестовых результатов")
 	results := make([]ValidationResult, len(certs))
 	for i, c := range certs {
 		r := ValidationResult{
