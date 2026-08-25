@@ -1,0 +1,13 @@
+# fbs-funnel-report — аналитический отчёт FBS-воронки (заказ → выкуп/отмена/возврат).
+# Считает по сырым таблицам загрузчика download-wb-fbs-orders-v2, только SELECT.
+
+days: 0            # 0 = весь диапазон данных; N = события/когорты за последние N сут (МСК)
+all_models: false  # true = все модели выполнения (incl. FBW); false = только склад продавца (is_mp)
+
+storage:
+  backend: "postgres"
+  pg_dsn: ""             # пусто = собрать из env (PGHOST/PGPORT/PGUSER/PG_PWD)
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
+
+xlsx: ""           # пусто = reports/fbs-funnel-<дата>.xlsx
