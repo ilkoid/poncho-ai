@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FBS-воронка · Play Today</title>
+<style>/*__STYLE_CSS__*/</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <div class="logo">PT</div>
+    <div class="brand-t">
+      <h1>FBS-воронка · дашборд</h1>
+      <div class="sub" id="subtitle"></div>
+    </div>
+    <span id="db-badge" class="badge" title="База-источник"></span>
+  </div>
+
+  <div class="controls">
+    <div class="group" id="presets">
+      <button data-days="7">7д</button>
+      <button data-days="14">14д</button>
+      <button data-days="30">30д</button>
+      <button data-days="0" class="active">Всё</button>
+    </div>
+    <div class="seg" id="seg-gran">
+      <button data-v="day" class="active">Дни</button>
+      <button data-v="week">Недели</button>
+    </div>
+    <div class="seg" id="seg-unit">
+      <button data-v="rub" class="active">&#8381;</button>
+      <button data-v="pc">шт</button>
+    </div>
+    <button id="glossary-btn" class="glossary-btn" title="Определения всех метрик и терминов">Глоссарий</button>
+    <button id="reset" class="reset" title="Сбросить все фильтры">Сбросить</button>
+  </div>
+
+  <div id="chips" class="chips"></div>
+</header>
+
+<div id="glossary-back" class="glossary-back"></div>
+<aside id="glossary" class="glossary" title="Глоссарий аналитика">
+  <div class="g-head">
+    <b>Глоссарий</b>
+    <span class="g-sub">одинаковые определения с XLSX-отчётом</span>
+    <button id="glossary-close" class="g-close" title="Закрыть (Esc)">×</button>
+  </div>
+  <div class="g-body">__GLOSSARY_HTML__</div>
+</aside>
+
+<main>
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid">
+    <div class="card span2">
+      <h2>Выручка и упущенное <span class="hint">столбики — деньги/штуки по дате статуса (МСК), линия — % выкупа среди завершённых</span></h2>
+      <div class="chart tall" id="chart-money"></div>
+    </div>
+
+    <div class="card">
+      <h2>Воронка периода</h2>
+      <div class="chart" id="chart-funnel"></div>
+    </div>
+
+    <div class="card">
+      <h2>Упущено: причины <span class="hint">в рублях</span></h2>
+      <div class="chart" id="chart-reasons"></div>
+    </div>
+
+    <div class="card span2">
+      <h2>Когорты: % финального выкупа <span class="hint">по дате создания заказа · бледные столбики ещё не созрели и покажут больше выкупа</span></h2>
+      <div class="chart" id="chart-cohort"></div>
+    </div>
+
+    <div class="card">
+      <h2>География <span class="hint">клик по городу — фильтр</span></h2>
+      <div class="chart" id="chart-geo"></div>
+    </div>
+
+    <div class="card">
+      <h2 id="cat-title">Категории 1С <span class="hint">клик — детализация, повторный клик — фильтр</span></h2>
+      <div class="chart" id="chart-cat"></div>
+    </div>
+
+    <div class="card span2">
+      <h2>Топ номенклатур <span class="hint">клик по строке — фильтр, по шапке — сортировка</span></h2>
+      <div class="tbl-wrap"><table id="topnm"><thead></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <footer id="method"></footer>
+</main>
+
+<noscript>Дашборду нужен JavaScript.</noscript>
+<script>/*__ECHARTS_JS__*/</script>
+<script id="payload" type="application/json">/*__PAYLOAD_JSON__*/</script>
+<script>/*__APP_JS__*/</script>
+</body>
+</html>

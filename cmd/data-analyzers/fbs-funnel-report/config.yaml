@@ -11,3 +11,4 @@ storage:
   pg_password_env: "PG_PWD"
 
 xlsx: ""           # пусто = reports/fbs-funnel-<дата>.xlsx
+html: ""           # самодостаточный HTML-дашборд: "" = не собирать, auto = reports/fbs-dashboard-<дата>.html

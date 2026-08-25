@@ -50,6 +50,8 @@ Options:
                   склад продавца (is_mp)
   --db NAME       БД (overrides storage.pg_database)
   --xlsx PATH     Выходной xlsx (default: reports/fbs-funnel-<date>.xlsx)
+  --html PATH     Самодостаточный HTML-дашборд (фильтры в браузере, офлайн):
+                  auto = reports/fbs-dashboard-<date>.html; пусто = не собирать
   --dry-run       Показать параметры без обращения к БД
   -h, --help      Справка
 
@@ -65,6 +67,7 @@ func main() {
 	allModels := flag.Bool("all-models", false, "Все модели выполнения (incl. FBW)")
 	dbName := flag.String("db", "", "БД (overrides storage.pg_database)")
 	xlsxPath := flag.String("xlsx", "", "Выходной xlsx (overrides config)")
+	htmlPath := flag.String("html", "", "HTML-дашборд: auto|путь (overrides config; пусто = не собирать)")
 	dryRun := flag.Bool("dry-run", false, "Показать параметры без обращения к БД")
 	help := flag.Bool("help", false, "Справка")
 	flag.BoolVar(help, "h", false, "Справка")
@@ -92,6 +95,9 @@ func main() {
 	}
 	if *xlsxPath != "" {
 		cfg.XLSX = *xlsxPath
+	}
+	if *htmlPath != "" {
+		cfg.HTML = *htmlPath
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -175,6 +181,24 @@ func main() {
 	}
 	fmt.Println(" ok")
 
+	// HTML-дашборд: те же фильтры (--days/--all-models/--db), данные кубом.
+	if cfg.HTML != "" {
+		fmt.Print("  Сборка HTML-дашборда (куб + словари)...")
+		cube, err := loadCube(ctx, pool.DB(), q, cfg.Storage.PgDatabase)
+		if err != nil {
+			log.Fatalf("  %v", err)
+		}
+		if cfg.HTML == "auto" {
+			cfg.HTML = filepath.Join("reports", fmt.Sprintf("fbs-dashboard-%s.html", time.Now().Format("2006-01-02")))
+		}
+		size, err := exportHTML(cube, cfg.HTML)
+		if err != nil {
+			log.Fatalf("  HTML: %v", err)
+		}
+		fmt.Printf(" ok (%d фактов, %.1f МБ) → %s\n",
+			len(cube.Facts.Cnt), float64(size)/1024/1024, cfg.HTML)
+	}
+
 	// Консольная сводка.
 	fmt.Println("\n  ── СВОДКА ──")
 	bp := data.Totals.BuyoutPct()
@@ -209,6 +233,8 @@ type Config struct {
 	Storage config.V2StorageConfig `yaml:"storage"`
 	// XLSX — путь к выходному файлу.
 	XLSX string `yaml:"xlsx"`
+	// HTML — самодостаточный дашборд: "" = не собирать, "auto" = стандартное имя.
+	HTML string `yaml:"html"`
 }
 
 func loadConfig(path string) (*Config, error) {
