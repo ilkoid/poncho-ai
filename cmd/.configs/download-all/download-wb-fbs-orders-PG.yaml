@@ -6,6 +6,9 @@ wb:
   api_key: ""
   api_key_env: "WB_API_KEY"   # marketplace-api/v3: контент-ключ даёт 403 scope; fallback на WB_API_CONTENT_KEY автоматический
   timeout: "15m"
+  # 6 попыток: бэкофф 5xx = свой интервал + 3с (лента 63с) — переживает
+  # ~5-минутные 503-окна WB (полуночные сбои ag-contentanalytics, 25.08.2026).
+  retry_attempts: 6
 
 fbs:
   days: 90                 # --days из download-all.sh переопределяет (инкрементальные прогоны)

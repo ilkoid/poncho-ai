@@ -14,19 +14,19 @@ import "strings"
 //
 // Используется для загрузки данных о продвижении товаров с WB API.
 type PromotionConfig struct {
-	DbPath     string               `yaml:"db_path"`     // Путь к SQLite базе данных
-	Begin      string               `yaml:"begin"`       // Начальная дата (YYYY-MM-DD)
-	End        string               `yaml:"end"`         // Конечная дата (YYYY-MM-DD)
-	Days       int                  `yaml:"days"`        // Дней от сегодня (альтернатива begin/end)
-	Statuses   []int                `yaml:"statuses"`    // Фильтр по статусам (например, 9, 11)
-	Resume     bool                 `yaml:"resume"`      // Продолжить с последней даты
-	RateLimits PromotionRateLimits  `yaml:"rate_limits"` // Rate limits per endpoint (req/min)
-	AdaptiveRecoverAfter int     `yaml:"adaptive_recover_after"` // OKs to restore to api floor after 429 (default: 5)
-	AdaptiveProbeAfter   int     `yaml:"adaptive_probe_after"`   // OKs at api floor before probing desired (default: 10)
-	MaxBackoffSeconds    int     `yaml:"max_backoff_seconds"`    // Cap for exponential backoff (default: 60)
-	SkipDetails bool                 `yaml:"skip_details"` // Skip campaign details download (name, payment_type)
-	SkipCampaigns bool                `yaml:"skip_campaigns"` // Skip campaign list download (reuse IDs from DB)
-	SkipStats     bool                `yaml:"skip_stats"`     // Skip stats download
+	DbPath               string              `yaml:"db_path"`                // Путь к SQLite базе данных
+	Begin                string              `yaml:"begin"`                  // Начальная дата (YYYY-MM-DD)
+	End                  string              `yaml:"end"`                    // Конечная дата (YYYY-MM-DD)
+	Days                 int                 `yaml:"days"`                   // Дней от сегодня (альтернатива begin/end)
+	Statuses             []int               `yaml:"statuses"`               // Фильтр по статусам (например, 9, 11)
+	Resume               bool                `yaml:"resume"`                 // Продолжить с последней даты
+	RateLimits           PromotionRateLimits `yaml:"rate_limits"`            // Rate limits per endpoint (req/min)
+	AdaptiveRecoverAfter int                 `yaml:"adaptive_recover_after"` // OKs to restore to api floor after 429 (default: 5)
+	AdaptiveProbeAfter   int                 `yaml:"adaptive_probe_after"`   // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds    int                 `yaml:"max_backoff_seconds"`    // Cap for exponential backoff (default: 60)
+	SkipDetails          bool                `yaml:"skip_details"`           // Skip campaign details download (name, payment_type)
+	SkipCampaigns        bool                `yaml:"skip_campaigns"`         // Skip campaign list download (reuse IDs from DB)
+	SkipStats            bool                `yaml:"skip_stats"`             // Skip stats download
 }
 
 // PromotionRateLimits — rate limits для promotion API endpoints.
@@ -39,20 +39,20 @@ type PromotionConfig struct {
 //
 // Если desired не указан — используется api (без превышения swagger).
 type PromotionRateLimits struct {
-	PromotionCount      int `yaml:"promotion_count"`       // desired rate (default: 300)
-	PromotionCountBurst int `yaml:"promotion_count_burst"` // desired burst (default: 5)
-	PromotionCountApi    int `yaml:"promotion_count_api"`  // swagger rate (default: 300)
+	PromotionCount         int `yaml:"promotion_count"`           // desired rate (default: 300)
+	PromotionCountBurst    int `yaml:"promotion_count_burst"`     // desired burst (default: 5)
+	PromotionCountApi      int `yaml:"promotion_count_api"`       // swagger rate (default: 300)
 	PromotionCountApiBurst int `yaml:"promotion_count_api_burst"` // swagger burst (default: 5)
 
-	AdvertDetails       int `yaml:"advert_details"`        // desired rate (default: 300)
-	AdvertDetailsBurst  int `yaml:"advert_details_burst"` // desired burst (default: 5)
-	AdvertDetailsApi    int `yaml:"advert_details_api"`   // swagger rate (default: 300)
+	AdvertDetails         int `yaml:"advert_details"`           // desired rate (default: 300)
+	AdvertDetailsBurst    int `yaml:"advert_details_burst"`     // desired burst (default: 5)
+	AdvertDetailsApi      int `yaml:"advert_details_api"`       // swagger rate (default: 300)
 	AdvertDetailsApiBurst int `yaml:"advert_details_api_burst"` // swagger burst (default: 5)
 
-	Fullstats           int `yaml:"fullstats"`            // desired rate (default: 3)
-	FullstatsBurst      int `yaml:"fullstats_burst"`      // desired burst (default: 1)
-	FullstatsApi        int `yaml:"fullstats_api"`        // swagger rate (default: 3)
-	FullstatsApiBurst   int `yaml:"fullstats_api_burst"`  // swagger burst (default: 1)
+	Fullstats         int `yaml:"fullstats"`           // desired rate (default: 3)
+	FullstatsBurst    int `yaml:"fullstats_burst"`     // desired burst (default: 1)
+	FullstatsApi      int `yaml:"fullstats_api"`       // swagger rate (default: 3)
+	FullstatsApiBurst int `yaml:"fullstats_api_burst"` // swagger burst (default: 1)
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.
@@ -125,15 +125,15 @@ func (c *PromotionConfig) GetDefaults() PromotionConfig {
 // Используется для загрузки данных о продажах с WB API.
 // Приоритет дат: CLI --begin/--end > config from/to > config days.
 type DownloadConfig struct {
-	Days        int    `yaml:"days"`         // Дней от вчерашнего дня (альтернатива from/to, default: 7)
-	From        string `yaml:"from"`         // Начальная дата (YYYY-MM-DD, приоритет над days)
-	To          string `yaml:"to"`           // Конечная дата (YYYY-MM-DD, приоритет над days)
-	DbPath      string `yaml:"db_path"`      // Путь к SQLite базе данных
-	FBWOnly     bool   `yaml:"fbw_only"`     // Только FBW продажи
-	Resume      bool   `yaml:"resume"`       // Продолжить с последней даты
-	Rewrite     bool   `yaml:"rewrite"`      // Удалить данные за период перед загрузкой
-	IntervalDays       int  `yaml:"interval_days"`        // Дней на один API запрос (default: 30)
-	SkipServiceRecords bool `yaml:"skip_service_records"` // Пропускать служебные записи (логистика, штрафы)
+	Days               int    `yaml:"days"`                 // Дней от вчерашнего дня (альтернатива from/to, default: 7)
+	From               string `yaml:"from"`                 // Начальная дата (YYYY-MM-DD, приоритет над days)
+	To                 string `yaml:"to"`                   // Конечная дата (YYYY-MM-DD, приоритет над days)
+	DbPath             string `yaml:"db_path"`              // Путь к SQLite базе данных
+	FBWOnly            bool   `yaml:"fbw_only"`             // Только FBW продажи
+	Resume             bool   `yaml:"resume"`               // Продолжить с последней даты
+	Rewrite            bool   `yaml:"rewrite"`              // Удалить данные за период перед загрузкой
+	IntervalDays       int    `yaml:"interval_days"`        // Дней на один API запрос (default: 30)
+	SkipServiceRecords bool   `yaml:"skip_service_records"` // Пропускать служебные записи (логистика, штрафы)
 
 	// Adaptive tuning (see dev_limits.md)
 	AdaptiveRecoverAfter int `yaml:"adaptive_recover_after"` // OKs to restore to api floor after 429 (default: 5)
@@ -172,7 +172,6 @@ type FunnelConfig struct {
 	FunnelRateLimitBurst    int `yaml:"funnel_rate_limit_burst"`     // desired burst
 	FunnelRateLimitApi      int `yaml:"funnel_rate_limit_api"`       // swagger rate (default: 3)
 	FunnelRateLimitApiBurst int `yaml:"funnel_rate_limit_api_burst"` // swagger burst (default: 3)
-
 
 	// Incremental loading
 	IncrementalHours int `yaml:"incremental_hours"` // Skip products loaded in last N hours (0 = load all)
@@ -269,6 +268,7 @@ type WBClientConfig struct {
 	BaseURL         string `yaml:"base_url"`          // Базовый URL Content API
 	RateLimit       int    `yaml:"rate_limit"`        // Запросов в минуту
 	BurstLimit      int    `yaml:"burst"`             // Burst для rate limiter
+	RetryAttempts   int    `yaml:"retry_attempts"`    // Попыток на запрос (5xx/429/сетевые; default 3)
 	Timeout         string `yaml:"timeout"`           // Timeout HTTP запросов
 	Endpoint        string `yaml:"endpoint"`          // Альтернативный endpoint (опционально)
 }
@@ -276,11 +276,12 @@ type WBClientConfig struct {
 // ToWBConfig конвертирует WBClientConfig в стандартную WBConfig.
 func (c *WBClientConfig) ToWBConfig() WBConfig {
 	return WBConfig{
-		APIKey:     c.APIKey,
-		BaseURL:    c.BaseURL,
-		RateLimit:  c.RateLimit,
-		BurstLimit: c.BurstLimit,
-		Timeout:    c.Timeout,
+		APIKey:        c.APIKey,
+		BaseURL:       c.BaseURL,
+		RateLimit:     c.RateLimit,
+		BurstLimit:    c.BurstLimit,
+		RetryAttempts: c.RetryAttempts,
+		Timeout:       c.Timeout,
 	}
 }
 
@@ -296,6 +297,9 @@ func (c *WBClientConfig) GetDefaults() WBClientConfig {
 	if result.BurstLimit == 0 {
 		result.BurstLimit = 5
 	}
+	if result.RetryAttempts == 0 {
+		result.RetryAttempts = 3
+	}
 	if result.Timeout == "" {
 		result.Timeout = "30s"
 	}
@@ -305,59 +309,59 @@ func (c *WBClientConfig) GetDefaults() WBClientConfig {
 // PromotionV2Config — конфигурация для download-wb-promotion-v2.
 // Расширенный сбор: normquery, bid recommendations, finance, calendar.
 type PromotionV2Config struct {
-	DbPath    string                  `yaml:"db_path"`
-	Begin     string                  `yaml:"begin"`
-	End       string                  `yaml:"end"`
-	Days      int                     `yaml:"days"`
-	Statuses  []int                   `yaml:"statuses"`
-	RateLimits PromotionV2RateLimits  `yaml:"rate_limits"`
-	AdaptiveProbeAfter int            `yaml:"adaptive_probe_after"`
-	MaxBackoffSeconds  int            `yaml:"max_backoff_seconds"`
-	SkipBids            bool `yaml:"skip_bids"`
-	SkipNormquery       bool `yaml:"skip_normquery"`
-	SkipRecommendations bool `yaml:"skip_recommendations"`
-	SkipFinance         bool `yaml:"skip_finance"`
-	SkipCalendar        bool `yaml:"skip_calendar"`
-	SkipBudgets         bool `yaml:"skip_budgets"`
-	SkipMinBids         bool `yaml:"skip_min_bids"`
-	CalendarDaysPast    int  `yaml:"calendar_days_past"`
-	CalendarDaysFuture  int  `yaml:"calendar_days_future"`
-	ChangedDays         int  `yaml:"changed_days"`
+	DbPath              string                `yaml:"db_path"`
+	Begin               string                `yaml:"begin"`
+	End                 string                `yaml:"end"`
+	Days                int                   `yaml:"days"`
+	Statuses            []int                 `yaml:"statuses"`
+	RateLimits          PromotionV2RateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter  int                   `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds   int                   `yaml:"max_backoff_seconds"`
+	SkipBids            bool                  `yaml:"skip_bids"`
+	SkipNormquery       bool                  `yaml:"skip_normquery"`
+	SkipRecommendations bool                  `yaml:"skip_recommendations"`
+	SkipFinance         bool                  `yaml:"skip_finance"`
+	SkipCalendar        bool                  `yaml:"skip_calendar"`
+	SkipBudgets         bool                  `yaml:"skip_budgets"`
+	SkipMinBids         bool                  `yaml:"skip_min_bids"`
+	CalendarDaysPast    int                   `yaml:"calendar_days_past"`
+	CalendarDaysFuture  int                   `yaml:"calendar_days_future"`
+	ChangedDays         int                   `yaml:"changed_days"`
 }
 
 // PromotionV2RateLimits — rate limits для V2 endpoints.
 // Swagger rates: normquery_stats=10/min, normquery_list/bids/minus=5/sec,
 // bid_recommendations=5/min, finance=1/sec, calendar=10/6sec, budget=4/sec, min_bids=20/min.
 type PromotionV2RateLimits struct {
-	Normquery          int `yaml:"normquery"`
-	NormqueryBurst     int `yaml:"normquery_burst"`
-	NormqueryApi       int `yaml:"normquery_api"`
-	NormqueryApiBurst  int `yaml:"normquery_api_burst"`
+	Normquery         int `yaml:"normquery"`
+	NormqueryBurst    int `yaml:"normquery_burst"`
+	NormqueryApi      int `yaml:"normquery_api"`
+	NormqueryApiBurst int `yaml:"normquery_api_burst"`
 
-	NormqueryStats          int `yaml:"normquery_stats"`
-	NormqueryStatsBurst     int `yaml:"normquery_stats_burst"`
-	NormqueryStatsApi       int `yaml:"normquery_stats_api"`
-	NormqueryStatsApiBurst  int `yaml:"normquery_stats_api_burst"`
+	NormqueryStats         int `yaml:"normquery_stats"`
+	NormqueryStatsBurst    int `yaml:"normquery_stats_burst"`
+	NormqueryStatsApi      int `yaml:"normquery_stats_api"`
+	NormqueryStatsApiBurst int `yaml:"normquery_stats_api_burst"`
 
-	BidRec          int `yaml:"bid_rec"`
-	BidRecBurst     int `yaml:"bid_rec_burst"`
-	BidRecApi       int `yaml:"bid_rec_api"`
-	BidRecApiBurst  int `yaml:"bid_rec_api_burst"`
+	BidRec         int `yaml:"bid_rec"`
+	BidRecBurst    int `yaml:"bid_rec_burst"`
+	BidRecApi      int `yaml:"bid_rec_api"`
+	BidRecApiBurst int `yaml:"bid_rec_api_burst"`
 
-	Finance          int `yaml:"finance"`
-	FinanceBurst     int `yaml:"finance_burst"`
-	FinanceApi       int `yaml:"finance_api"`
-	FinanceApiBurst  int `yaml:"finance_api_burst"`
+	Finance         int `yaml:"finance"`
+	FinanceBurst    int `yaml:"finance_burst"`
+	FinanceApi      int `yaml:"finance_api"`
+	FinanceApiBurst int `yaml:"finance_api_burst"`
 
-	Calendar          int `yaml:"calendar"`
-	CalendarBurst     int `yaml:"calendar_burst"`
-	CalendarApi       int `yaml:"calendar_api"`
-	CalendarApiBurst  int `yaml:"calendar_api_burst"`
+	Calendar         int `yaml:"calendar"`
+	CalendarBurst    int `yaml:"calendar_burst"`
+	CalendarApi      int `yaml:"calendar_api"`
+	CalendarApiBurst int `yaml:"calendar_api_burst"`
 
-	MinBids          int `yaml:"min_bids"`
-	MinBidsBurst     int `yaml:"min_bids_burst"`
-	MinBidsApi       int `yaml:"min_bids_api"`
-	MinBidsApiBurst  int `yaml:"min_bids_api_burst"`
+	MinBids         int `yaml:"min_bids"`
+	MinBidsBurst    int `yaml:"min_bids_burst"`
+	MinBidsApi      int `yaml:"min_bids_api"`
+	MinBidsApiBurst int `yaml:"min_bids_api_burst"`
 }
 
 func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
@@ -375,19 +379,19 @@ func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
 	if result.RateLimits.NormqueryBurst == 0 {
 		result.RateLimits.NormqueryBurst = result.RateLimits.NormqueryApiBurst
 	}
-		// Normquery stats: swagger 10 req/min (much stricter than list/bids/minus)
-		if result.RateLimits.NormqueryStatsApi == 0 {
-			result.RateLimits.NormqueryStatsApi = 10
-		}
-		if result.RateLimits.NormqueryStats == 0 {
-			result.RateLimits.NormqueryStats = result.RateLimits.NormqueryStatsApi
-		}
-		if result.RateLimits.NormqueryStatsApiBurst == 0 {
-			result.RateLimits.NormqueryStatsApiBurst = 1
-		}
-		if result.RateLimits.NormqueryStatsBurst == 0 {
-			result.RateLimits.NormqueryStatsBurst = result.RateLimits.NormqueryStatsApiBurst
-		}
+	// Normquery stats: swagger 10 req/min (much stricter than list/bids/minus)
+	if result.RateLimits.NormqueryStatsApi == 0 {
+		result.RateLimits.NormqueryStatsApi = 10
+	}
+	if result.RateLimits.NormqueryStats == 0 {
+		result.RateLimits.NormqueryStats = result.RateLimits.NormqueryStatsApi
+	}
+	if result.RateLimits.NormqueryStatsApiBurst == 0 {
+		result.RateLimits.NormqueryStatsApiBurst = 1
+	}
+	if result.RateLimits.NormqueryStatsBurst == 0 {
+		result.RateLimits.NormqueryStatsBurst = result.RateLimits.NormqueryStatsApiBurst
+	}
 	// Bid recommendations: swagger 5 req/min
 	if result.RateLimits.BidRecApi == 0 {
 		result.RateLimits.BidRecApi = 5
@@ -427,19 +431,19 @@ func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
 	if result.RateLimits.CalendarBurst == 0 {
 		result.RateLimits.CalendarBurst = result.RateLimits.CalendarApiBurst
 	}
-		// Min bids: swagger 20 req/min
-		if result.RateLimits.MinBidsApi == 0 {
-			result.RateLimits.MinBidsApi = 20
-		}
-		if result.RateLimits.MinBids == 0 {
-			result.RateLimits.MinBids = result.RateLimits.MinBidsApi
-		}
-		if result.RateLimits.MinBidsApiBurst == 0 {
-			result.RateLimits.MinBidsApiBurst = 3
-		}
-		if result.RateLimits.MinBidsBurst == 0 {
-			result.RateLimits.MinBidsBurst = result.RateLimits.MinBidsApiBurst
-		}
+	// Min bids: swagger 20 req/min
+	if result.RateLimits.MinBidsApi == 0 {
+		result.RateLimits.MinBidsApi = 20
+	}
+	if result.RateLimits.MinBids == 0 {
+		result.RateLimits.MinBids = result.RateLimits.MinBidsApi
+	}
+	if result.RateLimits.MinBidsApiBurst == 0 {
+		result.RateLimits.MinBidsApiBurst = 3
+	}
+	if result.RateLimits.MinBidsBurst == 0 {
+		result.RateLimits.MinBidsBurst = result.RateLimits.MinBidsApiBurst
+	}
 	// Adaptive tuning
 	if result.AdaptiveProbeAfter == 0 {
 		result.AdaptiveProbeAfter = 15
@@ -460,15 +464,15 @@ func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
 //
 // Используется для загрузки отзывов и вопросов с WB Feedbacks API.
 type FeedbacksConfig struct {
-	DbPath     string             `yaml:"db_path"`     // Путь к SQLite базе данных
-	Begin      string             `yaml:"begin"`       // Начальная дата (YYYY-MM-DD)
-	End        string             `yaml:"end"`         // Конечная дата (YYYY-MM-DD)
-	Days       int                `yaml:"days"`        // Дней от сегодня (альтернатива begin/end)
-	Feedbacks  bool               `yaml:"feedbacks"`   // Загружать отзывы (default: true)
-	Questions  bool               `yaml:"questions"`   // Загружать вопросы (default: true)
-	RateLimits FeedbacksRateLimits `yaml:"rate_limits"` // Rate limits per endpoint (req/min)
-	AdaptiveProbeAfter int        `yaml:"adaptive_probe_after"`   // OKs at api floor before probing desired (default: 10)
-	MaxBackoffSeconds  int        `yaml:"max_backoff_seconds"`    // Cap for cooldown (default: 60)
+	DbPath             string              `yaml:"db_path"`              // Путь к SQLite базе данных
+	Begin              string              `yaml:"begin"`                // Начальная дата (YYYY-MM-DD)
+	End                string              `yaml:"end"`                  // Конечная дата (YYYY-MM-DD)
+	Days               int                 `yaml:"days"`                 // Дней от сегодня (альтернатива begin/end)
+	Feedbacks          bool                `yaml:"feedbacks"`            // Загружать отзывы (default: true)
+	Questions          bool                `yaml:"questions"`            // Загружать вопросы (default: true)
+	RateLimits         FeedbacksRateLimits `yaml:"rate_limits"`          // Rate limits per endpoint (req/min)
+	AdaptiveProbeAfter int                 `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds  int                 `yaml:"max_backoff_seconds"`  // Cap for cooldown (default: 60)
 }
 
 // FeedbacksRateLimits — rate limits для feedbacks API endpoints.
@@ -483,14 +487,14 @@ type FeedbacksConfig struct {
 //
 // Если desired не указан — используется api (без превышения swagger).
 type FeedbacksRateLimits struct {
-	DownloadFeedbacks      int `yaml:"download_feedbacks"`       // desired rate (default: 180)
-	DownloadFeedbacksBurst int `yaml:"download_feedbacks_burst"` // desired burst (default: 6)
-	DownloadFeedbacksApi    int `yaml:"download_feedbacks_api"`  // swagger rate (default: 180)
+	DownloadFeedbacks         int `yaml:"download_feedbacks"`           // desired rate (default: 180)
+	DownloadFeedbacksBurst    int `yaml:"download_feedbacks_burst"`     // desired burst (default: 6)
+	DownloadFeedbacksApi      int `yaml:"download_feedbacks_api"`       // swagger rate (default: 180)
 	DownloadFeedbacksApiBurst int `yaml:"download_feedbacks_api_burst"` // swagger burst (default: 6)
 
-	DownloadQuestions      int `yaml:"download_questions"`       // desired rate (default: 180)
-	DownloadQuestionsBurst int `yaml:"download_questions_burst"` // desired burst (default: 6)
-	DownloadQuestionsApi    int `yaml:"download_questions_api"`  // swagger rate (default: 180)
+	DownloadQuestions         int `yaml:"download_questions"`           // desired rate (default: 180)
+	DownloadQuestionsBurst    int `yaml:"download_questions_burst"`     // desired burst (default: 6)
+	DownloadQuestionsApi      int `yaml:"download_questions_api"`       // swagger rate (default: 180)
 	DownloadQuestionsApiBurst int `yaml:"download_questions_api_burst"` // swagger burst (default: 6)
 }
 
@@ -571,11 +575,11 @@ type FunnelAggregatedConfig struct {
 	PageSize int `yaml:"page_size"` // Товаров за запрос (0 = auto, max 1000)
 
 	// Rate limiting (legacy fields for backwards compatibility)
-	RateLimit  int `yaml:"rate_limit"`  // Запросов в минуту (deprecated: use rate_limits instead)
-	BurstLimit int `yaml:"burst"`       // Burst (deprecated: use rate_limits instead)
+	RateLimit  int `yaml:"rate_limit"` // Запросов в минуту (deprecated: use rate_limits instead)
+	BurstLimit int `yaml:"burst"`      // Burst (deprecated: use rate_limits instead)
 
 	// Adaptive rate limiting
-	RateLimits         FunnelAggregatedRateLimits `yaml:"rate_limits"` // Rate limits per endpoint (req/min)
+	RateLimits         FunnelAggregatedRateLimits `yaml:"rate_limits"`          // Rate limits per endpoint (req/min)
 	AdaptiveProbeAfter int                        `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
 	MaxBackoffSeconds  int                        `yaml:"max_backoff_seconds"`  // Cap for cooldown (default: 60)
 
@@ -595,9 +599,9 @@ type FunnelAggregatedConfig struct {
 //
 // Если desired не указан — используется api (без превышения swagger).
 type FunnelAggregatedRateLimits struct {
-	FunnelAggregated      int `yaml:"funnel_aggregated"`       // desired rate (default: 3)
-	FunnelAggregatedBurst int `yaml:"funnel_aggregated_burst"` // desired burst (default: 3)
-	FunnelAggregatedApi    int `yaml:"funnel_aggregated_api"`  // swagger rate (default: 3)
+	FunnelAggregated         int `yaml:"funnel_aggregated"`           // desired rate (default: 3)
+	FunnelAggregatedBurst    int `yaml:"funnel_aggregated_burst"`     // desired burst (default: 3)
+	FunnelAggregatedApi      int `yaml:"funnel_aggregated_api"`       // swagger rate (default: 3)
 	FunnelAggregatedApiBurst int `yaml:"funnel_aggregated_api_burst"` // swagger burst (default: 3)
 }
 
@@ -654,12 +658,12 @@ func (c *FunnelAggregatedConfig) GetDefaults() FunnelAggregatedConfig {
 // Двухуровневый rate limiting: desired (агрессивный) + api (swagger floor для восстановления).
 // См. dev_limits.md для деталей.
 type StocksConfig struct {
-	DbPath             string             `yaml:"db_path"`              // Путь к SQLite базе данных (default: sales.db)
-	FirstDate          string             `yaml:"first_date"`           // Начало отсчёта для gap detection (YYYY-MM-DD)
-	APIKeyEnv          string             `yaml:"api_key_env"`          // Имя переменной окружения для API ключа (default: WB_API_ANALYTICS_AND_PROMO_KEY)
-	RateLimits         StocksRateLimits   `yaml:"rate_limits"`          // Rate limits для warehouse endpoint
-	AdaptiveProbeAfter int                `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
-	MaxBackoffSeconds  int                `yaml:"max_backoff_seconds"`  // Cap for exponential backoff (default: 60)
+	DbPath             string           `yaml:"db_path"`              // Путь к SQLite базе данных (default: sales.db)
+	FirstDate          string           `yaml:"first_date"`           // Начало отсчёта для gap detection (YYYY-MM-DD)
+	APIKeyEnv          string           `yaml:"api_key_env"`          // Имя переменной окружения для API ключа (default: WB_API_ANALYTICS_AND_PROMO_KEY)
+	RateLimits         StocksRateLimits `yaml:"rate_limits"`          // Rate limits для warehouse endpoint
+	AdaptiveProbeAfter int              `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds  int              `yaml:"max_backoff_seconds"`  // Cap for exponential backoff (default: 60)
 }
 
 // StocksRateLimits — rate limits для stocks warehouse API endpoint.
@@ -720,57 +724,95 @@ func (c *StocksConfig) GetDefaults() StocksConfig {
 //
 // Используется для загрузки исторических данных об остатках через CSV отчёты.
 type StockHistoryConfig struct {
-	DbPath      string                `yaml:"db_path"`
-	Begin       string                `yaml:"begin"`
-	End         string                `yaml:"end"`
-	Days        int                   `yaml:"days"`
-	ReportType  string                `yaml:"report_type"`
-	StockType   string                `yaml:"stock_type"`
-	Resume      bool                  `yaml:"resume"`
-	RateLimits  StockHistoryRateLimits `yaml:"rate_limits"`
-	AdaptiveProbeAfter int            `yaml:"adaptive_probe_after"`
-	MaxBackoffSeconds  int            `yaml:"max_backoff_seconds"`
-	PollIntervalSec    int            `yaml:"poll_interval_sec"`
-	PollTimeoutMin     int            `yaml:"poll_timeout_min"`
+	DbPath             string                 `yaml:"db_path"`
+	Begin              string                 `yaml:"begin"`
+	End                string                 `yaml:"end"`
+	Days               int                    `yaml:"days"`
+	ReportType         string                 `yaml:"report_type"`
+	StockType          string                 `yaml:"stock_type"`
+	Resume             bool                   `yaml:"resume"`
+	RateLimits         StockHistoryRateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter int                    `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int                    `yaml:"max_backoff_seconds"`
+	PollIntervalSec    int                    `yaml:"poll_interval_sec"`
+	PollTimeoutMin     int                    `yaml:"poll_timeout_min"`
 }
 
 type StockHistoryRateLimits struct {
-	Create           int `yaml:"create"`
-	CreateBurst      int `yaml:"create_burst"`
-	CreateApi        int `yaml:"create_api"`
-	CreateApiBurst   int `yaml:"create_api_burst"`
-	StatusCheck      int `yaml:"status_check"`
-	StatusCheckBurst int `yaml:"status_check_burst"`
-	StatusCheckApi   int `yaml:"status_check_api"`
+	Create              int `yaml:"create"`
+	CreateBurst         int `yaml:"create_burst"`
+	CreateApi           int `yaml:"create_api"`
+	CreateApiBurst      int `yaml:"create_api_burst"`
+	StatusCheck         int `yaml:"status_check"`
+	StatusCheckBurst    int `yaml:"status_check_burst"`
+	StatusCheckApi      int `yaml:"status_check_api"`
 	StatusCheckApiBurst int `yaml:"status_check_api_burst"`
-	Download         int `yaml:"download"`
-	DownloadBurst    int `yaml:"download_burst"`
-	DownloadApi      int `yaml:"download_api"`
-	DownloadApiBurst int `yaml:"download_api_burst"`
+	Download            int `yaml:"download"`
+	DownloadBurst       int `yaml:"download_burst"`
+	DownloadApi         int `yaml:"download_api"`
+	DownloadApiBurst    int `yaml:"download_api_burst"`
 }
 
 func (c *StockHistoryConfig) GetDefaults() StockHistoryConfig {
 	result := *c
-	if result.DbPath == "" { result.DbPath = "/var/db/wb-sales.db" }
+	if result.DbPath == "" {
+		result.DbPath = "/var/db/wb-sales.db"
+	}
 	// NOTE: Days is NOT defaulted here — default in main.go only when Begin/End empty.
-	if result.ReportType == "" { result.ReportType = "daily" }
-	if result.StockType == "" { result.StockType = "" }
-	if result.RateLimits.CreateApi == 0 { result.RateLimits.CreateApi = 3 }
-	if result.RateLimits.Create == 0 { result.RateLimits.Create = result.RateLimits.CreateApi }
-	if result.RateLimits.CreateApiBurst == 0 { result.RateLimits.CreateApiBurst = 3 }
-	if result.RateLimits.CreateBurst == 0 { result.RateLimits.CreateBurst = result.RateLimits.CreateApiBurst }
-	if result.RateLimits.StatusCheckApi == 0 { result.RateLimits.StatusCheckApi = 3 }
-	if result.RateLimits.StatusCheck == 0 { result.RateLimits.StatusCheck = result.RateLimits.StatusCheckApi }
-	if result.RateLimits.StatusCheckApiBurst == 0 { result.RateLimits.StatusCheckApiBurst = 3 }
-	if result.RateLimits.StatusCheckBurst == 0 { result.RateLimits.StatusCheckBurst = result.RateLimits.StatusCheckApiBurst }
-	if result.RateLimits.DownloadApi == 0 { result.RateLimits.DownloadApi = 3 }
-	if result.RateLimits.Download == 0 { result.RateLimits.Download = result.RateLimits.DownloadApi }
-	if result.RateLimits.DownloadApiBurst == 0 { result.RateLimits.DownloadApiBurst = 3 }
-	if result.RateLimits.DownloadBurst == 0 { result.RateLimits.DownloadBurst = result.RateLimits.DownloadApiBurst }
-	if result.AdaptiveProbeAfter == 0 { result.AdaptiveProbeAfter = 10 }
-	if result.MaxBackoffSeconds == 0 { result.MaxBackoffSeconds = 60 }
-	if result.PollIntervalSec == 0 { result.PollIntervalSec = 30 }
-	if result.PollTimeoutMin == 0 { result.PollTimeoutMin = 30 }
+	if result.ReportType == "" {
+		result.ReportType = "daily"
+	}
+	if result.StockType == "" {
+		result.StockType = ""
+	}
+	if result.RateLimits.CreateApi == 0 {
+		result.RateLimits.CreateApi = 3
+	}
+	if result.RateLimits.Create == 0 {
+		result.RateLimits.Create = result.RateLimits.CreateApi
+	}
+	if result.RateLimits.CreateApiBurst == 0 {
+		result.RateLimits.CreateApiBurst = 3
+	}
+	if result.RateLimits.CreateBurst == 0 {
+		result.RateLimits.CreateBurst = result.RateLimits.CreateApiBurst
+	}
+	if result.RateLimits.StatusCheckApi == 0 {
+		result.RateLimits.StatusCheckApi = 3
+	}
+	if result.RateLimits.StatusCheck == 0 {
+		result.RateLimits.StatusCheck = result.RateLimits.StatusCheckApi
+	}
+	if result.RateLimits.StatusCheckApiBurst == 0 {
+		result.RateLimits.StatusCheckApiBurst = 3
+	}
+	if result.RateLimits.StatusCheckBurst == 0 {
+		result.RateLimits.StatusCheckBurst = result.RateLimits.StatusCheckApiBurst
+	}
+	if result.RateLimits.DownloadApi == 0 {
+		result.RateLimits.DownloadApi = 3
+	}
+	if result.RateLimits.Download == 0 {
+		result.RateLimits.Download = result.RateLimits.DownloadApi
+	}
+	if result.RateLimits.DownloadApiBurst == 0 {
+		result.RateLimits.DownloadApiBurst = 3
+	}
+	if result.RateLimits.DownloadBurst == 0 {
+		result.RateLimits.DownloadBurst = result.RateLimits.DownloadApiBurst
+	}
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+	if result.PollIntervalSec == 0 {
+		result.PollIntervalSec = 30
+	}
+	if result.PollTimeoutMin == 0 {
+		result.PollTimeoutMin = 30
+	}
 	return result
 }
 
@@ -779,14 +821,14 @@ func (c *StockHistoryConfig) GetDefaults() StockHistoryConfig {
 // Используется для загрузки данных о продажах по регионам с WB Seller Analytics API.
 // Двухуровневый rate limiting: desired + api (swagger floor для восстановления).
 type RegionSalesConfig struct {
-	DbPath             string                  `yaml:"db_path"`
-	Days               int                     `yaml:"days"`
-	Begin              string                  `yaml:"begin"`
-	End                string                  `yaml:"end"`
-	APIKeyEnv          string                  `yaml:"api_key_env"`
-	RateLimits         RegionSalesRateLimits   `yaml:"rate_limits"`
-	AdaptiveProbeAfter int                     `yaml:"adaptive_probe_after"`
-	MaxBackoffSeconds  int                     `yaml:"max_backoff_seconds"`
+	DbPath             string                `yaml:"db_path"`
+	Days               int                   `yaml:"days"`
+	Begin              string                `yaml:"begin"`
+	End                string                `yaml:"end"`
+	APIKeyEnv          string                `yaml:"api_key_env"`
+	RateLimits         RegionSalesRateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter int                   `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int                   `yaml:"max_backoff_seconds"`
 }
 
 // RegionSalesRateLimits — rate limits для region sale API endpoint.
@@ -842,54 +884,90 @@ func (c *RegionSalesConfig) GetDefaults() RegionSalesConfig {
 // Загружает воронку продаж через асинхронные CSV-отчёты (nm-report API).
 // Поддерживает два типа отчётов: DETAIL (по nmID) и GROUPED (по субъектам/брендам).
 type FunnelCSVConfig struct {
-	DbPath    string `yaml:"db_path"`
-	Begin     string `yaml:"begin"`
-	End       string `yaml:"end"`
-	Days      int    `yaml:"days"`
-	ReportType string `yaml:"report_type"` // "detail" | "grouped" (default: "detail")
-	Resume    bool   `yaml:"resume"`
-	RateLimits FunnelCSVRateLimits `yaml:"rate_limits"`
-	AdaptiveProbeAfter int `yaml:"adaptive_probe_after"`
-	MaxBackoffSeconds  int `yaml:"max_backoff_seconds"`
-	PollIntervalSec    int `yaml:"poll_interval_sec"`
-	PollTimeoutMin     int `yaml:"poll_timeout_min"`
+	DbPath             string              `yaml:"db_path"`
+	Begin              string              `yaml:"begin"`
+	End                string              `yaml:"end"`
+	Days               int                 `yaml:"days"`
+	ReportType         string              `yaml:"report_type"` // "detail" | "grouped" (default: "detail")
+	Resume             bool                `yaml:"resume"`
+	RateLimits         FunnelCSVRateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter int                 `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int                 `yaml:"max_backoff_seconds"`
+	PollIntervalSec    int                 `yaml:"poll_interval_sec"`
+	PollTimeoutMin     int                 `yaml:"poll_timeout_min"`
 }
 
 type FunnelCSVRateLimits struct {
-	Create           int `yaml:"create"`
-	CreateBurst      int `yaml:"create_burst"`
-	CreateApi        int `yaml:"create_api"`
-	CreateApiBurst   int `yaml:"create_api_burst"`
-	StatusCheck      int `yaml:"status_check"`
-	StatusCheckBurst int `yaml:"status_check_burst"`
-	StatusCheckApi   int `yaml:"status_check_api"`
+	Create              int `yaml:"create"`
+	CreateBurst         int `yaml:"create_burst"`
+	CreateApi           int `yaml:"create_api"`
+	CreateApiBurst      int `yaml:"create_api_burst"`
+	StatusCheck         int `yaml:"status_check"`
+	StatusCheckBurst    int `yaml:"status_check_burst"`
+	StatusCheckApi      int `yaml:"status_check_api"`
 	StatusCheckApiBurst int `yaml:"status_check_api_burst"`
-	Download         int `yaml:"download"`
-	DownloadBurst    int `yaml:"download_burst"`
-	DownloadApi      int `yaml:"download_api"`
-	DownloadApiBurst int `yaml:"download_api_burst"`
+	Download            int `yaml:"download"`
+	DownloadBurst       int `yaml:"download_burst"`
+	DownloadApi         int `yaml:"download_api"`
+	DownloadApiBurst    int `yaml:"download_api_burst"`
 }
 
 func (c *FunnelCSVConfig) GetDefaults() FunnelCSVConfig {
 	result := *c
-	if result.DbPath == "" { result.DbPath = "/var/db/wb-sales.db" }
-	if result.ReportType == "" { result.ReportType = "detail" }
-	if result.RateLimits.CreateApi == 0 { result.RateLimits.CreateApi = 3 }
-	if result.RateLimits.Create == 0 { result.RateLimits.Create = result.RateLimits.CreateApi }
-	if result.RateLimits.CreateApiBurst == 0 { result.RateLimits.CreateApiBurst = 3 }
-	if result.RateLimits.CreateBurst == 0 { result.RateLimits.CreateBurst = result.RateLimits.CreateApiBurst }
-	if result.RateLimits.StatusCheckApi == 0 { result.RateLimits.StatusCheckApi = 3 }
-	if result.RateLimits.StatusCheck == 0 { result.RateLimits.StatusCheck = result.RateLimits.StatusCheckApi }
-	if result.RateLimits.StatusCheckApiBurst == 0 { result.RateLimits.StatusCheckApiBurst = 3 }
-	if result.RateLimits.StatusCheckBurst == 0 { result.RateLimits.StatusCheckBurst = result.RateLimits.StatusCheckApiBurst }
-	if result.RateLimits.DownloadApi == 0 { result.RateLimits.DownloadApi = 3 }
-	if result.RateLimits.Download == 0 { result.RateLimits.Download = result.RateLimits.DownloadApi }
-	if result.RateLimits.DownloadApiBurst == 0 { result.RateLimits.DownloadApiBurst = 3 }
-	if result.RateLimits.DownloadBurst == 0 { result.RateLimits.DownloadBurst = result.RateLimits.DownloadApiBurst }
-	if result.AdaptiveProbeAfter == 0 { result.AdaptiveProbeAfter = 10 }
-	if result.MaxBackoffSeconds == 0 { result.MaxBackoffSeconds = 60 }
-	if result.PollIntervalSec == 0 { result.PollIntervalSec = 30 }
-	if result.PollTimeoutMin == 0 { result.PollTimeoutMin = 30 }
+	if result.DbPath == "" {
+		result.DbPath = "/var/db/wb-sales.db"
+	}
+	if result.ReportType == "" {
+		result.ReportType = "detail"
+	}
+	if result.RateLimits.CreateApi == 0 {
+		result.RateLimits.CreateApi = 3
+	}
+	if result.RateLimits.Create == 0 {
+		result.RateLimits.Create = result.RateLimits.CreateApi
+	}
+	if result.RateLimits.CreateApiBurst == 0 {
+		result.RateLimits.CreateApiBurst = 3
+	}
+	if result.RateLimits.CreateBurst == 0 {
+		result.RateLimits.CreateBurst = result.RateLimits.CreateApiBurst
+	}
+	if result.RateLimits.StatusCheckApi == 0 {
+		result.RateLimits.StatusCheckApi = 3
+	}
+	if result.RateLimits.StatusCheck == 0 {
+		result.RateLimits.StatusCheck = result.RateLimits.StatusCheckApi
+	}
+	if result.RateLimits.StatusCheckApiBurst == 0 {
+		result.RateLimits.StatusCheckApiBurst = 3
+	}
+	if result.RateLimits.StatusCheckBurst == 0 {
+		result.RateLimits.StatusCheckBurst = result.RateLimits.StatusCheckApiBurst
+	}
+	if result.RateLimits.DownloadApi == 0 {
+		result.RateLimits.DownloadApi = 3
+	}
+	if result.RateLimits.Download == 0 {
+		result.RateLimits.Download = result.RateLimits.DownloadApi
+	}
+	if result.RateLimits.DownloadApiBurst == 0 {
+		result.RateLimits.DownloadApiBurst = 3
+	}
+	if result.RateLimits.DownloadBurst == 0 {
+		result.RateLimits.DownloadBurst = result.RateLimits.DownloadApiBurst
+	}
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+	if result.PollIntervalSec == 0 {
+		result.PollIntervalSec = 30
+	}
+	if result.PollTimeoutMin == 0 {
+		result.PollTimeoutMin = 30
+	}
 	return result
 }
 
@@ -1094,10 +1172,10 @@ func (f OneCRestsStorageFilter) Matches(guid, name string) bool {
 // Загружает остатки товаров со складов из 1C RESTs API.
 // URL содержит basic auth (user:pass@host) и подставляется через ONEC_API_REST_URL.
 type OneCRestsConfig struct {
-	RestURL       string                  `yaml:"rest_url"`
-	DbPath        string                  `yaml:"db_path"`
-	RetentionDays int                     `yaml:"retention_days"`
-	StorageFilter OneCRestsStorageFilter  `yaml:"storage_filter"`
+	RestURL       string                 `yaml:"rest_url"`
+	DbPath        string                 `yaml:"db_path"`
+	RetentionDays int                    `yaml:"retention_days"`
+	StorageFilter OneCRestsStorageFilter `yaml:"storage_filter"`
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.
@@ -1122,14 +1200,14 @@ func (c OneCRestsConfig) GetDefaults() OneCRestsConfig {
 // Справочники (склады, тарифы) + поставки + товары + упаковка.
 // Двухуровневый rate limiting: desired + api (swagger floor для восстановления).
 type SupplyConfig struct {
-	DbPath           string           `yaml:"db_path"`             // Путь к SQLite базе (default: sales.db)
-	Days             int              `yaml:"days"`                // Дней от сегодня (альтернатива begin/end)
-	Begin            string           `yaml:"begin"`               // Начальная дата (YYYY-MM-DD)
-	End              string           `yaml:"end"`                 // Конечная дата (YYYY-MM-DD)
-	DateFilterType   string           `yaml:"date_filter_type"`    // Тип дат: updatedDate, createDate, factDate (default: updatedDate)
-	RateLimits       SupplyRateLimits `yaml:"rate_limits"`         // Rate limits per endpoint
-	AdaptiveProbeAfter int            `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
-	MaxBackoffSeconds  int            `yaml:"max_backoff_seconds"`  // Cap for exponential backoff (default: 60)
+	DbPath             string           `yaml:"db_path"`              // Путь к SQLite базе (default: sales.db)
+	Days               int              `yaml:"days"`                 // Дней от сегодня (альтернатива begin/end)
+	Begin              string           `yaml:"begin"`                // Начальная дата (YYYY-MM-DD)
+	End                string           `yaml:"end"`                  // Конечная дата (YYYY-MM-DD)
+	DateFilterType     string           `yaml:"date_filter_type"`     // Тип дат: updatedDate, createDate, factDate (default: updatedDate)
+	RateLimits         SupplyRateLimits `yaml:"rate_limits"`          // Rate limits per endpoint
+	AdaptiveProbeAfter int              `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
+	MaxBackoffSeconds  int              `yaml:"max_backoff_seconds"`  // Cap for exponential backoff (default: 60)
 }
 
 // SupplyRateLimits — rate limits для supplies API endpoints.
@@ -1145,15 +1223,15 @@ type SupplyRateLimits struct {
 	// Shared limiter for ALL supply operations (list/goods/packages/details).
 	// All supply endpoints share a global per-seller limit of ~30 req/min.
 	// Uses ShareRateLimit in main.go to map all supply toolIDs → supply_ops.
-	SupplyOps      int `yaml:"supply_ops"`        // desired rate (default: 25)
-	SupplyOpsBurst int `yaml:"supply_ops_burst"`  // desired burst (default: 5)
-	SupplyOpsApi   int `yaml:"supply_ops_api"`    // swagger rate (default: 25)
+	SupplyOps         int `yaml:"supply_ops"`           // desired rate (default: 25)
+	SupplyOpsBurst    int `yaml:"supply_ops_burst"`     // desired burst (default: 5)
+	SupplyOpsApi      int `yaml:"supply_ops_api"`       // swagger rate (default: 25)
 	SupplyOpsApiBurst int `yaml:"supply_ops_api_burst"` // swagger burst (default: 5)
 
 	// Справочники (GET warehouses, transit-tariffs) — 6 req/min
-	Ref      int `yaml:"ref"`        // desired rate (default: 6)
-	RefBurst int `yaml:"ref_burst"`  // desired burst (default: 6)
-	RefApi   int `yaml:"ref_api"`    // swagger rate (default: 6)
+	Ref         int `yaml:"ref"`           // desired rate (default: 6)
+	RefBurst    int `yaml:"ref_burst"`     // desired burst (default: 6)
+	RefApi      int `yaml:"ref_api"`       // swagger rate (default: 6)
 	RefApiBurst int `yaml:"ref_api_burst"` // swagger burst (default: 6)
 }
 
@@ -1170,20 +1248,40 @@ func (c *SupplyConfig) GetDefaults() SupplyConfig {
 	}
 
 	// Shared supply operations rate limits (list/goods/packages/details share global ~30 req/min)
-	if result.RateLimits.SupplyOpsApi == 0 { result.RateLimits.SupplyOpsApi = 25 }
-	if result.RateLimits.SupplyOps == 0 { result.RateLimits.SupplyOps = result.RateLimits.SupplyOpsApi }
-	if result.RateLimits.SupplyOpsApiBurst == 0 { result.RateLimits.SupplyOpsApiBurst = 5 }
-	if result.RateLimits.SupplyOpsBurst == 0 { result.RateLimits.SupplyOpsBurst = result.RateLimits.SupplyOpsApiBurst }
+	if result.RateLimits.SupplyOpsApi == 0 {
+		result.RateLimits.SupplyOpsApi = 25
+	}
+	if result.RateLimits.SupplyOps == 0 {
+		result.RateLimits.SupplyOps = result.RateLimits.SupplyOpsApi
+	}
+	if result.RateLimits.SupplyOpsApiBurst == 0 {
+		result.RateLimits.SupplyOpsApiBurst = 5
+	}
+	if result.RateLimits.SupplyOpsBurst == 0 {
+		result.RateLimits.SupplyOpsBurst = result.RateLimits.SupplyOpsApiBurst
+	}
 
 	// Reference data rate limits (warehouses, tariffs)
-	if result.RateLimits.RefApi == 0 { result.RateLimits.RefApi = 6 }
-	if result.RateLimits.Ref == 0 { result.RateLimits.Ref = result.RateLimits.RefApi }
-	if result.RateLimits.RefApiBurst == 0 { result.RateLimits.RefApiBurst = 6 }
-	if result.RateLimits.RefBurst == 0 { result.RateLimits.RefBurst = result.RateLimits.RefApiBurst }
+	if result.RateLimits.RefApi == 0 {
+		result.RateLimits.RefApi = 6
+	}
+	if result.RateLimits.Ref == 0 {
+		result.RateLimits.Ref = result.RateLimits.RefApi
+	}
+	if result.RateLimits.RefApiBurst == 0 {
+		result.RateLimits.RefApiBurst = 6
+	}
+	if result.RateLimits.RefBurst == 0 {
+		result.RateLimits.RefBurst = result.RateLimits.RefApiBurst
+	}
 
 	// Adaptive tuning defaults
-	if result.AdaptiveProbeAfter == 0 { result.AdaptiveProbeAfter = 10 }
-	if result.MaxBackoffSeconds == 0 { result.MaxBackoffSeconds = 60 }
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
 
 	return result
 }
@@ -1198,21 +1296,21 @@ func (c *SupplyConfig) GetDefaults() SupplyConfig {
 // Seller Analytics API: 3 req/min, burst 3.
 // Двухуровневый rate limiting: desired + api (swagger floor для восстановления).
 type StockProductsConfig struct {
-	PageSize           int                        `yaml:"page_size"`            // max 1000 (default: 1000)
-	Days               int                        `yaml:"days"`                 // Дней от вчерашнего (default: 1)
-	APIKeyEnv          string                     `yaml:"api_key_env"`          // default: WB_API_ANALYTICS_AND_PROMO_KEY
-	RateLimits         StockProductsRateLimits    `yaml:"rate_limits"`
-	AdaptiveProbeAfter int                        `yaml:"adaptive_probe_after"` // default: 10
-	MaxBackoffSeconds  int                        `yaml:"max_backoff_seconds"`  // default: 60
+	PageSize           int                     `yaml:"page_size"`   // max 1000 (default: 1000)
+	Days               int                     `yaml:"days"`        // Дней от вчерашнего (default: 1)
+	APIKeyEnv          string                  `yaml:"api_key_env"` // default: WB_API_ANALYTICS_AND_PROMO_KEY
+	RateLimits         StockProductsRateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter int                     `yaml:"adaptive_probe_after"` // default: 10
+	MaxBackoffSeconds  int                     `yaml:"max_backoff_seconds"`  // default: 60
 }
 
 // StockProductsRateLimits — rate limits для stock products API endpoint.
 //
 // Seller Analytics API: 3 req/min, burst 3 (shared with stocks-report/search-report).
 type StockProductsRateLimits struct {
-	StockProducts      int `yaml:"stock_products"`        // desired rate (default: 3)
-	StockProductsBurst int `yaml:"stock_products_burst"`  // desired burst (default: 3)
-	StockProductsApi   int `yaml:"stock_products_api"`    // swagger rate (default: 3)
+	StockProducts         int `yaml:"stock_products"`           // desired rate (default: 3)
+	StockProductsBurst    int `yaml:"stock_products_burst"`     // desired burst (default: 3)
+	StockProductsApi      int `yaml:"stock_products_api"`       // swagger rate (default: 3)
 	StockProductsApiBurst int `yaml:"stock_products_api_burst"` // swagger burst (default: 3)
 }
 
@@ -1257,18 +1355,18 @@ func (c StockProductsConfig) GetDefaults() StockProductsConfig {
 // Загружает органическую поисковую видимость товаров из WB Seller Analytics API.
 // Два уровня rate limiting: desired + api (swagger floor для восстановления).
 type SearchVisibilityConfig struct {
-	DbPath             string                      `yaml:"db_path"`
-	Days               int                         `yaml:"days"`
-	Begin              string                      `yaml:"begin"`
-	End                string                      `yaml:"end"`
-	Limit              int                         `yaml:"limit"`            // max queries per product (default: 30)
-	SkipPositions      bool                        `yaml:"skip_positions"`
-	SkipQueries        bool                        `yaml:"skip_queries"`
-	APIKeyEnv          string                      `yaml:"api_key_env"`
-	RateLimits         SearchVisibilityRateLimits   `yaml:"rate_limits"`
-	AdaptiveProbeAfter int                         `yaml:"adaptive_probe_after"`
-	MaxBackoffSeconds  int                         `yaml:"max_backoff_seconds"`
-	Filter             FunnelFilterConfig          `yaml:"filter"`
+	DbPath             string                     `yaml:"db_path"`
+	Days               int                        `yaml:"days"`
+	Begin              string                     `yaml:"begin"`
+	End                string                     `yaml:"end"`
+	Limit              int                        `yaml:"limit"` // max queries per product (default: 30)
+	SkipPositions      bool                       `yaml:"skip_positions"`
+	SkipQueries        bool                       `yaml:"skip_queries"`
+	APIKeyEnv          string                     `yaml:"api_key_env"`
+	RateLimits         SearchVisibilityRateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter int                        `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int                        `yaml:"max_backoff_seconds"`
+	Filter             FunnelFilterConfig         `yaml:"filter"`
 }
 
 // SearchVisibilityRateLimits — rate limits для search-report API endpoints.
@@ -1352,7 +1450,7 @@ func (c *SearchVisibilityConfig) GetDefaults() SearchVisibilityConfig {
 type AlertsConfig struct {
 	ZeroStockThreshold int `yaml:"zero_stock_threshold"` // stock <= threshold = "нет товара" (default: 1)
 	ReorderWindow      int `yaml:"reorder_window"`       // SDR <= window → риск (default: 7)
-	CriticalDays       int `yaml:"critical_days"`         // SDR <= days → критично (default: 3)
+	CriticalDays       int `yaml:"critical_days"`        // SDR <= days → критично (default: 3)
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.

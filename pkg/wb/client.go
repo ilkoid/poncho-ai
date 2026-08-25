@@ -42,15 +42,14 @@ import (
 	"golang.org/x/time/rate"
 )
 
-
 // errNoContent is returned when the API returns 204 No Content (no data for the request).
 var errNoContent = fmt.Errorf("no content")
-
 
 // IsNoContent checks if the error is a 204 No Content response.
 func IsNoContent(err error) bool {
 	return err == errNoContent
 }
+
 // Константы удалены - все параметры теперь из config.yaml
 // Defaults для tools задаются в wb секции config.yaml
 
@@ -120,8 +119,8 @@ func isRetryableError(err error) bool {
 		"timeout",
 		"deadline exceeded", // context.DeadlineExceeded from http.Client.Timeout
 		"temporary failure",
-		"stream error",       // HTTP/2 INTERNAL_ERROR from peer (large responses)
-		"status 429",         // Rate limited â adaptive limiter handles cooldown
+		"stream error", // HTTP/2 INTERNAL_ERROR from peer (large responses)
+		"status 429",   // Rate limited â adaptive limiter handles cooldown
 	}
 	for _, pattern := range retryablePatterns {
 		if strings.Contains(errStr, pattern) {
@@ -156,8 +155,8 @@ type HTTPClient interface {
 }
 
 type Client struct {
-	apiKey        string
-	calendarKey   string // API key for calendar endpoints (dp-calendar-api.wildberries.ru)
+	apiKey      string
+	calendarKey string // API key for calendar endpoints (dp-calendar-api.wildberries.ru)
 	// financeKey — токен для finance endpoint (finance-api.wildberries.ru).
 	// Шлюз s2s-finance отвергает statistics-scoped apiKey по scope-проверке
 	// с 401 "token scope not allowed". Если ключ задан — SalesReportDetailedPage
@@ -173,11 +172,11 @@ type Client struct {
 	adaptiveProbeAfter   int // consecutive OKs at api floor before probing desired again
 	maxBackoffSeconds    int // cap for exponential backoff
 
-	mu       sync.RWMutex
-	limiters map[string]*rate.Limiter     // tool ID → limiter
-	adaptive map[string]*rateLimitState   // tool ID → adaptive state (for 429 recovery)
-	lastRequestTime map[string]time.Time  // tool ID → last HTTP request time (for min interval check)
-	limiterAliases map[string]string      // alias tool ID → canonical tool ID (for shared rate limits)
+	mu              sync.RWMutex
+	limiters        map[string]*rate.Limiter   // tool ID → limiter
+	adaptive        map[string]*rateLimitState // tool ID → adaptive state (for 429 recovery)
+	lastRequestTime map[string]time.Time       // tool ID → last HTTP request time (for min interval check)
+	limiterAliases  map[string]string          // alias tool ID → canonical tool ID (for shared rate limits)
 }
 
 // rateLimitState tracks adaptive rate limiting after 429 responses.
@@ -189,8 +188,8 @@ type rateLimitState struct {
 	desiredBurst  int        // burst for desired rate (stored for potential future use)
 	apiFloor      rate.Limit // swagger-documented safe rate (immediate drop on 429)
 	apiFloorBurst int
-	reduced       bool       // true after 429 — stays at api floor forever
-	consecutiveOK  int        // successes since last 429 (for potential future use)
+	reduced       bool // true after 429 — stays at api floor forever
+	consecutiveOK int  // successes since last 429 (for potential future use)
 }
 
 // IsDemoKey проверяет что используется demo ключ (для mock режима).
@@ -239,9 +238,9 @@ func New(apiKey string) *Client {
 	// Используем дефолтную конфигурацию для согласованности с NewFromConfig
 	defaultCfg := config.WBConfig{
 		APIKey:        apiKey,
-		RateLimit:     100,  // дефолтный rate limit
-		BurstLimit:    5,    // дефолтный burst
-		RetryAttempts: 3,    // дефолтный retry
+		RateLimit:     100,   // дефолтный rate limit
+		BurstLimit:    5,     // дефолтный burst
+		RetryAttempts: 3,     // дефолтный retry
 		Timeout:       "30s", // дефолтный timeout
 	}
 	cfg := defaultCfg.GetDefaults()
@@ -317,7 +316,7 @@ func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 		ResponseHeaderTimeout: timeout,
 
 		// Отключаем принудительное закрытие idle соединений
-		ForceAttemptHTTP2:     true,
+		ForceAttemptHTTP2: true,
 	}
 
 	return &Client{
@@ -392,6 +391,19 @@ type httpRequest struct {
 	authKey string
 }
 
+// transientBackoff — пауза перед повтором при 5xx: не быстрее собственного
+// ритма тул-а плюс 3с запаса. Ретрай «через 5с» для эндпоинта с интервалом
+// 60с (order-feed, 1 req/min) гарантированно ловит 429 того же минутного
+// окна и сжигает попытку (инцидент 03:01 МСК 25.08.2026: 503 → 5с → 429 →
+// бюджет попыток исчерпан при живом 5-минутном окне 503 у WB).
+func transientBackoff(minInterval time.Duration) time.Duration {
+	base := 5 * time.Second
+	if minInterval > base {
+		base = minInterval
+	}
+	return base + 3*time.Second
+}
+
 // doRequest выполняет HTTP запрос с retry логикой и rate limiting.
 //
 // Общий метод для Get() и Post(), реализующий retry loop, rate limiting
@@ -437,15 +449,15 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 			}
 		}
 
-			// Create request body reader (recreate on retry for POST requests)
-			var bodyReader io.Reader
-			if len(req.bodyBytes) > 0 {
-				bodyReader = bytes.NewReader(req.bodyBytes)
-			} else if req.body != nil {
-				bodyReader = req.body
-			}
+		// Create request body reader (recreate on retry for POST requests)
+		var bodyReader io.Reader
+		if len(req.bodyBytes) > 0 {
+			bodyReader = bytes.NewReader(req.bodyBytes)
+		} else if req.body != nil {
+			bodyReader = req.body
+		}
 
-			httpReq, err := http.NewRequestWithContext(ctx, req.method, req.url, bodyReader)
+		httpReq, err := http.NewRequestWithContext(ctx, req.method, req.url, bodyReader)
 		if err != nil {
 			return err
 		}
@@ -453,7 +465,6 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 		httpReq.Header.Set("Authorization", c.authKey(req.authKey))
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
-
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
@@ -525,21 +536,21 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 			}
 		}
 
-			// 204 No Content = no data for this request (not an error)
-			if resp.StatusCode == http.StatusNoContent {
-				c.adaptiveRecoverOK(toolID)
-				c.mu.Lock()
-				c.lastRequestTime[resolvedID] = time.Now()
-				c.mu.Unlock()
-				return errNoContent
-			}
+		// 204 No Content = no data for this request (not an error)
+		if resp.StatusCode == http.StatusNoContent {
+			c.adaptiveRecoverOK(toolID)
+			c.mu.Lock()
+			c.lastRequestTime[resolvedID] = time.Now()
+			c.mu.Unlock()
+			return errNoContent
+		}
 
 		if resp.StatusCode != http.StatusOK {
 			// Check if it's a transient 5xx error (and we have retries left)
 			isTransient5xx := resp.StatusCode >= 500 && resp.StatusCode < 600
 			if isTransient5xx && i < c.retryAttempts-1 {
 				lastErr = fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
-				backoff := time.Duration(i+1) * 5 * time.Second // 5s, 10s, 15s
+				backoff := transientBackoff(minInterval)
 				fmt.Fprintf(os.Stderr, "⚠️  Transient 5xx (%d) for %s, retrying in %v... (attempt %d/%d)\n",
 					resp.StatusCode, toolID, backoff.Truncate(time.Second), i+2, c.retryAttempts)
 				select {
@@ -691,7 +702,6 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
-
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			lastErr = err
@@ -763,14 +773,14 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 			}
 		}
 
-			// 204 No Content = no data for this request (not an error)
-			if resp.StatusCode == http.StatusNoContent {
-				c.adaptiveRecoverOK(toolID)
-				c.mu.Lock()
-				c.lastRequestTime[resolvedID] = time.Now()
-				c.mu.Unlock()
-				return errNoContent
-			}
+		// 204 No Content = no data for this request (not an error)
+		if resp.StatusCode == http.StatusNoContent {
+			c.adaptiveRecoverOK(toolID)
+			c.mu.Lock()
+			c.lastRequestTime[resolvedID] = time.Now()
+			c.mu.Unlock()
+			return errNoContent
+		}
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
@@ -779,7 +789,7 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 			isTransient5xx := resp.StatusCode >= 500 && resp.StatusCode < 600
 			if isTransient5xx && i < c.retryAttempts-1 {
 				lastErr = fmt.Errorf("wb api error: status %d, body: %s", resp.StatusCode, string(body))
-				backoff := time.Duration(i+1) * 5 * time.Second // 5s, 10s, 15s
+				backoff := transientBackoff(minInterval)
 				fmt.Fprintf(os.Stderr, "⚠️  Transient 5xx (%d) for %s, retrying in %v... (attempt %d/%d)\n",
 					resp.StatusCode, toolID, backoff.Truncate(time.Second), i+2, c.retryAttempts)
 				select {
@@ -1061,6 +1071,7 @@ func (c *Client) Post(ctx context.Context, toolID string, baseURL string, rateLi
 		bodyBytes: bodyJSON, // Store for retry (Reader can only be read once)
 	}, dest)
 }
+
 // PingResponse представляет ответ от ping endpoint Wildberries Content API.
 //
 // Поля:
@@ -1236,10 +1247,10 @@ func (c *Client) GetRaw(ctx context.Context, toolID string, baseURL string, rate
 
 // ReportDetailByPeriodPageResult представляет результат одной страницы пагинации.
 type ReportDetailByPeriodPageResult struct {
-	Rows        []RealizationReportRow // Строки отчета
-	HasMore     bool                    // Есть ли еще данные
-	LastRrdID   int                     // Последний rrd_id (для следующей страницы)
-	StatusCode int                     // HTTP статус код
+	Rows       []RealizationReportRow // Строки отчета
+	HasMore    bool                   // Есть ли еще данные
+	LastRrdID  int                    // Последний rrd_id (для следующей страницы)
+	StatusCode int                    // HTTP статус код
 }
 
 // ReportDetailByPeriodPage получает одну страницу отчета реализации.
@@ -1334,10 +1345,10 @@ func (c *Client) ReportDetailByPeriodPage(
 		c.lastRequestTime["report_detail_by_period"] = time.Now()
 		c.mu.Unlock()
 		return &ReportDetailByPeriodPageResult{
-			Rows:        nil,
-			HasMore:     false,
-			LastRrdID:   rrdid,
-			StatusCode:  204,
+			Rows:       nil,
+			HasMore:    false,
+			LastRrdID:  rrdid,
+			StatusCode: 204,
 		}, nil
 	}
 
@@ -1410,10 +1421,10 @@ func (c *Client) ReportDetailByPeriodPage(
 	}
 
 	return &ReportDetailByPeriodPageResult{
-		Rows:        rows,
-		HasMore:     len(rows) > 0,
-		LastRrdID:   lastRrdID,
-		StatusCode:  200,
+		Rows:       rows,
+		HasMore:    len(rows) > 0,
+		LastRrdID:  lastRrdID,
+		StatusCode: 200,
 	}, nil
 }
 
@@ -1445,7 +1456,7 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 	params.Set("dateFrom", dateFrom)
 	params.Set("dateTo", dateTo)
 	params.Set("limit", fmt.Sprintf("%d", limit))
-	params.Set("period", "daily")  // Периодичность: daily для поддержки времени
+	params.Set("period", "daily") // Периодичность: daily для поддержки времени
 	if rrdid > 0 {
 		params.Set("rrdid", fmt.Sprintf("%d", rrdid))
 	}
@@ -1505,10 +1516,10 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 		c.lastRequestTime["report_detail_by_period_with_time"] = time.Now()
 		c.mu.Unlock()
 		return &ReportDetailByPeriodPageResult{
-			Rows:        nil,
-			HasMore:     false,
-			LastRrdID:   rrdid,
-			StatusCode:  204,
+			Rows:       nil,
+			HasMore:    false,
+			LastRrdID:  rrdid,
+			StatusCode: 204,
 		}, nil
 	}
 
@@ -1581,10 +1592,10 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 	}
 
 	return &ReportDetailByPeriodPageResult{
-		Rows:        rows,
-		HasMore:     len(rows) > 0,
-		LastRrdID:   lastRrdID,
-		StatusCode:  200,
+		Rows:       rows,
+		HasMore:    len(rows) > 0,
+		LastRrdID:  lastRrdID,
+		StatusCode: 200,
 	}, nil
 }
 

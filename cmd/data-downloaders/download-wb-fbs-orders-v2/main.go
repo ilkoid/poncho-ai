@@ -181,7 +181,15 @@ func main() {
 
 // runWithKey выполняет полный прогон с указанным API-ключом.
 func runWithKey(ctx context.Context, apiKey string, cfg *Config, writer fbsorders.Writer, opts fbsorders.DownloadOptions) (*fbsorders.DownloadResult, error) {
-	client := wb.New(apiKey)
+	// NewFromConfig (а не deprecated wb.New), чтобы retry_attempts из конфига
+	// доходил до клиента: у ленты 1 req/min, переживать полуночные 503-окна WB
+	// трём попыткам не хватает (инцидент 03:01 МСК 25.08.2026).
+	wbc := cfg.WB
+	wbc.APIKey = apiKey
+	client, err := wb.NewFromConfig(wbc.ToWBConfig())
+	if err != nil {
+		return nil, fmt.Errorf("wb client: %w", err)
+	}
 
 	// Swagger: v3 задания+статусы = один общий бакет 300 req/min, burst 20.
 	// ShareRateLimit объединяет оба toolID в один лимитер (суммарно ≤ desired).

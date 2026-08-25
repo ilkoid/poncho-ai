@@ -8,27 +8,31 @@ wb:
   api_key: ""                    # literal-ключ (не коммитить!)
   api_key_env: "WB_API_KEY"
   timeout: "15m"
+  # Попыток на запрос (5xx/429/сетевые). Бэкофф 5xx = свой интервал + 3с,
+  # для ленты это 63с: 6 попыток переживают ~5-минутные 503-окна WB
+  # (полуночные сбои ag-contentanalytics, инцидент 25.08.2026).
+  retry_attempts: 6
 
 fbs:
   # ---- Фаза 1: сборочные задания ----
-  days: 10                       # глубина API /api/v3/orders (максимум 3 месяца)
+  days: 26                       # глубина API /api/v3/orders (максимум 3 месяца)
   # from: "2026-07-24"           # точная дата начала (приоритет над days)
   # to: "2026-08-23"             # точная дата конца (включительно)
 
   # ---- Фаза 2: статусы (гарантия полноты) ----
   # Безусловно обновляются задания моложе окна; незакрытые задания — любого возраста.
-  status_window_days: 7
+  status_window_days: 26
 
   # ---- Фаза 3: лента заказов ----
   feed_enabled: true             # false = отключить (или флаг --no-feed)
-  feed_days: 7                   # глубина ленты по дате текущего статуса (максимум 31)
+  feed_days: 26                   # глубина ленты по дате текущего статуса (максимум 31)
   feed_mp_only: true             # сохранять только FBS/DBS (is_mp=true); API не фильтрует —
                                  # FBW-строки качаются, но отбрасываются до записи. false = все модели (или --feed-all-models)
 
   # ---- Rate limits ----
   # Swagger: v3 задания+статусы — общий бакет 300 req/min, burst 20, интервал 200 мс.
   # Ставим консервативно; 4XX считается за 10 запросов.
-  rate_limit: 120                # desired, req/min
+  rate_limit: 200                # desired, req/min
   burst: 20
   # Swagger: order-feed 1 req/min (basic-токен 2 req/24h — если упрётся, отключите feed).
   feed_rate_limit: 1
@@ -37,5 +41,5 @@ fbs:
 storage:
   backend: "postgres"            # PG-only домен
   pg_dsn: ""                     # пусто = собрать из env (PGHOST/PGPORT/PGUSER/PG_PWD)
-  pg_database: "wb_data_test"    # wb_data_test для тестов!
+  pg_database: "wb_data_prod"    # wb_data_test для тестов!
   pg_password_env: "PG_PWD"
