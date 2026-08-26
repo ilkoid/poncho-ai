@@ -27,7 +27,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -77,8 +76,8 @@ WHERE ($1 OR is_mp)
   AND ($2::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
 GROUP BY 1 ORDER BY 1`
 
-// cohortsFeedQuery — когорты по дню создания (лента). Полны только когорты, чей
-// возраст ≥ p90 цикла (см. lifecycleQuery) и чей край внутри окна ленты загрузчика.
+// cohortsFeedQuery — когорты по дню создания (лента). Полноту когорты видно из
+// in_flight: зрелая = «в пути» ≤ 10% заказов (markMaturity).
 const cohortsFeedQuery = `
 SELECT
   (created_at AT TIME ZONE 'Europe/Moscow')::date::text AS cohort,
@@ -288,7 +287,7 @@ type CohortFeedRow struct {
 	InFlight   int64
 	OrderedRub float64
 	BuyoutRub  float64
-	Mature     bool // возраст когорты ≥ p90 цикла — проценты можно читать
+	Mature     bool // «в пути» ≤ 10% заказов когорты — проценты можно читать
 }
 
 // Finalized — завершившиеся заказы когорты.
@@ -623,7 +622,7 @@ func (q queryParams) sinceOnly() []any {
 }
 
 // loadAll собирает отчёт целиком. Зрелость когорт проставляется здесь же:
-// когорта зрелая, когда её возраст ≥ p90 цикла заказ→выкуп.
+// когорта зрелая, когда «в пути» ≤ 10% её заказов.
 func loadAll(ctx context.Context, pool *pgxpool.Pool, q queryParams) (*ReportData, error) {
 	d := &ReportData{AllModels: q.allModels, GeneratedAt: nowMoscow().Format("02.01.2006 15:04")}
 	var err error
@@ -663,23 +662,18 @@ func loadAll(ctx context.Context, pool *pgxpool.Pool, q queryParams) (*ReportDat
 	if d.Cross, err = loadCross(ctx, pool, q); err != nil {
 		return nil, err
 	}
-	markMaturity(d.Cohorts, d.Lifecycle, nowMoscow())
+	markMaturity(d.Cohorts)
 	return d, nil
 }
 
-// markMaturity помечает когорты с завершённым циклом: возраст когорты (с конца
-// дня создания) ≥ p90 цикла заказ→выкуп. У незрелых когорт доли выкупа смещены
-// вверх — в отчёте они показываются, но помечены.
-func markMaturity(cohorts []CohortFeedRow, lc Lifecycle, now time.Time) {
-	if lc.P90H == nil || *lc.P90H <= 0 {
-		return
-	}
+// markMaturity помечает зрелые когорты по факту данных: «в пути» ≤ 10% заказов.
+// Возраст ≥ p90 цикла заказ→выкуп оказался недостаточным условием: p90 считается
+// только по выкупам, а отмены «истёк срок хранения» доезжают позже — когорта
+// в 12–13 сут ещё наполовину в полёте. У незрелых когорт доли выкупа ещё
+// изменятся — в отчёте они показываются, но помечены.
+func markMaturity(cohorts []CohortFeedRow) {
 	for i := range cohorts {
-		day, err := time.ParseInLocation("2006-01-02", cohorts[i].Cohort, mskLoc())
-		if err != nil {
-			continue
-		}
-		endOfDay := day.AddDate(0, 0, 1)
-		cohorts[i].Mature = now.Sub(endOfDay) >= time.Duration(*lc.P90H*float64(time.Hour))
+		cohorts[i].Mature = cohorts[i].Orders > 0 &&
+			float64(cohorts[i].InFlight)/float64(cohorts[i].Orders) <= 0.10
 	}
 }

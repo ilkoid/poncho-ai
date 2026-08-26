@@ -82,20 +82,27 @@ function compute() {
     if (state.cat1 >= 0 && nmCat1[nmI] !== state.cat1) continue;
     if (state.cat2 >= 0 && nmCat2[nmI] !== state.cat2) continue;
 
-    // когортные агрегаты — без окна событий (когорта отвечает сама за себя)
-    const c = coh[F.cohort[i]] || (coh[F.cohort[i]] = {cnt: 0, buy: 0, can: 0, ret: 0, fly: 0});
-    c.cnt += F.cnt[i];
-
     const e = F.event[i];
+    const cls = CLS[i], cnt = F.cnt[i], kop = F.kop[i];
+
+    // Когортные агрегаты — строго без окна событий (когорта отвечает сама за
+    // себя): в тултипе Заказано = Выкуп + Отмены + Возвраты + В пути при любом
+    // пресете периода.
+    const c = coh[F.cohort[i]] || (coh[F.cohort[i]] = {cnt: 0, buy: 0, can: 0, ret: 0, fly: 0});
+    c.cnt += cnt;
+    if (cls === 1) c.buy += cnt;
+    else if (cls === 2) c.can += cnt;
+    else if (cls === 3) c.ret += cnt;
+    else c.fly += cnt;
+
     if (e < state.from || e > state.to) continue;
 
-    const cls = CLS[i], cnt = F.cnt[i], kop = F.kop[i];
     K.pc += cnt; K.rubOrder += kop;
     const eb = ev[e];
     eb.rubOrder += kop; if (cls === 0) eb.pcFly += cnt;
 
     if (cls === 1) {
-      K.pcBuy += cnt; K.rubBuy += kop; c.buy += cnt;
+      K.pcBuy += cnt; K.rubBuy += kop;
       eb.pcBuy += cnt; eb.rubBuy += kop;
       const off = Math.round((evT[e] - sparkEnd) / DAY);
       if (off >= -13 && off <= 0) {
@@ -103,12 +110,12 @@ function compute() {
         sp[off + 13] += kop / 100;
       }
     } else if (cls === 2) {
-      K.pcCan += cnt; K.rubLost += kop; c.can += cnt;
+      K.pcCan += cnt; K.rubLost += kop;
       eb.pcCan += cnt; eb.rubLost += kop;
       const ct = DIM.ctype[F.ctype[i]];
       if (ct in reasons) reasons[ct] += kop; else reasons.unknown += kop;
     } else if (cls === 3) {
-      K.pcRet += cnt; K.rubLost += kop; c.ret += cnt;
+      K.pcRet += cnt; K.rubLost += kop;
       eb.pcRet += cnt; eb.rubLost += kop;
       reasons.returns += kop;
     } else {
@@ -318,16 +325,17 @@ function renderReasons(A) {
 }
 
 /* ── когорты ── */
+/* Зрелость — по факту данных: «в пути» ≤ 10% заказов когорты. Возраста ≥ p90
+   цикла выкупов недостаточно: p90 считается по выкупам, а отмены «истёк срок
+   хранения» доезжают позже — когорта в 12–13 сут ещё наполовину в полёте. */
 function renderCohort(A) {
   const rows = [];
-  const matureD = META.mature_after_days || 0;
   DIM.cohort.forEach((d, i) => {
     const c = A.coh[i];
     if (!c || c.cnt < 5) return;                      // шум малых когорт
     const p = pct(c.buy, c.buy + c.can + c.ret);
     if (p < 0) return;
-    rows.push({date: d, p: +p.toFixed(1), cnt: c.cnt, c,
-      mature: matureD === 0 ? true : (lastT - d2t(d)) / DAY >= matureD});
+    rows.push({date: d, p: +p.toFixed(1), cnt: c.cnt, c, mature: c.fly / c.cnt <= 0.1});
   });
   ch.cohort.setOption({
     animationDuration: 300,
@@ -336,8 +344,11 @@ function renderCohort(A) {
       formatter: ps => {
         const r = rows[ps[0].dataIndex];
         return `<b>${dmy(r.date)}</b> · ${r.mature ? 'зрелая' : '<b style="color:#9A6700">не созрела</b>'}<br>` +
-          `Заказано: ${fmtInt(r.cnt)}<br>Выкуп: <b>${fmtPct(r.p)}</b> · ${fmtInt(r.c.buy)} шт<br>` +
-          `Отмены: ${fmtInt(r.c.can)} · Возвраты: ${fmtInt(r.c.ret)}`;
+          `Заказано: ${fmtInt(r.cnt)}<br>` +
+          `Выкуп: <b>${fmtPct(r.p)}</b> · ${fmtInt(r.c.buy)} шт (среди завершённых)<br>` +
+          `Отмены: ${fmtInt(r.c.can)} · Возвраты: ${fmtInt(r.c.ret)}<br>` +
+          `В пути: ${fmtInt(r.c.fly)}` +
+          (r.mature ? '' : `<br><span style="color:#9A6700">в пути ещё ${fmtPct(100 * r.c.fly / r.cnt)} — % изменится</span>`);
       }},
     legend: {top: 0, right: 0, itemWidth: 10, itemHeight: 10, textStyle: {color: C.muted, fontSize: 11, fontFamily: FONT}},
     xAxis: {type: 'category', data: rows.map(r => dd(r.date)), ...axisStyle, splitLine: {show: false}},
@@ -563,8 +574,8 @@ function initChrome() {
     (META.all_models ? ' · все модели (incl. FBW)' : ' · склад продавца (FBS/DBS)');
   $('#method').innerHTML = '<b>Методика.</b> Дни — календарные МСК. Выручка = цена продавца по выкупам ' +
     '(без комиссий и логистики WB); упущено = отмены + возвраты. Лента несёт текущий статус заказа, ' +
-    'день события = дата смены статуса. Когорта зрелая после ' + (META.mature_after_days || '?') +
-    ' сут — у незрелых «% выкупа» завышен. Категории: ' +
+    'день события = дата смены статуса. Зрелость когорты — по факту данных: «в пути» ≤ 10% ' +
+    'заказов; у бледных столбиков «% выкупа» ещё изменится. Категории: ' +
     (META.onec_categories
       ? 'иерархия 1С (покрытие ' + fmtPct(META.onec_coverage_pct) + ' номенклатур), «WB · …» — предметы WB для немапленных'
       : 'предметы WB (в базе нет 1С-словаря)') +
