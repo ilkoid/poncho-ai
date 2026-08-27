@@ -125,6 +125,29 @@ type salesReportDetailedRow struct {
 	SalePriceWholesaleDP flexFloat `json:"salePriceWholesaleDiscountPrc"`
 	B2BCustomerTin       string    `json:"b2bCustomerTin"`
 	OrderUID             string    `json:"orderUid"`
+
+	// Поля добавлены под макет фин-отчёта фин-аналитика (56 колонок).
+	// Описания сверены с SalesReportsDetailedRes (13-finances.yaml):
+	// deliveryAmount/returnAmount :1328-1335, ppvzReward :1378 (возмещение за
+	// выдачу/возврат на ПВЗ), paymentProcessing :1390 («Тип платежа»),
+	// acquiringBank :1394, ppvzOffice* :1406-1413, ppvzSupplier* :1414-1421,
+	// declarationNumber :1422, bonusTypeName :1426, stickerId :1430,
+	// country :1434, rebillLogisticOrg :1454, uuidPromocode :1530.
+	DeliveryAmount    int       `json:"deliveryAmount"`
+	ReturnAmount      int       `json:"returnAmount"`
+	PPVzReward        flexFloat `json:"ppvzReward"`
+	PaymentProcessing string    `json:"paymentProcessing"`
+	AcquiringBank     string    `json:"acquiringBank"`
+	UUIDPromocode     string    `json:"uuidPromocode"`
+	PPVzOfficeID      int64     `json:"ppvzOfficeId"`
+	PPVzOfficeName    string    `json:"ppvzOfficeName"`
+	PPVzSupplierName  string    `json:"ppvzSupplierName"`
+	PPVzSupplierInn   string    `json:"ppvzSupplierInn"`
+	DeclarationNumber string    `json:"declarationNumber"`
+	BonusTypeName     string    `json:"bonusTypeName"`
+	StickerID         string    `json:"stickerId"`
+	Country           string    `json:"country"`
+	RebillLogisticOrg string    `json:"rebillLogisticOrg"`
 }
 
 // SalesReportDetailedPage получает одну страницу детализации отчёта реализации.
@@ -432,6 +455,22 @@ func mapDetailedRowToRealization(d salesReportDetailedRow) RealizationReportRow 
 		IsLegalEntity:               d.IsB2b,
 		SalePriceAffiliatedDiscountPrc: float64(d.SalePriceAffilDP),
 		SalePriceWholesaleDiscountPrc:  float64(d.SalePriceWholesaleDP),
+
+		DeliveryAmount:    d.DeliveryAmount,
+		ReturnAmount:      d.ReturnAmount,
+		PPVzReward:        float64(d.PPVzReward),
+		PaymentProcessing: d.PaymentProcessing,
+		AcquiringBank:     d.AcquiringBank,
+		UUIDPromocode:     d.UUIDPromocode,
+		PPVzOfficeID:      d.PPVzOfficeID,
+		PPVzOfficeName:    d.PPVzOfficeName,
+		PPVzSupplierName:  d.PPVzSupplierName,
+		PPVzSupplierInn:   d.PPVzSupplierInn,
+		DeclarationNumber: d.DeclarationNumber,
+		BonusTypeName:     d.BonusTypeName,
+		StickerID:         d.StickerID,
+		Country:           d.Country,
+		RebillLogisticOrg: d.RebillLogisticOrg,
 	}
 }
 

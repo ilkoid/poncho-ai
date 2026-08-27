@@ -574,6 +574,25 @@ type RealizationReportRow struct {
 	IsLegalEntity                 bool    `json:"is_legal_entity,omitempty"`                  // Признак B2B-сделки (wire: is_legal_entity)
 	SalePriceAffiliatedDiscountPrc float64 `json:"sale_price_affiliated_discount_prc,omitempty"` // Скидка по подменному артикулу (%)
 	SalePriceWholesaleDiscountPrc float64 `json:"sale_price_wholesale_discount_prc,omitempty"` // Оптовая скидка для бизнеса (%)
+
+	// Поля под макет фин-отчёта (56 колонок, прототип export-wb-fin-report).
+	// camelCase-источники — SalesReportsDetailedRes (13-finances.yaml), маппинг
+	// в mapDetailedRowToRealization. В SQLite/PG sales НЕ пишутся (вне миграции).
+	DeliveryAmount    int     `json:"delivery_amount,omitempty"`     // Кол-во доставок (wire: deliveryAmount)
+	ReturnAmount      int     `json:"return_amount,omitempty"`       // Кол-во возвратов (wire: returnAmount)
+	PPVzReward        float64 `json:"ppvz_reward,omitempty"`         // Возмещение за выдачу и возврат на ПВЗ
+	PaymentProcessing string  `json:"payment_processing,omitempty"`  // Тип платежа («Комиссия за организацию платежа…»)
+	AcquiringBank     string  `json:"acquiring_bank,omitempty"`      // Банк-эквайер
+	UUIDPromocode     string  `json:"uuid_promocode,omitempty"`      // ID промокода
+	PPVzOfficeID      int64   `json:"ppvz_office_id,omitempty"`      // Номер офиса доставки
+	PPVzOfficeName    string  `json:"ppvz_office_name,omitempty"`    // Наименование офиса доставки
+	PPVzSupplierName  string  `json:"ppvz_supplier_name,omitempty"`  // Партнёр
+	PPVzSupplierInn   string  `json:"ppvz_supplier_inn,omitempty"`   // ИНН партнёра
+	DeclarationNumber string  `json:"declaration_number,omitempty"`  // Номер таможенной декларации
+	BonusTypeName     string  `json:"bonus_type_name,omitempty"`     // Обоснование штрафов и доплат
+	StickerID         string  `json:"sticker_id,omitempty"`          // Стикер МП
+	Country           string  `json:"country,omitempty"`             // Страна продажи
+	RebillLogisticOrg string  `json:"rebill_logistic_org,omitempty"` // Организатор перевозки
 }
 
 // ReportDetailByPeriodRequest представляет запрос к API отчета реализации.

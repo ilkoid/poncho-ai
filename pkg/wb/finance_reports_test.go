@@ -80,7 +80,22 @@ func TestMapDetailedRow_Parity(t *testing.T) {
 		"salePriceAffiliatedDiscountPrc": 0,
 		"salePriceWholesaleDiscountPrc": 0,
 		"b2bCustomerTin": "010101010101",
-		"orderUid": "id375f16c4bec295d9995393af803ff7b"
+		"orderUid": "id375f16c4bec295d9995393af803ff7b",
+		"deliveryAmount": 1,
+		"returnAmount": 0,
+		"ppvzReward": "12.3",
+		"paymentProcessing": "Комиссия за организацию платежа с НДС",
+		"acquiringBank": "Тинькофф",
+		"uuidPromocode": "promo-abc-123",
+		"ppvzOfficeId": 105383,
+		"ppvzOfficeName": "Москва Москва Очаковское шоссе 6к2",
+		"ppvzSupplierName": "ИП Жасмин",
+		"ppvzSupplierInn": "010101010101",
+		"declarationNumber": "10702020/120826/0001234",
+		"bonusTypeName": "Штраф МП. Невыполненный заказ (отмена клиентом после недовоза)",
+		"stickerId": "1964038895",
+		"country": "Россия",
+		"rebillLogisticOrg": "ИП Иванов Иван Иванович(123456789012)"
 	}]`
 
 	var rows []salesReportDetailedRow
@@ -161,6 +176,54 @@ func TestMapDetailedRow_Parity(t *testing.T) {
 	}
 	if got.IsLegalEntity != false {
 		t.Errorf("IsLegalEntity = %v (isB2b mapping), want false", got.IsLegalEntity)
+	}
+
+	// Поля макета фин-отчёта (export-wb-fin-report): серые колонки AM–AP и
+	// синие, добранные из SalesReportsDetailedRes в 2026-08.
+	if got.DeliveryAmount != 1 {
+		t.Errorf("DeliveryAmount = %d, want 1", got.DeliveryAmount)
+	}
+	if got.ReturnAmount != 0 {
+		t.Errorf("ReturnAmount = %d, want 0", got.ReturnAmount)
+	}
+	if !floatEq(got.PPVzReward, 12.3) {
+		t.Errorf("PPVzReward = %v (ppvzReward mapping), want 12.3", got.PPVzReward)
+	}
+	if got.PaymentProcessing != "Комиссия за организацию платежа с НДС" {
+		t.Errorf("PaymentProcessing = %q («Тип платежа»), wrong", got.PaymentProcessing)
+	}
+	if got.AcquiringBank != "Тинькофф" {
+		t.Errorf("AcquiringBank = %q, want Тинькофф", got.AcquiringBank)
+	}
+	if got.UUIDPromocode != "promo-abc-123" {
+		t.Errorf("UUIDPromocode = %q, want promo-abc-123", got.UUIDPromocode)
+	}
+	if got.PPVzOfficeID != 105383 {
+		t.Errorf("PPVzOfficeID = %d, want 105383", got.PPVzOfficeID)
+	}
+	if got.PPVzOfficeName != "Москва Москва Очаковское шоссе 6к2" {
+		t.Errorf("PPVzOfficeName = %q, wrong", got.PPVzOfficeName)
+	}
+	if got.PPVzSupplierName != "ИП Жасмин" {
+		t.Errorf("PPVzSupplierName = %q, want ИП Жасмин", got.PPVzSupplierName)
+	}
+	if got.PPVzSupplierInn != "010101010101" {
+		t.Errorf("PPVzSupplierInn = %q, want 010101010101", got.PPVzSupplierInn)
+	}
+	if got.DeclarationNumber == "" {
+		t.Errorf("DeclarationNumber пуст — потеряно поле declarationNumber")
+	}
+	if got.BonusTypeName == "" {
+		t.Errorf("BonusTypeName пуст — потеряно поле bonusTypeName")
+	}
+	if got.StickerID != "1964038895" {
+		t.Errorf("StickerID = %q, want 1964038895", got.StickerID)
+	}
+	if got.Country != "Россия" {
+		t.Errorf("Country = %q, want Россия", got.Country)
+	}
+	if got.RebillLogisticOrg == "" {
+		t.Errorf("RebillLogisticOrg пуст — потеряно поле rebillLogisticOrg")
 	}
 }
 
