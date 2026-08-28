@@ -13,6 +13,9 @@
 #
 # В конце печатается Summary: список упавших утилит (⚠️ FAIL помечается сразу).
 # Код выхода скрипта = 1, если хоть одна утилита упала.
+#
+# Прогон вручную на Mac: запускай под caffeinate, чтобы сон Mac не рвал длинные
+# фазы (search-vis качает ~1.5ч): caffeinate -is bash download-all.sh
 
 export PGHOST="${PGHOST:-192.168.10.7}"
 export PGPORT="${PGPORT:-15432}"
@@ -105,8 +108,8 @@ run go run "$PONCHO/cmd/data-downloaders/download-wb-fbs-orders-v2" --config "$C
 # ── Phase 5: Advertising ──
 echo "── Phase 5: Advertising ──"
 
-run go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" --config "$C/download-wb-campaigns-v2-PG.yaml" --backend postgres
-run go run "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" --config "$C/download-wb-promotion-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+#run go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" --config "$C/download-wb-campaigns-v2-PG.yaml" --backend postgres
+#run go run "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" --config "$C/download-wb-promotion-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 
 # ── Phase 6: Analytics ──
 echo "── Phase 6: Analytics ──"
