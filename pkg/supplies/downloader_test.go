@@ -2,6 +2,8 @@ package supplies
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -314,6 +316,92 @@ func TestSupplyFromAPIConversion(t *testing.T) {
 	if row2.SupplyID != 0 {
 		t.Errorf("SupplyID: got %d, want 0 (unplanned)", row2.SupplyID)
 	}
+}
+
+// refDisabledSource delegates everything to MockSource except reference
+// methods, which return the real-shaped 404 "temporarily disabled" error
+// observed from supplies-api since 2026-08-15.
+type refDisabledSource struct {
+	*MockSource
+}
+
+func (s *refDisabledSource) GetWarehouses(ctx context.Context) ([]wb.Warehouse, error) {
+	return nil, fmt.Errorf("wb api error: status 404, body: {\"status\":404,\"detail\":\"This method is temporarily disabled. Link: https://dev.wildberries.ru/release-notes?id=570\"}")
+}
+
+func (s *refDisabledSource) GetTransitTariffs(ctx context.Context) ([]wb.TransitTariff, error) {
+	return nil, fmt.Errorf("wb api error: status 404, body: {\"status\":404,\"detail\":\"This method is temporarily disabled. Link: https://dev.wildberries.ru/release-notes?id=570\"}")
+}
+
+func TestReferenceTemporarilyDisabledNotFatal(t *testing.T) {
+	src := &refDisabledSource{MockSource: NewMockSource(10)}
+	writer := NewDiscardWriter()
+
+	var progress []string
+	opts := DownloadOptions{
+		Begin:          "2026-01-01",
+		End:            "2026-01-31",
+		DateFilterType: "updatedDate",
+		OnProgress:     func(msg string) { progress = append(progress, msg) },
+	}
+
+	dl := NewDownloader(src, writer, opts)
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("reference disabled must not fail the run: %v", err)
+	}
+
+	// Reference skipped, supply flow intact.
+	if result.Warehouses != 0 || result.Tariffs != 0 {
+		t.Errorf("reference counts: warehouses=%d tariffs=%d, want 0/0", result.Warehouses, result.Tariffs)
+	}
+	if result.Supplies != 10 {
+		t.Errorf("supplies: got %d, want 10 (supply flow must continue)", result.Supplies)
+	}
+	if writer.SavedWarehouses() != 0 {
+		t.Errorf("saved warehouses: got %d, want 0 (old rows must be kept, not overwritten)", writer.SavedWarehouses())
+	}
+
+	var skippedMsgs int
+	for _, msg := range progress {
+		if strings.Contains(msg, "temporarily disabled") {
+			skippedMsgs++
+		}
+	}
+	if skippedMsgs != 2 {
+		t.Errorf("progress: got %d skip messages, want 2 (warehouses + tariffs), progress=%v", skippedMsgs, progress)
+	}
+}
+
+func TestReferenceOtherErrorStillFatal(t *testing.T) {
+	src := &refBrokenSource{MockSource: NewMockSource(10)}
+	writer := NewDiscardWriter()
+
+	opts := DownloadOptions{
+		Begin:          "2026-01-01",
+		End:            "2026-01-31",
+		DateFilterType: "updatedDate",
+		OnProgress:     func(msg string) {},
+	}
+
+	dl := NewDownloader(src, writer, opts)
+	_, err := dl.Run(context.Background())
+	if err == nil {
+		t.Fatal("non-disabled reference error must fail the run")
+	}
+	if !strings.Contains(err.Error(), "get warehouses") {
+		t.Errorf("error should mention the failed step, got: %v", err)
+	}
+}
+
+// refBrokenSource delegates to MockSource but fails warehouses with a
+// non-disabled error (5xx) — must stay fatal.
+type refBrokenSource struct {
+	*MockSource
+}
+
+func (s *refBrokenSource) GetWarehouses(ctx context.Context) ([]wb.Warehouse, error) {
+	return nil, fmt.Errorf("wb api error: status 500, body: upstream boom")
 }
 
 // testFilter returns a minimal SuppliesFilterRequest for testing.

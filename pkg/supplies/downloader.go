@@ -61,36 +61,48 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 }
 
 // downloadReference downloads and saves warehouse and tariff reference data.
+//
+// WB disables reference endpoints server-side from time to time (404
+// "temporarily disabled"); reference rows change slowly, so such failures are
+// skipped — previously stored rows stay valid until the method returns.
 func (d *Downloader) downloadReference(ctx context.Context, result *DownloadResult) error {
 	// Warehouses
 	warehouses, err := d.source.GetWarehouses(ctx)
 	result.APICalls++
 	if err != nil {
-		return fmt.Errorf("get warehouses: %w", err)
-	}
-	if !d.opts.DryRun && len(warehouses) > 0 {
-		saved, err := d.writer.SaveWarehouses(ctx, warehouses)
-		if err != nil {
-			return fmt.Errorf("save warehouses: %w", err)
+		if !wb.IsTemporarilyDisabled(err) {
+			return fmt.Errorf("get warehouses: %w", err)
 		}
-		result.Warehouses = saved
+		d.progress("warehouses: skipped — method temporarily disabled by WB, keeping stored rows")
+	} else {
+		if !d.opts.DryRun && len(warehouses) > 0 {
+			saved, sErr := d.writer.SaveWarehouses(ctx, warehouses)
+			if sErr != nil {
+				return fmt.Errorf("save warehouses: %w", sErr)
+			}
+			result.Warehouses = saved
+		}
+		d.progress("warehouses: %d saved", result.Warehouses)
 	}
-	d.progress("warehouses: %d saved", result.Warehouses)
 
 	// Transit tariffs
 	tariffs, err := d.source.GetTransitTariffs(ctx)
 	result.APICalls++
 	if err != nil {
-		return fmt.Errorf("get transit tariffs: %w", err)
-	}
-	if !d.opts.DryRun && len(tariffs) > 0 {
-		saved, err := d.writer.SaveTransitTariffs(ctx, tariffs)
-		if err != nil {
-			return fmt.Errorf("save transit tariffs: %w", err)
+		if !wb.IsTemporarilyDisabled(err) {
+			return fmt.Errorf("get transit tariffs: %w", err)
 		}
-		result.Tariffs = saved
+		d.progress("tariffs: skipped — method temporarily disabled by WB, keeping stored rows")
+	} else {
+		if !d.opts.DryRun && len(tariffs) > 0 {
+			saved, sErr := d.writer.SaveTransitTariffs(ctx, tariffs)
+			if sErr != nil {
+				return fmt.Errorf("save transit tariffs: %w", sErr)
+			}
+			result.Tariffs = saved
+		}
+		d.progress("tariffs: %d saved", result.Tariffs)
 	}
-	d.progress("tariffs: %d saved", result.Tariffs)
 
 	return nil
 }
