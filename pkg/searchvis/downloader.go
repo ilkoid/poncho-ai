@@ -73,10 +73,13 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 }
 
 // runPositionsPhase downloads search position snapshots in batches of 100.
+//
+// Each batch is saved immediately: a run interrupted mid-phase keeps everything
+// already fetched (upserts make re-runs idempotent), instead of losing the
+// whole phase like the former buffer-then-save-at-end design.
 func (d *Downloader) runPositionsPhase(ctx context.Context, result *DownloadResult) error {
 	d.progress("phase 1: search positions (%d batches)", (len(d.opts.NmIDs)+PositionsBatchSize-1)/PositionsBatchSize)
 
-	var allRows []SearchPositionRow
 	totalBatches := (len(d.opts.NmIDs) + PositionsBatchSize - 1) / PositionsBatchSize
 
 	for i := 0; i < len(d.opts.NmIDs); i += PositionsBatchSize {
@@ -102,18 +105,17 @@ func (d *Downloader) runPositionsPhase(ctx context.Context, result *DownloadResu
 			continue
 		}
 
-		allRows = append(allRows, rows...)
-		d.progress("positions: batch %d/%d, %d rows", batchNum, totalBatches, len(rows))
-	}
-
-	if len(allRows) > 0 && !d.opts.DryRun {
-		saved, err := d.writer.SaveSearchPositions(ctx, allRows)
-		if err != nil {
-			return fmt.Errorf("save positions: %w", err)
+		if d.opts.DryRun {
+			result.PositionRows += len(rows)
+		} else if len(rows) > 0 {
+			saved, err := d.writer.SaveSearchPositions(ctx, rows)
+			if err != nil {
+				return fmt.Errorf("save positions (batch %d/%d): %w", batchNum, totalBatches, err)
+			}
+			result.PositionRows += saved
 		}
-		result.PositionRows = saved
-	} else if d.opts.DryRun {
-		result.PositionRows = len(allRows)
+
+		d.progress("positions: batch %d/%d, %d rows (saved so far: %d)", batchNum, totalBatches, len(rows), result.PositionRows)
 	}
 
 	d.progress("positions done: %d rows, %d errors", result.PositionRows, result.Errors)
@@ -121,10 +123,10 @@ func (d *Downloader) runPositionsPhase(ctx context.Context, result *DownloadResu
 }
 
 // runQueriesPhase downloads search query snapshots in batches of 50.
+// Like the positions phase, each batch is saved immediately.
 func (d *Downloader) runQueriesPhase(ctx context.Context, result *DownloadResult) error {
 	d.progress("phase 2: search queries (%d batches, limit=%d)", (len(d.opts.NmIDs)+QueryBatchSize-1)/QueryBatchSize, d.opts.QueryLimit)
 
-	var allRows []SearchQueryRow
 	totalBatches := (len(d.opts.NmIDs) + QueryBatchSize - 1) / QueryBatchSize
 
 	for i := 0; i < len(d.opts.NmIDs); i += QueryBatchSize {
@@ -151,18 +153,17 @@ func (d *Downloader) runQueriesPhase(ctx context.Context, result *DownloadResult
 			continue
 		}
 
-		allRows = append(allRows, rows...)
-		d.progress("queries: batch %d/%d, %d total rows", batchNum, totalBatches, len(allRows))
-	}
-
-	if len(allRows) > 0 && !d.opts.DryRun {
-		saved, err := d.writer.SaveSearchQueries(ctx, allRows)
-		if err != nil {
-			return fmt.Errorf("save queries: %w", err)
+		if d.opts.DryRun {
+			result.QueryRows += len(rows)
+		} else if len(rows) > 0 {
+			saved, err := d.writer.SaveSearchQueries(ctx, rows)
+			if err != nil {
+				return fmt.Errorf("save queries (batch %d/%d): %w", batchNum, totalBatches, err)
+			}
+			result.QueryRows += saved
 		}
-		result.QueryRows = saved
-	} else if d.opts.DryRun {
-		result.QueryRows = len(allRows)
+
+		d.progress("queries: batch %d/%d, %d rows (saved so far: %d)", batchNum, totalBatches, len(rows), result.QueryRows)
 	}
 
 	d.progress("queries done: %d rows, %d errors", result.QueryRows, result.Errors)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ilkoid/poncho-ai/pkg/searchvis"
@@ -213,29 +214,63 @@ func (r *PgSearchVisRepo) CountSearchQueries(ctx context.Context) (int, error) {
 // Reader methods — cross-domain reads from orders/cards tables
 // ============================================================================
 
+// Reader queries (distinct nmIDs, supplier articles, activity filter) scan the
+// multi-million-row orders/operational_sales tables. On a warm cache they finish
+// in seconds, but after heavy nightly upserts a stale visibility map turns the
+// index-only scan into per-row heap fetches, and on a cold cache (e.g. PG
+// container restarted mid-run) that exceeds the pool-wide 5-minute
+// statement_timeout — 2026-08-28 03:55 the nightly search-vis run died exactly
+// there (SQLSTATE 57014, load nmIDs). The override is transaction-local, so it
+// never leaks into pooled connections.
+const readerStmtTimeoutSQL = `SELECT set_config('statement_timeout', '20min', true)`
+
+// withReaderTimeout runs fn inside a transaction with a raised statement_timeout.
+func (r *PgSearchVisRepo) withReaderTimeout(ctx context.Context, fn func(tx pgx.Tx) error) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin reader tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, readerStmtTimeoutSQL); err != nil {
+		return fmt.Errorf("set reader statement_timeout: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // GetDistinctNmIDs returns list of distinct nm_id from orders table.
 func (r *PgSearchVisRepo) GetDistinctNmIDs(ctx context.Context) ([]int, error) {
-	rows, err := r.pool.Query(ctx, "SELECT DISTINCT nm_id FROM orders ORDER BY nm_id")
-	if err != nil {
-		return nil, fmt.Errorf("query distinct nm_id: %w", err)
-	}
-	defer rows.Close()
-
 	var nmIDs []int
-	for rows.Next() {
-		var nmID int
-		if err := rows.Scan(&nmID); err != nil {
-			return nil, fmt.Errorf("scan nm_id: %w", err)
+	err := r.withReaderTimeout(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, "SELECT DISTINCT nm_id FROM orders ORDER BY nm_id")
+		if err != nil {
+			return fmt.Errorf("query distinct nm_id: %w", err)
 		}
-		nmIDs = append(nmIDs, nmID)
+		defer rows.Close()
+
+		for rows.Next() {
+			var nmID int
+			if err := rows.Scan(&nmID); err != nil {
+				return fmt.Errorf("scan nm_id: %w", err)
+			}
+			nmIDs = append(nmIDs, nmID)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
 	}
-	return nmIDs, rows.Err()
+	return nmIDs, nil
 }
 
 // GetSupplierArticlesByNmIDs returns nm_id → supplier_article map for filtering.
 func (r *PgSearchVisRepo) GetSupplierArticlesByNmIDs(ctx context.Context, nmIDs []int) (map[int]string, error) {
+	result := make(map[int]string)
 	if len(nmIDs) == 0 {
-		return make(map[int]string), nil
+		return result, nil
 	}
 
 	placeholders := make([]string, len(nmIDs))
@@ -250,22 +285,27 @@ func (r *PgSearchVisRepo) GetSupplierArticlesByNmIDs(ctx context.Context, nmIDs 
 		strings.Join(placeholders, ","),
 	)
 
-	rows, err := r.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query supplier articles: %w", err)
-	}
-	defer rows.Close()
-
-	result := make(map[int]string)
-	for rows.Next() {
-		var nmID int
-		var article string
-		if err := rows.Scan(&nmID, &article); err != nil {
-			return nil, fmt.Errorf("scan row: %w", err)
+	err := r.withReaderTimeout(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("query supplier articles: %w", err)
 		}
-		result[nmID] = article
+		defer rows.Close()
+
+		for rows.Next() {
+			var nmID int
+			var article string
+			if err := rows.Scan(&nmID, &article); err != nil {
+				return fmt.Errorf("scan row: %w", err)
+			}
+			result[nmID] = article
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // FilterActiveNmIDs filters to only nmIDs with recent orders activity.
@@ -288,19 +328,25 @@ func (r *PgSearchVisRepo) FilterActiveNmIDs(ctx context.Context, nmIDs []int, ac
 		activeDays,
 	)
 
-	rows, err := r.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("filter active nm_ids: %w", err)
-	}
-	defer rows.Close()
-
 	var result []int
-	for rows.Next() {
-		var nmID int
-		if err := rows.Scan(&nmID); err != nil {
-			return nil, fmt.Errorf("scan nm_id: %w", err)
+	err := r.withReaderTimeout(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("filter active nm_ids: %w", err)
 		}
-		result = append(result, nmID)
+		defer rows.Close()
+
+		for rows.Next() {
+			var nmID int
+			if err := rows.Scan(&nmID); err != nil {
+				return fmt.Errorf("scan row: %w", err)
+			}
+			result = append(result, nmID)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
 	}
-	return result, rows.Err()
+	return result, nil
 }

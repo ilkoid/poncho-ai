@@ -295,7 +295,70 @@ func TestLargeBatch(t *testing.T) {
 }
 
 // ============================================================================
-// Test 8: Duration is set
+// Test 8: Partial batch failure — successful batches are still saved
+// (incremental per-batch saves, regression for the buffer-then-save design
+// that lost the whole phase when the run was interrupted mid-way)
+// ============================================================================
+
+// flakySource returns rows for the first positions batch, then errors on
+// every subsequent FetchPositions call; queries always succeed.
+type flakySource struct {
+	MockSource
+	calls int
+	fail  *int // when non-nil, FetchPositions fails from this call on
+}
+
+func (s *flakySource) FetchPositions(ctx context.Context, req PositionsRequest) ([]SearchPositionRow, error) {
+	s.calls++
+	if s.fail != nil && s.calls >= *s.fail {
+		return nil, context.DeadlineExceeded
+	}
+	return s.MockSource.FetchPositions(ctx, req)
+}
+
+func TestPartialBatchFailureStillSaves(t *testing.T) {
+	// 250 nmIDs → 3 position batches of 100/100/50.
+	nmIDs := make([]int, 250)
+	for i := range nmIDs {
+		nmIDs[i] = 100 + i
+	}
+
+	failFrom := 2 // batch 2 and 3 fail
+	src := &flakySource{MockSource: *NewMockSource(), fail: &failFrom}
+	writer := NewDiscardWriter()
+
+	dl := NewDownloader(src, writer, DownloadOptions{
+		NmIDs:        nmIDs,
+		BeginDate:    "2026-05-28",
+		EndDate:      "2026-06-04",
+		SnapshotDate: "2026-06-04",
+		QueryLimit:   30,
+	})
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Batch 1 (100 rows) must be saved despite batches 2-3 failing.
+	if result.PositionRows != 100 {
+		t.Errorf("expected 100 position rows from first batch, got %d", result.PositionRows)
+	}
+	if writer.SavedPositions() != 100 {
+		t.Errorf("expected writer to receive 100 rows, got %d", writer.SavedPositions())
+	}
+	if result.Errors != 2 {
+		t.Errorf("expected 2 batch errors, got %d", result.Errors)
+	}
+
+	// Queries phase unaffected: 250 nmIDs × 3 = 750 rows.
+	if result.QueryRows != 750 {
+		t.Errorf("expected 750 query rows, got %d", result.QueryRows)
+	}
+}
+
+// ============================================================================
+// Test 9: Duration is set
 // ============================================================================
 
 func TestDurationSet(t *testing.T) {
