@@ -1,15 +1,20 @@
-// pg-maintenance performs post-load maintenance on PostgreSQL databases.
+// pg-maintenance performs targeted PostgreSQL maintenance (VACUUM / ANALYZE / REINDEX).
 //
-// After a download-all.sh cycle, tables accumulate dead tuples from heavy
-// upserts (ON CONFLICT DO UPDATE). Autovacuum may not keep up with the rate.
-// This utility runs ANALYZE + VACUUM on all tables, with optional REINDEX
-// for heavily-updated tables.
+// In the download-all.sh cycle each downloader is preceded by a per-group pass
+// (--group) that reclaims the dead tuples left by the previous run's upserts and
+// refreshes planner stats for the load's own DELETE/upsert statements. Tables
+// whose nightly load is mostly fresh-date INSERTs (onec_prices,
+// stocks_daily_warehouses, warehouse_remains, stock_products) are maintained
+// with ANALYZE only (depth "analyze") — a full VACUUM scan there costs minutes
+// and reclaims almost nothing.
 //
 // Usage:
 //
-//	PG_PWD=password go run ./cmd/data-maintenance/pg-maintenance --config cmd/.configs/download-all/pg-maintenance-PG.yaml
-//	PG_PWD=password go run ./cmd/data-maintenance/pg-maintenance --config .../pg-maintenance-PG.yaml --dry-run
-//	PG_PWD=password go run ./cmd/data-maintenance/pg-maintenance --config .../pg-maintenance-PG.yaml --reindex
+//	PG_PWD=x go run ./cmd/data-maintenance/pg-maintenance --config .../pg-maintenance-PG.yaml --group cards   # per-utility pre-load pass
+//	PG_PWD=x go run ./cmd/data-maintenance/pg-maintenance --config .../pg-maintenance-PG.yaml --analyze-only # final light pass over all tables
+//	PG_PWD=x go run ./cmd/data-maintenance/pg-maintenance --config .../pg-maintenance-PG.yaml                 # all tables, VACUUM (ANALYZE)
+//	PG_PWD=x go run ./cmd/data-maintenance/pg-maintenance --config .../pg-maintenance-PG.yaml --reindex-concurrently # weekly deep pass
+//	PG_PWD=x go run ./cmd/data-maintenance/pg-maintenance --config .../pg-maintenance-PG.yaml --dry-run
 package main
 
 import (
@@ -18,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -63,9 +69,10 @@ var HeavyUpdateTables = []string{
 	"measurement_penalties",
 }
 
-// AppendOnlyTables rarely get UPDATE — only INSERT.
-// VACUUM ANALYZE is sufficient; REINDEX is never needed because the write pattern
-// generates dead tuples but not the per-row UPDATE churn that bloats indexes.
+// AppendOnlyTables have write patterns that don't benefit from REINDEX.
+// sales is written as DELETE-by-date-window + INSERT (sales_repo.go), not UPDATE
+// churn — dead index entries are reclaimed by plain VACUUM along with the heap,
+// so it stays out of the weekly REINDEX set but still gets VACUUM every run.
 //
 // NOTE: wbscraper fact tables (search_positions, vitrine_ads, competitor_cards,
 // competitor_card_*) are intentionally NOT here. That pipeline's schema lives only
@@ -91,12 +98,25 @@ var PromotionTables = []string{
 	"wb_calendar_promotion_ranging",
 }
 
+// GroupConfig is a config-defined maintenance group: the tables one downloader
+// writes plus the depth to maintain them at. Defined in the "groups" section of
+// pg-maintenance-PG.yaml; --group <name> selects one. Depth "vacuum" (default)
+// runs VACUUM (ANALYZE) — for upsert/delete-churn tables; "analyze" runs ANALYZE
+// only — for snapshot giants whose nightly load is new-date INSERTs.
+type GroupConfig struct {
+	Depth  string   `yaml:"depth"` // "vacuum" (default) | "analyze"
+	Tables []string `yaml:"tables"`
+}
+
 func main() {
-	configPath := flag.String("config", "", "Path to YAML config (storage section)")
+	configPath := flag.String("config", "", "Path to YAML config (storage + optional groups section)")
 	database := flag.String("database", "", "Override database name from config")
 	dryRun := flag.Bool("dry-run", false, "Print what would be done without executing")
 	reindex := flag.Bool("reindex", false, "Include REINDEX TABLE for heavy-update tables")
+	reindexConcurrently := flag.Bool("reindex-concurrently", false, "REINDEX TABLE CONCURRENTLY for heavy-update tables (no long exclusive locks; weekly deep pass)")
 	full := flag.Bool("full", false, "Use VACUUM FULL (rewrites table file, returns space to OS, ACCESS EXCLUSIVE lock)")
+	analyzeOnlyFlag := flag.Bool("analyze-only", false, "ANALYZE only — light tier, no dead-tuple scan. Overrides the group's depth")
+	groupFlag := flag.String("group", "", "Maintain only this config-defined group's tables (per-utility pre-load pass)")
 	tablesFlag := flag.String("tables", "", "Comma-separated table names to maintain (default: all). Unknown names are warned, not fatal.")
 	flag.Parse()
 
@@ -117,10 +137,26 @@ func main() {
 
 	// Load config
 	var cfg struct {
-		Storage config.V2StorageConfig `yaml:"storage"`
+		Storage config.V2StorageConfig  `yaml:"storage"`
+		Groups  map[string]GroupConfig `yaml:"groups"`
 	}
 	if err := config.LoadYAML(*configPath, &cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Resolve the table set and depth: --group selects a config-defined group
+	// (per-utility pre-load pass); without it the hardcoded phase lists apply.
+	// resolveGroup is pure config work — no DB needed yet, so flag misuse fails
+	// before we connect anywhere.
+	analyzeOnly := *analyzeOnlyFlag
+	groupTables, err := resolveGroup(*groupFlag, cfg.Groups, &analyzeOnly)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+		os.Exit(1)
+	}
+	if analyzeOnly && *full {
+		fmt.Fprintln(os.Stderr, "❌ --analyze-only and --full are mutually exclusive")
 		os.Exit(1)
 	}
 
@@ -138,10 +174,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	groupLabel := *groupFlag
+	if groupLabel == "" {
+		groupLabel = "(all)"
+	}
+	reindexLabel := "off"
+	switch {
+	case *reindexConcurrently:
+		reindexLabel = "concurrent"
+	case *reindex:
+		reindexLabel = "on"
+	}
+	modeLabel := maintenanceMode(analyzeOnly, *full)
+
 	dllog.PrintHeader("PG Maintenance Utility",
 		dllog.HeaderField{Key: "Database", Value: cfg.Storage.PgDatabase},
+		dllog.HeaderField{Key: "Group", Value: groupLabel},
+		dllog.HeaderField{Key: "Mode", Value: modeLabel},
+		dllog.HeaderField{Key: "Reindex", Value: reindexLabel},
 		dllog.HeaderField{Key: "Dry-run", Value: fmt.Sprintf("%v", *dryRun)},
-		dllog.HeaderField{Key: "Reindex", Value: fmt.Sprintf("%v", *reindex)},
 		dllog.HeaderField{Key: "Full", Value: fmt.Sprintf("%v", *full)},
 	)
 
@@ -201,11 +252,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// All tables in maintenance order
-	allTables := make([]string, 0, len(HeavyUpdateTables)+len(AppendOnlyTables)+len(PromotionTables))
-	allTables = append(allTables, HeavyUpdateTables...)
-	allTables = append(allTables, AppendOnlyTables...)
-	allTables = append(allTables, PromotionTables...)
+	// Select the table set: the --group's config tables, or the hardcoded phase
+	// lists in canonical order (whole-DB default).
+	var allTables []string
+	if groupTables != nil {
+		allTables = groupTables
+	} else {
+		allTables = make([]string, 0, len(HeavyUpdateTables)+len(AppendOnlyTables)+len(PromotionTables))
+		allTables = append(allTables, HeavyUpdateTables...)
+		allTables = append(allTables, AppendOnlyTables...)
+		allTables = append(allTables, PromotionTables...)
+	}
 
 	// Optional --tables filter: keep only requested names, warn about typos.
 	// Lets you point VACUUM at one heavy table (e.g. stock_products) between full runs
@@ -267,13 +324,11 @@ func main() {
 		}
 
 		if *dryRun {
-			op := "VACUUM"
-			if *full {
-				op = "VACUUM FULL"
-			} else if *reindex && isHeavyUpdate(table) {
-				op += " + REINDEX"
+			opLabel := maintenanceMode(analyzeOnly, *full)
+			if (*reindex || *reindexConcurrently) && isHeavyUpdate(table) && !*full {
+				opLabel += " + REINDEX"
 			}
-			dllog.Progress(i+1, total, table, "ANALYZE + "+op, start)
+			dllog.Progress(i+1, total, table, opLabel, start)
 			continue
 		}
 
@@ -287,36 +342,16 @@ func main() {
 			sizeBefore = readTableSize(ctx, conn, table)
 		}
 
-		// ANALYZE — update planner statistics
-		if _, err := conn.Exec(ctx, fmt.Sprintf("ANALYZE %s", table)); err != nil {
-			dllog.Error("%s: ANALYZE failed: %v", table, err)
+		// Single statement — one table scan. VACUUM (ANALYZE) collects planner
+		// stats in the same pass that reclaims dead tuples (plain VACUUM marks
+		// them reusable without shrinking the file); the FULL variant also folds
+		// the post-rewrite ANALYZE in, where rows physically move.
+		stmt := maintenanceStmt(analyzeOnly, *full, table)
+		opLabel := maintenanceMode(analyzeOnly, *full)
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			dllog.Error("%s: %s failed: %v", table, opLabel, err)
 			errors++
 			continue
-		}
-
-		// VACUUM — reclaim dead tuples. Plain VACUUM marks dead tuples reusable
-		// but does NOT shrink the on-disk file. VACUUM FULL rewrites the table,
-		// returns space to the OS, and rebuilds indexes — at the cost of an
-		// ACCESS EXCLUSIVE lock for the duration (intended for a maintenance window).
-		vacuumStmt := "VACUUM"
-		if *full {
-			vacuumStmt = "VACUUM FULL"
-		}
-		if _, err := conn.Exec(ctx, fmt.Sprintf("%s %s", vacuumStmt, table)); err != nil {
-			dllog.Error("%s: %s failed: %v", table, vacuumStmt, err)
-			errors++
-			continue
-		}
-
-		// After VACUUM FULL the rows have physically moved → re-ANALYZE so the
-		// planner sees fresh stats. Plain VACUUM doesn't relocate rows, so this is
-		// FULL-only.
-		if *full {
-			if _, err := conn.Exec(ctx, fmt.Sprintf("ANALYZE %s", table)); err != nil {
-				dllog.Error("%s: post-FULL ANALYZE failed: %v", table, err)
-				errors++
-				continue
-			}
 		}
 
 		extra := reclaimSuffix(deadBefore, readDeadTuples(ctx, conn, table))
@@ -324,23 +359,29 @@ func main() {
 			extra += sizeSuffix(sizeBefore, readTableSize(ctx, conn, table))
 		}
 
-		// REINDEX — only for heavy-update tables when --reindex is set AND we did
-		// NOT run VACUUM FULL (FULL already rebuilds every index of the table, so
-		// a separate REINDEX would just redo work).
-		if *reindex && isHeavyUpdate(table) && !*full {
-			if _, err := conn.Exec(ctx, fmt.Sprintf("REINDEX TABLE %s", table)); err != nil {
+		// REINDEX — only for heavy-update tables when requested AND we did NOT run
+		// VACUUM FULL (FULL already rebuilds every index of the table, so a
+		// separate REINDEX would just redo work).
+		if (*reindex || *reindexConcurrently) && isHeavyUpdate(table) && !*full {
+			reindexStmt := fmt.Sprintf("REINDEX TABLE %s", table)
+			if *reindexConcurrently {
+				reindexStmt = fmt.Sprintf("REINDEX TABLE CONCURRENTLY %s", table)
+			}
+			if _, err := conn.Exec(ctx, reindexStmt); err != nil {
 				dllog.Error("%s: REINDEX failed: %v", table, err)
+				if *reindexConcurrently {
+					// A failed concurrent reindex aborts after creating the
+					// transient _ccnew index; it stays behind as INVALID and
+					// keeps consuming disk until dropped manually.
+					dllog.Error("%s: check pg_indexes for leftover *_ccnew entries and drop invalid ones", table)
+				}
 				errors++
 				continue
 			}
 			extra += " + REINDEX"
 		}
 
-		opLabel := "VACUUM"
-		if *full {
-			opLabel = "VACUUM FULL"
-		}
-		dllog.Progress(i+1, total, table, "ANALYZE + "+opLabel+extra, start)
+		dllog.Progress(i+1, total, table, opLabel+extra, start)
 	}
 
 	if ctx.Err() != nil {
@@ -353,6 +394,72 @@ func main() {
 	}
 
 	dllog.Done(time.Since(start), "%d tables maintained", total)
+}
+
+// maintenanceMode returns the per-table maintenance label. Precedence:
+// --analyze-only (or group depth "analyze") → ANALYZE; --full → the rewriting
+// VACUUM; default → plain VACUUM with stats collected in the same scan.
+func maintenanceMode(analyzeOnly, full bool) string {
+	switch {
+	case analyzeOnly:
+		return "ANALYZE"
+	case full:
+		return "VACUUM (FULL, ANALYZE)"
+	default:
+		return "VACUUM (ANALYZE)"
+	}
+}
+
+// maintenanceStmt returns the single maintenance statement for one table.
+// One statement = one table scan: ANALYZE and VACUUM never run as separate
+// passes in any combination here.
+func maintenanceStmt(analyzeOnly, full bool, table string) string {
+	switch {
+	case analyzeOnly:
+		return "ANALYZE " + table
+	case full:
+		return "VACUUM (FULL, ANALYZE) " + table
+	default:
+		return "VACUUM (ANALYZE) " + table
+	}
+}
+
+// resolveGroup resolves --group against the config's groups section. It returns
+// the group's tables (nil when no --group was given — caller falls back to the
+// hardcoded lists) and may lift analyzeOnly when the group's depth is "analyze"
+// (an explicit --analyze-only flag already sets it, so flag and depth compose).
+// Unknown group names and bad depth values fail with an actionable error.
+func resolveGroup(name string, groups map[string]GroupConfig, analyzeOnly *bool) ([]string, error) {
+	if name == "" {
+		return nil, nil
+	}
+	g, ok := groups[name]
+	if !ok {
+		return nil, fmt.Errorf("--group %q is not defined in the config. Available groups: %s",
+			name, strings.Join(sortedGroupNames(groups), ", "))
+	}
+	switch g.Depth {
+	case "", "vacuum":
+		// default depth — VACUUM (ANALYZE)
+	case "analyze":
+		*analyzeOnly = true
+	default:
+		return nil, fmt.Errorf("group %q: unknown depth %q (want \"vacuum\" or \"analyze\")", name, g.Depth)
+	}
+	if len(g.Tables) == 0 {
+		return nil, fmt.Errorf("group %q: empty tables list", name)
+	}
+	return g.Tables, nil
+}
+
+// sortedGroupNames returns the config's group names sorted, for error messages.
+func sortedGroupNames(m map[string]GroupConfig) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // readDeadTuples returns the current n_dead_tup for a table, or -1 if unavailable
