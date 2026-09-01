@@ -161,6 +161,7 @@ func (d *Downloader) downloadSuppliesList(ctx context.Context, result *DownloadR
 			return allSupplies, fmt.Errorf("save supplies: %w", err)
 		}
 		result.Supplies = saved
+		d.progress("supplies saved: %d, fetching details…", saved)
 	}
 
 	return allSupplies, nil
