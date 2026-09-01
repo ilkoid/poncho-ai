@@ -73,6 +73,29 @@ CREATE TABLE IF NOT EXISTS fbs_orders_status_log (
     PRIMARY KEY (order_id, supplier_status, wb_status)
 );
 
+-- Поставки FBS (GET /api/v3/supplies): полный список качается каждый прогон,
+-- upsert по supply_id идемпотентен и дообновляет scan_dt/closed_at открытых.
+-- scan_dt = приёмка на СЦ («дата сканирования поставки или первого заказа»);
+-- closed_at = передача в доставку (в живых данных РАНЬШЕ scan_dt на ~0.5–1 ч).
+CREATE TABLE IF NOT EXISTS fbs_supplies (
+    supply_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ,
+    closed_at TIMESTAMPTZ,
+    scan_dt TIMESTAMPTZ,
+    reject_dt TIMESTAMPTZ,
+    done BOOLEAN NOT NULL DEFAULT false,
+    is_b2b BOOLEAN,
+    cargo_type SMALLINT NOT NULL DEFAULT 0,
+    cross_border_type SMALLINT,
+    destination_office_id BIGINT NOT NULL DEFAULT 0,
+    recommended_wh_id BIGINT NOT NULL DEFAULT 0,
+    downloaded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fbs_supplies_scan ON fbs_supplies(scan_dt);
+CREATE INDEX IF NOT EXISTS idx_fbs_supplies_created ON fbs_supplies(created_at);
+
 -- Лента заказов (analytics/v1/order-feed): статусы created/buyout/cancel/return/returnDefective,
 -- причины отмен (cancel_type), география доставки, склад. is_mp = true → склад продавца (FBS/DBS).
 CREATE TABLE IF NOT EXISTS order_feed (

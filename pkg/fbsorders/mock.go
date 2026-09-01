@@ -20,6 +20,7 @@ type MockSource struct {
 	orders   []wb.FBSOrder
 	statuses map[int64]wb.FBSOrderStatus
 	feed     []wb.OrderFeedItem
+	supplies []wb.FBSSupply
 }
 
 // NewMockSource creates a mock source with count orders (spread over the last
@@ -98,11 +99,35 @@ func (m *MockSource) OrderFeedIterator(
 	return len(m.feed), nil
 }
 
+// FBSSuppliesIterator calls callback once with all mock supplies.
+func (m *MockSource) FBSSuppliesIterator(
+	ctx context.Context,
+	callback func([]wb.FBSSupply) error,
+) (int, error) {
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if len(m.supplies) == 0 {
+		return 0, nil
+	}
+	if err := callback(m.supplies); err != nil {
+		return 0, err
+	}
+	return len(m.supplies), nil
+}
+
 func (m *MockSource) populate(count int) {
 	base := time.Now().UTC().Add(-7 * 24 * time.Hour)
 	orders := make([]wb.FBSOrder, count)
 	statuses := make(map[int64]wb.FBSOrderStatus, count)
 	feed := make([]wb.OrderFeedItem, 0, count/5+1)
+	supplies := make([]wb.FBSSupply, 0, 50)
 
 	supplierStatuses := []string{"new", "confirm", "complete", "complete", "complete"}
 	wbStatuses := []string{"waiting", "sorted", "sold", "ready_for_pickup", "canceled_by_client"}
@@ -160,12 +185,42 @@ func (m *MockSource) populate(count int) {
 		}
 	}
 
+	// Поставки: 50 штук под mock-задания; задержка приёмки (scan_dt − created_at)
+	// варьируется 6..48 ч — есть и «успели в 24 часа», и «не успели».
+	for i := 0; i < 50; i++ {
+		created := base.Add(time.Duration(i) * 3 * time.Hour)
+		scanDelay := time.Duration(6+i) * time.Hour // 6..55 ч
+		sup := wb.FBSSupply{
+			ID:                  fmt.Sprintf("WB-GI-%d", 900000+i),
+			Name:                fmt.Sprintf("Mock-поставка %d", i),
+			CargoType:           1,
+			CreatedAt:           created.Format(time.RFC3339),
+			DestinationOfficeID: 236,
+			RecommendedWhID:     205228,
+		}
+		cb := int64(0)
+		sup.CrossBorderType = &cb
+		done := i%6 != 0 // каждая шестая ещё не закрыта
+		sup.Done = done
+		if done {
+			closed := created.Add(scanDelay - 30*time.Minute)
+			scan := created.Add(scanDelay)
+			sup.ClosedAt = strPtr(closed.Format(time.RFC3339))
+			sup.ScanDt = strPtr(scan.Format(time.RFC3339))
+		}
+		supplies = append(supplies, sup)
+	}
+
 	m.mu.Lock()
 	m.orders = orders
 	m.statuses = statuses
 	m.feed = feed
+	m.supplies = supplies
 	m.mu.Unlock()
 }
+
+// strPtr — компактный хелпер для nullable-полей mock-поставок.
+func strPtr(s string) *string { return &s }
 
 // ============================================================================
 // DiscardWriter — no-op для --mock (гарантированный ноль взаимодействий с БД)
@@ -174,11 +229,12 @@ func (m *MockSource) populate(count int) {
 // DiscardWriter implements Writer with no-op persistence.
 // Used in --mock mode to guarantee zero DB interaction.
 type DiscardWriter struct {
-	mu          sync.Mutex
-	savedOrders int
-	savedStatus int
-	savedFeed   int
-	loadedIDs   []int64
+	mu            sync.Mutex
+	savedOrders   int
+	savedStatus   int
+	savedFeed     int
+	savedSupplies int
+	loadedIDs     []int64
 }
 
 // NewDiscardWriter creates a no-op writer for mock mode.
@@ -210,6 +266,14 @@ func (w *DiscardWriter) SaveOrderFeed(_ context.Context, items []wb.OrderFeedIte
 	return len(items), nil
 }
 
+// SaveSupplies counts supplies but never writes.
+func (w *DiscardWriter) SaveSupplies(_ context.Context, supplies []wb.FBSSupply) (int, error) {
+	w.mu.Lock()
+	w.savedSupplies += len(supplies)
+	w.mu.Unlock()
+	return len(supplies), nil
+}
+
 // LoadStatusCandidateIDs returns a small deterministic ID set so the status
 // phase exercises batching logic in --mock runs too.
 func (w *DiscardWriter) LoadStatusCandidateIDs(_ context.Context, _ time.Time) ([]int64, error) {
@@ -219,9 +283,9 @@ func (w *DiscardWriter) LoadStatusCandidateIDs(_ context.Context, _ time.Time) (
 	return w.loadedIDs, nil
 }
 
-// Saved returns total counts of discarded records (orders, statuses, feed).
-func (w *DiscardWriter) Saved() (int, int, int) {
+// Saved returns total counts of discarded records (orders, statuses, feed, supplies).
+func (w *DiscardWriter) Saved() (int, int, int, int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.savedOrders, w.savedStatus, w.savedFeed
+	return w.savedOrders, w.savedStatus, w.savedFeed, w.savedSupplies
 }

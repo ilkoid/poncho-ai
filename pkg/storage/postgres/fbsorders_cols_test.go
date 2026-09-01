@@ -30,6 +30,7 @@ func TestFBSInsertCols_MatchColumnCounts(t *testing.T) {
 		{"insertFBSStatusPrefixSQL", insertFBSStatusPrefixSQL, insertFBSStatusCols},
 		{"insertFBSStatusLogPrefixSQL", insertFBSStatusLogPrefixSQL, insertFBSStatusCols},
 		{"insertOrderFeedPrefixSQL", insertOrderFeedPrefixSQL, insertOrderFeedCols},
+		{"insertFBSSupplyPrefixSQL", insertFBSSupplyPrefixSQL, insertFBSSupplyCols},
 	}
 	for _, tc := range cases {
 		if got := fbsCountColumns(t, tc.prefixSQL, tc.name); got != tc.cols {
@@ -54,6 +55,16 @@ func TestFBSOnConflictClauses(t *testing.T) {
 	if !strings.Contains(insertOrderFeedOnConflictSQL, "ON CONFLICT (srid)") {
 		t.Error("order feed upsert must conflict on (srid)")
 	}
+	if !strings.Contains(insertFBSSupplyOnConflictSQL, "ON CONFLICT (supply_id)") {
+		t.Error("supplies upsert must conflict on (supply_id)")
+	}
+	// Поставка дообновляется при повторных прогонах: closed_at/scan_dt обязаны
+	// быть в DO UPDATE (полный список качается каждый раз).
+	for _, col := range []string{"scan_dt", "closed_at", "done"} {
+		if !strings.Contains(insertFBSSupplyOnConflictSQL, col+" = EXCLUDED."+col) {
+			t.Errorf("supplies upsert missing update of %q", col)
+		}
+	}
 }
 
 // Full-chunk SQL не должен превышать лимит параметров PG (65535).
@@ -66,6 +77,7 @@ func TestFBSFullChunkSQLParamLimit(t *testing.T) {
 		{"statuses", pgFBSChunkSize * insertFBSStatusCols},
 		{"status log", pgFBSChunkSize * insertFBSStatusCols},
 		{"order feed", pgFBSChunkSize * insertOrderFeedCols},
+		{"supplies", pgFBSChunkSize * insertFBSSupplyCols},
 	}
 	for _, l := range limits {
 		if l.params > 65535 {

@@ -1,5 +1,5 @@
 # download-all конфиг FBS-заданий (прод). Локальный вариант: config.yaml рядом с main.go.
-# Фазы: fbs_orders → fbs_orders_status(+log) → order_feed.
+# Фазы: fbs_orders → fbs_orders_status(+log) → fbs_supplies → order_feed.
 # Сваггер: docs/wb_api_swagger/03-orders-fbs.yaml, 11-analytics.yaml (order-feed).
 
 wb:

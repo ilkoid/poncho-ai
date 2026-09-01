@@ -38,13 +38,16 @@ func NewDownloader(source Source, writer Writer, opts DownloadOptions) *Download
 	return &Downloader{source: source, writer: writer, opts: opts}
 }
 
-// Run выполняет три фазы:
+// Run выполняет четыре фазы:
 //
 //  1. Задания: /api/v3/orders за [from, to] → fbs_orders (идемпотентный upsert).
 //  2. Статусы: все кандидаты свежего окна + незакрытые → fbs_orders_status +
 //     fbs_orders_status_log. Ошибка батча ФАТАЛЬНА — прогон прерывается,
 //     пропусков переходов не бывает.
-//  3. Лента заказов (если не отключена): order-feed за FeedDays суток →
+//  3. Поставки (если не отключена): полный список /api/v3/supplies →
+//     fbs_supplies (scan_dt = приёмка на СЦ). Сбой нефатален: следующий
+//     прогон снова качает весь список и дообновляет открытые поставки.
+//  4. Лента заказов (если не отключена): order-feed за FeedDays суток →
 //     order_feed. Сбой нефатален (1 req/min на стороне WB хрупок), фиксируется
 //     в DownloadResult.FeedErr.
 func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
@@ -57,7 +60,7 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 	}
 
 	// ---- Фаза 1: сборочные задания -------------------------------------
-	d.progress("фаза 1/3: задания FBS за %s .. %s (окна по 30 дней)",
+	d.progress("фаза 1/4: задания FBS за %s .. %s (окна по 30 дней)",
 		from.Format("2006-01-02"), to.Format("2006-01-02"))
 
 	pages := 0
@@ -92,10 +95,40 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 		return res, err
 	}
 
-	// ---- Фаза 3: лента заказов (нефатально) ----------------------------
+	// ---- Фаза 3: поставки (нефатально) ---------------------------------
+	if !d.opts.DisableSupplies {
+		d.progress("фаза 3/4: поставки FBS — полный список (scan_dt = приёмка на СЦ)")
+
+		supPages := 0
+		_, err := d.source.FBSSuppliesIterator(ctx, func(page []wb.FBSSupply) error {
+			supPages++
+			if d.opts.DryRun {
+				res.SuppliesRows += len(page)
+				d.progress("dry-run: страница поставок %d пропущена", len(page))
+				return nil
+			}
+			n, err := d.writer.SaveSupplies(ctx, page)
+			if err != nil {
+				return fmt.Errorf("save supplies: %w", err)
+			}
+			res.SuppliesRows += n
+			d.progress("поставки: страница %d — %d строк (всего %d)", supPages, n, res.SuppliesRows)
+			return nil
+		})
+		if err != nil {
+			// Нефатально: следующий прогон снова качает весь список
+			// и дообновляет открытые поставки — самозалечивается.
+			res.SuppliesErr = err.Error()
+			d.progress("warning: поставки не загружены (прогон успешен): %v", err)
+		} else {
+			d.progress("поставки: %d строк", res.SuppliesRows)
+		}
+	}
+
+	// ---- Фаза 4: лента заказов (нефатально) ----------------------------
 	if !d.opts.DisableFeed {
 		feedFrom := time.Now().UTC().AddDate(0, 0, -d.opts.FeedDays)
-		d.progress("фаза 3/3: лента заказов с %s (по дате текущего статуса)", feedFrom.Format("2006-01-02"))
+		d.progress("фаза 4/4: лента заказов с %s (по дате текущего статуса)", feedFrom.Format("2006-01-02"))
 
 		feedPage := 0
 		mpOnly := d.opts.FeedMpOnly == nil || *d.opts.FeedMpOnly
@@ -152,7 +185,7 @@ func (d *Downloader) runStatusPhase(ctx context.Context, start time.Time, res *D
 	}
 	res.StatusCandidates = len(ids)
 
-	d.progress("фаза 2/3: статусы %d заданий (окно %d дн + незакрытые), батчи по %d",
+	d.progress("фаза 2/4: статусы %d заданий (окно %d дн + незакрытые), батчи по %d",
 		len(ids), d.opts.StatusWindowDays, statusBatchSize)
 
 	for i := 0; i < len(ids); i += statusBatchSize {

@@ -1,12 +1,13 @@
-// download-wb-fbs-orders-v2 downloads FBS assembly tasks + statuses + order feed.
+// download-wb-fbs-orders-v2 downloads FBS assembly tasks + statuses + supplies + order feed.
 //
 // V2 architecture: business logic in pkg/fbsorders/, this is a thin CLI driver.
 // PG-only домен (прецедент wbscraper): SQLite-бэкенд не поддерживается.
 //
-// Три фазы (см. pkg/fbsorders/downloader.go):
-//  1. GET /api/v3/orders        → public.fbs_orders
+// Четыре фазы (см. pkg/fbsorders/downloader.go):
+//  1. GET /api/v3/orders         → public.fbs_orders
 //  2. POST /api/v3/orders/status → public.fbs_orders_status + fbs_orders_status_log
-//  3. POST /api/analytics/v1/order-feed → public.order_feed (отключается --no-feed)
+//  3. GET /api/v3/supplies       → public.fbs_supplies (scan_dt = приёмка на СЦ; --no-supplies)
+//  4. POST /api/analytics/v1/order-feed → public.order_feed (отключается --no-feed)
 //
 // ⚠️ Mock safety: --mock mode uses DiscardWriter — ZERO database interaction.
 //
@@ -43,6 +44,7 @@ type FBSSection struct {
 	FeedEnabled      *bool  `yaml:"feed_enabled"`       // лента заказов (default true)
 	FeedDays         int    `yaml:"feed_days"`          // глубина ленты, ≤31 (default 7)
 	FeedMpOnly       *bool  `yaml:"feed_mp_only"`       // только FBS/DBS, без FBW (default true)
+	SuppliesEnabled  *bool  `yaml:"supplies_enabled"`   // поставки: scan_dt = приёмка на СЦ (default true)
 	RateLimit        int    `yaml:"rate_limit"`         // desired для v3 endpoints (default 120)
 	BurstLimit       int    `yaml:"burst"`              // (default 20)
 	FeedRateLimit    int    `yaml:"feed_rate_limit"`    // desired для order-feed (default 1)
@@ -64,7 +66,9 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "Skip DB writes, show what would be saved")
 	days := flag.Int("days", 0, "Orders lookback days (overrides config)")
 	statusWindow := flag.Int("status-window-days", 0, "Status refresh window days (overrides config)")
+	feedDays := flag.Int("feed-days", 0, "Order-feed lookback days, ≤31 (overrides config; 0 = config value)")
 	noFeed := flag.Bool("no-feed", false, "Disable order-feed phase (overrides config)")
+	noSupplies := flag.Bool("no-supplies", false, "Disable supplies phase (overrides config)")
 	feedAllModels := flag.Bool("feed-all-models", false, "Save FBW rows too (default: FBS/DBS only, overrides config)")
 	flag.Parse()
 
@@ -90,8 +94,14 @@ func main() {
 	if *statusWindow > 0 {
 		cfg.FBS.StatusWindowDays = *statusWindow
 	}
+	if *feedDays > 0 {
+		cfg.FBS.FeedDays = *feedDays
+	}
 	if *noFeed {
 		cfg.FBS.FeedEnabled = new(bool) // false
+	}
+	if *noSupplies {
+		cfg.FBS.SuppliesEnabled = new(bool) // false
 	}
 	if *feedAllModels {
 		f := false
@@ -99,6 +109,7 @@ func main() {
 	}
 
 	feedEnabled := cfg.FBS.FeedEnabled == nil || *cfg.FBS.FeedEnabled
+	suppliesEnabled := cfg.FBS.SuppliesEnabled == nil || *cfg.FBS.SuppliesEnabled
 
 	dllog.PrintHeader("WB FBS Orders Downloader v2",
 		dllog.HeaderField{Key: "Config", Value: *configPath},
@@ -107,6 +118,7 @@ func main() {
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 		dllog.HeaderField{Key: "Feed", Value: fmt.Sprintf("%v", feedEnabled)},
+		dllog.HeaderField{Key: "Supplies", Value: fmt.Sprintf("%v", suppliesEnabled)},
 	)
 
 	// ⚠️ Mock safety: --mock создаёт DiscardWriter (ноль взаимодействий с БД).
@@ -132,6 +144,7 @@ func main() {
 		To:               cfg.FBS.To,
 		StatusWindowDays: cfg.FBS.StatusWindowDays,
 		DisableFeed:      !feedEnabled,
+		DisableSupplies:  !suppliesEnabled,
 		FeedMpOnly:       cfg.FBS.FeedMpOnly, // nil = default true (FBS/DBS only)
 		FeedDays:         cfg.FBS.FeedDays,
 		DryRun:           *dryRun,
@@ -152,8 +165,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("download: %v", err)
 		}
-		dllog.Done(result.Duration, "%d orders, %d statuses, %d feed rows (mock)",
-			result.TotalOrders, result.TotalStatuses, result.FeedRows)
+		dllog.Done(result.Duration, "%d orders, %d statuses, %d supplies, %d feed rows (mock)",
+			result.TotalOrders, result.TotalStatuses, result.SuppliesRows, result.FeedRows)
 		return
 	}
 
@@ -175,8 +188,12 @@ func main() {
 	if result.FeedErr != "" {
 		log.Printf("⚠️  лента заказов не загружена (нефатально): %s", result.FeedErr)
 	}
-	dllog.Done(result.Duration, "%d orders; statuses: %d/%d candidates in %d batches; %d feed rows",
-		result.TotalOrders, result.TotalStatuses, result.StatusCandidates, result.StatusBatches, result.FeedRows)
+	if result.SuppliesErr != "" {
+		log.Printf("⚠️  поставки не загружены (нефатально): %s", result.SuppliesErr)
+	}
+	dllog.Done(result.Duration, "%d orders; statuses: %d/%d candidates in %d batches; %d supplies; %d feed rows",
+		result.TotalOrders, result.TotalStatuses, result.StatusCandidates, result.StatusBatches,
+		result.SuppliesRows, result.FeedRows)
 }
 
 // runWithKey выполняет полный прогон с указанным API-ключом.
@@ -191,12 +208,13 @@ func runWithKey(ctx context.Context, apiKey string, cfg *Config, writer fbsorder
 		return nil, fmt.Errorf("wb client: %w", err)
 	}
 
-	// Swagger: v3 задания+статусы = один общий бакет 300 req/min, burst 20.
-	// ShareRateLimit объединяет оба toolID в один лимитер (суммарно ≤ desired).
+	// Swagger: v3 задания+статусы+поставки = один общий бакет 300 req/min, burst 20.
+	// ShareRateLimit объединяет toolID в один лимитер (суммарно ≤ desired).
 	client.SetRateLimit(wb.FBSOrdersToolID,
 		cfg.FBS.RateLimit, cfg.FBS.BurstLimit,
 		300, 20) // api floor = swagger
 	client.ShareRateLimit(wb.FBSOrdersToolID, wb.FBSStatusToolID)
+	client.ShareRateLimit(wb.FBSOrdersToolID, wb.FBSSuppliesToolID)
 
 	// Swagger: order-feed 1 req/min (basic-токен 2 req/24h).
 	client.SetRateLimit(wb.OrderFeedToolID,

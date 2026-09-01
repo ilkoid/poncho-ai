@@ -53,3 +53,12 @@ func (s *WBSource) OrderFeedIterator(
 ) (int, error) {
 	return s.client.OrderFeedIterator(ctx, feedDefaultRate, feedDefaultBurst, from, callback)
 }
+
+// FBSSuppliesIterator качает полный список поставок (несколько страниц).
+// Лимит общий с заданиями/статусами: CLI объединяет toolID через ShareRateLimit.
+func (s *WBSource) FBSSuppliesIterator(
+	ctx context.Context,
+	callback func([]wb.FBSSupply) error,
+) (int, error) {
+	return s.client.FBSSuppliesIterator(ctx, fbsDefaultRate, fbsDefaultBurst, callback)
+}

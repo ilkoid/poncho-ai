@@ -331,6 +331,120 @@ const (
 var insertOrderFeedFullChunkSQL = BuildMultiRowInsert(insertOrderFeedPrefixSQL, insertOrderFeedOnConflictSQL, pgFBSChunkSize, insertOrderFeedCols)
 
 // ============================================================================
+// SaveSupplies
+// ============================================================================
+
+// SaveSupplies — чанки по 500, upsert по supply_id. Полный список поставок
+// качается каждый прогон: повторные прогоны дообновляют scan_dt/closed_at
+// у поставок, которые были открыты на момент прошлого прогона.
+func (r *PgFBSOrdersRepo) SaveSupplies(ctx context.Context, supplies []wb.FBSSupply) (int, error) {
+	if len(supplies) == 0 {
+		return 0, nil
+	}
+
+	total := 0
+	for i := 0; i < len(supplies); i += pgFBSChunkSize {
+		end := i + pgFBSChunkSize
+		if end > len(supplies) {
+			end = len(supplies)
+		}
+		n, err := r.saveSuppliesChunk(ctx, supplies[i:end])
+		if err != nil {
+			return 0, fmt.Errorf("save fbs supplies chunk at offset %d: %w", i, err)
+		}
+		total += n
+	}
+	return total, nil
+}
+
+func (r *PgFBSOrdersRepo) saveSuppliesChunk(ctx context.Context, chunk []wb.FBSSupply) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	args := make([]any, 0, len(chunk)*insertFBSSupplyCols)
+	for _, s := range chunk {
+		createdAt, err := parseFBSTime(s.CreatedAt)
+		if err != nil {
+			return 0, fmt.Errorf("supply %s: %w", s.ID, err)
+		}
+		closedAt, err := parseFBSTimePtr(s.ClosedAt)
+		if err != nil {
+			return 0, fmt.Errorf("supply %s closedAt: %w", s.ID, err)
+		}
+		scanDt, err := parseFBSTimePtr(s.ScanDt)
+		if err != nil {
+			return 0, fmt.Errorf("supply %s scanDt: %w", s.ID, err)
+		}
+		rejectDt, err := parseFBSTimePtr(s.RejectDt)
+		if err != nil {
+			return 0, fmt.Errorf("supply %s rejectDt: %w", s.ID, err)
+		}
+		args = append(args,
+			s.ID, s.Name,
+			createdAt, closedAt, scanDt, rejectDt,
+			s.Done, s.IsB2b, s.CargoType, s.CrossBorderType,
+			s.DestinationOfficeID, s.RecommendedWhID,
+		)
+	}
+
+	query := insertFBSSupplyFullChunkSQL
+	if len(chunk) < pgFBSChunkSize {
+		query = BuildMultiRowInsert(insertFBSSupplyPrefixSQL, insertFBSSupplyOnConflictSQL, len(chunk), insertFBSSupplyCols)
+	}
+
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("save fbs supplies batch (size %d): %w", len(chunk), err)
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
+}
+
+const (
+	// $1-$12; downloaded_at — DEFAULT now().
+	insertFBSSupplyCols = 12
+
+	insertFBSSupplyPrefixSQL = `INSERT INTO fbs_supplies (
+	    supply_id, name,
+	    created_at, closed_at, scan_dt, reject_dt,
+	    done, is_b2b, cargo_type, cross_border_type,
+	    destination_office_id, recommended_wh_id
+	) VALUES `
+
+	insertFBSSupplyOnConflictSQL = `
+	ON CONFLICT (supply_id) DO UPDATE SET
+	    name = EXCLUDED.name,
+	    created_at = EXCLUDED.created_at,
+	    closed_at = EXCLUDED.closed_at,
+	    scan_dt = EXCLUDED.scan_dt,
+	    reject_dt = EXCLUDED.reject_dt,
+	    done = EXCLUDED.done,
+	    is_b2b = EXCLUDED.is_b2b,
+	    cargo_type = EXCLUDED.cargo_type,
+	    cross_border_type = EXCLUDED.cross_border_type,
+	    destination_office_id = EXCLUDED.destination_office_id,
+	    recommended_wh_id = EXCLUDED.recommended_wh_id,
+	    downloaded_at = now()`
+)
+
+var insertFBSSupplyFullChunkSQL = BuildMultiRowInsert(insertFBSSupplyPrefixSQL, insertFBSSupplyOnConflictSQL, pgFBSChunkSize, insertFBSSupplyCols)
+
+// parseFBSTimePtr парсит nullable RFC3339-дату (null до события — поставка
+// ещё не принята/не закрыта). Ошибка парсинга фатальна, как в parseFBSTime.
+func parseFBSTimePtr(s *string) (*time.Time, error) {
+	if s == nil || *s == "" {
+		return nil, nil
+	}
+	t, err := parseFBSTime(*s)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// ============================================================================
 // LoadStatusCandidateIDs — полнота статусов без пропусков
 // ============================================================================
 

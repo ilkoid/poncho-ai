@@ -9,6 +9,7 @@
 //   - fbs_orders            — сборочные задания (GET /api/v3/orders)
 //   - fbs_orders_status     — последний статус задания (1:1)
 //   - fbs_orders_status_log — журнал уникальных состояний (воронка/тайминги ЖЦ)
+//   - fbs_supplies          — поставки FBS (GET /api/v3/supplies): scan_dt = приёмка на СЦ
 //   - order_feed            — лента заказов: cancelType, география, возвраты
 //
 // Гарантия полноты статусов: каждый прогон обновляет статусы всех заданий
@@ -35,6 +36,10 @@ type Source interface {
 
 	// OrderFeedIterator итерирует по ленте заказов с даты from (≤ 31 сутки).
 	OrderFeedIterator(ctx context.Context, from time.Time, callback func([]wb.OrderFeedItem) error) (int, error)
+
+	// FBSSuppliesIterator итерирует по полному списку поставок
+	// (GET /api/v3/supplies: createdAt/closedAt/scanDt — приёмка на СЦ).
+	FBSSuppliesIterator(ctx context.Context, callback func([]wb.FBSSupply) error) (int, error)
 }
 
 // Writer is the persistence interface (declared here, consumer — Rule 6).
@@ -48,6 +53,10 @@ type Writer interface {
 
 	// SaveOrderFeed сохраняет строки ленты заказов с upsert по srid.
 	SaveOrderFeed(ctx context.Context, items []wb.OrderFeedItem) (int, error)
+
+	// SaveSupplies сохраняет поставки с upsert по supply_id (полный список
+	// за прогон: дообновляет scan_dt/closed_at у ранее открытых).
+	SaveSupplies(ctx context.Context, supplies []wb.FBSSupply) (int, error)
 
 	// LoadStatusCandidateIDs возвращает ID заданий для обновления статусов:
 	// свежее окно created_at >= createdSince + задания без статуса + незакрытые.
@@ -79,6 +88,9 @@ type DownloadOptions struct {
 	// nil/default = true (утилита FBS-доменная). false = писать все модели.
 	FeedMpOnly *bool
 
+	// DisableSupplies отключает фазу поставок (default: включена).
+	DisableSupplies bool
+
 	// DryRun пропускает все записи в БД.
 	DryRun bool
 
@@ -94,5 +106,7 @@ type DownloadResult struct {
 	TotalStatuses    int
 	FeedRows         int
 	FeedErr          string // нефатальная ошибка ленты (прогон завершён успешно)
+	SuppliesRows     int
+	SuppliesErr      string // нефатальная ошибка поставок (прогон завершён успешно)
 	Duration         time.Duration
 }

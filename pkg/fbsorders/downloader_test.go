@@ -19,9 +19,11 @@ type fakeSource struct {
 	orders         []wb.FBSOrder
 	statusesByID   map[int64]wb.FBSOrderStatus
 	feed           []wb.OrderFeedItem
+	supplies       []wb.FBSSupply
 	statusBatchMax int // максимум ID в одном запрошенном батче
 	statusCalls    int
 	feedErr        error
+	suppliesErr    error
 }
 
 func (f *fakeSource) FBSOrdersIterator(_ context.Context, _, _ time.Time, cb func([]wb.FBSOrder) error) (int, error) {
@@ -61,6 +63,19 @@ func (f *fakeSource) OrderFeedIterator(_ context.Context, _ time.Time, cb func([
 	return len(f.feed), nil
 }
 
+func (f *fakeSource) FBSSuppliesIterator(_ context.Context, cb func([]wb.FBSSupply) error) (int, error) {
+	if f.suppliesErr != nil {
+		return 0, f.suppliesErr
+	}
+	if len(f.supplies) == 0 {
+		return 0, nil
+	}
+	if err := cb(f.supplies); err != nil {
+		return 0, err
+	}
+	return len(f.supplies), nil
+}
+
 // errSource ломается на указанном вызове статусов (эмуляция сбоя батча).
 type errSource struct {
 	fake     *fakeSource
@@ -84,11 +99,16 @@ func (e *errSource) OrderFeedIterator(ctx context.Context, from time.Time, cb fu
 	return e.fake.OrderFeedIterator(ctx, from, cb)
 }
 
+func (e *errSource) FBSSuppliesIterator(ctx context.Context, cb func([]wb.FBSSupply) error) (int, error) {
+	return e.fake.FBSSuppliesIterator(ctx, cb)
+}
+
 // memWriter — in-memory Writer с записью всех вызовов.
 type memWriter struct {
 	savedOrders   []wb.FBSOrder
 	savedStatuses []wb.FBSOrderStatus
 	savedFeed     []wb.OrderFeedItem
+	savedSupplies []wb.FBSSupply
 	candidateIDs  []int64
 	called        bool
 }
@@ -107,6 +127,11 @@ func (w *memWriter) SaveStatuses(_ context.Context, statuses []wb.FBSOrderStatus
 func (w *memWriter) SaveOrderFeed(_ context.Context, items []wb.OrderFeedItem) (int, error) {
 	w.savedFeed = append(w.savedFeed, items...)
 	return len(items), nil
+}
+
+func (w *memWriter) SaveSupplies(_ context.Context, supplies []wb.FBSSupply) (int, error) {
+	w.savedSupplies = append(w.savedSupplies, supplies...)
+	return len(supplies), nil
 }
 
 func (w *memWriter) LoadStatusCandidateIDs(_ context.Context, _ time.Time) ([]int64, error) {
@@ -341,11 +366,66 @@ func TestMockSourceWithDiscardWriter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	o, s, f := w.Saved()
-	if o == 0 || s == 0 || f == 0 {
-		t.Errorf("discard counters = %d/%d/%d, want all > 0", o, s, f)
+	o, s, f, sup := w.Saved()
+	if o == 0 || s == 0 || f == 0 || sup == 0 {
+		t.Errorf("discard counters = %d/%d/%d/%d, want all > 0", o, s, f, sup)
 	}
 	if res.TotalOrders != o {
 		t.Errorf("TotalOrders %d != saved %d", res.TotalOrders, o)
+	}
+	if res.SuppliesRows != sup {
+		t.Errorf("SuppliesRows %d != saved %d", res.SuppliesRows, sup)
+	}
+	if res.SuppliesErr != "" {
+		t.Errorf("SuppliesErr = %q, want empty", res.SuppliesErr)
+	}
+}
+
+// Фаза поставок: сбой нефатален (прогон успешен, SuppliesErr заполнен),
+// DisableSupplies полностью пропускает фазу.
+func TestSuppliesPhaseNonFatalAndDisable(t *testing.T) {
+	orders, byID := makeOrders(3)
+
+	// Сбой поставок не рушит прогон.
+	src := &fakeSource{
+		orders:       orders,
+		statusesByID: byID,
+		suppliesErr:  fmt.Errorf("simulated supplies failure"),
+	}
+	w := &memWriter{}
+	res, err := NewDownloader(src, w, DownloadOptions{Days: 7}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("supplies failure must be non-fatal: %v", err)
+	}
+	if res.SuppliesErr == "" {
+		t.Error("SuppliesErr must capture the failure")
+	}
+	if len(w.savedSupplies) != 0 {
+		t.Errorf("savedSupplies = %d, want 0 on failure", len(w.savedSupplies))
+	}
+
+	// DisableSupplies: ни запроса, ни записи, ни ошибки.
+	src2 := &fakeSource{
+		orders:       orders,
+		statusesByID: byID,
+		supplies:     []wb.FBSSupply{{ID: "WB-GI-1"}},
+	}
+	w2 := &memWriter{}
+	res2, err := NewDownloader(src2, w2, DownloadOptions{Days: 7, DisableSupplies: true}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(w2.savedSupplies) != 0 || res2.SuppliesRows != 0 || res2.SuppliesErr != "" {
+		t.Errorf("DisableSupplies: saved=%d rows=%d err=%q, want all zero/empty",
+			len(w2.savedSupplies), res2.SuppliesRows, res2.SuppliesErr)
+	}
+
+	// Успешная фаза: поставки сохранены.
+	res3, err := NewDownloader(src2, &memWriter{}, DownloadOptions{Days: 7}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res3.SuppliesRows != 1 || res3.SuppliesErr != "" {
+		t.Errorf("SuppliesRows=%d err=%q, want 1/empty", res3.SuppliesRows, res3.SuppliesErr)
 	}
 }
