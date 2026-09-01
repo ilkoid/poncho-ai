@@ -17,14 +17,16 @@ search_visibility:
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
 
   rate_limits:
-    search_report: 3           # desired rate (req/min)
-    search_report_burst: 3
-    search_report_api: 3       # swagger floor (recovery after 429)
-    search_report_api_burst: 3
-    search_texts: 3
-    search_texts_burst: 3
-    search_texts_api: 3
-    search_texts_api_burst: 3
+    # Эмпирика 2026-08-28: фактический лимит WB ≈1 req/min (429 при 2/min и тем
+    # более при 3/min = swagger-лимиту, который реальности не соответствует).
+    search_report: 1           # desired rate (req/min)
+    search_report_burst: 1
+    search_report_api: 1       # recovery floor after 429
+    search_report_api_burst: 1
+    search_texts: 1
+    search_texts_burst: 1
+    search_texts_api: 1
+    search_texts_api_burst: 1
 
   adaptive_probe_after: 10     # probes after N consecutive OK responses
   max_backoff_seconds: 60

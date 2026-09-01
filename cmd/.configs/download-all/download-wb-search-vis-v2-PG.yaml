@@ -7,20 +7,22 @@ search_visibility:
   skip_positions: false
   skip_queries: false
   rate_limits:
+    # Эмпирика 2026-08-28: фактический лимит WB ≈1 req/min — при 2/min каждый
+    # батч ловил 429 (swagger обещает 3/min, но не держится; origin ag-contentanalytics).
     search_report: 2
     search_report_burst: 1
     search_report_api: 2
     search_report_api_burst: 1
-    search_texts: 2
+    search_texts: 1
     search_texts_burst: 1
-    search_texts_api: 2
+    search_texts_api: 1
     search_texts_api_burst: 1
-  adaptive_probe_after: 10
+  adaptive_probe_after: 30
   max_backoff_seconds: 60
   filter:
     exclude_lengths: [6]
     allowed_years: [25, 26]
-    active_days: 14
+    active_days: 7
 
 storage:
   backend: "postgres"
