@@ -127,9 +127,35 @@ type CubeDims struct {
 
 // CubeData — весь payload дашборда.
 type CubeData struct {
-	Meta  DashMeta  `json:"meta"`
-	Dims  CubeDims  `json:"dims"`
-	Facts CubeFacts `json:"facts"`
+	Meta     DashMeta      `json:"meta"`
+	Dims     CubeDims      `json:"dims"`
+	Facts    CubeFacts     `json:"facts"`
+	Supplies *DashSupplies `json:"supplies,omitempty"` // приёмка на СЦ; nil = нет fbs_supplies
+}
+
+// DashSupplies — агрегаты приёмки поставок на СЦ. Зерно — поставка, поэтому
+// секция не пересчитывается фильтрами дашборда (nm/город/категория неприменимы
+// к отгрузке). Часы округлены до 0.1.
+type DashSupplies struct {
+	// по когортам (дата первого заказа поставки, МСК)
+	Cohort  []string  `json:"cohort"`
+	Sup     []int     `json:"sup"`
+	Ord     []int     `json:"ord"`
+	MedH    []float64 `json:"med_h"` // медиана лага от первого заказа поставки
+	P90H    []float64 `json:"p90_h"`
+	MinH    []float64 `json:"min_h"`
+	MaxH    []float64 `json:"max_h"`
+	OrdMedH []float64 `json:"ord_med_h"` // медиана по заказам: типичный заказ когорты
+	SupLe24 []float64 `json:"sup_le24"`  // % поставок ≤24ч
+	OrdLe24 []float64 `json:"ord_le24"`  // % заказов ≤24ч
+	// распределение поставочных лагов
+	HistBucket []string `json:"hist_bucket"`
+	HistSup    []int    `json:"hist_sup"`
+	HistOrd    []int    `json:"hist_ord"`
+	// оговорка
+	Total   int `json:"total"`
+	Scanned int `json:"scanned"`
+	Open    int `json:"open"` // без приёмки: в пути до СЦ / закрыты без скана
 }
 
 // dictBuilder — словарь «значение → индекс» с сохранением порядка добавления.
@@ -276,7 +302,70 @@ func loadCube(ctx context.Context, pool *pgxpool.Pool, q queryParams, dbName str
 	if n := len(cube.Dims.Nm); n > 0 {
 		cube.Meta.OnecCoveragePct = math.Round(float64(mapped)/float64(n)*1000) / 10
 	}
+
+	// Приёмка на СЦ — отдельный блок (зерно поставка). Таблица появляется
+	// после фазы 3 download-wb-fbs-orders-v2; в её отсутствие секции в
+	// дашборде не будет (карта скрывается).
+	var hasSupplies bool
+	if err := pool.QueryRow(ctx,
+		`SELECT to_regclass('public.fbs_supplies') IS NOT NULL`).Scan(&hasSupplies); err == nil && hasSupplies {
+		ds, err := loadDashSupplies(ctx, pool)
+		if err != nil {
+			// Секция аддитивная: не роняем дашборд, но и не молчим.
+			fmt.Printf("  ⚠️ поставки не включены в дашборд: %v\n", err)
+		} else if ds != nil {
+			cube.Supplies = ds
+		}
+	}
 	return cube, nil
+}
+
+// loadDashSupplies собирает агрегаты приёмки поставок для дашборда.
+func loadDashSupplies(ctx context.Context, pool *pgxpool.Pool) (*DashSupplies, error) {
+	cohorts, err := loadSuppliesCohorts(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	hist, err := loadSuppliesHist(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	totals, err := loadSuppliesTotals(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+
+	ds := &DashSupplies{Total: totals.Total, Scanned: totals.Scanned, Open: totals.Open}
+	r1 := func(v float64) float64 { return math.Round(v*10) / 10 }
+	for _, r := range cohorts {
+		ds.Cohort = append(ds.Cohort, r.Cohort)
+		ds.Sup = append(ds.Sup, r.Sup)
+		ds.Ord = append(ds.Ord, r.Orders)
+		ds.MedH = append(ds.MedH, r1(r.MedH))
+		ds.P90H = append(ds.P90H, r1(r.P90H))
+		ds.MinH = append(ds.MinH, r1(r.MinH))
+		ds.MaxH = append(ds.MaxH, r1(r.MaxH))
+		ds.OrdMedH = append(ds.OrdMedH, r1(deref(r.OrdMedH)))
+		ds.SupLe24 = append(ds.SupLe24, r1(r.SupLe24))
+		ds.OrdLe24 = append(ds.OrdLe24, r1(r.OrdLe24))
+	}
+	for _, h := range hist {
+		ds.HistBucket = append(ds.HistBucket, h.Bucket)
+		ds.HistSup = append(ds.HistSup, h.Sup)
+		ds.HistOrd = append(ds.HistOrd, h.Orders)
+	}
+	if ds.Scanned == 0 {
+		return nil, nil // ни одной принятой поставки — секция не о чем
+	}
+	return ds, nil
+}
+
+// deref — *float64 → 0 при NULL (медиана по заказам пустой подвыборки).
+func deref(v *float64) float64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // NmDictRow — строка словаря номенклатур (для Scan).

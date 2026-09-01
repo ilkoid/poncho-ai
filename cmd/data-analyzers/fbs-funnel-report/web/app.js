@@ -155,10 +155,12 @@ const axisStyle = {
 };
 
 const money = $('#chart-money'), funnel = $('#chart-funnel'), reasonsEl = $('#chart-reasons'),
-  cohortEl = $('#chart-cohort'), geoEl = $('#chart-geo'), catEl = $('#chart-cat');
+  cohortEl = $('#chart-cohort'), geoEl = $('#chart-geo'), catEl = $('#chart-cat'),
+  suppliesEl = $('#chart-supplies'), suphistEl = $('#chart-suphist');
 const ch = {
   money: echarts.init(money), funnel: echarts.init(funnel), reasons: echarts.init(reasonsEl),
   cohort: echarts.init(cohortEl), geo: echarts.init(geoEl), cat: echarts.init(catEl),
+  supplies: echarts.init(suppliesEl), suphist: echarts.init(suphistEl),
 };
 window.addEventListener('resize', () => Object.values(ch).forEach(c => c.resize()));
 
@@ -185,6 +187,7 @@ function render() {
   renderFunnel(A);
   renderReasons(A);
   renderCohort(A);
+  renderSupplies();
   renderGeo(A);
   renderCat(A);
   renderTable(A);
@@ -364,6 +367,72 @@ function renderCohort(A) {
         lineStyle: {color: C.violet2, width: 1.5, opacity: .6}},
     ],
   });
+}
+
+/* ── приёмка на СЦ ── */
+/* Зерно — поставка (WB-GI), лаг = scan_dt − заказ. Основной столбик — медиана
+   по заказам когорты («типичный заказ ждал приёмки N часов»), в тултипе —
+   поставочный лаг от первого заказа поставки. Порог сервиса — 24 часа.
+   Фильтры дашборда не действуют: срез не про nm/город, а про отгрузку. */
+function renderSupplies() {
+  const S = D.supplies, card = $('#supplies-card');
+  if (!S || !S.total) { if (card) card.style.display = 'none'; return; }
+  if (card) card.style.display = '';
+
+  const rows = S.cohort.map((d, i) => ({
+    d, med: S.ord_med_h[i], supMed: S.med_h[i], p90: S.p90_h[i],
+    min: S.min_h[i], max: S.max_h[i], sup: S.sup[i], ord: S.ord[i],
+    supLe: S.sup_le24[i], ordLe: S.ord_le24[i],
+  }));
+  const c24 = v => v <= 24 ? C.green : v <= 48 ? C.orange : C.red;
+
+  ch.supplies.setOption({
+    animationDuration: 300,
+    grid: {left: 46, right: 20, top: 28, bottom: 24},
+    tooltip: {...baseTooltip, trigger: 'axis', axisPointer: {type: 'shadow'},
+      formatter: ps => {
+        const r = rows[ps[0].dataIndex];
+        return `<b>${dmy(r.d)}</b> · поставок ${fmtInt(r.sup)} · заказов ${fmtInt(r.ord)}<br>` +
+          `Типичный заказ: <b style="color:${c24(r.med)}">${r.med.toLocaleString('ru-RU', {maximumFractionDigits: 1})} ч</b> до приёмки<br>` +
+          `Поставки: медиана ${r.supMed.toLocaleString('ru-RU', {maximumFractionDigits: 1})} · p90 ${r.p90.toLocaleString('ru-RU', {maximumFractionDigits: 1})} ·` +
+          ` размах ${r.min.toLocaleString('ru-RU', {maximumFractionDigits: 1})}–${r.max.toLocaleString('ru-RU', {maximumFractionDigits: 1})} ч<br>` +
+          `Успели в 24ч: <b>${fmtPct(r.supLe)}</b> поставок · ${fmtPct(r.ordLe)} заказов`;
+      }},
+    xAxis: {type: 'category', data: rows.map(r => dd(r.d)), ...axisStyle, splitLine: {show: false}},
+    yAxis: {type: 'value', ...axisStyle,
+      axisLabel: {...axisStyle.axisLabel, formatter: v => v + ' ч'}},
+    series: [{
+      name: 'Лаг приёмки, ч', type: 'bar',
+      data: rows.map(r => ({value: r.med, itemStyle: {color: c24(r.med), opacity: .9, borderRadius: [4, 4, 0, 0]}})),
+      barMaxWidth: 26,
+      markLine: {silent: true, symbol: 'none', animation: false,
+        lineStyle: {color: '#9A6700', type: 'dashed', width: 1.5},
+        label: {color: '#9A6700', fontSize: 10, fontFamily: FONT, position: 'insideEndTop', formatter: 'цель 24ч'},
+        data: [{yAxis: 24}]},
+    }],
+  }, true);
+
+  const buckets = S.hist_bucket || [];
+  // зелёным — бакеты, целиком укладывающиеся в 24ч (0–12 и 12–24)
+  const le24 = Math.max(0, buckets.indexOf('12–24ч'));
+  ch.suphist.setOption({
+    animationDuration: 300,
+    grid: {left: 46, right: 20, top: 14, bottom: 24},
+    tooltip: {...baseTooltip,
+      formatter: p => {
+        const i = p.dataIndex;
+        return `<b>${buckets[i]}</b><br>Поставок: ${fmtInt(S.hist_sup[i])}<br>Заказов: ${fmtInt(S.hist_ord[i])}` +
+          (i <= le24 ? '<br><span style="color:#018849">укладывается в 24ч</span>' : '');
+      }},
+    xAxis: {type: 'category', data: buckets, ...axisStyle, splitLine: {show: false}},
+    yAxis: {type: 'value', ...axisStyle, axisLabel: {...axisStyle.axisLabel, formatter: fmtShort}},
+    series: [{
+      type: 'bar',
+      data: buckets.map((b, i) => ({value: S.hist_ord[i],
+        itemStyle: {color: i <= le24 ? C.green : i <= le24 + 2 ? C.orange : C.red, opacity: .85, borderRadius: [3, 3, 0, 0]}})),
+      barMaxWidth: 40,
+    }],
+  }, true);
 }
 
 /* ── география ── */
@@ -580,6 +649,9 @@ function initChrome() {
       ? 'иерархия 1С (покрытие ' + fmtPct(META.onec_coverage_pct) + ' номенклатур), «WB · …» — предметы WB для немапленных'
       : 'предметы WB (в базе нет 1С-словаря)') +
     '. Источник: download-wb-fbs-orders-v2 → order_feed. Средний чек = выручка / число выкупов. ' +
+    'Приёмка на СЦ: лаг = scan_dt поставки (GET /api/v3/supplies, «дата сканирования поставки или ' +
+    'первого заказа») − время заказа; столбики — медиана по заказам когорты, порог 24ч; ' +
+    'у последних когорт часть поставок ещё не принята — лаг вырастет. ' +
     'Термины и определения — кнопка «Глоссарий» в шапке.';
 }
 

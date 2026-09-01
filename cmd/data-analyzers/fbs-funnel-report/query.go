@@ -209,6 +209,76 @@ LEFT JOIN public.order_feed f ON f.srid = o.rid AND ($1 OR f.is_mp)
 WHERE ($2::date IS NULL OR (o.created_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
 GROUP BY 1 ORDER BY 1`
 
+// ============================================================================
+// Приёмка поставок на СЦ — public.fbs_supplies (GET /api/v3/supplies,
+// 03-orders-fbs.yaml:2089; scan_dt — :4561 «дата сканирования поставки или
+// первого заказа» = момент приёмки на сортировочном центре).
+// ============================================================================
+
+// suppliesPerSupCTE — зерно «поставка»: первый заказ поставки и лаг до приёмки.
+const suppliesPerSupCTE = `
+WITH sup AS (
+  SELECT sp.supply_id, sp.scan_dt,
+         min(o.created_at) AS first_at,
+         count(*) AS n_orders
+  FROM public.fbs_supplies sp
+  JOIN public.fbs_orders o ON o.supply_id = sp.supply_id
+  WHERE sp.scan_dt IS NOT NULL AND o.cross_border_type = 0
+  GROUP BY 1, 2
+), per_sup AS (
+  SELECT supply_id, first_at, n_orders,
+         EXTRACT(EPOCH FROM (scan_dt - first_at)) / 3600.0 AS delay_h,
+         (first_at AT TIME ZONE 'Europe/Moscow')::date AS cohort_d
+  FROM sup
+)`
+
+// suppliesCohortsQuery — лаг приёмки по когортам (дата первого заказа поставки).
+// Поставочный лаг = scan_dt − первый заказ поставки (сколько ждала самая ранняя
+// позиция); ord_med_h — медиана «scan_dt − создание заказа» по заказам когорты
+// (типичный заказ когорты). Порог целевого сервиса — 24 часа.
+const suppliesCohortsQuery = suppliesPerSupCTE + `
+SELECT
+  cohort_d::text,
+  count(*)::int,
+  sum(n_orders)::int,
+  percentile_cont(0.5) WITHIN GROUP (ORDER BY delay_h),
+  percentile_cont(0.9) WITHIN GROUP (ORDER BY delay_h),
+  min(delay_h), max(delay_h),
+  100.0 * count(*) FILTER (WHERE delay_h <= 24) / count(*),
+  100.0 * COALESCE(sum(n_orders) FILTER (WHERE delay_h <= 24), 0) / sum(n_orders),
+  (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY
+     EXTRACT(EPOCH FROM (sp2.scan_dt - o2.created_at)) / 3600.0)
+   FROM public.fbs_orders o2
+   JOIN public.fbs_supplies sp2 ON sp2.supply_id = o2.supply_id
+   WHERE sp2.scan_dt IS NOT NULL AND o2.cross_border_type = 0
+     AND (o2.created_at AT TIME ZONE 'Europe/Moscow')::date = cohort_d)
+FROM per_sup
+GROUP BY cohort_d
+ORDER BY cohort_d`
+
+// suppliesHistQuery — распределение поставочных лагов по бакетам.
+const suppliesHistQuery = suppliesPerSupCTE + `
+SELECT
+  CASE WHEN delay_h <= 12 THEN '0–12ч'
+       WHEN delay_h <= 24 THEN '12–24ч'
+       WHEN delay_h <= 36 THEN '24–36ч'
+       WHEN delay_h <= 48 THEN '36–48ч'
+       WHEN delay_h <= 72 THEN '48–72ч'
+       WHEN delay_h <= 120 THEN '72–120ч'
+       ELSE '>120ч' END AS bucket,
+  count(*)::int,
+  sum(n_orders)::int
+FROM per_sup
+GROUP BY 1
+ORDER BY min(delay_h)`
+
+// suppliesTotalsQuery — наполнение fbs_supplies (для оговорки о непринятых).
+const suppliesTotalsQuery = `
+SELECT count(*)::int,
+  count(*) FILTER (WHERE scan_dt IS NOT NULL)::int,
+  count(*) FILTER (WHERE scan_dt IS NULL)::int
+FROM public.fbs_supplies`
+
 // ── Строки отчёта ──
 
 // Coverage — счётчики и диапазоны источников.
@@ -676,4 +746,84 @@ func markMaturity(cohorts []CohortFeedRow) {
 		cohorts[i].Mature = cohorts[i].Orders > 0 &&
 			float64(cohorts[i].InFlight)/float64(cohorts[i].Orders) <= 0.10
 	}
+}
+
+// ── Приёмка на СЦ: строки и лоадеры ──
+
+// SuppliesCohortRow — лаг приёмки одной когорты поставок.
+// Nullable-сканы: percentile/min/max над группой не бывают NULL (группа
+// непуста по построению), но коррелированная по-заказная медиана может.
+type SuppliesCohortRow struct {
+	Cohort  string
+	Sup     int
+	Orders  int
+	MedH    float64 // медиана поставочного лага (от первого заказа поставки)
+	P90H    float64
+	MinH    float64
+	MaxH    float64
+	SupLe24 float64  // % поставок, принятых ≤ 24ч от их первого заказа
+	OrdLe24 float64  // % заказов в таких поставках
+	OrdMedH *float64 // медиана лага по заказам когорты (типичный заказ)
+}
+
+// SuppliesHistRow — бакет распределения поставочных лагов.
+type SuppliesHistRow struct {
+	Bucket string
+	Sup    int
+	Orders int
+}
+
+// SuppliesTotals — наполнение fbs_supplies.
+type SuppliesTotals struct {
+	Total   int
+	Scanned int
+	Open    int // без scan_dt: ещё в пути до СЦ или закрыты без скана
+}
+
+// loadSuppliesCohorts — лаг приёмки по когортам.
+func loadSuppliesCohorts(ctx context.Context, pool *pgxpool.Pool) ([]SuppliesCohortRow, error) {
+	rows, err := pool.Query(ctx, suppliesCohortsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("supplies cohorts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SuppliesCohortRow
+	for rows.Next() {
+		var r SuppliesCohortRow
+		if err := rows.Scan(&r.Cohort, &r.Sup, &r.Orders,
+			&r.MedH, &r.P90H, &r.MinH, &r.MaxH, &r.SupLe24, &r.OrdLe24, &r.OrdMedH); err != nil {
+			return nil, fmt.Errorf("supplies cohorts scan: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// loadSuppliesHist — распределение лагов по бакетам.
+func loadSuppliesHist(ctx context.Context, pool *pgxpool.Pool) ([]SuppliesHistRow, error) {
+	rows, err := pool.Query(ctx, suppliesHistQuery)
+	if err != nil {
+		return nil, fmt.Errorf("supplies hist: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SuppliesHistRow
+	for rows.Next() {
+		var r SuppliesHistRow
+		if err := rows.Scan(&r.Bucket, &r.Sup, &r.Orders); err != nil {
+			return nil, fmt.Errorf("supplies hist scan: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// loadSuppliesTotals — счётчики поставок.
+func loadSuppliesTotals(ctx context.Context, pool *pgxpool.Pool) (SuppliesTotals, error) {
+	var t SuppliesTotals
+	if err := pool.QueryRow(ctx, suppliesTotalsQuery).Scan(&t.Total, &t.Scanned, &t.Open); err != nil {
+		return t, fmt.Errorf("supplies totals: %w", err)
+	}
+	return t, nil
 }
