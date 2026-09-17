@@ -1,5 +1,5 @@
 # Конфиг v2-загрузчика FBS-заданий (PG-only домен).
-# Фазы: fbs_orders → fbs_orders_status(+log) → order_feed.
+# Фазы: fbs_orders → fbs_orders_status(+log) → fbs_supplies → order_feed.
 # Сваггер: docs/wb_api_swagger/03-orders-fbs.yaml, 11-analytics.yaml (order-feed).
 
 wb:
@@ -27,8 +27,8 @@ fbs:
   feed_enabled: true             # false = отключить (или флаг --no-feed)
   feed_days: 7                    # глубина ленты по дате текущего статуса (максимум 31;
                                  # 26 — разовый бэкфилл августа, завершён 25.08.2026)
-  feed_mp_only: true             # сохранять только FBS/DBS (is_mp=true); API не фильтрует —
-                                 # FBW-строки качаются, но отбрасываются до записи. false = все модели (или --feed-all-models)
+  feed_mp_only: false            # все модели: FBW пишется с is_mp=false (API всегда возвращает
+                                 # все схемы — фильтр экономил только место в БД). true = только FBS/DBS
 
   # ---- Rate limits ----
   # Swagger: v3 задания+статусы — общий бакет 300 req/min, burst 20, интервал 200 мс.
