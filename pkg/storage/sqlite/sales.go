@@ -243,9 +243,14 @@ func (r *SQLiteSalesRepository) SaveServiceRecords(ctx context.Context, rows []w
 // DeleteSalesByDateRange deletes all sales records within a date range.
 // Uses rr_dt (report date) to match API filtering behavior.
 // Returns number of rows deleted.
+//
+// rr_dt — TEXT в двух форматах (дата-онли от finance-API vs RFC3339 от
+// статистик-эры): чисто строковое сравнение с RFC3339-границей пропускает
+// дата-онли строки первого дня окна (инцидент 04.09.2026, PG-близнец).
+// substr(...,1,10) нормализует обе стороны к ISO-дате.
 func (r *SQLiteSalesRepository) DeleteSalesByDateRange(ctx context.Context, from, to string) (int64, error) {
 	result, err := r.db.ExecContext(ctx,
-		"DELETE FROM sales WHERE rr_dt >= ? AND rr_dt <= ?",
+		"DELETE FROM sales WHERE substr(rr_dt,1,10) >= substr(?,1,10) AND substr(rr_dt,1,10) <= substr(?,1,10)",
 		from, to,
 	)
 	if err != nil {
@@ -256,10 +261,11 @@ func (r *SQLiteSalesRepository) DeleteSalesByDateRange(ctx context.Context, from
 
 // DeleteServiceRecordsByDateRange deletes all service records within a date range.
 // Uses rr_dt (report date) to match API filtering behavior.
+// Сравнение — как в DeleteSalesByDateRange: substr из-за mixed TEXT-форматов rr_dt.
 // Returns number of rows deleted.
 func (r *SQLiteSalesRepository) DeleteServiceRecordsByDateRange(ctx context.Context, from, to string) (int64, error) {
 	result, err := r.db.ExecContext(ctx,
-		"DELETE FROM service_records WHERE rr_dt >= ? AND rr_dt <= ?",
+		"DELETE FROM service_records WHERE substr(rr_dt,1,10) >= substr(?,1,10) AND substr(rr_dt,1,10) <= substr(?,1,10)",
 		from, to,
 	)
 	if err != nil {

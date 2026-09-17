@@ -216,9 +216,8 @@ func (d *Downloader) saveRows(ctx context.Context, rows []wb.RealizationReportRo
 	if d.opts.SkipServiceRecords && len(serviceRows) > 0 {
 		d.progress("  ⏭️  Пропущено %d служебных записей", len(serviceRows))
 	} else if len(serviceRows) > 0 {
-		// В rewrite-режиме диапазон уже удалён (downloadPeriod:115-136),
-		// конфликты по rrd_id невозможны → plain INSERT без ON CONFLICT
-		// даёт ~1.3–2x на write-пути. В resume-режиме нужен upsert.
+		// Оба пути — идемпотентный upsert по rrd_id: DELETE окна не гарантирует
+		// отсутствия строк (mixed форматы rr_dt, повторные выдачи finance-API).
 		var err error
 		if d.opts.Rewrite {
 			err = d.writer.SaveServiceRecordsPlain(ctx, serviceRows)
@@ -252,8 +251,8 @@ func (d *Downloader) saveRows(ctx context.Context, rows []wb.RealizationReportRo
 	}
 
 	if len(toSave) > 0 {
-		// В rewrite-режиме диапазон уже удалён (downloadPeriod:115-136),
-		// конфликты по rrd_id невозможны → plain INSERT без ON CONFLICT.
+		// Оба пути — идемпотентный upsert по rrd_id: DELETE окна не гарантирует
+		// отсутствия строк (mixed форматы rr_dt, повторные выдачи finance-API).
 		var err error
 		if d.opts.Rewrite {
 			err = d.writer.SavePlain(ctx, toSave)

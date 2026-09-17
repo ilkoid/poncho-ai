@@ -38,13 +38,13 @@ type SalesWriter interface {
 	GetFirstSaleDT(ctx context.Context) (time.Time, error)
 	DeleteSalesByDateRange(ctx context.Context, from, to string) (int64, error)
 	DeleteServiceRecordsByDateRange(ctx context.Context, from, to string) (int64, error)
-	// Save — upsert-запись (ON CONFLICT/INSERT OR IGNORE). Используется в
-	// resume-режиме, когда rrd_id уже могут присутствовать.
+	// Save — upsert-запись (ON CONFLICT DO UPDATE по rrd_id). И resume, и rewrite
+	// пути толерантны к уже существующим rrd_id: finance-API возвращает строки
+	// повторно с дозаполненными комиссиями.
 	Save(ctx context.Context, rows []wb.RealizationReportRow) error
-	// SavePlain — plain INSERT без conflict-arbitration. Используется в
-	// rewrite-режиме, где DeleteSalesByDateRange уже очистил диапазон и
-	// конфликты по rrd_id невозможны; пропуск upsert-фазы даёт ~1.3–2x
-	// на write-пути при ingeste 200k+ строк.
+	// SavePlain — историческое имя rewrite-ветки; реализация обязана быть
+	// идемпотентной, как Save (инвариант «DELETE уже очистил диапазон, конфликтов
+	// нет» оказался ложным — инцидент 04.09.2026, duplicate key sales_rrd_id_key).
 	SavePlain(ctx context.Context, rows []wb.RealizationReportRow) error
 	SaveServiceRecords(ctx context.Context, rows []wb.RealizationReportRow) error
 	// SaveServiceRecordsPlain — аналог SavePlain для service_records.
