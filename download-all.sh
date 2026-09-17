@@ -46,10 +46,18 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 fi
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
 
-# ── Fail fast if PG is unreachable (default 192.168.10.7:15432 unless overridden via .env) ──
+# ── Fail fast if PG is unreachable (default 192.168.10.7:15432 unless overridden via .env).
+#    Проверяем pg_isready (протокол PG), не nc -z: ночью 05-06.09.2026 nc «подключался»
+#    к спящему хосту (SYN-прокси?), а утилиты падали с no route to host. ──
 PG_HOST="${PGHOST}"; PG_PORT="${PGPORT}"
-if ! nc -z -w 5 "$PG_HOST" "$PG_PORT" 2>/dev/null; then
-  echo "FAIL: PostgreSQL $PG_HOST:$PG_PORT недоступен. Проверь PGHOST/PGPORT/PG_PWD в $PONCHO/.env" >&2
+PG_ISREADY="$(command -v pg_isready || echo /opt/homebrew/opt/libpq/bin/pg_isready)"
+if [ -x "$PG_ISREADY" ]; then
+  "$PG_ISREADY" -h "$PG_HOST" -p "$PG_PORT" -t 5 >/dev/null 2>&1 || PG_DOWN=1
+else
+  nc -z -w 5 "$PG_HOST" "$PG_PORT" 2>/dev/null || PG_DOWN=1
+fi
+if [ "${PG_DOWN:-0}" = "1" ]; then
+  echo "FAIL: PostgreSQL $PG_HOST:$PG_PORT не отвечает. Проверь PGHOST/PGPORT/PG_PWD в $PONCHO/.env" >&2
   exit 1
 fi
 
@@ -146,7 +154,7 @@ run go run "$PONCHO/cmd/data-downloaders/download-wb-fbs-orders-v2" --config "$C
 echo "── Phase 5: Advertising ──"
 
 #maint campaigns
-#run go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" --config "$C/download-wb-campaigns-v2-PG.yaml" --backend postgres
+run go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" --config "$C/download-wb-campaigns-v2-PG.yaml" --backend postgres
 #maint promotion
 #run go run "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" --config "$C/download-wb-promotion-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 
