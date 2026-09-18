@@ -51,7 +51,14 @@ tg_send() {
     log "WARNING: TG_BOT_TOKEN/TG_CHAT_ID не заданы в ${PONCHO}/.env — уведомление пропущено"
     return 1
   fi
-  resp=$(curl -s --connect-timeout 10 --max-time 30 \
+  # TG_PROXY (напр. socks5h://127.0.0.1:1080) — если api.telegram.org недоступен
+  # напрямую (RU-хостинг): только телеграм-запросы идут через прокси.
+  # socks5h (не socks5!): DNS резолвится на стороне прокси — важно при DNS-блокировках.
+  local proxy_args=()
+  if [ -n "${TG_PROXY:-}" ]; then
+    proxy_args=(--proxy "${TG_PROXY}")
+  fi
+  resp=$(curl -s --connect-timeout 10 --max-time 30 "${proxy_args[@]}" \
     "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
     --data-urlencode "chat_id=${TG_CHAT_ID}" \
     --data-urlencode "text=${text}")
