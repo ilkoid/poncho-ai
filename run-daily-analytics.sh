@@ -4,7 +4,9 @@ set -euo pipefail
 # Daily analytics pipeline: git pull → download data → build MA snapshots
 # Designed for cron on VPS. Uses pre-compiled binaries from bin/.
 
-PROJECT="/home/ilkoid/go-workspace/src/poncho-ai"
+# Project root: каталог самого скрипта (работает при любом username/путе VPS);
+# override — env PONCHO_PROJECT, если скрипт вызывается не из репозитория.
+PROJECT="${PONCHO_PROJECT:-$(cd "$(dirname "$0")" && pwd)}"
 LOCKFILE="${PROJECT}/.analytics.lock"
 LOGDIR="${PROJECT}/logs"
 BIN="${PROJECT}/bin"
