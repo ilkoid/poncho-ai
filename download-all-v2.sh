@@ -1,0 +1,242 @@
+#!/bin/bash
+# WB Full Data Refresh — VPS #2 edition: PG-only + cron-friendly
+#
+# Копия download-all.sh для VPS #2 «wb-tools» (ssh ilkoid@213.208.160.214 -p 16200),
+# клон ожидается в ~/go-workspace/src/poncho-ai. Бэкенд — ТОЛЬКО PostgreSQL
+# (SQLite-пасса нет), как принято на той машине.
+#
+# Отличия от download-all.sh:
+#   + всё пишет в logs/download-all-v2-ГГГГ-ММ-ДД.log (таймстампы, ротация 30 дней)
+#   + non-fatal git pull в начале (cron гоняет свежий код: go run, не bin/)
+#   + PATH дополнен /usr/local/go/bin (в cron нет окружения юзера)
+#   + общий LOCKDIR с download-all.sh — два полных прогона в одном чекауте
+#     не должны писать PG параллельно
+# Логика фаз, maint-группы, Summary — идентичны download-all.sh.
+#
+# Usage: bash download-all-v2.sh [days]   (days передаётся в утилиты с --days)
+# Перед утилитой — целевая оптимизация её таблиц (maint <group>): VACUUM (ANALYZE)
+# для upsert-churn, ANALYZE для снапшот-гигантов; группы — в pg-maintenance-PG.yaml.
+# Фаза 7 — ANALYZE всех таблиц; по субботам Фаза 8 — REINDEX CONCURRENTLY.
+
+# ── VPS #2: путь клона резолвится по месту скрипта; override — PONCHO_V2 ──
+PONCHO="${PONCHO_V2:-$(cd "$(dirname "$0")" && pwd)}"
+C="$PONCHO/cmd/.configs/download-all"
+DAYS="${1:-}"
+
+# cron не читает профиль юзера: добавляем стандартные Linux-пути go
+export PATH="$PATH:/usr/local/go/bin:${HOME}/go/bin"
+
+export PGHOST="${PGHOST:-192.168.10.7}"
+export PGPORT="${PGPORT:-15432}"
+export PGUSER="${PGUSER:-postgres}"
+
+# ── Logging: весь вывод скрипта (фазы, FAIL-метки, Summary) — в лог + stdout ──
+LOGDIR="$PONCHO/logs"
+mkdir -p "$LOGDIR"
+LOGFILE="$LOGDIR/download-all-v2-$(date +%Y-%m-%d).log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+# ── Cleanup old logs (30 days) ──
+find "$LOGDIR" -name '*.log' -mtime +30 -delete 2>/dev/null || true
+
+# ── Load .env if present (секреты: ключи WB, PG_PWD; переопределяет PGHOST при наличии) ──
+if [ -f "$PONCHO/.env" ]; then
+  set -a
+  . "$PONCHO/.env"
+  set +a
+  log "Loaded env from $PONCHO/.env"
+else
+  log "WARNING: $PONCHO/.env не найден — ключи WB берутся из окружения"
+fi
+
+# ── git pull (non-fatal) ──
+log "--- git pull ---"
+if git -C "$PONCHO" pull 2>&1; then
+  log "git pull OK"
+else
+  log "WARNING: git pull failed, continuing with existing code"
+fi
+
+# ── Single-instance lock (общий с download-all.sh) ──
+LOCKDIR="$PONCHO/.download-all.lock"
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+  log "SKIP: другой прогон уже идёт (lock: $LOCKDIR)"
+  exit 0
+fi
+trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
+
+# ── Fail fast if PG is unreachable (протокол PG, не nc -z — см. кейс 05-06.09.2026) ──
+PG_HOST="${PGHOST}"; PG_PORT="${PGPORT}"
+PG_ISREADY="$(command -v pg_isready || echo /usr/lib/postgresql/bin/pg_isready)"
+if [ -x "$PG_ISREADY" ]; then
+  "$PG_ISREADY" -h "$PG_HOST" -p "$PG_PORT" -t 5 >/dev/null 2>&1 || PG_DOWN=1
+else
+  nc -z -w 5 "$PG_HOST" "$PG_PORT" 2>/dev/null || PG_DOWN=1
+fi
+if [ "${PG_DOWN:-0}" = "1" ]; then
+  log "FAIL: PostgreSQL $PG_HOST:$PG_PORT не отвечает. Проверь PGHOST/PGPORT/PG_PWD в $PONCHO/.env"
+  exit 1
+fi
+
+# ── Failure tracking: Summary в конце перечисляет упавшие утилиты ──
+FAILED=()
+RUN_COUNT=0
+
+# run — обёртка над "go run <pkg> …". Имя утилиты = basename каталога из $3.
+run() {
+  local name; name="$(basename "$3")"
+  RUN_COUNT=$((RUN_COUNT + 1))
+  "$@"
+  local rc=$?
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("$name (exit $rc)")
+    log "⚠️  FAIL: $name (exit $rc)"
+  fi
+  return "$rc"
+}
+
+# maint <group> — целевая оптимизация таблиц утилиты ДО её запуска.
+# Падение НЕ блокирует загрузку — в Summary попадает как pg-maintenance[<group>].
+maint() {
+  RUN_COUNT=$((RUN_COUNT + 1))
+  go run "$PONCHO/cmd/data-maintenance/pg-maintenance" --config "$C/pg-maintenance-PG.yaml" --group "$1"
+  local rc=$?
+  if [ "$rc" -ne 0 ]; then
+    FAILED+=("pg-maintenance[$1] (exit $rc)")
+    log "⚠️  FAIL: pg-maintenance[$1] (exit $rc)"
+  fi
+  return "$rc"
+}
+
+START=$SECONDS
+log "═══════  WB Full Refresh v2 (PostgreSQL) started  ═══════"
+
+###############################################################################
+#  Phase 1: Catalog
+###############################################################################
+
+log "── Phase 1: Catalog ──"
+
+maint cards
+run go run "$PONCHO/cmd/data-downloaders/download-wb-cards-v2" --config "$C/download-wb-cards-v2-PG.yaml" --backend postgres
+maint prices
+run go run "$PONCHO/cmd/data-downloaders/download-wb-prices-v2" --config "$C/download-wb-prices-PG.yaml" --backend postgres
+maint onec-data
+maint onec-prices
+run go run "$PONCHO/cmd/data-downloaders/download-1c-data-v2" --config "$C/download-1c-data-v2-PG.yaml" --backend postgres
+maint onec-rests
+run go run "$PONCHO/cmd/data-downloaders/download-1c-rests-v2" --config "$C/download-1c-rests-PG.yaml" --backend postgres
+
+###############################################################################
+#  Phase 2: Feedbacks
+###############################################################################
+
+log "── Phase 2: Feedbacks ──"
+
+maint feedbacks
+run go run "$PONCHO/cmd/data-downloaders/download-wb-feedbacks-v2" --config "$C/download-wb-feedbacks-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+
+###############################################################################
+#  Phase 3: Sales & Revenue
+###############################################################################
+
+log "── Phase 3: Sales & Revenue ──"
+
+maint orders
+run go run "$PONCHO/cmd/data-downloaders/download-wb-orders-v2" --config "$C/download-wb-orders-PG.yaml" --backend postgres
+maint opsales
+run go run "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" --config "$C/download-wb-opsales-PG.yaml" --backend postgres
+maint sales
+run go run "$PONCHO/cmd/data-downloaders/download-wb-sales-v2" --config "$C/download-wb-sales-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+maint region-sales
+run go run "$PONCHO/cmd/data-downloaders/download-wb-region-sales-v2" --config "$C/download-wb-region-sales-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+
+###############################################################################
+#  Phase 4: Stock & Logistics
+###############################################################################
+
+log "── Phase 4: Stock & Logistics ──"
+
+maint stocks
+run go run "$PONCHO/cmd/data-downloaders/download-wb-stocks-v2" --config "$C/download-wb-stocks-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)
+maint stock-products
+run go run "$PONCHO/cmd/data-downloaders/download-wb-stock-products-v2" --config "$C/download-wb-stock-products-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)
+maint stock-history
+run go run "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" --config "$C/download-wb-stock-history-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+maint stock-history-metrics
+run go run "$PONCHO/cmd/data-downloaders/download-wb-stock-history-v2" --config "$C/download-wb-stock-history-metrics-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+maint supplies
+run go run "$PONCHO/cmd/data-downloaders/download-wb-supplies-v2" --config "$C/download-wb-supplies-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+maint fbs-orders
+run go run "$PONCHO/cmd/data-downloaders/download-wb-fbs-orders-v2" --config "$C/download-wb-fbs-orders-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+
+###############################################################################
+#  Phase 5: Advertising
+###############################################################################
+
+log "── Phase 5: Advertising ──"
+
+#maint campaigns
+run go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" --config "$C/download-wb-campaigns-v2-PG.yaml" --backend postgres
+#maint promotion
+#run go run "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" --config "$C/download-wb-promotion-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+
+###############################################################################
+#  Phase 6: Analytics
+###############################################################################
+
+log "── Phase 6: Analytics ──"
+
+#run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-v2" --config "$C/download-wb-funnel-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+maint funnel-agg
+run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# Самодолив дырок funnel-агрегатов: ночное окно, убитое 429-штормом, не
+# самолечется — здесь находим отсутствующие/частичные окна за 2 недели и
+# перекачиваем явными датами. Нефатально для прогона.
+bash "$PONCHO/refill-funnel-holes.sh" || log "⚠️  refill-funnel-holes: сбой (нефатально)"
+maint funnel-csv
+run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" --config "$C/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+maint search-vis
+run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+maint penalties
+run go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$C/download-wb-penalties-v2-PG.yaml" --backend postgres
+maint whremains
+run go run "$PONCHO/cmd/data-downloaders/download-wb-whremains-v2" --config "$C/download-wb-whremains-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)
+
+###############################################################################
+#  Phase 7: PG Maintenance — финальный лёгкий проход (ANALYZE всех таблиц)
+###############################################################################
+
+log "── Phase 7: PG Maintenance (ANALYZE all) ──"
+
+run go run "$PONCHO/cmd/data-maintenance/pg-maintenance" --config "$C/pg-maintenance-PG.yaml" --analyze-only
+
+###############################################################################
+#  Phase 8: Weekly deep pass — REINDEX CONCURRENTLY (без локов, ~10-20 мин).
+#  Только по субботам; прерванная суббота догонится через неделю.
+###############################################################################
+
+if [ "$(date +%u)" = "6" ]; then
+  log "── Phase 8: Weekly REINDEX CONCURRENTLY ──"
+  run go run "$PONCHO/cmd/data-maintenance/pg-maintenance" --config "$C/pg-maintenance-PG.yaml" --reindex-concurrently
+else
+  log "── Phase 8: skipped (REINDEX только по субботам; сегодня $(date +%A)) ──"
+fi
+
+###############################################################################
+#  Summary
+###############################################################################
+
+TOTAL=$(( SECONDS - START ))
+log "═══════  Summary  ═══════"
+if [ "${#FAILED[@]}" -eq 0 ]; then
+  log "✔ Все утилиты завершились успешно ($RUN_COUNT/$RUN_COUNT)"
+else
+  log "✗ Не выполнились (${#FAILED[@]} из $RUN_COUNT):"
+  printf '  ✗ %s\n' "${FAILED[@]}"
+fi
+log "Total:  $((TOTAL / 60))m $((TOTAL % 60))s"
+
+[ "${#FAILED[@]}" -eq 0 ] || exit 1
