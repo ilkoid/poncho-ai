@@ -33,6 +33,10 @@ DAYS="${1:-}"
 export PATH="$PATH:/usr/local/go/bin:${HOME}/go/bin"
 command -v go >/dev/null 2>&1 || { echo "FAIL: go не найден в PATH (cron без профиля?) — установи go или допиши путь в PATH-строке скрипта" >&2; exit 1; }
 
+# go run <пакет> требует cwd внутри модуля: cron стартует с cwd=$HOME (ночь
+# 19.09.2026 — все 44 шага упали «go.mod not found»; ср. download-all-pg.sh:38)
+cd "$PONCHO" || { echo "FAIL: не могу зайти в $PONCHO" >&2; exit 1; }
+
 # Примечание для crontab: символ % в строке запуска НЕ нужен и НЕ используется —
 # все даты вычисляются внутри скрипта (там % безопасен).
 

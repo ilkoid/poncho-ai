@@ -31,6 +31,10 @@ PONCHO="$(cd "$(dirname "$0")" && pwd)"
 C="$PONCHO/cmd/.configs/download-all"
 DAYS="${1:-}"
 
+# go run <пакет> требует cwd внутри модуля — скрипт может вызываться не из
+# чекаута (cron, абсолютный путь); иначе все шаги падают «go.mod not found»
+cd "$PONCHO" || { echo "FAIL: не могу зайти в $PONCHO" >&2; exit 1; }
+
 # ── Load .env if present (local-run support; harmless on VPS where env is exported) ──
 if [ -f "$PONCHO/.env" ]; then
   set -a
@@ -163,12 +167,12 @@ echo "── Phase 6: Analytics ──"
 
 #run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-v2" --config "$C/download-wb-funnel-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint funnel-agg
-run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+#run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 # Самодолив дырок funnel-агрегатов: ночное окно, убитое 429-штормом, не
 # самолечется — здесь находим отсутствующие/частичные окна за 2 недели и
 # перекачиваем явными датами. Нефатально для прогона; лог: logs/funnel-holes-*.log
-bash "$PONCHO/refill-funnel-holes.sh" || echo "⚠️  refill-funnel-holes: сбой (нефатально)"
-maint funnel-csv
+#bash "$PONCHO/refill-funnel-holes.sh" || echo "⚠️  refill-funnel-holes: сбой (нефатально)"
+#maint funnel-csv
 run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" --config "$C/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint search-vis
 run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
