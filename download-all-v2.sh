@@ -18,8 +18,8 @@
 # Уведомления об ошибках: notify = Telegram primary → mail fallback.
 # TG: тот же бот/чат, что у Mac-ночника (TG_BOT_TOKEN/TG_CHAT_ID из .env),
 #     тег [VPS2 <hostname>]; при блокировке api.telegram.org — TG_PROXY.
-# Mail: внутренний relay (SMTP_HOST/SMTP_PORT, дефолт 10.120.11.31:587 STARTTLS),
-#     кому — MAIL_TO из .env; креды ТОЛЬКО в netrc-файле (SMTP_NETRC, ~600 прав).
+# Mail: go run cmd/ops-notify/mail-notify (pkg/email, relay из его config.yaml),
+#     креды — SMTP_PASSWORD в .env, кому — MAIL_TO из .env (override).
 # Перед утилитой — целевая оптимизация её таблиц (maint <group>): VACUUM (ANALYZE)
 # для upsert-churn, ANALYZE для снапшот-гигантов; группы — в pg-maintenance-PG.yaml.
 # Фаза 7 — ANALYZE всех таблиц; по субботам Фаза 8 — REINDEX CONCURRENTLY.
@@ -72,53 +72,31 @@ tg_send() {
   return 1
 }
 
-# mail_send <text>: статус на почту (внутренний MS Exchange relay).
-# Креды — НЕ в аргументах и НЕ в env-переменной с паролем (светится в ps aux):
-# только netrc-файл (SMTP_NETRC, по умолчанию ~/.smtp-netrc, права 600):
-#   machine 10.120.11.31 login it_service@playtoday.ru password <SMTP-пароль>
-# .env: MAIL_TO=... (кому), SMTP_FROM (от кого, по умолчанию login из netrc).
-# Тема = первая строка текста (UTF-8 → encoded-word), тело — base64.
+# mail_send <text>: статус на почту через cmd/ops-notify/mail-notify (go run,
+# отправщик pkg/email — работает с этим relay ежедневно, в отличие от curl
+# smtp://, который спотыкается о сертификат: exit 60). Креды: SMTP_PASSWORD
+# в .env (внутрь YAML разворачивается ${SMTP_PASSWORD}); MAIL_TO в .env
+# переопределяет получателей config.yaml. Тема = первая строка текста.
 mail_send() {
-  local text="$1" netrc subj body_b64 tmp rc from
-  if [ -z "${MAIL_TO:-}" ]; then
-    log "WARNING: MAIL_TO не задан в ${PONCHO}/.env — mail-уведомление пропущено"
+  local text="$1" rc
+  if [ -z "${SMTP_PASSWORD:-}" ]; then
+    log "WARNING: SMTP_PASSWORD не задана в ${PONCHO}/.env — mail-уведомление пропущено"
     return 1
   fi
-  netrc="${SMTP_NETRC:-$HOME/.smtp-netrc}"
-  if [ ! -f "$netrc" ]; then
-    log "WARNING: netrc-файл $netrc не найден — mail-уведомление пропущено (machine <relay> login <от кого> password <...>; chmod 600)"
-    return 1
+  local to_args=()
+  if [ -n "${MAIL_TO:-}" ]; then
+    to_args=(--to "${MAIL_TO}")
   fi
-  from="${SMTP_FROM:-it_service@playtoday.ru}"
-  subj="${TG_TAG}: ${text%%$'\n'*}"
-  subj=${subj:0:180}
-  tmp="$(mktemp)"
-  {
-    printf 'From: %s\n' "$from"
-    printf 'To: %s\n' "$MAIL_TO"
-    printf 'Subject: =?UTF-8?B?%s?=\n' "$(printf '%s' "$subj" | base64 | tr -d '\n')"
-    printf 'Date: %s\n' "$(date -R 2>/dev/null || date '+%a, %d %b %Y %H:%M:%S %z')"
-    printf 'MIME-Version: 1.0\n'
-    printf 'Content-Type: text/plain; charset=utf-8\n'
-    printf 'Content-Transfer-Encoding: base64\n'
-    printf '\n'
-    printf '%s' "$text" | base64 | tr -d '\n' | fold -w 76
-    printf '\n'
-  } > "$tmp"
-  curl -sS --connect-timeout 10 --max-time 60 \
-    --url "smtp://${SMTP_HOST:-10.120.11.31}:${SMTP_PORT:-587}" \
-    --ssl-reqd \
-    --netrc-file "$netrc" \
-    --mail-from "$from" \
-    --mail-rcpt "$MAIL_TO" \
-    --upload-file "$tmp"
+  go run "$PONCHO/cmd/ops-notify/mail-notify" \
+    --config "$PONCHO/cmd/ops-notify/mail-notify/config.yaml" \
+    --subject "${TG_TAG}: ${text%%$'\n'*}" \
+    --text "$text" \
+    "${to_args[@]}"
   rc=$?
-  rm -f "$tmp"
-  if [ "$rc" -eq 0 ]; then
-    return 0
+  if [ "$rc" -ne 0 ]; then
+    log "WARNING: mail-notify не доставил письмо (exit ${rc})"
   fi
-  log "WARNING: SMTP-отправка не удалась (curl exit ${rc})"
-  return 1
+  return "$rc"
 }
 
 # notify <text>: TG primary → mail fallback. TG без кредов/прокси вернёт 1 —

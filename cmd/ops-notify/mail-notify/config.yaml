@@ -1,0 +1,26 @@
+# mail-notify — SMTP-подключение и получатели по умолчанию.
+# Формат = типы pkg/email (секции smtp/recipients на верхнем уровне).
+#
+# Пароль: ${SMTP_PASSWORD} разворачивается pkg/config.LoadYAML (os.ExpandEnv)
+# из env — на VPS лежит в .env (после ротации). Не коммитить значение!
+#
+# tls_mode: starttls (587) — единственный рабочий режим этого relay:
+# implicit на 465 не поднимает TLS; none — только локальные тесты.
+# tls_certcheck: false — не проверять сертификат сервера (= tls_certcheck off).
+# auth_mechanism: login — MS Exchange после STARTTLS принимает только AUTH LOGIN.
+smtp:
+  host: 10.120.11.31
+  port: 587
+  from: it_service@playtoday.ru
+  username: it_service@playtoday.ru
+  password: ${SMTP_PASSWORD}
+  auth: true
+  auth_mechanism: login
+  tls_mode: starttls
+  tls_certcheck: false
+  keepbcc: false
+  timeout: 30s
+
+recipients:
+  to:
+    - kashparov.i@playtoday.ru
