@@ -25,10 +25,10 @@ DAYS="${1:-}"
 
 # cron не читает профиль юзера: добавляем стандартные Linux-пути go
 export PATH="$PATH:/usr/local/go/bin:${HOME}/go/bin"
+command -v go >/dev/null 2>&1 || { echo "FAIL: go не найден в PATH (cron без профиля?) — установи go или допиши путь в PATH-строке скрипта" >&2; exit 1; }
 
-export PGHOST="${PGHOST:-192.168.10.7}"
-export PGPORT="${PGPORT:-15432}"
-export PGUSER="${PGUSER:-postgres}"
+# Примечание для crontab: символ % в строке запуска НЕ нужен и НЕ используется —
+# все даты вычисляются внутри скрипта (там % безопасен).
 
 # ── Logging: весь вывод скрипта (фазы, FAIL-метки, Summary) — в лог + stdout ──
 LOGDIR="$PONCHO/logs"
@@ -41,7 +41,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 # ── Cleanup old logs (30 days) ──
 find "$LOGDIR" -name '*.log' -mtime +30 -delete 2>/dev/null || true
 
-# ── Load .env if present (секреты: ключи WB, PG_PWD; переопределяет PGHOST при наличии) ──
+# ── Load .env if present (секреты: ключи WB, PG_PWD; может нести PGHOST/PG_ADMIN) ──
 if [ -f "$PONCHO/.env" ]; then
   set -a
   . "$PONCHO/.env"
@@ -50,6 +50,13 @@ if [ -f "$PONCHO/.env" ]; then
 else
   log "WARNING: $PONCHO/.env не найден — ключи WB берутся из окружения"
 fi
+
+# ── PG defaults ПОСЛЕ .env (прод этой VPS; .env/export переопределяют) ──
+# Фикс PGUSER→PG_ADMIN из локального download-all-pg.sh сохранён:
+# приоритет PGUSER > PG_ADMIN > arm_ai_admin.
+export PGHOST="${PGHOST:-10.120.24.155}"
+export PGPORT="${PGPORT:-5432}"
+export PGUSER="${PGUSER:-${PG_ADMIN:-arm_ai_admin}}"
 
 # ── git pull (non-fatal) ──
 log "--- git pull ---"
@@ -60,7 +67,14 @@ else
 fi
 
 # ── Single-instance lock (общий с download-all.sh) ──
+# Протухший lock: mkdir-lock от убитого прогона (kill -9, OOM, ребут) сам не
+# исчезнет — считаем брошенным и удаляем, если он старше 12 часов. rmdir (не
+# rm -r): пустой каталог удаляем молча, с содержимым — падаем громко.
 LOCKDIR="$PONCHO/.download-all.lock"
+if [ -d "$LOCKDIR" ] && [ -n "$(find "$(dirname "$LOCKDIR")" -maxdepth 1 -name "$(basename "$LOCKDIR")" -type d -mmin -720 2>/dev/null)" ]; then
+  log "WARNING: протухший lock (${LOCKDIR}, старше 12ч) — удаляю и продолжаю"
+  rmdir "$LOCKDIR" 2>/dev/null || { log "FAIL: lock-каталог не пуст — разбери вручную: $LOCKDIR"; exit 1; }
+fi
 if ! mkdir "$LOCKDIR" 2>/dev/null; then
   log "SKIP: другой прогон уже идёт (lock: $LOCKDIR)"
   exit 0
