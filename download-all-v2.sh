@@ -68,10 +68,13 @@ fi
 
 # ── Single-instance lock (общий с download-all.sh) ──
 # Протухший lock: mkdir-lock от убитого прогона (kill -9, OOM, ребут) сам не
-# исчезнет — считаем брошенным и удаляем, если он старше 12 часов. rmdir (не
-# rm -r): пустой каталог удаляем молча, с содержимым — падаем громко.
+# исчезнет — считаем брошенным и удаляем, если он старше 12 часов (-mmin +720 =
+# «изменён больше 720 мин назад»; полярность веток обратна run-nightly-download.sh,
+# там матч = свежий → SKIP). rmdir (не rm -r): пустой каталог удаляем молча,
+# с содержимым — падаем громко. Легитимный прогон не потеряет lock: каждый шаг
+# (run/maint) тачаит lockdir, так что окно 12ч отсчитывается от прогресса.
 LOCKDIR="$PONCHO/.download-all.lock"
-if [ -d "$LOCKDIR" ] && [ -n "$(find "$(dirname "$LOCKDIR")" -maxdepth 1 -name "$(basename "$LOCKDIR")" -type d -mmin -720 2>/dev/null)" ]; then
+if [ -d "$LOCKDIR" ] && [ -n "$(find "$(dirname "$LOCKDIR")" -maxdepth 1 -name "$(basename "$LOCKDIR")" -type d -mmin +720 2>/dev/null)" ]; then
   log "WARNING: протухший lock (${LOCKDIR}, старше 12ч) — удаляю и продолжаю"
   rmdir "$LOCKDIR" 2>/dev/null || { log "FAIL: lock-каталог не пуст — разбери вручную: $LOCKDIR"; exit 1; }
 fi
@@ -99,9 +102,12 @@ FAILED=()
 RUN_COUNT=0
 
 # run — обёртка над "go run <pkg> …". Имя утилиты = basename каталога из $3.
+# touch lockdir: живой прогон обновляет mtime lock → окно протухшести 12ч
+# отсчитывается от последнего шага, а не от старта прогона.
 run() {
   local name; name="$(basename "$3")"
   RUN_COUNT=$((RUN_COUNT + 1))
+  touch "${LOCKDIR:-/nonexistent}" 2>/dev/null || true
   "$@"
   local rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -115,6 +121,7 @@ run() {
 # Падение НЕ блокирует загрузку — в Summary попадает как pg-maintenance[<group>].
 maint() {
   RUN_COUNT=$((RUN_COUNT + 1))
+  touch "${LOCKDIR:-/nonexistent}" 2>/dev/null || true
   go run "$PONCHO/cmd/data-maintenance/pg-maintenance" --config "$C/pg-maintenance-PG.yaml" --group "$1"
   local rc=$?
   if [ "$rc" -ne 0 ]; then
