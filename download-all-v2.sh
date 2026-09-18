@@ -73,30 +73,21 @@ tg_send() {
 }
 
 # mail_send <text>: статус на почту через cmd/ops-notify/mail-notify (go run,
-# отправщик pkg/email — работает с этим relay ежедневно, в отличие от curl
-# smtp://, который спотыкается о сертификат: exit 60). Креды: SMTP_PASSWORD
-# в .env (внутрь YAML разворачивается ${SMTP_PASSWORD}); MAIL_TO в .env
-# переопределяет получателей config.yaml. Тема = первая строка текста.
+# отправщик pkg/email — работает с этим relay годами, в отличие от curl
+# smtp://: по IP exit 60 — сертификат CN не совпадает с IP; по хостнейму
+# exit 94 — AUTH-механизм Exchange). Креды: SMTP_PASSWORD в .env; MAIL_TO в .env
+# переопределяет получателей config.yaml. Тело — в stdin, тема = первая строка.
 mail_send() {
-  local text="$1" rc
-  if [ -z "${SMTP_PASSWORD:-}" ]; then
-    log "WARNING: SMTP_PASSWORD не задана в ${PONCHO}/.env — mail-уведомление пропущено"
-    return 1
-  fi
-  local to_args=()
-  if [ -n "${MAIL_TO:-}" ]; then
-    to_args=(--to "${MAIL_TO}")
-  fi
-  go run "$PONCHO/cmd/ops-notify/mail-notify" \
+  local text="$1" subj rc
+  if [ -z "${MAIL_TO:-}" ]; then log "WARNING: MAIL_TO не задан в ${PONCHO}/.env"; return 1; fi
+  if [ -z "${SMTP_PASSWORD:-}" ]; then log "WARNING: SMTP_PASSWORD не задан в ${PONCHO}/.env"; return 1; fi
+  subj="${TG_TAG}: ${text%%$'\n'*}"; subj=${subj:0:180}
+  printf '%s' "$text" | go run "$PONCHO/cmd/ops-notify/mail-notify" \
     --config "$PONCHO/cmd/ops-notify/mail-notify/config.yaml" \
-    --subject "${TG_TAG}: ${text%%$'\n'*}" \
-    --text "$text" \
-    "${to_args[@]}"
+    --subject "$subj" --to "$MAIL_TO"
   rc=$?
-  if [ "$rc" -ne 0 ]; then
-    log "WARNING: mail-notify не доставил письмо (exit ${rc})"
-  fi
-  return "$rc"
+  if [ "$rc" -eq 0 ]; then return 0; fi
+  log "WARNING: SMTP-отправка не удалась (mail-notify exit ${rc})"; return 1
 }
 
 # notify <text>: TG primary → mail fallback. TG без кредов/прокси вернёт 1 —
@@ -350,6 +341,11 @@ TOTAL=$(( SECONDS - START ))
 log "═══════  Summary  ═══════"
 if [ "${#FAILED[@]}" -eq 0 ]; then
   log "✔ Все утилиты завершились успешно ($RUN_COUNT/$RUN_COUNT)"
+  # Heartbeat: тишина двусмысленна (нет письма = и «всё ок», и «мёртвый cron») —
+  # успешный прогон тоже сообщает о себе.
+  notify "✔️ ${TG_TAG} download-all-v2: все шаги OK ($RUN_COUNT/$RUN_COUNT), $((TOTAL / 60))m
+host: $(hostname), $(date '+%Y-%m-%d %H:%M:%S')
+Лог: ${LOGFILE}" || true
 else
   log "✗ Не выполнились (${#FAILED[@]} из $RUN_COUNT):"
   printf '  ✗ %s\n' "${FAILED[@]}"
