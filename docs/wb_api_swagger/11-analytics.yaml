@@ -25,21 +25,27 @@ tags:
   - name: Воронка продаж
     x-displayName: Воронка продаж
     description: ''
+    x-tagKey: salesFunnel
   - name: Лента заказов
     x-displayName: Лента заказов
     description: ''
+    x-tagKey: orderFeed
   - name: Поисковые запросы по вашим товарам
     x-displayName: Поисковые запросы по вашим товарам
     description: ''
+    x-tagKey: searchQueriesForYourItems
   - name: История остатков
     x-displayName: История остатков
     description: ''
+    x-tagKey: stocksReport
   - name: Оценка товара
     x-displayName: Оценка товара
     description: ''
+    x-tagKey: itemRating
   - name: Аналитика продавца CSV
     x-displayName: Аналитика продавца CSV
     description: ''
+    x-tagKey: sellerAnalyticsCsv
 paths:
   /api/analytics/v3/sales-funnel/products:
     servers:
@@ -64,7 +70,7 @@ paths:
         Малая часть этих данных может появляться в течение нескольких дней.<br><br>
 
         Выкупы, отмены и возвраты отображаются в отчёте за тот день, когда товар был заказан. Например, если заказ был сделан 1 января, а покупатель вернул товар 10 января, данные об этом возврате появятся в отчёте за 1 января.<br>
-        Окончательные итоги продаж вы можете отслеживать с помощью [детализаций к отчётам реализации](/openapi/financial-reports-and-accounting#tag/financialReports).<br><br>
+        Окончательные итоги продаж вы можете отслеживать с помощью [детализаций к отчётам реализации](/openapi/documents-and-accounting#tag/financialReports).<br><br>
 
         Параметры `brandNames`,`subjectIds`, `tagIds`, `nmIds` могут быть пустыми `[]`, тогда в ответе возвращаются все карточки продавца.<br><br>
 
@@ -117,7 +123,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AuthorizationErrorResponse'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AuthorizationErrorResponse'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/analytics/v3/sales-funnel/products/history:
@@ -144,7 +163,7 @@ paths:
         Малая часть этих данных может появляться в течение нескольких дней.<br><br>
 
         Выкупы, отмены и возвраты отображаются в отчёте за тот день, когда товар был заказан. Например, если заказ был сделан 1 января, а покупатель вернул товар 10 января, данные об этом возврате появятся в отчёте за 1 января.<br>
-        Окончательные итоги продаж вы можете отслеживать с помощью [детализаций к отчётам реализации](/openapi/financial-reports-and-accounting#tag/financialReports).
+        Окончательные итоги продаж вы можете отслеживать с помощью [детализаций к отчётам реализации](/openapi/documents-and-accounting#tag/financialReports).
 
         <div class="description_important">
           Чтобы получать отчёты за период до года, используйте методы <a href="/openapi/analytics#tag/sellerAnalyticsCsv">Аналитика продавца CSV</a> — тип <code>DETAIL_HISTORY_REPORT</code>. Отчёты этого типа доступны только с подпиской <a href='https://seller.wildberries.ru/monetization/jam'>Джем</a>
@@ -181,7 +200,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AuthorizationErrorResponse'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AuthorizationErrorResponse'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/analytics/v3/sales-funnel/grouped/history:
@@ -209,7 +241,7 @@ paths:
         Малая часть этих данных может появляться в течение нескольких дней.<br><br>
 
         Выкупы, отмены и возвраты отображаются в отчёте за тот день, когда товар был заказан. Например, если заказ был сделан 1 января, а покупатель вернул товар 10 января, данные об этом возврате появятся в отчёте за 1 января.<br>
-        Окончательные итоги продаж вы можете отслеживать с помощью [детализаций к отчётам реализации](/openapi/financial-reports-and-accounting#tag/financialReports).<br><br>
+        Окончательные итоги продаж вы можете отслеживать с помощью [детализаций к отчётам реализации](/openapi/documents-and-accounting#tag/financialReports).<br><br>
 
         Параметры `brandNames`, `subjectIds`, `tagIds` могут быть пустыми `[]`, тогда группировка происходит по всем карточкам продавца.<br><br>
 
@@ -254,7 +286,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AuthorizationErrorResponse'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AuthorizationErrorResponse'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/nm-report/downloads:
@@ -559,27 +604,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  title:
-                    type: string
-                    description: Заголовок ошибки
-                  detail:
-                    type: string
-                    description: Детали ошибки
-                  requestId:
-                    type: string
-                    description: Уникальный ID запроса
-                  origin:
-                    type: string
-                    description: ID внутреннего сервиса WB
+                $ref: '#/components/schemas/ErrorObject'
               examples:
-                errorExample:
-                  value:
-                    title: Authorization error
-                    detail: Authorization error
-                    requestId: 51b7828b-e298-4dfa-b7cd-45ab179921d3
-                    origin: analytics-open-api
+                AccessDenied:
+                  $ref: '#/components/examples/AuthorizationErrorResponse'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           description: Слишком много запросов
           content:
@@ -665,27 +699,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  title:
-                    type: string
-                    description: Заголовок ошибки
-                  detail:
-                    type: string
-                    description: Детали ошибки
-                  requestId:
-                    type: string
-                    description: Уникальный ID запроса
-                  origin:
-                    type: string
-                    description: ID внутреннего сервиса WB
+                $ref: '#/components/schemas/ErrorObject'
               examples:
-                errorExample:
-                  value:
-                    title: Authorization error
-                    detail: Authorization error
-                    requestId: 51b7828b-e298-4dfa-b7cd-45ab179921d3
-                    origin: analytics-open-api
+                AccessDenied:
+                  $ref: '#/components/examples/AuthorizationErrorResponse'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/nm-report/downloads/retry:
@@ -765,27 +788,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  title:
-                    type: string
-                    description: Заголовок ошибки
-                  detail:
-                    type: string
-                    description: Детали ошибки
-                  requestId:
-                    type: string
-                    description: Уникальный ID запроса
-                  origin:
-                    type: string
-                    description: ID внутреннего сервиса WB
+                $ref: '#/components/schemas/ErrorObject'
               examples:
-                errorExample:
-                  value:
-                    title: Authorization error
-                    detail: Authorization error
-                    requestId: 51b7828b-e298-4dfa-b7cd-45ab179921d3
-                    origin: analytics-open-api
+                AccessDenied:
+                  $ref: '#/components/examples/AuthorizationErrorResponse'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/nm-report/downloads/file/{downloadId}:
@@ -832,7 +844,7 @@ paths:
               schema:
                 type: string
                 format: binary
-                description: "Описание полей в файле CSV:\n<br>\n<br>\n**Воронка продаж** — `DETAIL_HISTORY_REPORT` по артикулам WB и `GROUPED_HISTORY_REPORT` по предметам, брендам и ярлыкам\n\n| Имя | Тип | Формат | Описание |\n|-----------------| --- | --- | --- |\n| nmID (только для `DETAIL_HISTORY_REPORT`) | integer | int32 | Артикул WB |\n| dt | string | date | Дата |\n| openCardCount | integer | int32 | Переходы в карточку товара |\n| addToCartCount | integer | int32 | Положили в корзину, шт. |\n| ordersCount | integer | int32 | Заказали товаров, шт. |\n| ordersSumRub | integer | int32 | Заказали на сумму |\n| buyoutsCount | integer | int32 | Выкупили товаров, шт. |\n| buyoutsSumRub | integer | int32 | Выкупили на сумму |\n| cancelCount | integer | int32 | Отменили и вернули товаров, шт. |\n| cancelSumRub | integer | int32 | Отменили и вернули на сумму |\n| addToCartConversion | number | int32 | Конверсия в корзину, % (Какой процент посетителей, открывших карточку товара, добавили товар в корзину) |\n| cartToOrderConversion | integer | int32 | Конверсия в заказ, % (Какой процент посетителей, добавивших товар в корзину, сделали заказ) |\n| buyoutPercent | integer | int32 | Процент выкупа, % (Какой процент посетителей, заказавших товар, его выкупили. Без учёта товаров, которые еще доставляются покупателю) |\n| addToWishlist | integer | int32 | Добавили в **Отложенные**|\n| currency | string | string | Валюта отчёта |\n\n\n**Отчёт по параметрам поиска. По предметам, брендам и ярлыкам** — `SEARCH_QUERIES_PREMIUM_REPORT_GROUP`\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| SubjectName |\tstring | string | Название предмета |\n| SubjectID | integer | int32 | ID предмета |\n| BrandName | string | string  | Бренд |\n| TagID | integer | int64 | ID ярлыка |\n| AveragePosition | integer | uint64 | Средняя позиция в поиске в текущий период |\n| OpenCard | integer | uint64 | Количество переходов в карточку товара из поиска в текущий период |\n| AddToCart | integer | uint64 | Количество добавлений товара в корзину из поиска в текущий период |\n| OpenToCart | integer | uint64 |\tКонверсия в корзину из поиска в текущий период |\n| Orders | integer | uint64 | Заказали товар из поиска в текущий период |\n| CartToOrder | integer | uint64 | Конверсия в заказ из поиска в текущий период |\n| Visibility | integer | uint64 | Видимость товара в поиске в текущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции |\n| AveragePositionPast | integer | uint64 | Средняя позиция в поиске в предыдущий период (заполняется, если указан прошлый период) |\n| OpenCardPast | integer | uint64 | Количество переходов в карточку товара из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| AddToCartPast | integer | uint64 | Количество добавлений товара в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OpenToCartPast | integer | uint64 | Конверсия в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OrdersPast | integer | uint64 | Заказали товар из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| CartToOrderPast | integer | uint64 | Конверсия в заказ из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| VisibilityPast | integer | uint64 | Видимость товара в поиске в предыдущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции (заполняется, если указан прошлый период), % |\n\n\n**Отчёт по параметрам поиска. По артикулам WB** — `SEARCH_QUERIES_PREMIUM_REPORT_PRODUCT`\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| NmID | integer | int64 | Артикул WB |\n| VendorCode | string | string | Артикул продавца |\n| Name | string\t| string | Название товара |\n| SubjectName | string\t| string | Название предмета |\n| BrandName | string | string  | Бренд |\n| IsAdvertised | boolean | bool\t| Рекламируется ли товар |\n| IsRated | boolean | bool | Есть ли возможность оценить качество карточки товара |\n| Rating | float | float64 | Рейтинг карточки товара |\n| FeedbackRating | float | float64 | Рейтинг по отзывам |\n| MinPrice | integer | uint64 | Минимальная цена продавца со скидкой продавца (без учёта скидки WB Клуба |\n| MaxPrice | integer | uint64 | Максимальная цена продавца со скидкой продавца (без учёта скидки WB Клуба) |\n| AveragePosition | integer | uint64 | Средняя позиция товара в поиске в текущий период |\n| OpenCard | integer | uint64 | Количество переходов в карточку товара из поиска в текущий период |\n| AddToCart | integer | uint64 | Количество добавлений товара в корзину из поиска в текущий период |\n| OpenToCart | integer | uint64 | Конверсия в корзину из поиска в текущий период |\n| Orders | integer | uint64 | Заказали товар из поиска в текущий период |\n| CartToOrder | integer | uint64 | Конверсия в заказ из поиска в текущий период |\n| Visibility | integer | uint64 | Видимость товара в поиске в текущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции |\n| AveragePositionPast | integer | uint64 | Средняя позиция товара в поиске в предыдущий период (заполняется, если указан прошлый период) |\n| OpenCardPast | integer | uint64 | Количество переходов в карточку товара из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| AddToCartPast | integer | uint64 | Количество добавлений товара в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OpenToCartPast | integer | uint64 | Конверсия в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OrdersPast | integer | uint64 | Заказали товар из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| CartToOrderPast | integer | uint64 | Конверсия в заказ из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| VisibilityPast | integer | uint64 | Видимость товара в поиске в предыдущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции (заполняется, если указан прошлый период), % |\n| IsSubstitutedSKU | boolean | bool | Искали ли товар по подменному артикулу. Будет в ответе при наличии в запросе `includeSubstitutedSKUs` и/или `includeSearchTexts` |\n| Currency | string | string | Валюта отчёта |\n\n\n**Отчёт по текстам поисковых запросов по вашим товарам** — `SEARCH_QUERIES_PREMIUM_REPORT_TEXT`\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| Text | string\t| string | Текст поискового запроса |\n| NmID | integer | int64 | Артикул WB |\n| SubjectName | string\t| string | Название предмета |\n| BrandName | string | string  | Бренд |\n| VendorCode | string | string | Артикул продавца |\n| Name | string\t| string | Название товара |\n| Rating | float | float64 | Рейтинг карточки товара. Если рейтинг отсутствует, то значение будет `no rating` |\n| FeedbackRating | float | float64 | Рейтинг по отзывам |\n| MinPrice | integer | uint64 | Минимальная цена продавца со скидкой продавца (без учёта скидки WB Клуба) |\n| MaxPrice | integer | uint64 | Максимальная цена продавца со скидкой продавца (без учёта скидки WB Клуба) |\n| Frequency | integer | uint64 | Количество обращений с поисковым запросом в текущий период |\n| MedianPosition | float | float64 | Медианная позиция товара в поиске в текущий период. Учитываются только те позиции, из которых пользователи добавляли товар в корзину или переходили в его карточку. Серединное значение позиции в поисковой выдаче, которое исключает сильные отклонения данных от среднего значения |\n| AveragePosition | integer | uint64 | Средняя позиция товара в поиске в текущий период. Учитываются только те позиции, из которых пользователи добавляли товар в корзину или переходили в его карточку |\n| OpenCard | integer | uint64 | Количество открытий карточки товара из поисковой выдачи в текущий период |\n| OpenCardPercentile | float | float64 | Процент, на который показатель количества открытий карточки товара выше, чем у карточек других продавцов по поисковому запросу |\n| AddToCart | integer | uint64 | Количество добавлений товара в корзину из поисковой выдачи в текущий период |\n| AddToCartPercentile | float | float64 | Процент, на который показатель добавлений в корзину выше, чем у карточек других продавцов по поисковому запросу |\n| OpenToCart | integer | uint64 | Конверсия в корзину из поиска в текущий период, % |\n| OpenToCartPercentile\t| float\t| float64\t| Процент, на который показатель конверсии в корзину выше, чем у карточек других продавцов по поисковому запросу |\n| Orders | integer | uint64 | Заказали товар из поиска в текущий период |\n| OrdersPercentile | float | float64 | Процент, на который показатель заказов выше, чем у карточек других продавцов по поисковому запросу |\n| CartToOrder | integer | uint64 | Конверсия в заказ из поиска в текущий период, % |\n| CartToOrderPercentile | float | float64 | Процент, на который показатель конверсии в заказ выше, чем у карточек других продавцов по поисковому запросу |\n| Visibility | integer | uint64 | Видимость товара в поиске в текущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции |\n| FrequencyPast | integer | uint64 | Количество обращений с поисковым запросом за предыдущий период (заполняется, если указан прошлый период) |\n| MedianPositionPast | float | float64 | Медианная позиция товара в поиске за предыдущий период (заполняется, если указан прошлый период) |\n| AveragePositionPast | integer | uint64 | Средняя позиция товара в поиске в предыдущий период (заполняется, если указан прошлый период) |\n| OpenCardPast | integer | uint64 | Количество открытий карточки товара из поисковой выдачи в предыдущий период (заполняется, если указан прошлый период) |\n| AddToCartPast | integer | uint64 | Количество добавлений товара в корзину в предыдущий период (заполняется, если указан прошлый период) |\n| OpenToCartPast | integer | uint64 | Конверсия в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OrdersPast | integer | uint64 | Заказали товар из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| CartToOrderPast | integer | uint64 | Конверсия в заказ из поиска в предыдущий период (заполняется, если указан прошлый период), % |\n| VisibilityPast | integer | uint64 | Видимость товара в поиске в предыдущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции (заполняется, если указан прошлый период), % |\n| Currency | string | string | Валюта отчёта |\n\n\n**Отчёт по статистике остатков** — `STOCK_HISTORY_REPORT_CSV`\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| VendorCode | string | string | Артикул продавца |\n| Name | string\t| string | Название товара |\n| NmID | integer | int64 | Артикул WB |\n| SubjectName | string\t| string | Название предмета |\n| BrandName | string | string  | Бренд |\n| SizeName | string\t| string | Название размера |\n| ChrtID | integer | int64 | ID размера |\n| RegionName | string\t| string | Регион отгрузки. Для складов продавца значение в строках будет `Маркетплейс`, так как данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам. [На данный момент](https://dev.wildberries.ru/release-notes?id=570) для складов WB может быть только `Склад WB` |\n| OfficeName | string\t| string | Название склада. Для складов продавца значение в строках будет `Маркетплейс`, так как данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам. [На данный момент](https://dev.wildberries.ru/release-notes?id=570) для складов WB может быть только `Склад WB` |\n| Availability | string\t| enum | Доступность товара |\n| OrdersCount | integer\t| uint64 | Заказы, шт. |\n| OrdersSum | integer\t| uint64 | Заказы, сумма |\n| BuyoutCount | integer\t| uint64 | Выкупы, шт. |\n| BuyoutSum | integer\t| uint64 | Выкупы, сумма |\n| BuyoutPercent | integer\t| uint32 | Процент выкупа |\n| AvgOrders | number\t| float64 | Среднее количество заказов в день |\n| StockCount | integer\t| uint64 | Остатки на текущий день, шт. |\n| StockSum | integer\t| uint64 | Стоимость остатков на текущий день |\n| SaleRate | integer\t| int32 | Оборачиваемость текущих остатков в часах |\n| AvgStockTurnover | integer\t| int32 | Оборачиваемость средних остатков в часах |\n| ToClientCount | integer\t| uint64 | В пути к клиенту, шт. |\n| FromClientCount | integer\t| uint64 | В пути от клиента, шт. |\n| Price | integer\t| uint64 | Текущая цена продавца со скидкой продавца (без учёта скидки WB Клуба) |\n| OfficeMissingTime | integer\t| int32 | Время отсутствия товара на складе в часах |\n| LostOrdersCount | number\t| float64 | Упущенные заказы, шт. |\n| LostOrdersSum | number\t| float64 | Упущенные заказы, сумма |\n| LostBuyoutsCount | number\t| float64 | Упущенные выкупы, шт. |\n| LostBuyoutsSum | number\t| float64 | Упущенные выкупы, сумма |\n| AvgOrdersByMonth_MM.YYYY | number\t| float64 | Среднее количество заказов по месяцам. Столбцы формируются динамически в зависимости от переданного текущего периода. Каждому месяцу текущего периода соответствует один столбец. В случае, если товар не существовал на момент конкретного месяца, то значение будет пропущено |\n| Currency | string | string | Валюта отчёта |\n\n\n**Отчёт по истории остатков** — `STOCK_HISTORY_DAILY_CSV `\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| VendorCode | string | string | Артикул продавца |\n| Name | string\t| string | Название товара |\n| NmID | integer | int64 | Артикул WB |\n| SubjectName | string\t| string | Название предмета |\n| BrandName | string | string  | Бренд |\n| SizeName | string\t| string | Название размера |\n| ChrtID | integer | int64 | ID размера |\n| OfficeName | string\t| string | Название склада. Для складов продавца значение в строках будет `Маркетплейс`, так как данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам. [На данный момент](https://dev.wildberries.ru/release-notes?id=570) для складов WB может быть только `Склад WB` |\n| DD.MM.YYYY | integer| uint64 | Остаток по состоянию на 23:59 дня в заголовке. Столбцы формируются динамически в зависимости от переданного в запросе периода. Каждому дню периода соответствует один столбец. Если товара не было в конкретный день, значение будет пропущено |\n"
+                description: "Описание полей в файле CSV:\n<br>\n<br>\n**Воронка продаж** — `DETAIL_HISTORY_REPORT` по артикулам WB и `GROUPED_HISTORY_REPORT` по предметам, брендам и ярлыкам\n\n| Имя | Тип | Формат | Описание |\n|-----------------| --- | --- | --- |\n| nmID (только для `DETAIL_HISTORY_REPORT`) | integer | int32 | Артикул WB |\n| dt | string | date | Дата |\n| openCardCount | integer | int32 | Переходы в карточку товара |\n| addToCartCount | integer | int32 | Положили в корзину, шт. |\n| ordersCount | integer | int32 | Заказали товаров, шт. |\n| ordersSumRub | integer | int32 | Заказали на сумму |\n| buyoutsCount | integer | int32 | Выкупили товаров, шт. |\n| buyoutsSumRub | integer | int32 | Выкупили на сумму |\n| cancelCount | integer | int32 | Отменили и вернули товаров, шт. |\n| cancelSumRub | integer | int32 | Отменили и вернули на сумму |\n| addToCartConversion | number | int32 | Конверсия в корзину, % (Какой процент посетителей, открывших карточку товара, добавили товар в корзину) |\n| cartToOrderConversion | integer | int32 | Конверсия в заказ, % (Какой процент посетителей, добавивших товар в корзину, сделали заказ) |\n| buyoutPercent | integer | int32 | Процент выкупа, % (Какой процент посетителей, заказавших товар, его выкупили. Без учёта товаров, которые еще доставляются покупателю) |\n| addToWishlist | integer | int32 | Добавили в **Отложенные**|\n| currency | string | string | Валюта отчёта |\n\n\n**Отчёт по параметрам поиска. По предметам, брендам и ярлыкам** — `SEARCH_QUERIES_PREMIUM_REPORT_GROUP`\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| SubjectName |\tstring | string | Название предмета |\n| SubjectID | integer | int32 | ID предмета |\n| BrandName | string | string  | Бренд |\n| TagID | integer | int64 | ID ярлыка |\n| AveragePosition | integer | uint64 | Средняя позиция в поиске в текущий период |\n| OpenCard | integer | uint64 | Количество переходов в карточку товара из поиска в текущий период |\n| AddToCart | integer | uint64 | Количество добавлений товара в корзину из поиска в текущий период |\n| OpenToCart | integer | uint64 |\tКонверсия в корзину из поиска в текущий период |\n| Orders | integer | uint64 | Заказали товар из поиска в текущий период |\n| CartToOrder | integer | uint64 | Конверсия в заказ из поиска в текущий период |\n| Visibility | integer | uint64 | Видимость товара в поиске в текущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции |\n| AveragePositionPast | integer | uint64 | Средняя позиция в поиске в предыдущий период (заполняется, если указан прошлый период) |\n| OpenCardPast | integer | uint64 | Количество переходов в карточку товара из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| AddToCartPast | integer | uint64 | Количество добавлений товара в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OpenToCartPast | integer | uint64 | Конверсия в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OrdersPast | integer | uint64 | Заказали товар из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| CartToOrderPast | integer | uint64 | Конверсия в заказ из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| VisibilityPast | integer | uint64 | Видимость товара в поиске в предыдущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции (заполняется, если указан прошлый период), % |\n\n\n**Отчёт по параметрам поиска. По артикулам WB** — `SEARCH_QUERIES_PREMIUM_REPORT_PRODUCT`\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| NmID | integer | int64 | Артикул WB |\n| VendorCode | string | string | Артикул продавца |\n| Name | string\t| string | Название товара |\n| SubjectName | string\t| string | Название предмета |\n| BrandName | string | string  | Бренд |\n| IsAdvertised | boolean | bool\t| Рекламируется ли товар |\n| IsRated | boolean | bool | Есть ли возможность оценить качество карточки товара |\n| Rating | float | float64 | Рейтинг карточки товара |\n| FeedbackRating | float | float64 | Рейтинг по отзывам |\n| MinPrice | integer | uint64 | Минимальная цена продавца со скидкой продавца (без учёта скидки WB Клуба |\n| MaxPrice | integer | uint64 | Максимальная цена продавца со скидкой продавца (без учёта скидки WB Клуба) |\n| AveragePosition | integer | uint64 | Средняя позиция товара в поиске в текущий период |\n| OpenCard | integer | uint64 | Количество переходов в карточку товара из поиска в текущий период |\n| AddToCart | integer | uint64 | Количество добавлений товара в корзину из поиска в текущий период |\n| OpenToCart | integer | uint64 | Конверсия в корзину из поиска в текущий период |\n| Orders | integer | uint64 | Заказали товар из поиска в текущий период |\n| CartToOrder | integer | uint64 | Конверсия в заказ из поиска в текущий период |\n| Visibility | integer | uint64 | Видимость товара в поиске в текущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции |\n| AveragePositionPast | integer | uint64 | Средняя позиция товара в поиске в предыдущий период (заполняется, если указан прошлый период) |\n| OpenCardPast | integer | uint64 | Количество переходов в карточку товара из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| AddToCartPast | integer | uint64 | Количество добавлений товара в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OpenToCartPast | integer | uint64 | Конверсия в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OrdersPast | integer | uint64 | Заказали товар из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| CartToOrderPast | integer | uint64 | Конверсия в заказ из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| VisibilityPast | integer | uint64 | Видимость товара в поиске в предыдущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции (заполняется, если указан прошлый период), % |\n| IsSubstitutedSKU | boolean | bool | Искали ли товар по подменному артикулу. Будет в ответе при наличии в запросе `includeSubstitutedSKUs` и/или `includeSearchTexts` |\n| Currency | string | string | Валюта отчёта |\n\n\n**Отчёт по текстам поисковых запросов по вашим товарам** — `SEARCH_QUERIES_PREMIUM_REPORT_TEXT`\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| Text | string\t| string | Текст поискового запроса |\n| NmID | integer | int64 | Артикул WB |\n| SubjectName | string\t| string | Название предмета |\n| BrandName | string | string  | Бренд |\n| VendorCode | string | string | Артикул продавца |\n| Name | string\t| string | Название товара |\n| Rating | float | float64 | Рейтинг карточки товара. Если рейтинг отсутствует, то значение будет `no rating` |\n| FeedbackRating | float | float64 | Рейтинг по отзывам |\n| MinPrice | integer | uint64 | Минимальная цена продавца со скидкой продавца (без учёта скидки WB Клуба) |\n| MaxPrice | integer | uint64 | Максимальная цена продавца со скидкой продавца (без учёта скидки WB Клуба) |\n| Frequency | integer | uint64 | Количество обращений с поисковым запросом в текущий период |\n| MedianPosition | float | float64 | Медианная позиция товара в поиске в текущий период. Учитываются только те позиции, из которых пользователи добавляли товар в корзину или переходили в его карточку. Серединное значение позиции в поисковой выдаче, которое исключает сильные отклонения данных от среднего значения |\n| AveragePosition | integer | uint64 | Средняя позиция товара в поиске в текущий период. Учитываются только те позиции, из которых пользователи добавляли товар в корзину или переходили в его карточку |\n| OpenCard | integer | uint64 | Количество открытий карточки товара из поисковой выдачи в текущий период |\n| OpenCardPercentile | float | float64 | Процент, на который показатель количества открытий карточки товара выше, чем у карточек других продавцов по поисковому запросу |\n| AddToCart | integer | uint64 | Количество добавлений товара в корзину из поисковой выдачи в текущий период |\n| AddToCartPercentile | float | float64 | Процент, на который показатель добавлений в корзину выше, чем у карточек других продавцов по поисковому запросу |\n| OpenToCart | integer | uint64 | Конверсия в корзину из поиска в текущий период, % |\n| OpenToCartPercentile\t| float\t| float64\t| Процент, на который показатель конверсии в корзину выше, чем у карточек других продавцов по поисковому запросу |\n| Orders | integer | uint64 | Заказали товар из поиска в текущий период |\n| OrdersPercentile | float | float64 | Процент, на который показатель заказов выше, чем у карточек других продавцов по поисковому запросу |\n| CartToOrder | integer | uint64 | Конверсия в заказ из поиска в текущий период, % |\n| CartToOrderPercentile | float | float64 | Процент, на который показатель конверсии в заказ выше, чем у карточек других продавцов по поисковому запросу |\n| Visibility | integer | uint64 | Видимость товара в поиске в текущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции |\n| FrequencyPast | integer | uint64 | Количество обращений с поисковым запросом за предыдущий период (заполняется, если указан прошлый период) |\n| MedianPositionPast | float | float64 | Медианная позиция товара в поиске за предыдущий период (заполняется, если указан прошлый период) |\n| AveragePositionPast | integer | uint64 | Средняя позиция товара в поиске в предыдущий период (заполняется, если указан прошлый период) |\n| OpenCardPast | integer | uint64 | Количество открытий карточки товара из поисковой выдачи в предыдущий период (заполняется, если указан прошлый период) |\n| AddToCartPast | integer | uint64 | Количество добавлений товара в корзину в предыдущий период (заполняется, если указан прошлый период) |\n| OpenToCartPast | integer | uint64 | Конверсия в корзину из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| OrdersPast | integer | uint64 | Заказали товар из поиска в предыдущий период (заполняется, если указан прошлый период) |\n| CartToOrderPast | integer | uint64 | Конверсия в заказ из поиска в предыдущий период (заполняется, если указан прошлый период), % |\n| VisibilityPast | integer | uint64 | Видимость товара в поиске в предыдущий период. Процент вероятности, что пользователь увидит карточку товара. Зависит от средней позиции (заполняется, если указан прошлый период), % |\n| Currency | string | string | Валюта отчёта |\n\n\n**Отчёт по статистике остатков** — `STOCK_HISTORY_REPORT_CSV`\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| VendorCode | string | string | Артикул продавца |\n| Name | string\t| string | Название товара |\n| NmID | integer | int64 | Артикул WB |\n| SubjectName | string\t| string | Название предмета |\n| BrandName | string | string  | Бренд |\n| SizeName | string\t| string | Название размера |\n| ChrtID | integer | int64 | ID размера |\n| RegionName | string\t| string | Регион отгрузки. Для складов продавца значение в строках будет `Свой склад`, так как данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам. [На данный момент](https://dev.wildberries.ru/release-notes?id=570) для складов WB может быть только `Склад WB` |\n| OfficeName | string\t| string | Название склада. Для складов продавца значение в строках будет `Свой склад`, так как данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам. [На данный момент](https://dev.wildberries.ru/release-notes?id=570) для складов WB может быть только `Склад WB` |\n| Availability | string\t| enum | Доступность товара |\n| OrdersCount | integer\t| uint64 | Заказы, шт. |\n| OrdersSum | integer\t| uint64 | Заказы, сумма |\n| BuyoutCount | integer\t| uint64 | Выкупы, шт. |\n| BuyoutSum | integer\t| uint64 | Выкупы, сумма |\n| BuyoutPercent | integer\t| uint32 | Процент выкупа |\n| AvgOrders | number\t| float64 | Среднее количество заказов в день |\n| StockCount | integer\t| uint64 | Остатки на текущий день, шт. |\n| StockSum | integer\t| uint64 | Стоимость остатков на текущий день |\n| SaleRate | integer\t| int32 | Оборачиваемость текущих остатков в часах |\n| AvgStockTurnover | integer\t| int32 | Оборачиваемость средних остатков в часах |\n| ToClientCount | integer\t| uint64 | В пути к клиенту, шт. |\n| FromClientCount | integer\t| uint64 | В пути от клиента, шт. |\n| Price | integer\t| uint64 | Текущая цена продавца со скидкой продавца (без учёта скидки WB Клуба) |\n| OfficeMissingTime | integer\t| int32 | Время отсутствия товара на складе в часах |\n| LostOrdersCount | number\t| float64 | Упущенные заказы, шт. |\n| LostOrdersSum | number\t| float64 | Упущенные заказы, сумма |\n| LostBuyoutsCount | number\t| float64 | Упущенные выкупы, шт. |\n| LostBuyoutsSum | number\t| float64 | Упущенные выкупы, сумма |\n| AvgOrdersByMonth_MM.YYYY | number\t| float64 | Среднее количество заказов по месяцам. Столбцы формируются динамически в зависимости от переданного текущего периода. Каждому месяцу текущего периода соответствует один столбец. В случае, если товар не существовал на момент конкретного месяца, то значение будет пропущено |\n| Currency | string | string | Валюта отчёта |\n\n\n**Отчёт по истории остатков** — `STOCK_HISTORY_DAILY_CSV `\n\n| Имя | Поле | Формат | Описание |\n|-----------------| --- | --- | --- |\n| VendorCode | string | string | Артикул продавца |\n| Name | string\t| string | Название товара |\n| NmID | integer | int64 | Артикул WB |\n| SubjectName | string\t| string | Название предмета |\n| BrandName | string | string  | Бренд |\n| SizeName | string\t| string | Название размера |\n| ChrtID | integer | int64 | ID размера |\n| OfficeName | string\t| string | Название склада. Для складов продавца значение в строках будет `Свой склад`, так как данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам. [На данный момент](https://dev.wildberries.ru/release-notes?id=570) для складов WB может быть только `Склад WB` |\n| DD.MM.YYYY | integer| uint64 | Остаток по состоянию на 23:59 дня в заголовке. Столбцы формируются динамически в зависимости от переданного в запросе периода. Каждому дню периода соответствует один столбец. Если товара не было в конкретный день, значение будет пропущено |\n"
               examples:
                 SalesFunnelItemRes:
                   $ref: '#/components/examples/SalesFunnelItemRes'
@@ -888,27 +900,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  title:
-                    type: string
-                    description: Заголовок ошибки
-                  detail:
-                    type: string
-                    description: Детали ошибки
-                  requestId:
-                    type: string
-                    description: Уникальный ID запроса
-                  origin:
-                    type: string
-                    description: ID внутреннего сервиса WB
+                $ref: '#/components/schemas/ErrorObject'
               examples:
-                errorExample:
-                  value:
-                    title: Authorization error
-                    detail: Authorization error
-                    requestId: 51b7828b-e298-4dfa-b7cd-45ab179921d3
-                    origin: analytics-open-api
+                AccessDenied:
+                  $ref: '#/components/examples/AuthorizationErrorResponse'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/search-report/report:
@@ -986,6 +987,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/search-report/table/groups:
@@ -1055,6 +1062,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/search-report/table/details:
@@ -1128,6 +1141,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/search-report/product/search-texts:
@@ -1198,6 +1217,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/search-report/product/orders:
@@ -1270,6 +1295,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/analytics/v1/stocks-report/wb-warehouses:
@@ -1326,6 +1357,8 @@ paths:
                     $ref: '#/components/schemas/InventoryWbResponse'
                 required:
                   - data
+        '204':
+          description: Нет данных
         '400':
           description: Неправильный запрос
           content:
@@ -1344,7 +1377,90 @@ paths:
                 $ref: '#/components/schemas/ErrorObject403'
             application/problem+json:
               schema:
-                $ref: '#/components/schemas/Response403General'
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
+        '429':
+          $ref: '#/components/responses/429'
+  /api/analytics/v1/stocks-report/seller-warehouses:
+    servers:
+      - url: https://seller-analytics-api.wildberries.ru
+    post:
+      x-readonly-method: true
+      x-category: contentanalytics
+      x-token-types:
+        - personal
+        - service
+      tags:
+        - История остатков
+      summary: Остатки на складах продавца
+      operationId: postAnalyticsV1StocksReportSellerWarehouses
+      description: |
+
+        <div class="description_token">
+            Метод <a href="/openapi/api-information#tag/authorization/Pravila-ispolzovaniya-tokenov-dostupa-k-API">доступен</a> по
+                <strong>Персональному</strong> токену, 
+                <strong>Сервисному</strong> токену
+        </div>
+
+        Метод возвращает текущие остатки товаров на складах продавца.
+        <br><br>
+        Данные обновляются 1 раз в 30 минут.
+        <br><br>
+        1 строка ответа — данные об 1 размере товара на 1 складе продавца.
+
+        <div class="description_limit">
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
+
+        | Период | Лимит | Интервал | Всплеск |
+        | --- | --- | --- | --- |
+        | 1 мин | 3 запроса | 20 сек | 1 запрос |
+        </div>
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventoryRequest'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InventorySellerResponse'
+                required:
+                  - data
+        '204':
+          description: Нет данных
+        '400':
+          description: Неправильный запрос
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject400'
+        '401':
+          $ref: '#/components/responses/401'
+        '403':
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/stocks-report/products/groups:
@@ -1362,7 +1478,7 @@ paths:
         <br><br>
         Группа товаров описывается кортежем `subjectID, brandName, tagID`.<br><br>
 
-        Данные отчёта обновляются 1 раз в час.
+        Данные отчёта обновляются 1 раз в 2 часа.
 
         <div class="description_limit">
         <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
@@ -1409,6 +1525,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/stocks-report/products/products:
@@ -1426,7 +1548,7 @@ paths:
         <br><br>
         Можно получить данные как по отдельным товарам, так и в рамках всего отчёта — если в запросе отсутствуют фильтры: `nmIDs`, `subjectID`, `brandName`, `tagID`.<br><br>
 
-        Данные отчёта обновляются 1 раз в час.
+        Данные отчёта обновляются 1 раз в 2 часа.
 
         <div class="description_limit">
         <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
@@ -1474,6 +1596,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/stocks-report/products/sizes:
@@ -1495,9 +1623,9 @@ paths:
         3. Товар не имеет размера и `"includeOffice":true`, тогда в ответе будет детализация по складам. Без данных об остатках по каждому из размеров.
         4. Товар не имеет размера и `"includeOffice":false`, тогда тело ответа будет пустым.<br></br>
         Товар не имеет размера, если у него единственный размер с `"techSize":"0"`. В ответах метода получения данных по [товарам](/openapi/analytics#tag/stocksReport/operation/postV2StocksReportProductsProducts) у таких товаров `"hasSizes":false`.<br></br>
-        Данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам — эти записи будут с `"regionName":"Маркетплейс"` и `"officeName":""`.<br><br>
+        Данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам — эти записи будут с `"regionName":"Свой склад"` и `"officeName":""`.<br><br>
 
-        Данные отчёта обновляются 1 раз в час.
+        Данные отчёта обновляются 1 раз в 2 часа.
 
         <div class="description_limit">
         <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
@@ -1544,6 +1672,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v2/stocks-report/offices:
@@ -1559,9 +1693,9 @@ paths:
       description: |
         Метод формирует набор данных об остатках по складам.
         <br><br>
-        Данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам — эти записи будут с `"regionName":"Маркетплейс"` и `"offices":[]`.<br><br>
+        Данные по складам продавца приходят в агрегированном виде — по всем сразу, без детализации по конкретным складам — эти записи будут с `"regionName":"Свой склад"` и `"offices":[]`.<br><br>
 
-        Данные отчёта обновляются 1 раз в час.
+        Данные отчёта обновляются 1 раз в 2 часа.
 
         <div class="description_limit">
         <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
@@ -1608,6 +1742,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorObject403'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/analytics/v2/item-rating:
@@ -1676,7 +1816,12 @@ paths:
                 $ref: '#/components/schemas/ErrorObject403'
             application/problem+json:
               schema:
-                $ref: '#/components/schemas/Response403General'
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
         '429':
           $ref: '#/components/responses/429'
   /api/analytics/v1/order-feed:
@@ -1749,7 +1894,10 @@ paths:
                 $ref: '#/components/schemas/ErrorObject403'
             application/problem+json:
               schema:
-                $ref: '#/components/schemas/Response403General'
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
 components:
@@ -3656,7 +3804,7 @@ components:
           type: string
           format: uuid
         reportType:
-          description: Тип отчёта `STOCK_HISTORY_REPORT_CSV` — Отчёт по статистике остатков
+          description: Тип отчёта `STOCK_HISTORY_REPORT_CSV` — Отчёт по статистике остатков. <br> Данные отчёта обновляются 1 раз в 2 часа
           type: string
         userReportName:
           type: string
@@ -3677,7 +3825,7 @@ components:
           type: string
           format: uuid
         reportType:
-          description: Тип отчёта `STOCK_HISTORY_DAILY_CSV` — Отчёт по истории остатков
+          description: Тип отчёта `STOCK_HISTORY_DAILY_CSV` — Отчёт по истории остатков. <br> Данные отчёта обновляются 1 раз в 2 часа
           type: string
         userReportName:
           type: string
@@ -3849,7 +3997,7 @@ components:
         detail: limited by c122a060-a7fb-4bb4-abb0-32fd4e18d489
         code: 07e4668e-ac2242c5c8c5-[UK-4dx7JUdskGZ]
         requestId: 9d3c02cc698f8b041c661a7c28bed293
-        origin: s2s-api-auth-stat
+        origin: ag-analytics
         status: 429
         statusText: Too Many Requests
         timestamp: '2024-09-30T06:52:38Z'
@@ -4499,7 +4647,6 @@ components:
       allOf:
         - $ref: '#/components/schemas/CommonSizeFilters'
         - description: Параметры запроса об остатках по размерам товара
-        - {}
     CommonSizeFilters:
       type: object
       description: Общие фильтры по размеру
@@ -4616,7 +4763,6 @@ components:
       allOf:
         - $ref: '#/components/schemas/CommonShippingOfficeFilters'
         - description: Параметры запроса об остатках по складам
-        - {}
     CommonShippingOfficeFilters:
       type: object
       description: Общие фильтры по регионам отгрузки
@@ -5743,6 +5889,53 @@ components:
               - quantity
               - inWayToClient
               - inWayFromClient
+    InventorySellerResponse:
+      description: Текущие остатки товаров на складах продавца
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          description: Остатки товаров на складах продавца по размерам
+          type: array
+          items:
+            type: object
+            properties:
+              nmId:
+                type: integer
+                description: Артикул WB
+                example: 47254354
+                format: int64
+              chrtId:
+                type: integer
+                description: ID размера
+                example: 91663228
+                format: int64
+              warehouseId:
+                type: integer
+                description: ID склада
+                example: 123456
+                format: int64
+              warehouseName:
+                type: string
+                description: Название склада
+                example: склад продавца Иркутск
+              regionName:
+                type: string
+                description: Регион отгрузки
+                example: Дальневосточный и Сибирский
+              quantity:
+                type: integer
+                description: Количество товара на складе, доступное клиентам для добавления в корзину
+                example: 43
+                format: uint64
+            required:
+              - nmId
+              - chrtId
+              - warehouseId
+              - warehouseName
+              - regionName
+              - quantity
     ItemRatingRequest:
       type: object
       required:
@@ -6474,42 +6667,34 @@ components:
               - `true` — B2B
               - `false` — B2C
           example: false
-    Response403General:
+    Response4XX:
       type: object
       properties:
         title:
           type: string
           description: Заголовок ошибки
-          example: forbidden
         detail:
           type: string
           description: Детали ошибки
-          example: base token is not allowed
         code:
           type: string
           description: Внутренний код ошибки
-          example: base token is not allowed for this path
         requestId:
           type: string
           description: ID запроса
-          example: 722199b2e15bbca48cc1d488a7989976
         origin:
           type: string
           description: ID внутреннего сервиса WB
-          example: s2s-finance
         status:
           type: number
           description: HTTP статус-код
-          example: 403
         statusText:
           type: string
           description: Расшифровка HTTP статус-кода
-          example: Forbidden
         timestamp:
           type: string
           format: date-time
           description: Дата и время запроса
-          example: '2026-05-25T02:47:09Z'
   examples:
     SalesFunnelItemRes:
       description: ''
@@ -6556,23 +6741,50 @@ components:
         VendorCode,Name,NmID,SubjectName,BrandName,SizeName,ChrtID,RegionName,OfficeName,Availability,OrdersCount,OrdersSum,BuyoutCount,BuyoutSum,BuyoutPercent,AvgOrders,StockCount,StockSum,SaleRate,AvgStockTurnover,ToClientCount,FromClientCount,Price,OfficeMissingTime,LostOrdersCount,LostOrdersSum,LostBuyoutsCount,LostBuyoutsSum,AvgOrdersByMonth_11.2013,AvgOrdersByMonth_12.2013,AvgOrdersByMonth_01.2014,AvgOrdersByMonth_02.2014,AvgOrdersByMonth_03.2014,AvgOrdersByMonth_04.2014,AvgOrdersByMonth_05.2014,AvgOrdersByMonth_06.2014,AvgOrdersByMonth_07.2014,Currency
         037456337500,Robust High-Performance Robot,1031126854494603033,Термокомплекты,Amazon Web Services,67-69,987654321,Склад WB,Склад WB,nonLiquid,521124,521124000,123,123000,10,0.57,20,20000,-3,5,111,222,14008,-3,0.71,0.77,0.93,0.68,74067.12,29935.79,8895.27,37019.65,37934.89,62412.64,29857.97,0.00,72465.85,RUB
         089201683406,Luxe Blender Nexus,8904325039176595105,Термокомплекты,iRecycle,54-56,987654071,Склад WB,Склад WB,nonLiquid,1231,1231000,456,456000,20,0.71,30,30000,2,-3,333,444,85162,-2,0.90,0.96,0.31,0.93,,,,,,2628.77,0.00,70534.86,0.00,RUB
-        059509746730,Pure Quartz Speaker,6780550382946145952,Термокомплекты,Next Step Living,60-62,984574321,Маркетплейс,Маркетплейс,balanced,3214,3214000,789,789000,30,0.30,40,40000,1,11,555,666,66484,-3,0.03,0.08,0.71,0.48,,,47297.22,55308.71,6463.43,48664.95,0.00,0.00,74502.72,RUB
-        058266400986,Modular Stainless Monitor,3475827302459171321,Термокомплекты,TagniFi,65-67,926554321,Маркетплейс,Маркетплейс,nonActual,312,312000,123,123000,40,0.71,50,50000,13,-2,666,888,53254,-3,0.96,0.01,0.97,0.92,,67227.50,4608.98,90300.06,15890.52,0.00,0.00,41891.11,0.00,RUB
+        059509746730,Pure Quartz Speaker,6780550382946145952,Термокомплекты,Next Step Living,60-62,984574321,Свой склад,Свой склад,balanced,3214,3214000,789,789000,30,0.30,40,40000,1,11,555,666,66484,-3,0.03,0.08,0.71,0.48,,,47297.22,55308.71,6463.43,48664.95,0.00,0.00,74502.72,RUB
+        058266400986,Modular Stainless Monitor,3475827302459171321,Термокомплекты,TagniFi,65-67,926554321,Свой склад,Свой склад,nonActual,312,312000,123,123000,40,0.71,50,50000,13,-2,666,888,53254,-3,0.96,0.01,0.97,0.92,,67227.50,4608.98,90300.06,15890.52,0.00,0.00,41891.11,0.00,RUB
         070198970053,Microwave Quick Eco-Friendly,4734922922328623947,Термокомплекты,Boston Consulting Group,46-48,983234321,Склад WB,Склад WB,nonLiquid,343,343000,456,456000,50,0.92,60,60000,17,-2,777,101010,43823,-1,0.84,0.14,0.26,0.75,30463.57,8073.43,26678.35,0.00,339.99,56237.24,2172.75,74665.30,14296.76,RUB
     InventoryHistoryReportRes:
       description: ''
       value: |
         VendorCode,Name,NmID,SubjectName,BrandName,SizeName,ChrtID,OfficeName,13.12.2025,14.12.2025,15.12.2025
         41058/прозрачный,Чехол для телефона прозрачный111,5870243,Чехлы для телефонов,Arizona.kz,-,20964883,Склад WB,1,1,1
-        41058/прозрачный,Чехол для телефона прозрачный111,5870243,Чехлы для телефонов,Arizona.kz,-,20964883,Маркетплейс,1000,997,923
-        wb59toaotq,Брюки,12862180,Болеро,,O,39533928,Маркетплейс,6,8,4
-        451263124,Брюки 123,12862181,Брюки,DUB,A,39533929,Маркетплейс,11,10,11
-        wb33q6504x,ПАЗЛ,13088345,Пазлы,CoolPuzzles,-,40030565,Маркетплейс,2,28,54
-        4854554654/0,Альбом,13480414,Альбомы для коллекционирования,Эконом,-,40873579,Маркетплейс,25,20,19
-        14053651Черный,Дубленка 333334,14652473,Дубленки,SARTORI DODICI,48,43253666,Маркетплейс,30,30,30
+        41058/прозрачный,Чехол для телефона прозрачный111,5870243,Чехлы для телефонов,Arizona.kz,-,20964883,Свой склад,1000,997,923
+        wb59toaotq,Брюки,12862180,Болеро,,O,39533928,Свой склад,6,8,4
+        451263124,Брюки 123,12862181,Брюки,DUB,A,39533929,Свой склад,11,10,11
+        wb33q6504x,ПАЗЛ,13088345,Пазлы,CoolPuzzles,-,40030565,Свой склад,2,28,54
+        4854554654/0,Альбом,13480414,Альбомы для коллекционирования,Эконом,-,40873579,Свой склад,25,20,19
+        14053651Черный,Дубленка 333334,14652473,Дубленки,SARTORI DODICI,48,43253666,Свой склад,30,30,30
         HGF56X,Чай,14986284,Чай,Lipton,-,43804848,Склад WB,154,254,223
         123401,Кроссовки,14917832,Кофе молотый,,-,43807552,Склад WB,0,0,0
         123401,Кроссовки,14917832,Кофе молотый,,-,43807553,Склад WB,4,0,23
+    AuthorizationErrorResponse:
+      value:
+        title: Authorization error
+        detail: Authorization error
+        requestId: 51b7828b-e298-4dfa-b7cd-45ab179921d3
+        origin: analytics-open-api
+    Response403TokenCategory:
+      value:
+        status: 403
+        statusText: Forbidden
+        title: Forbidden
+        detail: scope is not allowed for this resource
+        requestId: 2dbf6fc9-bad8-4ef9-a058-c938a8553ba5
+        origin: ag-marketplace
+        timestamp: '2026-09-03T13:55:15Z'
+      description: Неверная категория токена
+    Response403TokenType:
+      value:
+        title: forbidden
+        detail: base token is not allowed
+        code: base token is not allowed for this path
+        requestId: 722199b2e15bbca48cc1d488a7989976
+        origin: ag-marketplace
+        status: 403
+        statusText: Forbidden
+        timestamp: '2026-05-25T02:47:09Z'
+      description: Неверный тип токена
   responses:
     '401':
       description: Не авторизован
@@ -6611,7 +6823,7 @@ components:
             detail: 'token problem; token is malformed: could not base64 decode signature: illegal base64 data at input byte 84'
             code: 07e4668e--a53a3d31f8b0-[UK-oWaVDUqNrKG]; 03bce=277; 84bd353bf-75
             requestId: 7b80742415072fe8b6b7f7761f1d1211
-            origin: s2s-api-auth-catalog
+            origin: ag-marketplace
             status: 401
             statusText: Unauthorized
             timestamp: '2024-09-30T06:52:38Z'
@@ -6668,7 +6880,7 @@ components:
             detail: limited by c122a060-a7fb-4bb4-abb0-32fd4e18d489
             code: 07e4668e-ac2242c5c8c5-[UK-4dx7JUdskGZ]
             requestId: 9d3c02cc698f8b041c661a7c28bed293
-            origin: s2s-api-auth-catalog
+            origin: ag-marketplace
             status: 429
             statusText: Too Many Requests
             timestamp: '2024-09-30T06:52:38Z'
@@ -6683,19 +6895,6 @@ components:
               value:
                 title: Invalid request body
                 detail: 'code=400, message=invalid: positionCluster (field required), internal=invalid: positionCluster (field required)'
-                requestId: 51b7828b-e298-4dfa-b7cd-45ab179921d3
-                origin: analytics-open-api
-    AuthorizationErrorResponse:
-      description: Доступ запрещён
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorObject'
-          examples:
-            errorExample:
-              value:
-                title: Authorization error
-                detail: Authorization error
                 requestId: 51b7828b-e298-4dfa-b7cd-45ab179921d3
                 origin: analytics-open-api
   securitySchemes:
