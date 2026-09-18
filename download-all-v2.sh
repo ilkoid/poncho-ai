@@ -14,6 +14,9 @@
 # Логика фаз, maint-группы, Summary — идентичны download-all.sh.
 #
 # Usage: bash download-all-v2.sh [days]   (days передаётся в утилиты с --days)
+#        bash download-all-v2.sh --test-notify   (проверить доставку Telegram)
+# Telegram: при падениях шагов и недоступности PG — сообщение в тот же чат,
+# что у Mac-ночника (TG_BOT_TOKEN/TG_CHAT_ID из .env), с тегом [VPS2 <hostname>].
 # Перед утилитой — целевая оптимизация её таблиц (maint <group>): VACUUM (ANALYZE)
 # для upsert-churn, ANALYZE для снапшот-гигантов; группы — в pg-maintenance-PG.yaml.
 # Фаза 7 — ANALYZE всех таблиц; по субботам Фаза 8 — REINDEX CONCURRENTLY.
@@ -38,10 +41,31 @@ exec > >(tee -a "$LOGFILE") 2>&1
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
+# ── Telegram-уведомления об ошибках (креды TG_BOT_TOKEN/TG_CHAT_ID в .env,
+#    тот же бот/чат, что у Mac-ночника; отличаем источник тегом машины —
+#    TG_TAG задаётся после .env, так что переопределяется и из .env).
+#    tg_send <text>: 0 = доставлено, 1 = нет (прогон не роняет). ──
+tg_send() {
+  local text="$1" resp
+  if [ -z "${TG_BOT_TOKEN:-}" ] || [ -z "${TG_CHAT_ID:-}" ]; then
+    log "WARNING: TG_BOT_TOKEN/TG_CHAT_ID не заданы в ${PONCHO}/.env — уведомление пропущено"
+    return 1
+  fi
+  resp=$(curl -s --connect-timeout 10 --max-time 30 \
+    "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+    --data-urlencode "chat_id=${TG_CHAT_ID}" \
+    --data-urlencode "text=${text}")
+  if printf '%s' "$resp" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+    return 0
+  fi
+  log "WARNING: Telegram отклонил отправку: ${resp:0:300}"
+  return 1
+}
+
 # ── Cleanup old logs (30 days) ──
 find "$LOGDIR" -name '*.log' -mtime +30 -delete 2>/dev/null || true
 
-# ── Load .env if present (секреты: ключи WB, PG_PWD; может нести PGHOST/PG_ADMIN) ──
+# ── Load .env if present (секреты: ключи WB, PG_PWD, TG_BOT_TOKEN/TG_CHAT_ID) ──
 if [ -f "$PONCHO/.env" ]; then
   set -a
   . "$PONCHO/.env"
@@ -49,6 +73,18 @@ if [ -f "$PONCHO/.env" ]; then
   log "Loaded env from $PONCHO/.env"
 else
   log "WARNING: $PONCHO/.env не найден — ключи WB берутся из окружения"
+fi
+
+# ── Тег машины в TG-сообщениях (после .env — можно переопределить оттуда) ──
+TG_TAG="${TG_TAG:-[VPS2 $(hostname -s 2>/dev/null || hostname)]}"
+
+# ── --test-notify: проверить доставку Telegram и выйти ──
+if [ "$DAYS" = "--test-notify" ]; then
+  DAYS=""
+  tg_send "✅ ${TG_TAG} download-all-v2.sh: тест уведомлений OK ($(date '+%Y-%m-%d %H:%M:%S'), host $(hostname))" \
+    && log "OK: сообщение доставлено в Telegram" \
+    || { log "FAIL: сообщение не доставлено (подробности выше)"; exit 1; }
+  exit 0
 fi
 
 # ── PG defaults ПОСЛЕ .env (прод этой VPS; .env/export переопределяют) ──
@@ -94,6 +130,10 @@ else
 fi
 if [ "${PG_DOWN:-0}" = "1" ]; then
   log "FAIL: PostgreSQL $PG_HOST:$PG_PORT не отвечает. Проверь PGHOST/PGPORT/PG_PWD в $PONCHO/.env"
+  tg_send "⛔ ${TG_TAG} download-all-v2: PG недоступен — прогон прерван
+host: $(hostname), $(date '+%Y-%m-%d %H:%M:%S')
+PG: ${PG_HOST}:${PG_PORT}
+лог: ${LOGFILE}" || true
   exit 1
 fi
 
@@ -257,6 +297,19 @@ if [ "${#FAILED[@]}" -eq 0 ]; then
 else
   log "✗ Не выполнились (${#FAILED[@]} из $RUN_COUNT):"
   printf '  ✗ %s\n' "${FAILED[@]}"
+  # ── Telegram: одно сообщение на прогон — источник, упавшие шаги, хвост лога ──
+  fail_lines=$(printf '  ✗ %s\n' "${FAILED[@]}")
+  tail_log=$(tail -n 15 "$LOGFILE" 2>/dev/null)
+  tg_send "⛔ ${TG_TAG} download-all-v2: упали ${#FAILED[@]} из ${RUN_COUNT} шагов
+host: $(hostname), $(date '+%Y-%m-%d %H:%M:%S'), $((TOTAL / 60))m
+
+Упавшие утилиты:
+${fail_lines}
+
+Лог: ${LOGFILE}
+
+Хвост лога:
+${tail_log}" || true
 fi
 log "Total:  $((TOTAL / 60))m $((TOTAL % 60))s"
 
