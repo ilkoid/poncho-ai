@@ -14,9 +14,12 @@
 # Логика фаз, maint-группы, Summary — идентичны download-all.sh.
 #
 # Usage: bash download-all-v2.sh [days]   (days передаётся в утилиты с --days)
-#        bash download-all-v2.sh --test-notify   (проверить доставку Telegram)
-# Telegram: при падениях шагов и недоступности PG — сообщение в тот же чат,
-# что у Mac-ночника (TG_BOT_TOKEN/TG_CHAT_ID из .env), с тегом [VPS2 <hostname>].
+#        bash download-all-v2.sh --test-notify   (проверить доставку обоих каналов)
+# Уведомления об ошибках: notify = Telegram primary → mail fallback.
+# TG: тот же бот/чат, что у Mac-ночника (TG_BOT_TOKEN/TG_CHAT_ID из .env),
+#     тег [VPS2 <hostname>]; при блокировке api.telegram.org — TG_PROXY.
+# Mail: внутренний relay (SMTP_HOST/SMTP_PORT, дефолт 10.120.11.31:587 STARTTLS),
+#     кому — MAIL_TO из .env; креды ТОЛЬКО в netrc-файле (SMTP_NETRC, ~600 прав).
 # Перед утилитой — целевая оптимизация её таблиц (maint <group>): VACUUM (ANALYZE)
 # для upsert-churn, ANALYZE для снапшот-гигантов; группы — в pg-maintenance-PG.yaml.
 # Фаза 7 — ANALYZE всех таблиц; по субботам Фаза 8 — REINDEX CONCURRENTLY.
@@ -69,6 +72,61 @@ tg_send() {
   return 1
 }
 
+# mail_send <text>: статус на почту (внутренний MS Exchange relay).
+# Креды — НЕ в аргументах и НЕ в env-переменной с паролем (светится в ps aux):
+# только netrc-файл (SMTP_NETRC, по умолчанию ~/.smtp-netrc, права 600):
+#   machine 10.120.11.31 login it_service@playtoday.ru password <SMTP-пароль>
+# .env: MAIL_TO=... (кому), SMTP_FROM (от кого, по умолчанию login из netrc).
+# Тема = первая строка текста (UTF-8 → encoded-word), тело — base64.
+mail_send() {
+  local text="$1" netrc subj body_b64 tmp rc from
+  if [ -z "${MAIL_TO:-}" ]; then
+    log "WARNING: MAIL_TO не задан в ${PONCHO}/.env — mail-уведомление пропущено"
+    return 1
+  fi
+  netrc="${SMTP_NETRC:-$HOME/.smtp-netrc}"
+  if [ ! -f "$netrc" ]; then
+    log "WARNING: netrc-файл $netrc не найден — mail-уведомление пропущено (machine <relay> login <от кого> password <...>; chmod 600)"
+    return 1
+  fi
+  from="${SMTP_FROM:-it_service@playtoday.ru}"
+  subj="${TG_TAG}: ${text%%$'\n'*}"
+  subj=${subj:0:180}
+  tmp="$(mktemp)"
+  {
+    printf 'From: %s\n' "$from"
+    printf 'To: %s\n' "$MAIL_TO"
+    printf 'Subject: =?UTF-8?B?%s?=\n' "$(printf '%s' "$subj" | base64 | tr -d '\n')"
+    printf 'Date: %s\n' "$(date -R 2>/dev/null || date '+%a, %d %b %Y %H:%M:%S %z')"
+    printf 'MIME-Version: 1.0\n'
+    printf 'Content-Type: text/plain; charset=utf-8\n'
+    printf 'Content-Transfer-Encoding: base64\n'
+    printf '\n'
+    printf '%s' "$text" | base64 | tr -d '\n' | fold -w 76
+    printf '\n'
+  } > "$tmp"
+  curl -sS --connect-timeout 10 --max-time 60 \
+    --url "smtp://${SMTP_HOST:-10.120.11.31}:${SMTP_PORT:-587}" \
+    --ssl-reqd \
+    --netrc-file "$netrc" \
+    --mail-from "$from" \
+    --mail-rcpt "$MAIL_TO" \
+    --upload-file "$tmp"
+  rc=$?
+  rm -f "$tmp"
+  if [ "$rc" -eq 0 ]; then
+    return 0
+  fi
+  log "WARNING: SMTP-отправка не удалась (curl exit ${rc})"
+  return 1
+}
+
+# notify <text>: TG primary → mail fallback. TG без кредов/прокси вернёт 1 —
+# письмо уйдёт; на машине с рабочим TG почта не дублируется.
+notify() {
+  tg_send "$1" || mail_send "$1"
+}
+
 # ── Cleanup old logs (30 days) ──
 find "$LOGDIR" -name '*.log' -mtime +30 -delete 2>/dev/null || true
 
@@ -85,12 +143,25 @@ fi
 # ── Тег машины в TG-сообщениях (после .env — можно переопределить оттуда) ──
 TG_TAG="${TG_TAG:-[VPS2 $(hostname -s 2>/dev/null || hostname)]}"
 
-# ── --test-notify: проверить доставку Telegram и выйти ──
+# ── --test-notify: проверить оба канала раздельно и выйти ──
 if [ "$DAYS" = "--test-notify" ]; then
   DAYS=""
-  tg_send "✅ ${TG_TAG} download-all-v2.sh: тест уведомлений OK ($(date '+%Y-%m-%d %H:%M:%S'), host $(hostname))" \
-    && log "OK: сообщение доставлено в Telegram" \
-    || { log "FAIL: сообщение не доставлено (подробности выше)"; exit 1; }
+  delivered=0
+  log "--- тест Telegram ---"
+  if tg_send "✅ ${TG_TAG} download-all-v2.sh: тест Telegram OK ($(date '+%Y-%m-%d %H:%M:%S'), host $(hostname))"; then
+    log "OK: Telegram доставлен"
+    delivered=1
+  else
+    log "Telegram недоступен/не настроен (не блокирует переход — fallback на mail)"
+  fi
+  log "--- тест mail ---"
+  if mail_send "✅ ${TG_TAG} download-all-v2.sh: тест mail OK ($(date '+%Y-%m-%d %H:%M:%S'), host $(hostname))"; then
+    log "OK: письмо доставлено на ${MAIL_TO}"
+    delivered=1
+  else
+    log "FAIL: письмо не доставлено (подробности выше)"
+  fi
+  [ "$delivered" -eq 1 ] || { log "FAIL: ни один канал не доставил сообщение"; exit 1; }
   exit 0
 fi
 
@@ -137,7 +208,7 @@ else
 fi
 if [ "${PG_DOWN:-0}" = "1" ]; then
   log "FAIL: PostgreSQL $PG_HOST:$PG_PORT не отвечает. Проверь PGHOST/PGPORT/PG_PWD в $PONCHO/.env"
-  tg_send "⛔ ${TG_TAG} download-all-v2: PG недоступен — прогон прерван
+  notify "⛔ ${TG_TAG} download-all-v2: PG недоступен — прогон прерван
 host: $(hostname), $(date '+%Y-%m-%d %H:%M:%S')
 PG: ${PG_HOST}:${PG_PORT}
 лог: ${LOGFILE}" || true
@@ -304,10 +375,10 @@ if [ "${#FAILED[@]}" -eq 0 ]; then
 else
   log "✗ Не выполнились (${#FAILED[@]} из $RUN_COUNT):"
   printf '  ✗ %s\n' "${FAILED[@]}"
-  # ── Telegram: одно сообщение на прогон — источник, упавшие шаги, хвост лога ──
+  # ── Уведомление: TG primary → mail fallback, одно на прогон ──
   fail_lines=$(printf '  ✗ %s\n' "${FAILED[@]}")
   tail_log=$(tail -n 15 "$LOGFILE" 2>/dev/null)
-  tg_send "⛔ ${TG_TAG} download-all-v2: упали ${#FAILED[@]} из ${RUN_COUNT} шагов
+  notify "⛔ ${TG_TAG} download-all-v2: упали ${#FAILED[@]} из ${RUN_COUNT} шагов
 host: $(hostname), $(date '+%Y-%m-%d %H:%M:%S'), $((TOTAL / 60))m
 
 Упавшие утилиты:
