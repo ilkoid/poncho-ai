@@ -50,6 +50,10 @@ func main() {
 	backend := flag.String("backend", "", "Storage backend: sqlite|postgres (overrides config)")
 	pgDatabase := flag.String("pg-database", "", "PostgreSQL database name (overrides config)")
 	days := flag.Int("days", 0, "Period in days (alternative to config begin/end)")
+	selStartFlag := flag.String("selected-start", "", "Explicit selected window start YYYY-MM-DD (overrides config/days)")
+	selEndFlag := flag.String("selected-end", "", "Explicit selected window end YYYY-MM-DD (required with --selected-start)")
+	pastStartFlag := flag.String("past-start", "", "Explicit past window start YYYY-MM-DD (default: derived from selected)")
+	pastEndFlag := flag.String("past-end", "", "Explicit past window end YYYY-MM-DD (default: derived from selected)")
 	mockMode := flag.Bool("mock", false, "Use mock source (no API calls)")
 	dryRun := flag.Bool("dry-run", false, "Skip DB writes, show what would be saved")
 	flag.Parse()
@@ -76,6 +80,9 @@ func main() {
 	}
 	if *days > 0 {
 		aggCfg.Days = *days
+	}
+	if err := overrideExplicitDates(&aggCfg, *selStartFlag, *selEndFlag, *pastStartFlag, *pastEndFlag); err != nil {
+		log.Fatalf("dates: %v", err)
 	}
 
 	// Resolve date range
@@ -129,6 +136,7 @@ func main() {
 		PastStart:          pastStart,
 		PastEnd:            pastEnd,
 		PageSize:           aggCfg.PageSize,
+		MaxPageRetries:     aggCfg.MaxPageRetries, // 0 = default 3 (задаётся в NewDownloader)
 		RateLimit:          aggCfg.RateLimits.FunnelAggregated,
 		Burst:              aggCfg.RateLimits.FunnelAggregatedBurst,
 		NmIDs:              aggCfg.NmIDs,
@@ -204,6 +212,36 @@ func resolveAPIKey(cfg *Config) string {
 		return key
 	}
 	return ""
+}
+
+// overrideExplicitDates применяет CLI-флаги явных дат поверх конфига.
+// Если past-пара не задана — выводится из selected со сдвигом на неделю назад
+// (та же арифметика, что у дефолтного расчёта при days=7).
+func overrideExplicitDates(cfg *config.FunnelAggregatedConfig, selStart, selEnd, pStart, pEnd string) error {
+	if selStart == "" && selEnd == "" && pStart == "" && pEnd == "" {
+		return nil
+	}
+	if selStart == "" || selEnd == "" {
+		return fmt.Errorf("--selected-start и --selected-end задаются вместе")
+	}
+	start, err := time.ParseInLocation("2006-01-02", selStart, time.UTC)
+	if err != nil {
+		return fmt.Errorf("parse --selected-start %q: %w", selStart, err)
+	}
+	if _, err := time.ParseInLocation("2006-01-02", selEnd, time.UTC); err != nil {
+		return fmt.Errorf("parse --selected-end %q: %w", selEnd, err)
+	}
+	cfg.SelectedStart, cfg.SelectedEnd = selStart, selEnd
+	if pStart != "" || pEnd != "" {
+		if pStart == "" || pEnd == "" {
+			return fmt.Errorf("--past-start и --past-end задаются вместе")
+		}
+		cfg.PastStart, cfg.PastEnd = pStart, pEnd
+	} else {
+		cfg.PastStart = start.AddDate(0, 0, -7).Format("2006-01-02")
+		cfg.PastEnd = start.AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	return nil
 }
 
 // calculateDateRange resolves the date range from config.

@@ -574,6 +574,10 @@ type FunnelAggregatedConfig struct {
 	// Пагинация
 	PageSize int `yaml:"page_size"` // Товаров за запрос (0 = auto, max 1000)
 
+	// Устойчивость к 429-штормам: попыток на страницу (0 = default 3).
+	// Бэкофф линейный 2м×n; 8 попыток дают до ~часа запаса на страницу.
+	MaxPageRetries int `yaml:"max_page_retries"`
+
 	// Rate limiting (legacy fields for backwards compatibility)
 	RateLimit  int `yaml:"rate_limit"` // Запросов в минуту (deprecated: use rate_limits instead)
 	BurstLimit int `yaml:"burst"`      // Burst (deprecated: use rate_limits instead)

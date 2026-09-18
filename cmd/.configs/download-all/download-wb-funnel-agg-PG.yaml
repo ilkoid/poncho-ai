@@ -12,6 +12,11 @@ funnel_aggregated:
   order_by_field: ""
   order_by_mode: "desc"
   page_size: 1000
+  # 429-штормы ag-contentanalytics гуляют по всей ночи (10-18.09.2026: падения
+  # и в 03:46-04:11, и в 05:21-05:28) — 3 попыток на страницу не хватает.
+  # 8 попыток с линейным бэкоффом 2м×n ≈ час запаса на страницу; хвосты окон
+  # добивает refill-funnel-holes.sh сразу после этой утилиты в ночном прогоне.
+  max_page_retries: 8
   rate_limit: 3
   burst: 1
   rate_limits:

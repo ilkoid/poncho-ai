@@ -164,6 +164,10 @@ echo "── Phase 6: Analytics ──"
 #run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-v2" --config "$C/download-wb-funnel-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint funnel-agg
 run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# Самодолив дырок funnel-агрегатов: ночное окно, убитое 429-штормом, не
+# самолечется — здесь находим отсутствующие/частичные окна за 2 недели и
+# перекачиваем явными датами. Нефатально для прогона; лог: logs/funnel-holes-*.log
+bash "$PONCHO/refill-funnel-holes.sh" || echo "⚠️  refill-funnel-holes: сбой (нефатально)"
 maint funnel-csv
 run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" --config "$C/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint search-vis
