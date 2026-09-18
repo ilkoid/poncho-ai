@@ -10,10 +10,10 @@ info:
     <div class="api-block">
 
     В разделе описаны методы получения:
-      1. [Комиссий](/openapi/wb-tariffs#tag/fees)
-      2. [Тарифов на поставку](/openapi/wb-tariffs#tag/supplyRates)
-      3. [Тарифов на остаток](/openapi/wb-tariffs#tag/stockRates)
-      4. [Тарифов на возврат товаров продавцу](/openapi/wb-tariffs#tag/returnCostToSeller)
+      1. [Комиссий](/openapi/rates#tag/fees)
+      2. [Тарифов на поставку](/openapi/rates#tag/supplyRates)
+      3. [Тарифов на остаток](/openapi/rates#tag/stockRates)
+      4. [Тарифов на возврат товаров продавцу](/openapi/rates#tag/returnCostToSeller)
 
     </div>
   x-file-name: rates
@@ -23,15 +23,19 @@ tags:
   - name: Комиссии
     x-displayName: Комиссии
     description: ''
+    x-tagKey: fees
   - name: Тарифы на поставку
     x-displayName: Тарифы на поставку
     description: ''
+    x-tagKey: supplyRates
   - name: Тарифы на остаток
     x-displayName: Тарифы на остаток
     description: ''
+    x-tagKey: stockRates
   - name: Стоимость возврата продавцу
     x-displayName: Стоимость возврата продавцу
     description: ''
+    x-tagKey: returnCostToSeller
 paths:
   /api/v1/tariffs/commission:
     servers:
@@ -44,7 +48,7 @@ paths:
       tags:
         - Комиссии
       description: |
-        Метод возвращает данные о [комиссии](https://seller.wildberries.ru/dynamic-product-categories/commission) WB по [родительским категориям товаров](/openapi/work-with-products#tag/categoriesSubcategoriesAndCharacteristics/paths/~1content~1v2~1object~1parent~1all/get) согласно модели продаж.
+        Метод возвращает данные о [комиссии](https://seller.wildberries.ru/dynamic-product-categories/commission) WB по [родительским категориям товаров](/openapi/item-management#tag/categoriesSubcategoriesAndCharacteristics/operation/getV2ObjectParentAll) согласно модели продаж.
 
         <div class="description_limit">
         <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца:
@@ -738,7 +742,7 @@ components:
                 description: Комиссия по модели **Самовывоз из магазина продавца** (`C&C`), %
               kgvpSupplier:
                 type: number
-                description: Комиссия по моделям **Витрина** (`DBS`) и **Курьер WB** (`DBW`), %
+                description: Комиссия по моделям **Витрина** (`DBS`) и **Деливери WB** (`DBW`), %
               kgvpSupplierExpress:
                 type: number
                 description: Комиссия по модели **Витрина экспресс** (`EDBS`), %
@@ -912,7 +916,7 @@ components:
             detail: 'token problem; token is malformed: could not base64 decode signature: illegal base64 data at input byte 84'
             code: 07e4668e--a53a3d31f8b0-[UK-oWaVDUqNrKG]; 03bce=277; 84bd353bf-75
             requestId: 7b80742415072fe8b6b7f7761f1d1211
-            origin: s2s-api-auth-catalog
+            origin: ag-marketplace
             status: 401
             statusText: Unauthorized
             timestamp: '2024-09-30T06:52:38Z'
@@ -969,7 +973,7 @@ components:
             detail: limited by c122a060-a7fb-4bb4-abb0-32fd4e18d489
             code: 07e4668e-ac2242c5c8c5-[UK-4dx7JUdskGZ]
             requestId: 9d3c02cc698f8b041c661a7c28bed293
-            origin: s2s-api-auth-catalog
+            origin: ag-marketplace
             status: 429
             statusText: Too Many Requests
             timestamp: '2024-09-30T06:52:38Z'

@@ -7,7 +7,7 @@ info:
 
     Управление [сборочными заданиями](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders) и [идентификаторами маркировки](/openapi/in-store-pickup#tag/inStorePickupLabelIdentifiers) Самовывоза.<br><br>
 
-    Вы можете протестировать методы Самовывоза в [песочнице](/sandbox). Также в песочнице доступны [специальные методы](/docs/openapi-other/sandbox-environment#tag/Marketplejs-Samovyvoz) для эмуляции действий пользователя
+    Вы можете протестировать методы Самовывоза в [песочнице](/sandbox). Также в песочнице доступны [специальные методы](/docs/openapi-other/sandbox-environment#tag/marketplaceInStorePickup) для эмуляции действий пользователя
 
     </div>
   version: instorepickup
@@ -19,9 +19,11 @@ tags:
   - name: Сборочные задания Самовывоз
     x-displayName: Сборочные задания Самовывоз
     description: ''
+    x-tagKey: inStorePickupAssemblyOrders
   - name: Идентификаторы маркировки Самовывоз
     x-displayName: Идентификаторы маркировки Самовывоз
     description: ''
+    x-tagKey: inStorePickupLabelIdentifiers
 paths:
   /api/v3/click-collect/orders/new:
     servers:
@@ -52,7 +54,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       responses:
@@ -70,7 +72,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v3/click-collect/orders:
@@ -104,7 +119,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       parameters:
@@ -157,7 +172,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/final-price:
@@ -186,7 +214,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -209,7 +237,20 @@ paths:
         '401':
           $ref: '#/components/responses/401'
         '403':
-          $ref: '#/components/responses/AccessDeniedBatch'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.BatchError'
+              examples:
+                AccessDeniedBatch:
+                  $ref: '#/components/examples/AccessDeniedBatch'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/status/confirm:
@@ -241,7 +282,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -263,7 +304,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDeniedBatch'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.BatchError'
+              examples:
+                AccessDeniedBatch:
+                  $ref: '#/components/examples/AccessDeniedBatch'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/status/prepare:
@@ -295,7 +349,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -317,7 +371,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDeniedBatch'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.BatchError'
+              examples:
+                AccessDeniedBatch:
+                  $ref: '#/components/examples/AccessDeniedBatch'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v3/click-collect/orders/client:
@@ -353,7 +420,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -383,7 +450,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v3/click-collect/orders/client/identity:
@@ -417,7 +497,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -447,7 +527,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '404':
           description: Не найдено
           content:
@@ -497,7 +590,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -519,7 +612,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDeniedBatch'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.BatchError'
+              examples:
+                AccessDeniedBatch:
+                  $ref: '#/components/examples/AccessDeniedBatch'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/status/reject:
@@ -551,7 +657,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -573,7 +679,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDeniedBatch'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.BatchError'
+              examples:
+                AccessDeniedBatch:
+                  $ref: '#/components/examples/AccessDeniedBatch'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/status/info:
@@ -591,7 +710,7 @@ paths:
       tags:
         - Сборочные задания Самовывоз
       summary: Получить статусы сборочных заданий
-      description: "Метод возвращает статусы [сборочных заданий](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders) по их ID.\n<br><br>\n`supplierStatus` — статус сборочного задания. Триггер его изменения - действие самого продавца.\n\nВозможные значения `supplierStatus`:\n| Статус   | Описание            | Как перевести сборочное задание в данный статус |\n| -------  | ---------           | --------------------------------------|\n| `new`      | **Новое сборочное задание** |\n| `confirm`  | **На сборке**  | \t[Перевести сборочное задание на сборку](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusConfirm)\n| `prepare`  | **Готов к выдаче** | \t[Сообщить, что сборочное задание готово к выдаче](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusPrepare)\n| `receive`  | **Получено покупателем**   | [Сообщить, что заказ принят покупателем](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusReceive)\n| `reject`  | **Отказ покупателя при получении**    |  \t[Сообщить, что покупатель отказался от заказа](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusReject)\n| `cancel`   | **Отменено продавцом**    |  \t[Отменить сборочное задание](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusCancel)\n| `cancel_shelf_life` | **Отмена по истечении срока хранения**    |  \tПереводится автоматически по возникновению события\n\n<br><br>\n`wbStatus` — статус системы Wildberries.\n\nВозможные значения `wbStatus`:\n- `waiting` - сборочное задание в работе\n- `sold` - заказ получен покупателем\n- `canceled` - отмена сборочного задания\n- `canceled_by_client` - покупатель отменил заказ при получении\n- `declined_by_client` - покупатель отменил заказ в первый чаc\n<br> Отмена доступна покупателю в первый час с момента заказа, если заказ не переведён на сборку\n- `defect` - отмена заказа по причине брака\n- `ready_for_pickup` - заказ готов к выдаче\n\n<div class=\"description_limit\">\n<a href=\"/openapi/api-information#tag/introduction/Limity-zaprosov\">Лимит запросов</a> на один аккаунт продавца:\n\n| Период | Лимит | Интервал | Всплеск |\n| --- | --- | --- | --- |\n| 1 сек | 1 запрос | 1 сек | 10 запросов |\n\nОдин запрос с кодами ответов <code>4XX</code> учитывается как 10 запросов.\n\n<hr>\n\nВ <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.\n\n</div>\n"
+      description: "Метод возвращает статусы [сборочных заданий](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders) по их ID.\n<br><br>\n`supplierStatus` — статус сборочного задания. Триггер его изменения - действие самого продавца.\n\nВозможные значения `supplierStatus`:\n| Статус   | Описание            | Как перевести сборочное задание в данный статус |\n| -------  | ---------           | --------------------------------------|\n| `new`      | **Новое сборочное задание** |\n| `confirm`  | **На сборке**  | \t[Перевести сборочное задание на сборку](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusConfirm)\n| `prepare`  | **Готов к выдаче** | \t[Сообщить, что сборочное задание готово к выдаче](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusPrepare)\n| `receive`  | **Получено покупателем**   | [Сообщить, что заказ принят покупателем](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusReceive)\n| `reject`  | **Отказ покупателя при получении**    |  \t[Сообщить, что покупатель отказался от заказа](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusReject)\n| `cancel`   | **Отменено продавцом**    |  \t[Отменить сборочное задание](/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/postV3ClickCollectOrdersStatusCancel)\n| `cancel_shelf_life` | **Отмена по истечении срока хранения**    |  \tПереводится автоматически по возникновению события\n\n<br><br>\n`wbStatus` — статус системы Wildberries.\n\nВозможные значения `wbStatus`:\n- `waiting` - сборочное задание в работе\n- `sold` - заказ получен покупателем\n- `canceled` - отмена сборочного задания\n- `canceled_by_client` - покупатель отменил заказ при получении\n- `declined_by_client` - покупатель отменил заказ в первый чаc\n<br> Отмена доступна покупателю в первый час с момента заказа, если заказ не переведён на сборку\n- `defect` - отмена заказа по причине брака\n- `ready_for_pickup` - заказ готов к выдаче\n\n<div class=\"description_limit\">\n<a href=\"/openapi/api-information#tag/introduction/Limity-zaprosov\">Лимит запросов</a> на один аккаунт продавца:\n\n| Период | Лимит | Интервал | Всплеск |\n| --- | --- | --- | --- |\n| 1 сек | 1 запрос | 1 сек | 10 запросов |\n\nОдин запрос с кодами ответов <code>4XX</code> учитывается как 10 запросов.\n\n<hr>\n\nВ <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.\n\n</div>\n"
       requestBody:
         content:
           application/json:
@@ -612,7 +731,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDeniedBatch'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.BatchError'
+              examples:
+                AccessDeniedBatch:
+                  $ref: '#/components/examples/AccessDeniedBatch'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/status/cancel:
@@ -644,7 +776,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -666,7 +798,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDeniedBatch'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.BatchError'
+              examples:
+                AccessDeniedBatch:
+                  $ref: '#/components/examples/AccessDeniedBatch'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/meta/details:
@@ -717,7 +862,20 @@ paths:
         '401':
           $ref: '#/components/responses/401'
         '403':
-          $ref: '#/components/responses/AccessDeniedBatch'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.BatchError'
+              examples:
+                AccessDeniedBatch:
+                  $ref: '#/components/examples/AccessDeniedBatch'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/meta/delete:
@@ -756,7 +914,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -779,7 +937,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/meta/sgtin:
@@ -814,7 +985,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -837,7 +1008,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/meta/uin:
@@ -870,7 +1054,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -893,7 +1077,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/meta/imei:
@@ -927,7 +1124,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -950,7 +1147,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/meta/gtin:
@@ -983,7 +1193,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -1006,7 +1216,20 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/marketplace/v3/click-collect/orders/meta/customs-declaration:
@@ -1039,7 +1262,7 @@ paths:
 
         <hr>
 
-        В <a href='/sandbox'>Песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
+        В <a href='/sandbox'>песочнице</a> — максимум 1 запрос в секунду суммарно для всех методов <strong>Маркетплейса</strong>.
 
         </div>
       requestBody:
@@ -1091,7 +1314,20 @@ paths:
         '401':
           $ref: '#/components/responses/401'
         '403':
-          $ref: '#/components/responses/AccessDenied'
+          description: Доступ запрещён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                AccessDenied:
+                  $ref: '#/components/examples/AccessDenied'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
 components:
@@ -1141,6 +1377,7 @@ components:
             convertedCurrencyCode: 643
             cargoType: 1
             isZeroOrder: false
+            tireService: false
             options:
               isB2b: true
     CustomsDeclarationResponse:
@@ -1180,6 +1417,26 @@ components:
       value:
         code: IncorrectParameter
         message: Передан некорректный параметр
+    AccessDenied:
+      value:
+        code: AccessDenied
+        message: ''
+    AccessDeniedBatch:
+      value:
+        detail: {}
+        origin: market-public-api
+        requestId: f1787bd2d1fdс35d6f537316514у4a05
+        title: AccessDenied
+    Response403TokenCategory:
+      value:
+        status: 403
+        statusText: Forbidden
+        title: Forbidden
+        detail: scope is not allowed for this resource
+        requestId: 2dbf6fc9-bad8-4ef9-a058-c938a8553ba5
+        origin: ag-marketplace
+        timestamp: '2026-09-03T13:55:15Z'
+      description: Неверная категория токена
   schemas:
     api.OrdersFinalPriceResponse:
       type: object
@@ -1208,7 +1465,7 @@ components:
           description: |
             Данные сборочного задания.
             <br><br>
-            Если `"data":{}`, данные формируются. Повторите запрос позднее. Максимальное время формирования данных около 3 минут.
+            Если `"data":{}`, данные формируются. Повторите запрос позднее. Максимальное время формирования данных около 1 минуты.
             <br><br>
             Если `data` отсутствует, данных по сборочному заданию не предусмотрено. Используйте данные из ответов методов:
               - [Получить список новых сборочных заданий](/docs/openapi/in-store-pickup#tag/inStorePickupAssemblyOrders/operation/getV3ClickCollectOrdersNew)
@@ -1325,15 +1582,15 @@ components:
           description: |
             Уникальный ID заказа. <br>
             Примечание: `rid` — это `srid` в ответах методов:
-              - [Заявки покупателей на возврат](./user-communication#tag/buyersReturns/operation/getV1Claims)
+              - [Заявки покупателей на возврат](./customer-communication#tag/buyersReturns/operation/getV1Claims)
               - [Лента заказов](./analytics#tag/orderFeed/operation/postV1OrderFeed)
               - [Заказы](./reports#tag/mainReports/operation/getV1SupplierOrders)
               - [Продажи](./reports#tag/mainReports/operation/getV1SupplierSales)
               - [Отчет о возвратах и перемещении товаров](./reports#tag/returnsAndItemMovementReport)
-              - [Детализации к отчётам реализации по ID отчётов](./financial-reports-and-accounting#tag/financialReports/operation/postV1SalesReportsDetailedReportId)
-              - [Детализации к отчётам реализации за период](./financial-reports-and-accounting#tag/financialReports/operation/postV1SalesReportsDetailed)
-              - [Детализации к отчётам об издержках на приём платежей по ID отчётов](./financial-reports-and-accounting#tag/financialReports/operation/postV1AcquiringDetailedReportId)
-              - [Детализации к отчётам об издержках на приём платежей за период](./financial-reports-and-accounting#tag/financialReports/operation/postV1AcquiringDetailed)
+              - [Детализации к отчётам реализации по ID отчётов](./documents-and-accounting#tag/financialReports/operation/postV1SalesReportsDetailedReportId)
+              - [Детализации к отчётам реализации за период](./documents-and-accounting#tag/financialReports/operation/postV1SalesReportsDetailed)
+              - [Детализации к отчётам об издержках на приём платежей по ID отчётов](./documents-and-accounting#tag/financialReports/operation/postV1AcquiringDetailedReportId)
+              - [Детализации к отчётам об издержках на приём платежей за период](./documents-and-accounting#tag/financialReports/operation/postV1AcquiringDetailed)
         createdAt:
           type: string
           description: Дата и время создания сборочного задания
@@ -1431,6 +1688,13 @@ components:
             Признак заказа товара с нулевым остатком:
               - `false` — заказ сделан на товар с ненулевым остатком
               - `true` — заказ сделан на товар с нулевым остатком. Такой заказ можно отменить без штрафа за отмену
+        tireService:
+          type: boolean
+          example: false
+          description: |
+            Указал ли покупатель, что ему требуется услуга шиномонтажа:
+              - `false` — нет, услуга шиномонтажа не требуется
+              - `true` — да, услуга шиномонтажа требуется
         options:
           type: object
           description: Опции заказа
@@ -1551,15 +1815,15 @@ components:
           description: |
             Уникальный ID заказа. <br>
             Примечание: `rid` — это `srid` в ответах методов:
-              - [Заявки покупателей на возврат](./user-communication#tag/buyersReturns/operation/getV1Claims)
+              - [Заявки покупателей на возврат](./customer-communication#tag/buyersReturns/operation/getV1Claims)
               - [Лента заказов](./analytics#tag/orderFeed/operation/postV1OrderFeed)
               - [Заказы](./reports#tag/mainReports/operation/getV1SupplierOrders)
               - [Продажи](./reports#tag/mainReports/operation/getV1SupplierSales)
               - [Отчет о возвратах и перемещении товаров](./reports#tag/returnsAndItemMovementReport)
-              - [Детализации к отчётам реализации по ID отчётов](./financial-reports-and-accounting#tag/financialReports/operation/postV1SalesReportsDetailedReportId)
-              - [Детализации к отчётам реализации за период](./financial-reports-and-accounting#tag/financialReports/operation/postV1SalesReportsDetailed)
-              - [Детализации к отчётам об издержках на приём платежей по ID отчётов](./financial-reports-and-accounting#tag/financialReports/operation/postV1AcquiringDetailedReportId)
-              - [Детализации к отчётам об издержках на приём платежей за период](./financial-reports-and-accounting#tag/financialReports/operation/postV1AcquiringDetailed)
+              - [Детализации к отчётам реализации по ID отчётов](./documents-and-accounting#tag/financialReports/operation/postV1SalesReportsDetailedReportId)
+              - [Детализации к отчётам реализации за период](./documents-and-accounting#tag/financialReports/operation/postV1SalesReportsDetailed)
+              - [Детализации к отчётам об издержках на приём платежей по ID отчётов](./documents-and-accounting#tag/financialReports/operation/postV1AcquiringDetailedReportId)
+              - [Детализации к отчётам об издержках на приём платежей за период](./documents-and-accounting#tag/financialReports/operation/postV1AcquiringDetailed)
           example: 5044304527347733263.0.0
         skus:
           type: array
@@ -1576,6 +1840,13 @@ components:
           type: integer
           description: ID склада продавца, на который поступило сборочное задание
           example: 1162157
+        tireService:
+          type: boolean
+          example: false
+          description: |
+            Указал ли покупатель, что ему требуется услуга шиномонтажа:
+              - `false` — нет, услуга шиномонтажа не требуется
+              - `true` — да, услуга шиномонтажа требуется
         options:
           type: object
           description: Опции заказа
@@ -2023,7 +2294,6 @@ components:
                       allOf:
                         - $ref: '#/components/schemas/MetaDetailsErrors'
                         - description: Ошибки проверки идентификаторов маркировки
-                        - {}
                   type: object
                 type: array
                 description: Детали ошибки
@@ -2341,6 +2611,34 @@ components:
             - 234567
           items:
             type: integer
+    Response4XX:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Заголовок ошибки
+        detail:
+          type: string
+          description: Детали ошибки
+        code:
+          type: string
+          description: Внутренний код ошибки
+        requestId:
+          type: string
+          description: ID запроса
+        origin:
+          type: string
+          description: ID внутреннего сервиса WB
+        status:
+          type: number
+          description: HTTP статус-код
+        statusText:
+          type: string
+          description: Расшифровка HTTP статус-кода
+        timestamp:
+          type: string
+          format: date-time
+          description: Дата и время запроса
   responses:
     '401':
       description: Не авторизован
@@ -2379,7 +2677,7 @@ components:
             detail: 'token problem; token is malformed: could not base64 decode signature: illegal base64 data at input byte 84'
             code: 07e4668e--a53a3d31f8b0-[UK-oWaVDUqNrKG]; 03bce=277; 84bd353bf-75
             requestId: 7b80742415072fe8b6b7f7761f1d1211
-            origin: s2s-api-auth-catalog
+            origin: ag-marketplace
             status: 401
             statusText: Unauthorized
             timestamp: '2024-09-30T06:52:38Z'
@@ -2436,19 +2734,10 @@ components:
             detail: limited by c122a060-a7fb-4bb4-abb0-32fd4e18d489
             code: 07e4668e-ac2242c5c8c5-[UK-4dx7JUdskGZ]
             requestId: 9d3c02cc698f8b041c661a7c28bed293
-            origin: s2s-api-auth-catalog
+            origin: ag-marketplace
             status: 429
             statusText: Too Many Requests
             timestamp: '2024-09-30T06:52:38Z'
-    AccessDenied:
-      description: Доступ запрещён
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            code: AccessDenied
-            message: Доступ запрещён
     IncorrectRequest:
       description: Неправильный запрос
       content:
@@ -2460,14 +2749,3 @@ components:
             origin: market-public-api
             requestId: f1787bd2d1fdс35d6f537316514у4a05
             title: IncorrectRequest
-    AccessDeniedBatch:
-      description: Доступ запрещён
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/api.BatchError'
-          example:
-            detail: {}
-            origin: market-public-api
-            requestId: f1787bd2d1fdс35d6f537316514у4a05
-            title: AccessDenied

@@ -28,33 +28,43 @@ tags:
   - name: Основные отчёты
     x-displayName: Основные отчёты
     description: ''
+    x-tagKey: mainReports
   - name: Отчёт об остатках на складах
     x-displayName: Отчёт об остатках на складах
     description: ''
+    x-tagKey: warehousesInventoryReport
   - name: Отчёт о товарах c обязательной маркировкой
     x-displayName: Отчёт о товарах c обязательной маркировкой
     description: ''
+    x-tagKey: reportOnItemsWithMandatoryLabeling
   - name: Отчёты об удержаниях
     x-displayName: Отчёты об удержаниях
     description: ''
+    x-tagKey: retentionReports
   - name: Операции при приёмке
     x-displayName: Операции при приёмке
     description: ''
+    x-tagKey: acceptanceExpenses
   - name: Платное хранение
     x-displayName: Платное хранение
     description: ''
+    x-tagKey: paidStorage
   - name: Продажи по регионам
     x-displayName: Продажи по регионам
     description: ''
+    x-tagKey: salesByRegions
   - name: Доля бренда в продажах
     x-displayName: Доля бренда в продажах
     description: ''
+    x-tagKey: shareOfBrandInSales
   - name: Заблокированные карточки
     x-displayName: Заблокированные карточки
     description: ''
+    x-tagKey: blockedItems
   - name: Отчёт о возвратах и перемещении товаров
     x-displayName: Отчёт о возвратах и перемещении товаров
     description: ''
+    x-tagKey: returnsAndItemMovementReport
 paths:
   /api/v1/supplier/orders:
     servers:
@@ -78,7 +88,7 @@ paths:
 
         Информация о заказе хранится 90 дней с момента оформления.<br><br>
 
-        В ответах могут отсутствовать заказы, по которым не подтверждена оплата. Например, заказы с отложенными платежами или оплатой в рассрочку. При этом, если по таким заказам есть продажи, вы можете получить их с помощью [детализаций к отчётам реализации](/openapi/financial-reports-and-accounting#tag/financialReports).<br>
+        В ответах могут отсутствовать заказы, по которым не подтверждена оплата. Например, заказы с отложенными платежами или оплатой в рассрочку. При этом, если по таким заказам есть продажи, вы можете получить их с помощью [детализаций к отчётам реализации](/openapi/documents-and-accounting#tag/financialReports).<br>
         Чтобы получить все оформленные заказы, используйте [Ленту заказов](/openapi/analytics#tag/orderFeed).
 
         <div class="description_important">
@@ -173,6 +183,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/supplier/sales:
@@ -206,7 +218,7 @@ paths:
           - Поля `finishedPrice`, `priceWithDisc`, `forPay` могут временно иметь значение `0`: данные заполняются асинхронно, актуализируются в течение 24 часов
           - Для заказов, которые оплачены в валюте, отличной от валюты продавца, возможны округления цен из-за конвертации валют
 
-        Для точных финансовых расчётов, сверки и отчётности используйте [детализации к отчётам реализации](/openapi/financial-reports-and-accounting#tag/financialReports).<br><br>
+        Для точных финансовых расчётов, сверки и отчётности используйте [детализации к отчётам реализации](/openapi/documents-and-accounting#tag/financialReports).<br><br>
 
         Для одного ответа на запрос с `flag=0` или без `flag` в системе установлено условное ограничение 80000 строк. Поэтому, чтобы получить все продажи и возвраты, может потребоваться более, чем один запрос. Во втором и далее запросе в параметре `dateFrom `используйте полное значение поля `lastChangeDate` из последней строки ответа на предыдущий запрос.<br> Если в ответе отдаётся пустой массив `[]`, все продажи и возвраты уже выгружены.<br><br>
 
@@ -297,6 +309,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/analytics/excise-report:
@@ -356,6 +370,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/warehouse_remains:
@@ -487,6 +503,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/warehouse_remains/tasks/{task_id}/status:
@@ -547,6 +565,8 @@ paths:
                 title: Bad Request
         '401':
           $ref: '#/components/responses/401'
+        '403':
+          $ref: '#/components/responses/403'
         '404':
           description: Не найдено
           content:
@@ -686,6 +706,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '404':
           description: Не найдено
           content:
@@ -782,6 +804,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Response403Retentions'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/analytics/v1/warehouse-measurements:
@@ -867,6 +895,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Response403Retentions'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/analytics/v1/deductions:
@@ -973,6 +1007,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Response403Retentions'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/analytics/antifraud-details:
@@ -1023,6 +1063,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/analytics/goods-labeling:
@@ -1084,6 +1126,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/acceptance_report:
@@ -1150,6 +1194,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/acceptance_report/tasks/{task_id}/status:
@@ -1210,6 +1256,8 @@ paths:
                 title: Bad Request
         '401':
           $ref: '#/components/responses/401'
+        '403':
+          $ref: '#/components/responses/403'
         '404':
           description: Не найдено
           content:
@@ -1315,6 +1363,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '404':
           description: Не найдено
           content:
@@ -1416,6 +1466,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/paid_storage/tasks/{task_id}/status:
@@ -1476,6 +1528,8 @@ paths:
                 title: Bad Request
         '401':
           $ref: '#/components/responses/401'
+        '403':
+          $ref: '#/components/responses/403'
         '404':
           description: Не найдено
           content:
@@ -1572,6 +1626,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '404':
           description: Не найдено
           content:
@@ -1642,6 +1698,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/analytics/brand-share/brands:
@@ -1681,6 +1739,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/analytics/brand-share/parent-subjects:
@@ -1764,6 +1824,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/analytics/brand-share:
@@ -1843,6 +1905,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/analytics/banned-products/blocked:
@@ -1970,6 +2034,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
   /api/v1/analytics/goods-return:
@@ -2141,6 +2207,8 @@ paths:
           $ref: '#/components/responses/401'
         '402':
           $ref: '#/components/responses/402'
+        '403':
+          $ref: '#/components/responses/403'
         '429':
           $ref: '#/components/responses/429'
 components:
@@ -2471,6 +2539,20 @@ components:
               description: Удержания
               items:
                 type: object
+                required:
+                  - nmId
+                  - subjectName
+                  - dimId
+                  - prcOver
+                  - volume
+                  - width
+                  - length
+                  - height
+                  - volumeSup
+                  - widthSup
+                  - lengthSup
+                  - heightSup
+                  - photoUrls
                 properties:
                   nmId:
                     type: integer
@@ -2554,6 +2636,16 @@ components:
                     type: number
                     description: Сумма штрафа
                     example: 449.83
+                  dateStart:
+                    type: string
+                    format: date-time
+                    example: '2025-05-09T13:35:57Z'
+                    description: Дата и время начала действия коэффициента
+                  dateEnd:
+                    type: string
+                    format: date-time
+                    example: '2025-05-29T13:35:57Z'
+                    description: Дата и время окончания действия коэффициента
             total:
               type: integer
               description: Количество удержаний в отчёте. Без учёта `limit` и `offset`
@@ -2811,6 +2903,34 @@ components:
         title:
           type: string
           description: Заголовок ошибки
+    Response4XX:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Заголовок ошибки
+        detail:
+          type: string
+          description: Детали ошибки
+        code:
+          type: string
+          description: Внутренний код ошибки
+        requestId:
+          type: string
+          description: ID запроса
+        origin:
+          type: string
+          description: ID внутреннего сервиса WB
+        status:
+          type: number
+          description: HTTP статус-код
+        statusText:
+          type: string
+          description: Расшифровка HTTP статус-кода
+        timestamp:
+          type: string
+          format: date-time
+          description: Дата и время запроса
   parameters:
     flag:
       in: query
@@ -3084,6 +3204,16 @@ components:
                 - https://static-basket-03.wb.ru/vol54/handheld-goods-measurements-photo/8906416_ff93b7c4-19d6-e0a2-4dba-7c2f09f06b3.jpg
               dt: '2025-04-01T00:06:00Z'
           total: 2
+    Response403TokenCategory:
+      value:
+        status: 403
+        statusText: Forbidden
+        title: Forbidden
+        detail: scope is not allowed for this resource
+        requestId: 2dbf6fc9-bad8-4ef9-a058-c938a8553ba5
+        origin: ag-marketplace
+        timestamp: '2026-09-03T13:55:15Z'
+      description: Неверная категория токена
   responses:
     '401':
       description: Не авторизован
@@ -3122,7 +3252,7 @@ components:
             detail: 'token problem; token is malformed: could not base64 decode signature: illegal base64 data at input byte 84'
             code: 07e4668e--a53a3d31f8b0-[UK-oWaVDUqNrKG]; 03bce=277; 84bd353bf-75
             requestId: 7b80742415072fe8b6b7f7761f1d1211
-            origin: s2s-api-auth-catalog
+            origin: ag-marketplace
             status: 401
             statusText: Unauthorized
             timestamp: '2024-09-30T06:52:38Z'
@@ -3142,6 +3272,49 @@ components:
           example:
             title: payment required
             detail: wb solution for business has insufficient funds on its balance. please top up the balance in the company's personal account https://dev.wildberries.ru/company
+    '403':
+      description: Доступ запрещён
+      content:
+        application/problem+json:
+          schema:
+            type: object
+            properties:
+              title:
+                type: string
+                description: Заголовок ошибки
+              detail:
+                type: string
+                description: Детали ошибки
+              code:
+                type: string
+                description: Внутренний код ошибки
+              requestId:
+                type: string
+                description: ID запроса
+              origin:
+                type: string
+                description: ID внутреннего сервиса WB
+              status:
+                type: number
+                description: HTTP статус-код
+              statusText:
+                type: string
+                description: Расшифровка HTTP статус-кода
+              timestamp:
+                type: string
+                format: date-time
+                description: Дата и время запроса
+          examples:
+            Response403TokenCategory:
+              value:
+                status: 403
+                statusText: Forbidden
+                title: Forbidden
+                detail: scope is not allowed for this resource
+                requestId: 2dbf6fc9-bad8-4ef9-a058-c938a8553ba5
+                origin: ag-marketplace
+                timestamp: '2026-09-03T13:55:15Z'
+              description: Неверная категория токена
     '429':
       description: Слишком много запросов
       content:
@@ -3179,7 +3352,7 @@ components:
             detail: limited by c122a060-a7fb-4bb4-abb0-32fd4e18d489
             code: 07e4668e-ac2242c5c8c5-[UK-4dx7JUdskGZ]
             requestId: 9d3c02cc698f8b041c661a7c28bed293
-            origin: s2s-api-auth-catalog
+            origin: ag-marketplace
             status: 429
             statusText: Too Many Requests
             timestamp: '2024-09-30T06:52:38Z'
