@@ -5,7 +5,7 @@
 # Если ночная funnel-agg умерла в 429-шторме — окно отсутствует/частично
 # навсегда, самолечения нет (доказано ночами 10-18.09.2026).
 #
-# Логика: для 14 ожидаемых окон [сегодня-20 .. сегодня-7] считаем строки;
+# Логика: для 21 ожидаемого окна [сегодня-27 .. сегодня-7] считаем строки;
 # медиана полных окон — эталон; окно с числом строк < 80% медианы или
 # отсутствующее — дырка. Дырки перекачиваются с явными датами
 # (--selected-start/--selected-end, past выводится автоматически).
@@ -40,11 +40,12 @@ mkdir -p "$LOGDIR"
 echo "=== $(date '+%F %T') refill-funnel-holes: старт (dry_run=$DRY_RUN) ==="
 
 # --- Детекция дырок одним запросом -----------------------------------------
-# Ожидаемые старты окон: current_date-20 .. current_date-7 (14 шт).
+# Ожидаемые старты окон: current_date-27 .. current_date-7 (21 шт; глубина
+# больше горизонта детекции — старые дырки выпадают из долива навсегда).
 # Эталон — медиана строк окон с count>1000 (полных); дырка — <80% медианы.
 HOLES=$(PGPASSWORD="$PG_PWD" "$PSQL" -h "$PGH" -p "$PGP" -U "$PGU" -d "$DB" -At -F'|' -c "
 WITH expect AS (
-  SELECT generate_series(current_date - 20, current_date - 7, interval '1 day')::date AS s
+  SELECT generate_series(current_date - 27, current_date - 7, interval '1 day')::date AS s
 ), have AS (
   SELECT period_start::date AS s, count(*) AS c
   FROM funnel_metrics_aggregated GROUP BY 1
