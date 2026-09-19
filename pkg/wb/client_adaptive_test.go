@@ -215,3 +215,64 @@ func TestAdaptiveRateLimit_RetryConsumesBackoffTime(t *testing.T) {
 		t.Errorf("elapsed = %v, test took too long (rate limiter blocking?)", elapsed)
 	}
 }
+
+func Test429CooldownFlat_NoMultiplier(t *testing.T) {
+	// Cooldown при 429 плоский: max(X-Ratelimit-Retry, интервал apiFloor), без
+	// домножения на номер попытки. Три 429 с hint=2 дают ТРИ паузы по 2с ≈ 6с
+	// (пауза выполняется и после последней попытки, перед выходом из цикла);
+	// прежний множитель ×2/×3 дал бы 2+4+6=12с и тест падает (граница 9с).
+	mockHTTP := &mockHTTPClient{
+		responses: []*mockResponse{
+			{status: 429, header: map[string]string{"X-Ratelimit-Retry": "2"}},
+			{status: 429, header: map[string]string{"X-Ratelimit-Retry": "2"}},
+			{status: 429, header: map[string]string{"X-Ratelimit-Retry": "2"}},
+		},
+	}
+	client := New("test_key")
+	client.SetHTTPClient(mockHTTP)
+	client.SetRateLimit("my_tool", testDesiredRate, testDesiredBurst, testAPIRate, testAPIBurst)
+
+	start := time.Now()
+	ctx := context.Background()
+	var result []map[string]interface{}
+	err := client.Get(ctx, "my_tool", "https://api.example.com", testFallbackRate, testFallbackBurst, "/test", nil, &result)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error after 3 consecutive 429s")
+	}
+	if got := mockHTTP.requestCount(); got != 3 {
+		t.Errorf("request count = %d, want 3", got)
+	}
+	if elapsed < 5500*time.Millisecond {
+		t.Errorf("elapsed = %v, want ≥ 5.5s (три паузы по ~2с)", elapsed)
+	}
+	if elapsed > 9*time.Second {
+		t.Errorf("elapsed = %v, cooldown не плоский (множитель на попытку вернулся?)", elapsed)
+	}
+}
+
+func Test429Cooldown_ServerHintAboveFloor(t *testing.T) {
+	// max(подсказка, floor): hint "0" → default serverRetrySec=1с, floor
+	// apiRate=300/мин → интервал 0.2с — пауза равна подсказке 1с.
+	mockHTTP := newMockHTTP("0")
+	client := New("test_key")
+	client.SetHTTPClient(mockHTTP)
+	client.SetRateLimit("my_tool", testDesiredRate, testDesiredBurst, 300, 100)
+
+	start := time.Now()
+	ctx := context.Background()
+	var result []map[string]interface{}
+	_ = client.Get(ctx, "my_tool", "https://api.example.com", testFallbackRate, testFallbackBurst, "/test", nil, &result)
+	elapsed := time.Since(start)
+
+	if got := mockHTTP.requestCount(); got != 2 {
+		t.Errorf("request count = %d, want 2 (429 + retry)", got)
+	}
+	if elapsed < 900*time.Millisecond {
+		t.Errorf("elapsed = %v, want ≥ 0.9с (подсказка 1с выше floor 0.2с)", elapsed)
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("elapsed = %v, пауза не соответствует подсказке сервера", elapsed)
+	}
+}

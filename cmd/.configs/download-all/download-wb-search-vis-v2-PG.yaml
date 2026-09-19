@@ -11,11 +11,14 @@ search_visibility:
     # батч ловил 429 (swagger обещает 3/min, но не держится; origin ag-contentanalytics).
     search_report: 2
     search_report_burst: 1
-    search_report_api: 2
+    # api floor = сваггер-лимит семейства 3 req/min (интервал 20с): cooldown после
+    # 429 = max(X-Ratelimit-Retry, 20с), плоский без множителя на попытку.
+    # desired не меняется — лимитер не поднимается (drop только если floor ниже).
+    search_report_api: 3
     search_report_api_burst: 1
     search_texts: 1
     search_texts_burst: 1
-    search_texts_api: 1
+    search_texts_api: 3
     search_texts_api_burst: 1
   adaptive_probe_after: 30
   max_backoff_seconds: 60

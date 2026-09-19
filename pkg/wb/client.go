@@ -507,14 +507,11 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 					serverRetrySec = sec
 				}
 			}
+			// Плоский cooldown без множителя на номер попытки: max(подсказка сервера
+			// X-Ratelimit-Retry, интервал apiFloor), cap уже внутри adaptiveReduce.
+			// Повтор раньше подсказки гарантированно даёт 429 (доки WB), а сон дольше
+			// сжигает попытки в конкурентно вычерпываемом ведре.
 			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
-			// Exponential backoff on consecutive 429s: 2x, 3x, ... (capped at maxBackoff)
-			if i > 0 {
-				waitDur = waitDur * time.Duration(i+1)
-				if c.maxBackoffSeconds > 0 && waitDur > time.Duration(c.maxBackoffSeconds)*time.Second {
-					waitDur = time.Duration(c.maxBackoffSeconds) * time.Second
-				}
-			}
 
 			lastErr = fmt.Errorf("429 rate limited: %s", err429.Detail)
 
@@ -744,14 +741,11 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 					serverRetrySec = sec
 				}
 			}
+			// Плоский cooldown без множителя на номер попытки: max(подсказка сервера
+			// X-Ratelimit-Retry, интервал apiFloor), cap уже внутри adaptiveReduce.
+			// Повтор раньше подсказки гарантированно даёт 429 (доки WB), а сон дольше
+			// сжигает попытки в конкурентно вычерпываемом ведре.
 			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
-			// Exponential backoff on consecutive 429s: 2x, 3x, ... (capped at maxBackoff)
-			if i > 0 {
-				waitDur = waitDur * time.Duration(i+1)
-				if c.maxBackoffSeconds > 0 && waitDur > time.Duration(c.maxBackoffSeconds)*time.Second {
-					waitDur = time.Duration(c.maxBackoffSeconds) * time.Second
-				}
-			}
 
 			lastErr = fmt.Errorf("429 rate limited: %s", err429.Detail)
 

@@ -22,7 +22,10 @@ funnel_aggregated:
   rate_limits:
     funnel_aggregated: 2
     funnel_aggregated_burst: 1
-    funnel_aggregated_api: 2
+    # api floor = сваггер-лимит ручки 3 req/min (интервал 20с): после 429 cooldown
+    # = max(X-Ratelimit-Retry, 20с). desired остаётся 2/мин — лимитер не поднимается
+    # (drop до floor срабатывает только если floor НИЖЕ текущего).
+    funnel_aggregated_api: 3
     funnel_aggregated_api_burst: 1
   adaptive_probe_after: 10
   max_backoff_seconds: 120
