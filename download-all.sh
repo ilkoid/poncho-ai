@@ -175,7 +175,13 @@ maint funnel-agg
 #maint funnel-csv
 run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" --config "$C/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint search-vis
-run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# Отключено 21.09.2026: шторма 429 на /product/search-texts каждую ночь с 15.09 —
+# ведро лимитов персчётное на аккаунт (~1/min фактической ёмкости), а VPS2 своим
+# download-all-v2.sh (~02:30) качает ту же ручку в пересекающемся окне: 2 машины ×
+# 1/min = постоянный дефицит для обеих. Владелец ручки — VPS2; при необходимости
+# локальный разовый сбор: go run ./cmd/data-downloaders/download-wb-search-vis-v2
+#   --config cmd/.configs/download-all/download-wb-search-vis-v2-PG.yaml --backend postgres
+#run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint penalties
 run go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$C/download-wb-penalties-v2-PG.yaml" --backend postgres
 maint whremains
