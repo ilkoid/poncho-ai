@@ -22,6 +22,16 @@ search_visibility:
     search_texts_api_burst: 1
   adaptive_probe_after: 30
   max_backoff_seconds: 60
+
+  # Rescue-долив упавших батчей: основной цикл не тормозит (батчи независимы),
+  # в конце фазы неудачники перезапрашиваются проходами, пока не иссякнут или
+  # не кончится бюджет. Оверран ночного окна ограничен: ≤ initial_sleep + budget
+  # + один цикл батча на фазу. Ночью 20.09.2026 шторм съел 58/105 батчей молча.
+  rescue_timeout: "30m"       # бюджет долива на фазу
+  rescue_initial_sleep: "5m"  # пауза перед первым проходом (шторму дают выдохнуться; < rescue_timeout!)
+  rescue_pass_sleep: "30s"    # пауза между проходами (анти-hot-loop по мгновенным 4xx)
+  max_allowed_errors: 0       # потеряно после долива > порога → exit 1 (фаза FAIL в Summary)
+
   filter:
     exclude_lengths: [6]
     allowed_years: [25, 26]

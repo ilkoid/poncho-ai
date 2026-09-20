@@ -2,6 +2,8 @@ package searchvis
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -83,11 +85,11 @@ func TestSkipPositions(t *testing.T) {
 	writer := NewDiscardWriter()
 
 	dl := NewDownloader(src, writer, DownloadOptions{
-		NmIDs:        []int{101},
-		BeginDate:    "2026-05-28",
-		EndDate:      "2026-06-04",
-		SnapshotDate: "2026-06-04",
-		QueryLimit:   30,
+		NmIDs:         []int{101},
+		BeginDate:     "2026-05-28",
+		EndDate:       "2026-06-04",
+		SnapshotDate:  "2026-06-04",
+		QueryLimit:    30,
 		SkipPositions: true,
 	})
 
@@ -380,5 +382,155 @@ func TestDurationSet(t *testing.T) {
 	}
 	if result.Duration > time.Second {
 		t.Errorf("mock download should be fast, took %v", result.Duration)
+	}
+}
+
+// ============================================================================
+// Test 10-12: Rescue-долив упавших батчей
+// ============================================================================
+
+// rescueSource fails positions batches identified by their first nmID for the
+// first failTimes attempts, then succeeds (simulates 429-шторм, кончившийся
+// к моменту rescue-прохода).
+type rescueSource struct {
+	MockSource
+	failFirst map[int]int // first nmID of batch → how many leading attempts fail
+	calls     map[int]int
+}
+
+func (s *rescueSource) FetchPositions(ctx context.Context, req PositionsRequest) ([]SearchPositionRow, error) {
+	key := req.NmIDs[0]
+	s.calls[key]++
+	if s.failFirst[key] >= s.calls[key] {
+		return nil, fmt.Errorf("rate limit exceeded, retry after the period specified in the X-RateLimit-Retry header")
+	}
+	return s.MockSource.FetchPositions(ctx, req)
+}
+
+func TestRescueRecoversFailedBatches(t *testing.T) {
+	// 250 nmIDs → 3 position batches; batches 2-3 падают при первой попытке
+	// (основной цикл), при второй (rescue-проход) успешны.
+	nmIDs := make([]int, 250)
+	for i := range nmIDs {
+		nmIDs[i] = 100 + i
+	}
+
+	src := &rescueSource{
+		MockSource: *NewMockSource(),
+		failFirst:  map[int]int{200: 1, 300: 1},
+		calls:      map[int]int{},
+	}
+	writer := NewDiscardWriter()
+
+	dl := NewDownloader(src, writer, DownloadOptions{
+		NmIDs:              nmIDs,
+		BeginDate:          "2026-05-28",
+		EndDate:            "2026-06-04",
+		SnapshotDate:       "2026-06-04",
+		QueryLimit:         30,
+		SkipQueries:        true,
+		RescueTimeout:      time.Minute,
+		RescueInitialSleep: time.Millisecond,
+		RescuePassSleep:    time.Millisecond,
+	})
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Errors != 0 {
+		t.Errorf("expected 0 errors after rescue, got %d", result.Errors)
+	}
+	if result.PositionRows != 250 {
+		t.Errorf("expected all 250 position rows recovered, got %d", result.PositionRows)
+	}
+	if writer.SavedPositions() != 250 {
+		t.Errorf("expected writer to receive 250 rows, got %d", writer.SavedPositions())
+	}
+}
+
+// alwaysFailSource fails every positions fetch instantly (имитация «ядовитого»
+// батча / затяжного шторма — ошибка возвращается без ретраев клиента).
+type alwaysFailSource struct {
+	MockSource
+}
+
+func (s *alwaysFailSource) FetchPositions(ctx context.Context, req PositionsRequest) ([]SearchPositionRow, error) {
+	return nil, fmt.Errorf("400 bad request")
+}
+
+func TestRescueBudgetExhausted(t *testing.T) {
+	// 150 nmIDs → 2 position batches, оба падают всегда. Rescue обязан
+	// остановиться по бюджету (регрессия на зацикливание) и честно
+	// посчитать потери.
+	nmIDs := make([]int, 150)
+	for i := range nmIDs {
+		nmIDs[i] = 100 + i
+	}
+
+	src := &alwaysFailSource{MockSource: *NewMockSource()}
+	writer := NewDiscardWriter()
+
+	dl := NewDownloader(src, writer, DownloadOptions{
+		NmIDs:              nmIDs,
+		BeginDate:          "2026-05-28",
+		EndDate:            "2026-06-04",
+		SnapshotDate:       "2026-06-04",
+		QueryLimit:         30,
+		SkipQueries:        true,
+		RescueTimeout:      30 * time.Millisecond,
+		RescueInitialSleep: 5 * time.Millisecond,
+		RescuePassSleep:    5 * time.Millisecond,
+	})
+
+	start := time.Now()
+	result, err := dl.Run(context.Background())
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Errors != 2 {
+		t.Errorf("expected 2 lost batches after budget exhausted, got %d", result.Errors)
+	}
+	if result.PositionRows != 0 {
+		t.Errorf("expected 0 rows saved, got %d", result.PositionRows)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("rescue must be bounded by its budget, took %v", elapsed)
+	}
+}
+
+func TestRescueCtxCancelDuringSleep(t *testing.T) {
+	// Отмена во время rescue initial sleep должна прервать Run с ctx-ошибкой
+	// (как ctx-cancel в основном цикле), а не проигнорироваться.
+	src := &alwaysFailSource{MockSource: *NewMockSource()}
+	writer := NewDiscardWriter()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	dl := NewDownloader(src, writer, DownloadOptions{
+		NmIDs:              []int{100},
+		BeginDate:          "2026-05-28",
+		EndDate:            "2026-06-04",
+		SnapshotDate:       "2026-06-04",
+		QueryLimit:         30,
+		SkipQueries:        true,
+		RescueTimeout:      time.Minute,
+		RescueInitialSleep: 500 * time.Millisecond,
+		RescuePassSleep:    time.Millisecond,
+	})
+
+	_, err := dl.Run(ctx)
+	if err == nil {
+		t.Fatal("expected context cancellation error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }

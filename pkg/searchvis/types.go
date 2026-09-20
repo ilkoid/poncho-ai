@@ -7,8 +7,8 @@
 //   - Downloader — business logic depends only on interfaces
 //
 // Covers 2 phases:
-//   1. Search Positions — POST /api/v2/search-report/report (aggregated positions, visibility %)
-//   2. Search Queries  — POST /api/v2/search-report/product/search-texts (top queries per product)
+//  1. Search Positions — POST /api/v2/search-report/report (aggregated positions, visibility %)
+//  2. Search Queries  — POST /api/v2/search-report/product/search-texts (top queries per product)
 //
 // Both endpoints share a global 3 req/min rate limit.
 package searchvis
@@ -189,6 +189,15 @@ type DownloadOptions struct {
 	RateLimit int
 	Burst     int
 
+	// Rescue — долив упавших батчей после основного цикла фазы.
+	// Батчи search-vis независимы (не страницы одного ресурса), поэтому упавший
+	// батч не тормозит цикл: его добивают отдельными проходами с бюджетом
+	// времени — шторму 429 дают выдохнуться, оверран ночного окна ограничен.
+	// Нулевой RescueTimeout = долив выключен (тесты, legacy-вызовы).
+	RescueTimeout      time.Duration // бюджет долива (0 = выкл)
+	RescueInitialSleep time.Duration // пауза перед первым проходом
+	RescuePassSleep    time.Duration // пауза между проходами (анти-hot-loop для мгновенных 4xx)
+
 	// OnProgress callback for status messages (nil = silent).
 	OnProgress func(msg string)
 }
@@ -197,6 +206,6 @@ type DownloadOptions struct {
 type DownloadResult struct {
 	PositionRows int           // Total position rows saved
 	QueryRows    int           // Total query rows saved
-	Errors       int           // Batches that failed but were skipped
+	Errors       int           // Batches lost AFTER rescue (permanent gaps for this snapshot_date)
 	Duration     time.Duration // Total run time
 }

@@ -41,9 +41,9 @@ import (
 
 // Config holds YAML configuration for the search-visibility v2 downloader.
 type Config struct {
-	WB              config.WBClientConfig          `yaml:"wb"`
-	SearchVis       config.SearchVisibilityConfig  `yaml:"search_visibility"`
-	Storage         config.V2StorageConfig         `yaml:"storage"`
+	WB        config.WBClientConfig         `yaml:"wb"`
+	SearchVis config.SearchVisibilityConfig `yaml:"search_visibility"`
+	Storage   config.V2StorageConfig        `yaml:"storage"`
 }
 
 func main() {
@@ -161,17 +161,34 @@ func main() {
 		source = searchvis.NewWBSource(wbClient, rl.SearchReport, rl.SearchReportBurst)
 	}
 
+	// Rescue-долив длительности (строки → Duration; дефолты уже в GetDefaults)
+	rescueTimeout, err := time.ParseDuration(svCfg.RescueTimeout)
+	if err != nil {
+		log.Fatalf("config search_visibility.rescue_timeout %q: %v", svCfg.RescueTimeout, err)
+	}
+	rescueInitialSleep, err := time.ParseDuration(svCfg.RescueInitialSleep)
+	if err != nil {
+		log.Fatalf("config search_visibility.rescue_initial_sleep %q: %v", svCfg.RescueInitialSleep, err)
+	}
+	rescuePassSleep, err := time.ParseDuration(svCfg.RescuePassSleep)
+	if err != nil {
+		log.Fatalf("config search_visibility.rescue_pass_sleep %q: %v", svCfg.RescuePassSleep, err)
+	}
+
 	opts := searchvis.DownloadOptions{
-		NmIDs:         nmIDs,
-		BeginDate:     beginDate,
-		EndDate:       endDate,
-		SnapshotDate:  snapshotDate,
-		QueryLimit:    svCfg.Limit,
-		SkipPositions: svCfg.SkipPositions,
-		SkipQueries:   svCfg.SkipQueries,
-		DryRun:        *dryRun,
-		RateLimit:     svCfg.RateLimits.SearchReport,
-		Burst:         svCfg.RateLimits.SearchReportBurst,
+		NmIDs:              nmIDs,
+		BeginDate:          beginDate,
+		EndDate:            endDate,
+		SnapshotDate:       snapshotDate,
+		QueryLimit:         svCfg.Limit,
+		SkipPositions:      svCfg.SkipPositions,
+		SkipQueries:        svCfg.SkipQueries,
+		DryRun:             *dryRun,
+		RateLimit:          svCfg.RateLimits.SearchReport,
+		Burst:              svCfg.RateLimits.SearchReportBurst,
+		RescueTimeout:      rescueTimeout,
+		RescueInitialSleep: rescueInitialSleep,
+		RescuePassSleep:    rescuePassSleep,
 		OnProgress: func() func(string) {
 			var page int
 			start := time.Now()
@@ -190,6 +207,13 @@ func main() {
 
 	dllog.Done(result.Duration, "positions=%d queries=%d errors=%d",
 		result.PositionRows, result.QueryRows, result.Errors)
+
+	// Честный статус фазы: батчи, потерянные даже после rescue — это дыра в
+	// search_*_daily за сегодняшнюю дату (следующая ночь пишет новый snapshot_date
+	// и дыру не закрывает). Молчаливый exit 0 прятал потерю 58/105 батчей 20.09.2026.
+	if result.Errors > svCfg.MaxAllowedErrors {
+		log.Fatalf("searchvis: %d batch(es) lost after rescue (allowed %d)", result.Errors, svCfg.MaxAllowedErrors)
+	}
 }
 
 // createBackend creates Writer + Reader from the same backend.

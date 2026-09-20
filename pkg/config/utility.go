@@ -1371,6 +1371,14 @@ type SearchVisibilityConfig struct {
 	AdaptiveProbeAfter int                        `yaml:"adaptive_probe_after"`
 	MaxBackoffSeconds  int                        `yaml:"max_backoff_seconds"`
 	Filter             FunnelFilterConfig         `yaml:"filter"`
+
+	// Rescue — долив упавших батчей после основного цикла фазы.
+	// Батчи независимы, поэтому упавший не тормозит цикл — его добивают
+	// проходами с бюджетом времени (шторму 429 дают выдохнуться).
+	RescueTimeout      string `yaml:"rescue_timeout"`       // бюджет долива, default "30m"; 0 в DownloadOptions = выкл
+	RescueInitialSleep string `yaml:"rescue_initial_sleep"` // пауза перед первым проходом, default "5m" (< rescue_timeout!)
+	RescuePassSleep    string `yaml:"rescue_pass_sleep"`    // пауза между проходами, default "30s"
+	MaxAllowedErrors   int    `yaml:"max_allowed_errors"`   // потеряно после долива > порога → exit 1 (default 0 — честный FAIL)
 }
 
 // SearchVisibilityRateLimits — rate limits для search-report API endpoints.
@@ -1439,6 +1447,18 @@ func (c *SearchVisibilityConfig) GetDefaults() SearchVisibilityConfig {
 	}
 	if result.MaxBackoffSeconds == 0 {
 		result.MaxBackoffSeconds = 60
+	}
+
+	// Rescue-долив: дефолты длительностей; MaxAllowedErrors остаётся 0
+	// (нулевое значение) — любая потеря после долива честно фейлит фазу.
+	if result.RescueTimeout == "" {
+		result.RescueTimeout = "30m"
+	}
+	if result.RescueInitialSleep == "" {
+		result.RescueInitialSleep = "5m"
+	}
+	if result.RescuePassSleep == "" {
+		result.RescuePassSleep = "30s"
 	}
 
 	return result
