@@ -9,6 +9,8 @@ package main
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -99,7 +101,7 @@ func boolRu(b bool) string {
 //
 // photos — карта nmID → JPEG-байты миниатюры (для встраивания в колонку «Фото»).
 // embed — встроить ли миниатюры (true) или ограничиться колонкой-ссылкой (false).
-func exportXLSX(rows []Row, path string, collections, seasons []string, photos map[int64][]byte, embed bool) error {
+func exportXLSX(rows []Row, path string, collections, seasons []string, allowedYears []int, photos map[int64][]byte, embed bool) error {
 	f := excelize.NewFile()
 	sheet := "Отчёт"
 	f.SetSheetName("Sheet1", sheet)
@@ -262,7 +264,7 @@ func exportXLSX(rows []Row, path string, collections, seasons []string, photos m
 	}
 
 	// Сводный лист.
-	addFunnelSummary(f, rows, collections, seasons)
+	addFunnelSummary(f, rows, collections, seasons, allowedYears)
 
 	return f.SaveAs(path)
 }
@@ -286,7 +288,7 @@ func colIndexByHeader(header string) int {
 }
 
 // addFunnelSummary — лист «Сводка» с raw-подсчётами состояний воронки (без скора).
-func addFunnelSummary(f *excelize.File, rows []Row, collections, seasons []string) {
+func addFunnelSummary(f *excelize.File, rows []Row, collections, seasons []string, allowedYears []int) {
 	sheet := "Сводка"
 	f.NewSheet(sheet)
 
@@ -303,6 +305,12 @@ func addFunnelSummary(f *excelize.File, rows []Row, collections, seasons []strin
 			filterDesc += "  "
 		}
 		filterDesc += "Сезоны: " + joinCollections(seasons)
+	}
+	if len(allowedYears) > 0 {
+		if filterDesc != "" {
+			filterDesc += "  "
+		}
+		filterDesc += "Годы: " + joinYears(allowedYears)
 	}
 	if filterDesc == "" {
 		filterDesc = "(фильтр не задан)"
@@ -374,6 +382,16 @@ func joinCollections(c []string) string {
 		out += `"` + s + `"`
 	}
 	return out
+}
+
+// joinYears — компактное перечисление годов производства (2-значные → 4-значные
+// для читаемости: [24, 25, 26] → "2024, 2025, 2026").
+func joinYears(y []int) string {
+	parts := make([]string, len(y))
+	for i, v := range y {
+		parts[i] = strconv.Itoa(2000 + v)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // xSet — хелпер установки значения ячейки (как в analyze-promo-calendar/report.go).

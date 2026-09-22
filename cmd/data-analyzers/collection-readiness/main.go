@@ -43,6 +43,7 @@ Options:
   --xlsx PATH          Выходной xlsx (пусто → report-<slug>-YYYYMMDD.xlsx)
   --limit N            Ограничить число строк (0 = все)
   --exclude-lengths A,B  Исключить артикулы заданных длин (overrides config; напр. 6,7)
+  --years A,B          Годы производства, 2-значные (24,25,26 = 2024-2026; overrides config)
   --db NAME            БД (overrides storage.pg_database, напр. wb_data_test)
   --dry-run            Показать параметры запроса без обращения к БД
   --mock               Сгенерировать демо-xlsx без БД
@@ -65,6 +66,7 @@ func main() {
 	xlsxPath := flag.String("xlsx", "", "Выходной xlsx (overrides config)")
 	limit := flag.Int("limit", 0, "Ограничить число строк (0 = все)")
 	excludeLengthsStr := flag.String("exclude-lengths", "", "Исключить артикулы заданных длин через запятую (overrides config; напр. 6,7)")
+	yearsStr := flag.String("years", "", "Годы производства через запятую, 2-значные (24,25,26 = 2024-2026; overrides config)")
 	dbName := flag.String("db", "", "БД (overrides storage.pg_database)")
 	dryRun := flag.Bool("dry-run", false, "Показать параметры запроса без обращения к БД")
 	mock := flag.Bool("mock", false, "Сгенерировать демо-xlsx без БД")
@@ -102,6 +104,9 @@ func main() {
 	}
 	if *excludeLengthsStr != "" {
 		cfg.ExcludeLengths = parseIntList(*excludeLengthsStr)
+	}
+	if *yearsStr != "" {
+		cfg.AllowedYears = parseIntList(*yearsStr)
 	}
 	if *dbName != "" {
 		cfg.Storage.PgDatabase = *dbName
@@ -144,6 +149,9 @@ func main() {
 	if len(cfg.Seasons) > 0 {
 		fmt.Printf("  Сезоны:    %s\n", strings.Join(cfg.Seasons, ", "))
 	}
+	if len(cfg.AllowedYears) > 0 {
+		fmt.Printf("  Годы:      %s\n", joinYears(cfg.AllowedYears))
+	}
 	fmt.Printf("  База:      %s\n", cfg.Storage.DisplayDB())
 	if cfg.Limit > 0 {
 		fmt.Printf("  Лимит:     %d строк\n", cfg.Limit)
@@ -156,7 +164,7 @@ func main() {
 	if *mock {
 		fmt.Println("\n  Режим --mock: генерация демо-xlsx без обращения к БД.")
 		rows := mockRows()
-		if err := exportXLSX(rows, cfg.XLSX, cfg.Collections, cfg.Seasons, nil, false); err != nil {
+		if err := exportXLSX(rows, cfg.XLSX, cfg.Collections, cfg.Seasons, cfg.AllowedYears, nil, false); err != nil {
 			log.Fatalf("  Ошибка экспорта: %v", err)
 		}
 		fmt.Printf("  → %s  (%d строк, %s)\n", cfg.XLSX, len(rows), time.Since(start).Round(time.Millisecond))
@@ -212,6 +220,25 @@ func main() {
 		rows = kept
 	}
 
+	// ── Фильтр по году производства (allowed_years): только свежие коллекции ──
+	// Год уже вычислен в loadRows (articleYear: символы 2-3 артикула → 20XX; 0 = легаси).
+	// Сравниваем по модулю 100: 2024→24, как в конвенции allowed_years по репо.
+	if len(cfg.AllowedYears) > 0 {
+		kept := make([]Row, 0, len(rows))
+		for _, r := range rows {
+			if r.ProductionYear != 0 && slices.Contains(cfg.AllowedYears, r.ProductionYear%100) {
+				kept = append(kept, r)
+			}
+		}
+		fmt.Printf("  Фильтр годов %v (%s): исключено %d, осталось %d\n",
+			cfg.AllowedYears, joinYears(cfg.AllowedYears), len(rows)-len(kept), len(kept))
+		rows = kept
+		if len(rows) == 0 {
+			fmt.Println("\n  После фильтра годов не осталось строк. Проверьте allowed_years (2-значные: 24 = 2024).")
+			return
+		}
+	}
+
 	// ── Фото (card_photos): URL + опциональное скачивание миниатюр ──
 	var photoBytes map[int64][]byte
 	embed := cfg.EmbedPhotos && !*noPhotos
@@ -244,7 +271,7 @@ func main() {
 
 	// ── Экспорт ──
 	fmt.Printf("  Экспорт XLSX: %s...", cfg.XLSX)
-	if err := exportXLSX(rows, cfg.XLSX, cfg.Collections, cfg.Seasons, photoBytes, embed); err != nil {
+	if err := exportXLSX(rows, cfg.XLSX, cfg.Collections, cfg.Seasons, cfg.AllowedYears, photoBytes, embed); err != nil {
 		log.Fatalf("  Экспорт: %v", err)
 	}
 	fmt.Println(" ok")

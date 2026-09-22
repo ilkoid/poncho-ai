@@ -42,6 +42,12 @@ type Config struct {
 	// символам 2-3), 7-значные = старая нумерация. Пустой список [] = не фильтровать.
 	ExcludeLengths []int `yaml:"exclude_lengths"`
 
+	// AllowedYears — фильтр по году производства (символы 2-3 артикула → 20XX; конвенция
+	// репо: pkg/config/utility.go YearFilterConfig / FilterNmIDsByYear). Годы 2-значные:
+	// [24, 25, 26] = 2024-2026. Пустой = без фильтра. При активном фильтре отбрасываются
+	// артикулы с невалидным годом (0 = короткие/не-цифры; легаси 2083/2094 и т.п.).
+	AllowedYears []int `yaml:"allowed_years"`
+
 	// Email — опциональная отправка готового xlsx по почте через pkg/email.
 	// Срабатывает, когда Email.Enabled=true ИЛИ передан флаг --mail. См. EmailConfig.
 	Email EmailConfig `yaml:"email"`
