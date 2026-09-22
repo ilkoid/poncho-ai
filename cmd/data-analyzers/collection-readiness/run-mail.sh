@@ -15,7 +15,7 @@
 #   export SMTP_PASSWORD='ваш-пароль'
 #   ./run-mail.sh mock                 # тест почты без БД
 #   ./run-mail.sh real                 # реальный отчёт + отправка
-#   SEASONS="Школа" OUT=/tmp/r.xlsx ./run-mail.sh real
+#   SEASONS="Осень,Зима,Осень-Зима,Новый год" OUT=/tmp/r.xlsx ./run-mail.sh real
 #
 # SMTP-подключение (host/port/from/...) вшито в config.yaml (email.smtp); единственный
 # секрет — пароль, который берётся отсюда (SMTP_PASSWORD).
@@ -26,7 +26,7 @@ set -euo pipefail
 
 # ─── параметры (перекрываются env) ───
 MODE="${1:-real}"                       # mock | real
-SEASONS="${SEASONS:-Школа}"
+SEASONS="${SEASONS:-Осень,Зима,Осень-Зима,Новый год}"
 COLLECTIONS="${COLLECTIONS:-}"          # напр. "CLASSIC 2026 girls Tween"; пусто → только сезоны
 OUT="${OUT:-/tmp/readiness-mail.xlsx}"
 
