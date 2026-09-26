@@ -40,6 +40,7 @@ Options:
   --config PATH        Путь к конфигу (default: config.yaml)
   --collections A,B    Список коллекций 1С (overrides config)
   --seasons A,B        Список сезонов 1С (overrides config; сезон надёжнее коллекции для школы)
+  --year N             Год производства по символам 2-3 артикула: 26 или 2026 (overrides config)
   --xlsx PATH          Выходной xlsx (пусто → report-<slug>-YYYYMMDD.xlsx)
   --limit N            Ограничить число строк (0 = все)
   --exclude-lengths A,B  Исключить артикулы заданных длин (overrides config; напр. 6,7)
@@ -62,6 +63,7 @@ func main() {
 	flag.StringVar(configPath, "c", "config.yaml", "Путь к конфигу (short)")
 	collectionsStr := flag.String("collections", "", "Список коллекций через запятую (overrides config)")
 	seasonsStr := flag.String("seasons", "", "Список сезонов через запятую (overrides config)")
+	year := flag.Int("year", 0, "Год производства по символам 2-3 артикула: 26 или 2026 (overrides config; 0 = не фильтровать)")
 	xlsxPath := flag.String("xlsx", "", "Выходной xlsx (overrides config)")
 	limit := flag.Int("limit", 0, "Ограничить число строк (0 = все)")
 	excludeLengthsStr := flag.String("exclude-lengths", "", "Исключить артикулы заданных длин через запятую (overrides config; напр. 6,7)")
@@ -93,6 +95,9 @@ func main() {
 	}
 	if *seasonsStr != "" {
 		cfg.Seasons = splitAndTrim(*seasonsStr)
+	}
+	if *year != 0 {
+		cfg.Year = *year
 	}
 	if *xlsxPath != "" {
 		cfg.XLSX = *xlsxPath
@@ -144,6 +149,9 @@ func main() {
 	if len(cfg.Seasons) > 0 {
 		fmt.Printf("  Сезоны:    %s\n", strings.Join(cfg.Seasons, ", "))
 	}
+	if cfg.Year > 0 {
+		fmt.Printf("  Год произв.: 20%02d (символы 2-3 артикула)\n", cfg.Year%100)
+	}
 	fmt.Printf("  База:      %s\n", cfg.Storage.DisplayDB())
 	if cfg.Limit > 0 {
 		fmt.Printf("  Лимит:     %d строк\n", cfg.Limit)
@@ -188,7 +196,7 @@ func main() {
 
 	// ── Запрос ──
 	fmt.Print("  Загрузка данных...")
-	rows, err := loadRows(ctx, pool.DB(), cfg.Collections, cfg.Seasons, cfg.Limit)
+	rows, err := loadRows(ctx, pool.DB(), cfg.Collections, cfg.Seasons, cfg.Year, cfg.Limit)
 	if err != nil {
 		log.Fatalf("  Запрос: %v", err)
 	}
@@ -242,6 +250,29 @@ func main() {
 		}
 	}
 
+	// ── Характеристики и размеры карточек (card_characteristics + card_sizes) ──
+	if nmIDs := collectNmIDs(rows); len(nmIDs) > 0 {
+		fmt.Print("  Характеристики карточек...")
+		cardChars, err := loadCardChars(ctx, pool.DB(), nmIDs)
+		if err != nil {
+			log.Printf("\n  WARN: характеристики не загружены (%v) — продолжаем без них", err)
+		} else {
+			fmt.Printf(" %d\n", len(cardChars))
+			for i := range rows {
+				if rows[i].NmID == nil {
+					continue
+				}
+				if cc, ok := cardChars[*rows[i].NmID]; ok {
+					rows[i].CharLines = cc.Lines
+					rows[i].WBSizes = strings.Join(cc.Sizes, ", ")
+					rows[i].WBCertNum = cc.CertNum
+					rows[i].WBDeclNum = cc.DeclNum
+					rows[i].WBTnved = cc.Tnved
+				}
+			}
+		}
+	}
+
 	// ── Экспорт ──
 	fmt.Printf("  Экспорт XLSX: %s...", cfg.XLSX)
 	if err := exportXLSX(rows, cfg.XLSX, cfg.Collections, cfg.Seasons, photoBytes, embed); err != nil {
@@ -250,7 +281,7 @@ func main() {
 	fmt.Println(" ok")
 
 	// Краткая сводка в консоль.
-	var noCard, blocked int
+	var noCard, blocked, certAbsent, certStale int
 	for _, r := range rows {
 		if !r.HasWBCard() {
 			noCard++
@@ -258,9 +289,17 @@ func main() {
 		if r.ArticleBlocked || r.ModelCancelled {
 			blocked++
 		}
+		if r.HasOneCCertDoc() && r.HasWBCard() {
+			switch m := r.certWBMarker(); {
+			case m == "на WB: НЕТ":
+				certAbsent++
+			case m != "на WB: да" && !r.CertProblem(time.Now()):
+				certStale++
+			}
+		}
 	}
-	fmt.Printf("\n  Всего: %d | без nmID (нет на WB): %d | заблокировано в 1С: %d\n",
-		len(rows), noCard, blocked)
+	fmt.Printf("\n  Всего: %d | без nmID (нет на WB): %d | заблокировано в 1С: %d | сертификата нет на WB: %d | номер отличается/тип не тот: %d\n",
+		len(rows), noCard, blocked, certAbsent, certStale)
 	fmt.Printf("  Готово за %s → %s\n", time.Since(start).Round(time.Millisecond), cfg.XLSX)
 
 	// Отправка по почте (если включено в config.yaml или флагом --mail).
@@ -344,6 +383,9 @@ func collectNmIDs(rows []Row) []int64 {
 func mockRows() []Row {
 	nmA := int64(478081133)
 	nmB := int64(153317462)
+	nmC := int64(295845803)
+	nmD := int64(301246577)
+	nmE := int64(301246578)
 	return []Row{
 		{
 			Article: "22527124", ArticleNum: "22527124", Sex: "Женский", Collection: "CLASSIC 2026 girls Tween",
@@ -351,8 +393,16 @@ func mockRows() []Row {
 			Color: "тёмно-синий", SizeRange: "128;134;140;146;152;158;164", ModelStatus: "Утверждена к отгрузке",
 			NmID: &nmA, WBName: "Платье школьное", HasDescription: true,
 			Description: "Платье школьное для девочек. Состав: хлопок 95%, эластан 5%. Подходит для повседневной носки. Длина по спинке — 70 см.",
-			PhotoTM: "https://basket-01.wbbasket.ru/vol478/part478081/images/tm/1.webp",
-			PhotoBig: "https://basket-01.wbbasket.ru/vol478/part478081/images/big/1.webp",
+			CharLines: []string{
+				"Возрастная группа: для детей",
+				"Комплектация: платье",
+				"Состав: хлопок 95%, эластан 5%",
+				"Цвет: темно-синий",
+			},
+			WBSizes: "128, 134, 140, 146", WBCertNum: "ЕАЭС RU С-CN.НВ18.В.02416/23", WBTnved: "6110201000",
+			HasOneCCert: true, CertType: "Сертификат", CertNumber: "ЕАЭС RU С-CN.НВ18.В.02416/23", CertEnd: "2027-05-30T00:00:00",
+			PhotoTM:       "https://basket-01.wbbasket.ru/vol478/part478081/images/tm/1.webp",
+			PhotoBig:      "https://basket-01.wbbasket.ru/vol478/part478081/images/big/1.webp",
 			ProductRating: 10, FeedbackRating: 5, WHWithStock: 6, OrdersCount: 6, BuyoutCount: 1,
 			WBStock: 221, OneCReserv: 78, OneCFree: 0,
 		},
@@ -361,6 +411,7 @@ func mockRows() []Row {
 			AgeSegment: "Tween", NameIM: "Сапожки для разогрева", Category: "Обувь", ProductionYear: 2025,
 			Color: "черный", SizeRange: "29-30;31-32;33-34;35-36;37-38;39-40", ModelStatus: "В производстве",
 			NmID: nil, WBName: "", HasDescription: false,
+			HasOneCCert: true, CertType: "Декларация", CertNumber: "ЕАЭС N RU Д-HK.РА05.В.23921/24", CertEnd: "2028-01-31T00:00:00",
 			ProductRating: 0, FeedbackRating: 0, WHWithStock: 0, OrdersCount: 0, BuyoutCount: 0,
 			WBStock: 0, OneCReserv: 0, OneCFree: 0,
 		},
@@ -369,10 +420,53 @@ func mockRows() []Row {
 			AgeSegment: "Tween", NameIM: "Комплект: Футболка, шорты", Category: "Комплекты одежды", ProductionYear: 2022,
 			Color: "белый,черный", SizeRange: "128;134;140;146;152;158;164;170;176", ModelStatus: "Утверждена к отгрузке",
 			ArticleBlocked: true, NmID: &nmB, WBName: "Костюм летний подростковый", HasDescription: true,
-			PhotoTM: "https://basket-01.wbbasket.ru/vol153/part153317/images/tm/1.webp",
-			PhotoBig: "https://basket-01.wbbasket.ru/vol153/part153317/images/big/1.webp",
+			CharLines:   []string{"Пол: Мальчики", "Состав: хлопок 100%"},
+			WBSizes:     "128, 134, 140",
+			HasOneCCert: true, CertType: "Сертификат", CertNumber: "ЕАЭС RU С-IN.ПФ02.В.06982/23", CertEnd: "2021-06-30T00:00:00",
+			PhotoTM:       "https://basket-01.wbbasket.ru/vol153/part153317/images/tm/1.webp",
+			PhotoBig:      "https://basket-01.wbbasket.ru/vol153/part153317/images/big/1.webp",
 			ProductRating: 8, FeedbackRating: 4.5, WHWithStock: 12, OrdersCount: 29, BuyoutCount: 10,
 			WBStock: 55, OneCReserv: 6, OneCFree: 56,
+		},
+		{
+			// Живая карточка без документа в 1С — cert-ячейка пустая (нет ни подсветки, ни маркера).
+			Article: "32615277", ArticleNum: "32615277", Sex: "Женский", Collection: "CLASSIC 2026 girls Kids",
+			AgeSegment: "Kids", NameIM: "Футболка для девочек", Category: "Футболки", ProductionYear: 2026,
+			Color: "розовый", SizeRange: "92;98;104;110;116;122", ModelStatus: "Утверждена к отгрузке",
+			NmID: &nmC, WBName: "Футболка детская", HasDescription: true,
+			Description:   "Футболка детская. Состав: 100% хлопок.",
+			CharLines:     []string{"Пол: Девочки", "Состав: хлопок 100%"},
+			WBSizes:       "92, 98, 104, 110, 116, 122",
+			ProductRating: 7, FeedbackRating: 4.0, WHWithStock: 3, OrdersCount: 12, BuyoutCount: 5,
+			WBStock: 40, OneCReserv: 2, OneCFree: 38,
+		},
+		{
+			// 1С валиден, на карточке СТАРЫЙ номер — янтарная подсветка «другой номер».
+			Article: "32615334", ArticleNum: "32615334", Sex: "Женский", Collection: "CLASSIC 2026 girls Kids",
+			AgeSegment: "Kids", NameIM: "Юбка для девочек", Category: "Юбки", ProductionYear: 2026,
+			Color: "серый", SizeRange: "92;98;104;110", ModelStatus: "Утверждена к отгрузке",
+			NmID: &nmD, WBName: "Юбка детская", HasDescription: true,
+			Description: "Юбка детская. Состав: 100% хлопок.",
+			CharLines:   []string{"Пол: Девочки", "Состав: хлопок 100%"},
+			WBSizes:     "92, 98, 104, 110",
+			WBCertNum:   "ЕАЭС RU С-CN.НВ18.В.01717/21",
+			HasOneCCert: true, CertType: "Сертификат", CertNumber: "ЕАЭС RU С-CN.НВ18.В.03233/24", CertEnd: "2028-01-16T00:00:00",
+			ProductRating: 9, FeedbackRating: 4.5, WHWithStock: 2, OrdersCount: 8, BuyoutCount: 3,
+			WBStock: 25, OneCReserv: 1, OneCFree: 24,
+		},
+		{
+			// 1С — декларация, номер на карточке в слоте СЕРТИФИКАТА — янтарная «не тот тип».
+			Article: "32615491", ArticleNum: "32615491", Sex: "Мужской", Collection: "CLASSIC 2026 boys Kids",
+			AgeSegment: "Kids", NameIM: "Брюки для мальчиков", Category: "Брюки", ProductionYear: 2026,
+			Color: "хаки", SizeRange: "92;98;104;110;116", ModelStatus: "Утверждена к отгрузке",
+			NmID: &nmE, WBName: "Брюки детские", HasDescription: true,
+			Description: "Брюки детские. Состав: 100% хлопок.",
+			CharLines:   []string{"Пол: Мальчики", "Состав: хлопок 100%"},
+			WBSizes:     "92, 98, 104, 110, 116",
+			WBCertNum:   "ЕАЭС N RU Д-CN.РА01.В.11349/23",
+			HasOneCCert: true, CertType: "Декларация", CertNumber: "ЕАЭС N RU Д-CN.РА01.В.11349/23", CertEnd: "2028-01-12T00:00:00",
+			ProductRating: 9, FeedbackRating: 4.0, WHWithStock: 2, OrdersCount: 15, BuyoutCount: 7,
+			WBStock: 30, OneCReserv: 3, OneCFree: 27,
 		},
 	}
 }

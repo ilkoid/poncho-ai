@@ -8,7 +8,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,6 +50,17 @@ type Row struct {
 	// ── Фото (card_photos; заполняется отдельным батч-запросом loadPhotoURLs) ──
 	PhotoTM         string   // URL миниатюры WB (card_photos.tm) — для встраивания
 	PhotoBig        string   // URL полноразмерного фото (card_photos.big) — для ссылки
+	// ── Характеристики карточки (card_characteristics + card_sizes; заполняется отдельным батч-запросом loadCardChars) ──
+	CharLines      []string // «Название: значение1, значение2» — по строке на характеристику, отсортированы по названию
+	WBSizes        string   // размеры карточки WB через запятую (card_sizes.tech_size, distinct)
+	WBCertNum      string   // номер сертификата с карточки WB (char_id 15001136; «» = не заполнен)
+	WBDeclNum      string   // номер декларации с карточки WB (char_id 15001135; «» = не заполнен)
+	WBTnved        string   // ТНВЭД с карточки WB (char_id 15000001; отображается в колонке сертификата)
+	// ── Сертификат/декларация из 1С (onec_goods.certificate*) ──
+	HasOneCCert    bool     // 1С декларирует наличие документа (has_certificate)
+	CertType       string   // русская метка: «Сертификат» / «Декларация» (из certificate_type)
+	CertNumber     string   // номер документа (без «№»)
+	CertEnd        string   // срок действия, как в 1С (текст; парсится при выводе)
 }
 
 // PhotoURL — пара URL фото для одного nmID (миниатюра + полноразмерное).
@@ -85,8 +100,207 @@ WHERE nm_id = ANY($1)
 	return out, rows.Err()
 }
 
+// charID сертификатных характеристик карточки WB (те же константы, что в fix-certificates/stage.go).
+const (
+	charDeclNumberID int64 = 15001135 // «Номер декларации соответствия»
+	charCertNumberID int64 = 15001136 // «Номер сертификата соответствия»
+	charCertBeginID  int64 = 15001137 // «Дата регистрации сертификата/декларации»
+	charCertEndID    int64 = 15001138 // «Дата окончания действия сертификата/декларации»
+	charTnvedID      int64 = 15000001 // «ТНВЭД» — тоже ВЭД-домен, живёт в колонке сертификата
+)
+
+// CardChars — характеристики и размеры карточки WB (один nmID).
+type CardChars struct {
+	Lines   []string // «Название: значение1, значение2» — по строке, отсортированы по названию
+	Sizes   []string // размеры (card_sizes.tech_size, distinct; числовые — по значению)
+	CertNum string   // номер сертификата с карточки (char_id 15001136; «» = не заполнен)
+	DeclNum string   // номер декларации с карточки (char_id 15001135; «» = не заполнен)
+	Tnved   string   // ТНВЭД с карточки (char_id 15000001; «» = не заполнен)
+}
+
+// rawChar — сырая строка card_characteristics до рендера.
+type rawChar struct {
+	charID int64
+	name   string
+	values []string
+}
+
+// loadCardChars возвращает характеристики и размеры карточек по списку nmID.
+//
+// Отдельный батч-запрос (как loadPhotoURLs): одним round-trip на таблицу.
+// card_characteristics — строка = одна характеристика, значения в json_value
+// (JSON-массив, бывают мультизначения: Цвет: ["тёмно-синий","красный","белый"]).
+// card_sizes — строка = один размер карточки (tech_size).
+func loadCardChars(ctx context.Context, conn *pgxpool.Pool, nmIDs []int64) (map[int64]*CardChars, error) {
+	out := make(map[int64]*CardChars, len(nmIDs))
+	if len(nmIDs) == 0 {
+		return out, nil
+	}
+
+	charsRows, err := conn.Query(ctx, `
+SELECT nm_id, char_id, name, json_value
+FROM card_characteristics
+WHERE nm_id = ANY($1)`, nmIDs)
+	if err != nil {
+		return nil, fmt.Errorf("card_characteristics query: %w", err)
+	}
+	defer charsRows.Close()
+	perNM := make(map[int64][]rawChar)
+	for charsRows.Next() {
+		var nmID, charID int64
+		var name, jsonValue string
+		if err := charsRows.Scan(&nmID, &charID, &name, &jsonValue); err != nil {
+			return nil, fmt.Errorf("card_characteristics scan: %w", err)
+		}
+		vals, err := parseJSONValues(jsonValue)
+		if err != nil {
+			// Повреждённый JSON — показываем сырое значение, характеристику не теряем.
+			vals = []string{strings.TrimSpace(jsonValue)}
+		}
+		perNM[nmID] = append(perNM[nmID], rawChar{charID: charID, name: name, values: vals})
+	}
+	if err := charsRows.Err(); err != nil {
+		return nil, fmt.Errorf("card_characteristics: %w", err)
+	}
+
+	sizeRows, err := conn.Query(ctx, `
+SELECT nm_id, tech_size
+FROM card_sizes
+WHERE nm_id = ANY($1)`, nmIDs)
+	if err != nil {
+		return nil, fmt.Errorf("card_sizes query: %w", err)
+	}
+	defer sizeRows.Close()
+	sizesPerNM := make(map[int64][]string)
+	for sizeRows.Next() {
+		var nmID int64
+		var size string
+		if err := sizeRows.Scan(&nmID, &size); err != nil {
+			return nil, fmt.Errorf("card_sizes scan: %w", err)
+		}
+		size = strings.TrimSpace(size)
+		if size != "" && !slices.Contains(sizesPerNM[nmID], size) {
+			sizesPerNM[nmID] = append(sizesPerNM[nmID], size)
+		}
+	}
+	if err := sizeRows.Err(); err != nil {
+		return nil, fmt.Errorf("card_sizes: %w", err)
+	}
+
+	for nmID, chars := range perNM {
+		out[nmID] = renderCardChars(chars, sizesPerNM[nmID])
+	}
+	// Карточки без характеристик, но с размерами — тоже попадают в карту.
+	for nmID, sizes := range sizesPerNM {
+		if _, ok := out[nmID]; !ok {
+			out[nmID] = renderCardChars(nil, sizes)
+		}
+	}
+	return out, nil
+}
+
+// renderCardChars собирает характеристики в строки отчёта (чистая функция — для тестов).
+// Пустые характеристики (нет значений) пропускаются: имя без значения не информативно.
+// Разрешительная документация ВЭД (номер/даты сертификата и декларации, ТНВЭД) НЕ попадает
+// в маркетинговые строки: номера идут в слоты для сверки с 1С, ТНВЭД — отдельным полем;
+// всё это отображается колонкой «Сертификат/декларация».
+func renderCardChars(chars []rawChar, sizes []string) *CardChars {
+	cc := &CardChars{Sizes: sortSizes(sizes)}
+	for _, ch := range chars {
+		if len(ch.values) == 0 {
+			continue
+		}
+		switch ch.charID {
+		case charDeclNumberID:
+			// Номера — из первого элемента значений (как normalizeValue в fix-certificates):
+			// слоты нужны для сверки с 1С; пустой json_value — номер НЕ перенесён.
+			cc.DeclNum = strings.TrimSpace(ch.values[0])
+			continue
+		case charCertNumberID:
+			cc.CertNum = strings.TrimSpace(ch.values[0])
+			continue
+		case charCertBeginID, charCertEndID:
+			continue
+		case charTnvedID:
+			cc.Tnved = strings.Join(ch.values, ", ")
+			continue
+		}
+		name := strings.TrimSpace(ch.name)
+		if name == "" {
+			name = fmt.Sprintf("char_%d", ch.charID)
+		}
+		cc.Lines = append(cc.Lines, name+": "+strings.Join(ch.values, ", "))
+	}
+	sort.Strings(cc.Lines)
+	return cc
+}
+
+// parseJSONValues разбирает json_value характеристики — JSON-массив строк/чисел
+// («["хлопок 95%","эластан 5%"]», «[150]»).
+func parseJSONValues(s string) ([]string, error) {
+	var arr []interface{}
+	if err := json.Unmarshal([]byte(s), &arr); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(arr))
+	for _, v := range arr {
+		switch t := v.(type) {
+		case string:
+			if t != "" {
+				out = append(out, t)
+			}
+		case float64:
+			out = append(out, strconv.FormatFloat(t, 'f', -1, 64))
+		case nil:
+			// null — пропускаем
+		default:
+			out = append(out, fmt.Sprintf("%v", v))
+		}
+	}
+	return out, nil
+}
+
+// sortSizes — числовые размеры по значению («62, 74, 128», не лексикографически),
+// при любом нечисловом размере (диапазоны, one_size) — обычная сортировка строк.
+func sortSizes(sizes []string) []string {
+	out := slices.Clone(sizes)
+	nums := make([]int, len(out))
+	allNum := true
+	for i, s := range out {
+		n, err := strconv.Atoi(strings.TrimSpace(s))
+		if err != nil {
+			allNum = false
+			break
+		}
+		nums[i] = n
+	}
+	if allNum {
+		sort.Ints(nums)
+		for i := range out {
+			out[i] = strconv.Itoa(nums[i])
+		}
+		return out
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ruCertType переводит certificate_type из 1С (Certificate/Declaration) в русскую метку.
+func ruCertType(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "certificate":
+		return "Сертификат"
+	case "declaration":
+		return "Декларация"
+	}
+	return strings.TrimSpace(t)
+}
+
 // HasWBCard — создана ли карточка на WB (есть nmID).
 func (r Row) HasWBCard() bool { return r.NmID != nil }
+
+// WBHasCertDecl — заполнен ли номер сертификата/декларации на карточке WB.
+func (r Row) WBHasCertDecl() bool { return r.WBCertNum != "" || r.WBDeclNum != "" }
 
 // reportQuery строит SQL. limit>0 добавляет LIMIT.
 //
@@ -121,6 +335,10 @@ SELECT
   o.model_status,
   o.is_article_blocked,
   o.is_model_cancelled,
+  o.has_certificate,
+  COALESCE(o.certificate_type, ''),
+  COALESCE(o.certificate_number, ''),
+  COALESCE(o.certificate_end, ''),
   c.nm_id,
   COALESCE(c.title, ''),
   COALESCE(c.description IS NOT NULL AND c.description <> '', false),
@@ -147,8 +365,8 @@ LEFT JOIN wh             w  ON w.nm_id = c.nm_id`
 // Хотя бы один из них должен быть задан. seasons матчит ОБА поля: season (функциональный
 // сезон ткани) OR collection_season (коммерческая коллекция) — т.к. collection_season на 77%
 // пуст и одно это поле теряет товары «School boys/girls YYYY». Для 'Школа': season=2880,
-// collection_season=1439, union=2917.
-func loadRows(ctx context.Context, conn *pgxpool.Pool, collections, seasons []string, limit int) ([]Row, error) {
+// collection_season=1439, union=2917. year>0 — год производства по символам 2-3 артикула.
+func loadRows(ctx context.Context, conn *pgxpool.Pool, collections, seasons []string, year, limit int) ([]Row, error) {
 	if len(collections) == 0 && len(seasons) == 0 {
 		return nil, fmt.Errorf("не заданы ни коллекции, ни сезоны (collections/seasons в config.yaml или --collections/--seasons)")
 	}
@@ -172,6 +390,13 @@ func loadRows(ctx context.Context, conn *pgxpool.Pool, collections, seasons []st
 		args = append(args, seasons)
 		pi++
 	}
+	if year > 0 {
+		// Год производства: символы 2-3 артикула (конвенция репо, как articleYear).
+		// substring в SQL ≡ article[1:3] в Go; не-цифры просто не совпадут.
+		conds = append(conds, fmt.Sprintf("substring(o.article from 2 for 2) = $%d", pi))
+		args = append(args, fmt.Sprintf("%02d", year%100))
+		pi++
+	}
 
 	q := reportQueryBase + "\nWHERE " + strings.Join(conds, " AND ") +
 		"\nORDER BY o.collection, o.article"
@@ -193,6 +418,7 @@ func loadRows(ctx context.Context, conn *pgxpool.Pool, collections, seasons []st
 			&r.Article, &r.ArticleNum, &r.Sex, &r.Collection, &r.NameIM,
 			&r.Category, &r.Color, &r.SizeRange, &r.ModelStatus,
 			&r.ArticleBlocked, &r.ModelCancelled,
+			&r.HasOneCCert, &r.CertType, &r.CertNumber, &r.CertEnd,
 			&r.NmID, &r.WBName, &r.HasDescription, &r.Description,
 			&r.ProductRating, &r.FeedbackRating,
 			&r.OrdersCount, &r.BuyoutCount, &r.WBStock,
@@ -202,6 +428,7 @@ func loadRows(ctx context.Context, conn *pgxpool.Pool, collections, seasons []st
 		}
 		r.AgeSegment = parseAgeSegment(r.Collection)
 		r.ProductionYear = articleYear(r.Article)
+		r.CertType = ruCertType(r.CertType)
 		out = append(out, r)
 	}
 	return out, rows.Err()

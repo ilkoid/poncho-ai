@@ -22,6 +22,11 @@ type Config struct {
 	// Комбинируется с Collections через AND.
 	Seasons []string `yaml:"seasons"`
 
+	// Year — год производства по символам 2-3 артикула (конвенция репо: «32615277» → 26 → 2026).
+	// Принимает 26 или 2026 (нормализуется к двум цифрам). 0 = не фильтровать.
+	// Комбинируется с Collections/Seasons через AND.
+	Year int `yaml:"year"`
+
 	// Storage — параметры подключения к БД (backend: postgres, pg_database, и т.д.).
 	Storage config.V2StorageConfig `yaml:"storage"`
 
