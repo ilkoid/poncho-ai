@@ -50,7 +50,7 @@ func TestRenderCardChars(t *testing.T) {
 		{charID: 15001138, name: "Дата окончания действия сертификата/декларации", values: []string{"2026-05-30T00:00:00"}},
 		{charID: 15000001, name: "ТНВЭД", values: []string{"6110201000"}},
 		{charID: 999, name: "", values: []string{"x"}}, // имя пустое → char_<id>
-		{charID: 998, name: "Пустая", values: nil},      // нет значений → строка пропускается
+		{charID: 998, name: "Пустая", values: nil},     // нет значений → строка пропускается
 	}
 	cc := renderCardChars(chars, []string{"146", "62", "128", "74"})
 
@@ -251,6 +251,21 @@ func TestCertCellTnvedLine(t *testing.T) {
 	r3.WBTnved = ""
 	if got := r3.certCell(now); strings.Contains(got, "ТНВЭД") {
 		t.Fatalf("без ТНВЭД: не должно быть строки ТНВЭД: %q", got)
+	}
+}
+
+func TestJoinYearsNormalization(t *testing.T) {
+	// 2- и 4-значные годы дают одинаковый вывод; applyDefaults нормализует 4-значные.
+	if got, want := joinYears([]int{24, 25, 26}), "2024, 2025, 2026"; got != want {
+		t.Fatalf("2-значные: получили %q, ожидали %q", got, want)
+	}
+	if got, want := joinYears([]int{2024, 2026}), "2024, 2026"; got != want {
+		t.Fatalf("4-значные: получили %q, ожидали %q", got, want)
+	}
+	cfg := &Config{AllowedYears: []int{2024, 25, 2026}}
+	cfg.applyDefaults()
+	if !reflect.DeepEqual(cfg.AllowedYears, []int{24, 25, 26}) {
+		t.Fatalf("applyDefaults: получили %v, ожидали [24 25 26]", cfg.AllowedYears)
 	}
 }
 

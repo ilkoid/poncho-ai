@@ -4,11 +4,13 @@
 //   - нет nmID (карточка WB не создана)        — строка окрашена, ячейка nmID красная;
 //   - заблокирован в 1С (is_article_blocked)    — маркер «да» в колонке «Заблокирован»;
 //   - карточный рейтинг = 10 / складов ≥ 5      — зелёная ячейка (критерий «идеала»).
+//
 // Лист «Сводка»: кол-ва ключевых состояний воронки (без скора — только raw counts).
 package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -297,7 +299,7 @@ func newReportStyles(f *excelize.File) *reportStyles {
 //
 // photos — карта nmID → JPEG-байты миниатюры (для встраивания в колонку «Фото»).
 // embed — встроить ли миниатюры (true) или ограничиться колонкой-ссылкой (false).
-func exportXLSX(rows []Row, path string, collections, seasons []string, photos map[int64][]byte, embed bool) error {
+func exportXLSX(rows []Row, path string, collections, seasons []string, allowedYears []int, photos map[int64][]byte, embed bool) error {
 	f := excelize.NewFile()
 	sheet := "Отчёт"
 	f.SetSheetName("Sheet1", sheet)
@@ -450,7 +452,7 @@ func exportXLSX(rows []Row, path string, collections, seasons []string, photos m
 	}
 
 	// Сводный лист.
-	addFunnelSummary(f, rows, collections, seasons)
+	addFunnelSummary(f, rows, collections, seasons, allowedYears)
 
 	// Легенда: расшифровка подсветки и маркеров (свотчи — теми же стилями, что и отчёт).
 	addLegendSheet(f, st)
@@ -459,15 +461,15 @@ func exportXLSX(rows []Row, path string, collections, seasons []string, photos m
 }
 
 // Индексы (1-based) колонок, к которым применяется точечная подсветка.
-func nmIDColIndex() int     { return colIndexByHeader("nmID") }
-func blockedColIndex() int  { return colIndexByHeader("Заблокирован") }
-func ratingColIndex() int   { return colIndexByHeader("Рейтинг карточки 0-10") }
-func whColIndex() int       { return colIndexByHeader("Складов с остатком") }
-func photoColIndex() int    { return colIndexByHeader("Фото") }
+func nmIDColIndex() int      { return colIndexByHeader("nmID") }
+func blockedColIndex() int   { return colIndexByHeader("Заблокирован") }
+func ratingColIndex() int    { return colIndexByHeader("Рейтинг карточки 0-10") }
+func whColIndex() int        { return colIndexByHeader("Складов с остатком") }
+func photoColIndex() int     { return colIndexByHeader("Фото") }
 func photoLinkColIndex() int { return colIndexByHeader("Ссылка на фото") }
-func descColIndex() int     { return colIndexByHeader("Описание WB") }
-func charsColIndex() int    { return colIndexByHeader("Характеристики WB") }
-func certColIndex() int     { return colIndexByHeader("Сертификат/декларация") }
+func descColIndex() int      { return colIndexByHeader("Описание WB") }
+func charsColIndex() int     { return colIndexByHeader("Характеристики WB") }
+func certColIndex() int      { return colIndexByHeader("Сертификат/декларация") }
 
 func colIndexByHeader(header string) int {
 	for i, c := range reportColumns {
@@ -479,7 +481,7 @@ func colIndexByHeader(header string) int {
 }
 
 // addFunnelSummary — лист «Сводка» с raw-подсчётами состояний воронки (без скора).
-func addFunnelSummary(f *excelize.File, rows []Row, collections, seasons []string) {
+func addFunnelSummary(f *excelize.File, rows []Row, collections, seasons []string, allowedYears []int) {
 	sheet := "Сводка"
 	f.NewSheet(sheet)
 
@@ -496,6 +498,12 @@ func addFunnelSummary(f *excelize.File, rows []Row, collections, seasons []strin
 			filterDesc += "  "
 		}
 		filterDesc += "Сезоны: " + joinCollections(seasons)
+	}
+	if len(allowedYears) > 0 {
+		if filterDesc != "" {
+			filterDesc += "  "
+		}
+		filterDesc += "Годы: " + joinYears(allowedYears)
 	}
 	if filterDesc == "" {
 		filterDesc = "(фильтр не задан)"
@@ -676,6 +684,19 @@ func joinCollections(c []string) string {
 		out += `"` + s + `"`
 	}
 	return out
+}
+
+// joinYears — компактное перечисление годов производства (нормализуются к 20XX
+// для читаемости: [24, 25, 26] или [2024, 2026] → "2024, 2025, 2026").
+func joinYears(y []int) string {
+	parts := make([]string, len(y))
+	for i, v := range y {
+		if v > 100 {
+			v %= 100
+		}
+		parts[i] = strconv.Itoa(2000 + v)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // xSet — хелпер установки значения ячейки (как в analyze-promo-calendar/report.go).

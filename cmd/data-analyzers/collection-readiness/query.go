@@ -21,46 +21,46 @@ import (
 // Row — одна строка отчёта (авто-часть: всё, что берётся из PG).
 type Row struct {
 	// ── 1С (onec_goods) ──
-	Article         string // Артикул
-	ArticleNum      string // Артикул (числовое значение, digits-only)
-	Sex             string // Пол
-	Collection      string // Коллекция
-	AgeSegment      string // Возраст (парсится из collection)
-	NameIM          string // Наименование для печати / Вид номенклатуры (best-effort)
-	Category        string // детальная категория 1С: category_level2_name → level1_name → корневой category
-	ProductionYear  int    // год производства из символов 2-3 артикула (конвенция репо); 0 = нет данных/легаси
-	Color           string // цвет
-	SizeRange       string // Диапазон размеров
-	ModelStatus     string // этап/движение товара (model_status)
-	ArticleBlocked  bool   // заблокирован в 1С (is_article_blocked)
-	ModelCancelled  bool   // модель снята (is_model_cancelled)
+	Article        string // Артикул
+	ArticleNum     string // Артикул (числовое значение, digits-only)
+	Sex            string // Пол
+	Collection     string // Коллекция
+	AgeSegment     string // Возраст (парсится из collection)
+	NameIM         string // Наименование для печати / Вид номенклатуры (best-effort)
+	Category       string // детальная категория 1С: category_level2_name → level1_name → корневой category
+	ProductionYear int    // год производства из символов 2-3 артикула (конвенция репо); 0 = нет данных/легаси
+	Color          string // цвет
+	SizeRange      string // Диапазон размеров
+	ModelStatus    string // этап/движение товара (model_status)
+	ArticleBlocked bool   // заблокирован в 1С (is_article_blocked)
+	ModelCancelled bool   // модель снята (is_model_cancelled)
 	// ── WB (cards / products / stock_products / stocks_daily_warehouses) ──
-	NmID            *int64   // nmID; NULL = карточка на WB не создана
-	WBName          string   // Наименование WB (cards.title)
-	HasDescription  bool     // описание готово (cards.description непусто)
-	Description     string   // Описание WB — полный текст cards.description (обрезается при выводе до maxDescriptionLen)
-	ProductRating   float64  // карточный рейтинг WB 0-10 (products.product_rating)
-	FeedbackRating  float64  // звёзды отзывов 0-5 (products.feedback_rating)
-	OrdersCount     int64    // заказы (stock_products.orders_count, latest)
-	BuyoutCount     int64    // выкупы (stock_products.buyout_count, latest)
-	WBStock         int64    // остаток WB (stock_products.stock_count, latest)
-	OneCReserv      int64    // остаток 1С резерв (SUM onec_rests.reserv, latest)
-	OneCFree        int64    // остаток 1С свободно (SUM onec_rests.free, latest)
-	WHWithStock     int64    // кол-во складов WB с остатком (stocks_daily_warehouses)
+	NmID           *int64  // nmID; NULL = карточка на WB не создана
+	WBName         string  // Наименование WB (cards.title)
+	HasDescription bool    // описание готово (cards.description непусто)
+	Description    string  // Описание WB — полный текст cards.description (обрезается при выводе до maxDescriptionLen)
+	ProductRating  float64 // карточный рейтинг WB 0-10 (products.product_rating)
+	FeedbackRating float64 // звёзды отзывов 0-5 (products.feedback_rating)
+	OrdersCount    int64   // заказы (stock_products.orders_count, latest)
+	BuyoutCount    int64   // выкупы (stock_products.buyout_count, latest)
+	WBStock        int64   // остаток WB (stock_products.stock_count, latest)
+	OneCReserv     int64   // остаток 1С резерв (SUM onec_rests.reserv, latest)
+	OneCFree       int64   // остаток 1С свободно (SUM onec_rests.free, latest)
+	WHWithStock    int64   // кол-во складов WB с остатком (stocks_daily_warehouses)
 	// ── Фото (card_photos; заполняется отдельным батч-запросом loadPhotoURLs) ──
-	PhotoTM         string   // URL миниатюры WB (card_photos.tm) — для встраивания
-	PhotoBig        string   // URL полноразмерного фото (card_photos.big) — для ссылки
+	PhotoTM  string // URL миниатюры WB (card_photos.tm) — для встраивания
+	PhotoBig string // URL полноразмерного фото (card_photos.big) — для ссылки
 	// ── Характеристики карточки (card_characteristics + card_sizes; заполняется отдельным батч-запросом loadCardChars) ──
-	CharLines      []string // «Название: значение1, значение2» — по строке на характеристику, отсортированы по названию
-	WBSizes        string   // размеры карточки WB через запятую (card_sizes.tech_size, distinct)
-	WBCertNum      string   // номер сертификата с карточки WB (char_id 15001136; «» = не заполнен)
-	WBDeclNum      string   // номер декларации с карточки WB (char_id 15001135; «» = не заполнен)
-	WBTnved        string   // ТНВЭД с карточки WB (char_id 15000001; отображается в колонке сертификата)
+	CharLines []string // «Название: значение1, значение2» — по строке на характеристику, отсортированы по названию
+	WBSizes   string   // размеры карточки WB через запятую (card_sizes.tech_size, distinct)
+	WBCertNum string   // номер сертификата с карточки WB (char_id 15001136; «» = не заполнен)
+	WBDeclNum string   // номер декларации с карточки WB (char_id 15001135; «» = не заполнен)
+	WBTnved   string   // ТНВЭД с карточки WB (char_id 15000001; отображается в колонке сертификата)
 	// ── Сертификат/декларация из 1С (onec_goods.certificate*) ──
-	HasOneCCert    bool     // 1С декларирует наличие документа (has_certificate)
-	CertType       string   // русская метка: «Сертификат» / «Декларация» (из certificate_type)
-	CertNumber     string   // номер документа (без «№»)
-	CertEnd        string   // срок действия, как в 1С (текст; парсится при выводе)
+	HasOneCCert bool   // 1С декларирует наличие документа (has_certificate)
+	CertType    string // русская метка: «Сертификат» / «Декларация» (из certificate_type)
+	CertNumber  string // номер документа (без «№»)
+	CertEnd     string // срок действия, как в 1С (текст; парсится при выводе)
 }
 
 // PhotoURL — пара URL фото для одного nmID (миниатюра + полноразмерное).
@@ -365,8 +365,9 @@ LEFT JOIN wh             w  ON w.nm_id = c.nm_id`
 // Хотя бы один из них должен быть задан. seasons матчит ОБА поля: season (функциональный
 // сезон ткани) OR collection_season (коммерческая коллекция) — т.к. collection_season на 77%
 // пуст и одно это поле теряет товары «School boys/girls YYYY». Для 'Школа': season=2880,
-// collection_season=1439, union=2917. year>0 — год производства по символам 2-3 артикула.
-func loadRows(ctx context.Context, conn *pgxpool.Pool, collections, seasons []string, year, limit int) ([]Row, error) {
+// collection_season=1439, union=2917. allowedYears — годы производства по символам 2-3
+// артикула (SQL-side: substring = ANY; невалидные годы отбрасываются при активном фильтре).
+func loadRows(ctx context.Context, conn *pgxpool.Pool, collections, seasons []string, allowedYears []int, limit int) ([]Row, error) {
 	if len(collections) == 0 && len(seasons) == 0 {
 		return nil, fmt.Errorf("не заданы ни коллекции, ни сезоны (collections/seasons в config.yaml или --collections/--seasons)")
 	}
@@ -390,11 +391,17 @@ func loadRows(ctx context.Context, conn *pgxpool.Pool, collections, seasons []st
 		args = append(args, seasons)
 		pi++
 	}
-	if year > 0 {
+	if len(allowedYears) > 0 {
 		// Год производства: символы 2-3 артикула (конвенция репо, как articleYear).
-		// substring в SQL ≡ article[1:3] в Go; не-цифры просто не совпадут.
-		conds = append(conds, fmt.Sprintf("substring(o.article from 2 for 2) = $%d", pi))
-		args = append(args, fmt.Sprintf("%02d", year%100))
+		// substring в SQL ≡ article[1:3] в Go: не-цифры/короткие артикулы не совпадут —
+		// та же семантика, что была у Go-side фильтра по Row.ProductionYear (9d0f794),
+		// но фильтр в WHERE: корректен с LIMIT и не тащит лишние строки.
+		years := make([]string, len(allowedYears))
+		for i, y := range allowedYears {
+			years[i] = fmt.Sprintf("%02d", y%100)
+		}
+		conds = append(conds, fmt.Sprintf("substring(o.article from 2 for 2) = ANY($%d::text[])", pi))
+		args = append(args, years)
 		pi++
 	}
 

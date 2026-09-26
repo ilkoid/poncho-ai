@@ -22,11 +22,6 @@ type Config struct {
 	// Комбинируется с Collections через AND.
 	Seasons []string `yaml:"seasons"`
 
-	// Year — год производства по символам 2-3 артикула (конвенция репо: «32615277» → 26 → 2026).
-	// Принимает 26 или 2026 (нормализуется к двум цифрам). 0 = не фильтровать.
-	// Комбинируется с Collections/Seasons через AND.
-	Year int `yaml:"year"`
-
 	// Storage — параметры подключения к БД (backend: postgres, pg_database, и т.д.).
 	Storage config.V2StorageConfig `yaml:"storage"`
 
@@ -46,6 +41,14 @@ type Config struct {
 	// По умолчанию [6, 7]: 6-значные = легаси-нумерация (дают мусорный «год» 2081/2083/2094 по
 	// символам 2-3), 7-значные = старая нумерация. Пустой список [] = не фильтровать.
 	ExcludeLengths []int `yaml:"exclude_lengths"`
+
+	// AllowedYears — фильтр по году производства (символы 2-3 артикула → 20XX; конвенция
+	// репо: pkg/config/utility.go YearFilterConfig / FilterNmIDsByYear). Годы 2- или
+	// 4-значные: [24, 25, 26] и [2026] эквивалентны (нормализация в applyDefaults).
+	// Пустой = без фильтра. При активном фильтре отбрасываются артикулы с невалидным
+	// годом (0 = короткие/не-цифры; легаси 2083/2094 и т.п.) — фильтр SQL-side в WHERE
+	// (loadRows: substring(article from 2 for 2) = ANY), не Go-side.
+	AllowedYears []int `yaml:"allowed_years"`
 
 	// Email — опциональная отправка готового xlsx по почте через pkg/email.
 	// Срабатывает, когда Email.Enabled=true ИЛИ передан флаг --mail. См. EmailConfig.
@@ -92,12 +95,12 @@ func loadConfig(path string) (*Config, error) {
 func defaultConfig() *Config {
 	return &Config{
 		Storage: config.V2StorageConfig{
-			Backend:      "postgres",
-			PgDatabase:   "wb_data_prod",
+			Backend:       "postgres",
+			PgDatabase:    "wb_data_prod",
 			PgPasswordEnv: "PG_PWD",
 		},
-		Limit:       0,
-		EmbedPhotos: true,
+		Limit:          0,
+		EmbedPhotos:    true,
 		ExcludeLengths: []int{6, 7},
 	}
 }
@@ -113,5 +116,11 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Storage.PgPasswordEnv == "" {
 		c.Storage.PgPasswordEnv = d.Storage.PgPasswordEnv
+	}
+	// Годы: 4-значные → 2-значные (2026 → 26) — конвенция allowed_years по репо.
+	for i, y := range c.AllowedYears {
+		if y > 100 {
+			c.AllowedYears[i] = y % 100
+		}
 	}
 }
