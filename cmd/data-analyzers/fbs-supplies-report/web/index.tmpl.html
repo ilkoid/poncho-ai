@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Поставки на СЦ · SLA · Play Today</title>
+<style>/*__STYLE_CSS__*/</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <div class="logo">PT</div>
+    <div class="brand-t">
+      <h1>Поставки на СЦ · SLA-дашборд</h1>
+      <div class="sub" id="subtitle"></div>
+    </div>
+    <span id="db-badge" class="badge" title="База-источник"></span>
+  </div>
+
+  <div class="controls">
+    <div class="group" id="presets">
+      <button data-day="__ALL__" class="active">Все дни</button>
+    </div>
+    <div class="seg" id="seg-threshold" title="Целевое окно от первого задания до приёмки">
+      <button data-h="12">12ч</button>
+      <button data-h="24" class="active">24ч</button>
+      <button data-h="36">36ч</button>
+    </div>
+    <button id="glossary-btn" class="glossary-btn" title="Определения всех метрик и терминов">Глоссарий</button>
+  </div>
+
+  <div id="days" class="days"></div>
+</header>
+
+<div id="glossary-back" class="glossary-back"></div>
+<aside id="glossary" class="glossary" title="Глоссарий аналитика">
+  <div class="g-head">
+    <b>Глоссарий</b>
+    <span class="g-sub">семантика поставок и SLA</span>
+    <button id="glossary-close" class="g-close" title="Закрыть (Esc)">×</button>
+  </div>
+  <div class="g-body">__GLOSSARY_HTML__</div>
+</aside>
+
+<aside id="detail" class="glossary detail" title="Детали поставки">
+  <div class="g-head">
+    <b id="d-title">Поставка</b>
+    <span class="g-sub" id="d-sub"></span>
+    <button id="d-close" class="g-close" title="Закрыть (Esc)">×</button>
+  </div>
+  <div class="g-body" id="d-body"></div>
+</aside>
+<div id="detail-back" class="glossary-back"></div>
+
+<main>
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid">
+    <div class="card span2">
+      <h2>Поставки по дням формирования <span class="hint">столбики — поставки: зелёные уложились в окно, красные нет, серые ждут приёмки · линия — заданий в поставках дня · клик по столбику — выбор дня</span></h2>
+      <div class="chart tall" id="chart-days"></div>
+    </div>
+
+    <div class="card span2">
+      <h2 id="tbl-title">Поставки дня <span class="hint">клик по строке — деталь поставки: таймлайн, гистограмма ожиданий, % в срок</span></h2>
+      <div class="tbl-wrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <footer id="method">__METHOD_HTML__</footer>
+</main>
+
+<noscript>Дашборду нужен JavaScript.</noscript>
+<script>/*__ECHARTS_JS__*/</script>
+<script id="payload" type="application/json">/*__PAYLOAD_JSON__*/</script>
+<script>/*__APP_JS__*/</script>
+</body>
+</html>
