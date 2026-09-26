@@ -12,7 +12,23 @@ const ALL = '__ALL__';
 
 const C = { green: '#018849', red: '#E41A2A', grey: '#9E9AA8', violet: '#7758B3', ink2: '#757575' };
 
-const state = { day: ALL, thr: 24, sortCol: 0, sortDir: 1, sel: -1 };
+/* Период (from/to) — базовый фильтр, он НЕ сбрасывается при выборе дня:
+   день — детализация внутри периода. Пустые инпуты = весь диапазон данных.
+   Старт по умолчанию — последние 7 суток МСК включая сегодня: незавершённые
+   дни будут с пробелами (когорты дозреют) — это нормальный вид «живой недели». */
+const mskTodayISO = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+function defaultRange() {
+  const to = mskTodayISO();
+  const from = new Date(Date.parse(to + 'T00:00:00Z') - 6 * 86400e3).toISOString().slice(0, 10);
+  return { from, to };
+}
+const DEF = defaultRange();
+const state = { day: '', from: DEF.from, to: DEF.to, thr: 24, sortCol: 0, sortDir: 1, sel: -1 };
+
+/* эффективные границы периода (пустой край = край данных) */
+function effRange() {
+  return { f: state.from || days[0], t: state.to || days[days.length - 1] };
+}
 
 /* ── индексы и агрегаты ── */
 const days = [...new Set(S.day)].sort();
@@ -41,13 +57,20 @@ function verdict(i, thr) {
   return S.lag_h[i] <= thr ? { cls: 'ok', txt: 'В срок', rank: 0 } : { cls: 'bad', txt: 'Просрочена', rank: 1 };
 }
 
-/* поставки текущего выбора (день) в исходном порядке */
+/* поставки текущего выбора: день (если выбран) либо весь период */
 function rowsInView() {
   const out = [];
+  const { f, t } = effRange();
   for (let i = 0; i < S.id.length; i++) {
-    if (state.day === ALL || S.day[i] === state.day) out.push(i);
+    if (state.day ? S.day[i] === state.day : (S.day[i] >= f && S.day[i] <= t)) out.push(i);
   }
   return out;
+}
+
+/* дни выбранного периода (ось графика и лента чипов) */
+function daysInView() {
+  const { f, t } = effRange();
+  return days.filter(d => d >= f && d <= t);
 }
 
 /* агрегаты по выборке: поставки ok/bad/wait/anom, задания, медиана лага */
@@ -98,17 +121,21 @@ function renderHeader() {
 
   const box = document.getElementById('days');
   box.innerHTML = '';
+  const shownDays = daysInView();
   const mk = (day, html) => {
     const el = document.createElement('button');
     el.className = 'day-chip' + (state.day === day ? ' active' : '');
     el.innerHTML = html;
-    el.onclick = () => { state.day = day; render(); };
+    el.onclick = () => { state.day = (day === ALL) ? '' : day; render(); };
     box.appendChild(el);
   };
-  mk(ALL, `<b>Все дни</b><span>${fmtN(S.id.length)} поставок</span>`);
   const perDay = {};
   for (let i = 0; i < S.id.length; i++) (perDay[S.day[i]] ??= []).push(i);
-  for (const d of days) {
+  let periodSupplies = 0;
+  for (const d of shownDays) periodSupplies += (perDay[d] || []).length;
+  const wholeAll = shownDays.length === days.length;
+  mk(ALL, `<b>${wholeAll ? 'Все дни' : 'Весь период'}</b><span>${fmtN(periodSupplies)} поставок</span>`);
+  for (const d of shownDays) {
     const a = agg(perDay[d], state.thr);
     const mini = `<div class="mini">
       <i style="background:${C.green};width:${Math.max(a.ok ? 10 : 0, 30 * a.ok / Math.max(1, a.sup))}px"></i>
@@ -119,6 +146,25 @@ function renderHeader() {
   // активная прокрутка к выбранному дню
   const act = box.querySelector('.day-chip.active');
   if (act) act.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+/* инпуты периода: min/max из данных; стартовое значение — период по умолчанию.
+   Смена периода сохраняет выбранный день, только если он внутри нового окна. */
+function wireRangeInputs() {
+  const from = document.getElementById('d-from'), to = document.getElementById('d-to');
+  from.min = to.min = days[0];
+  from.max = to.max = mskTodayISO();
+  from.value = state.from;
+  to.value = state.to;
+  const apply = () => {
+    state.from = from.value || '';
+    state.to = to.value || '';
+    const { f, t } = effRange();
+    if (state.day && (state.day < f || state.day > t)) state.day = '';
+    render();
+  };
+  from.onchange = apply;
+  to.onchange = apply;
 }
 
 /* ── KPI ── */
@@ -136,17 +182,19 @@ function renderKpis(idxs) {
     kpi('Цель', state.thr + ' ч', 'окно SLA, переключатель в шапке');
 }
 
-/* ── график дней ── */
+/* ── график дней: ось — всегда выбранный период; при выбранном дне
+   заполнен только его столбик (контекст периода сохраняется) ── */
 let daysChart = null;
 function renderDaysChart(thr) {
   const el = document.getElementById('chart-days');
   daysChart = daysChart || echarts.init(el);
+  const shown = daysInView();
   const perDay = {};
-  for (const d of days) perDay[d] = [];
-  for (let i = 0; i < S.id.length; i++) perDay[S.day[i]].push(i);
+  for (const d of shown) perDay[d] = [];
+  for (const i of rowsInView()) (perDay[S.day[i]] ??= []).push(i);
 
   const labels = [], ok = [], bad = [], wait = [], rej = [], tasks = [];
-  for (const d of days) {
+  for (const d of shown) {
     const a = agg(perDay[d], thr);
     labels.push(dayShort(d));
     ok.push(a.ok); bad.push(a.bad); wait.push(a.wait); rej.push(a.rej);
@@ -172,7 +220,13 @@ function renderDaysChart(thr) {
     ],
   });
   daysChart.off('click');
-  daysChart.on('click', (p) => { if (labels.includes(p.name)) { state.day = days[labels.indexOf(p.name)]; render(); } });
+  daysChart.on('click', (p) => {
+    const k = labels.indexOf(p.name);
+    if (k >= 0) {
+      state.day = shown[k];
+      render();
+    }
+  });
 }
 
 /* ── таблица ── */
@@ -193,8 +247,15 @@ const COLS = [
 ];
 
 function renderTable(idxs) {
-  document.getElementById('tbl-title').firstChild.textContent =
-    state.day === ALL ? 'Все поставки ' : `Поставки ${dayShort(state.day)} `;
+  const title = document.getElementById('tbl-title').firstChild;
+  if (state.day) {
+    title.textContent = `Поставки ${dayShort(state.day)} `;
+  } else if (state.from || state.to) {
+    const { f, t } = effRange();
+    title.textContent = `Поставки ${dayShort(f)}–${dayShort(t)} `;
+  } else {
+    title.textContent = 'Все поставки ';
+  }
   const tbl = document.getElementById('tbl');
   const view = [...idxs];
   const col = COLS[state.sortCol];
@@ -218,7 +279,7 @@ function renderTable(idxs) {
       if (c.sub) return `<td class="tl"><div class="nm">${txt}</div><div class="sid">${esc(c.sub(i))}</div></td>`;
       return `<td class="${cls}">${txt}</td>`;
     }).join('') + '</tr>';
-  }).join('') || '<tr><td colspan="9" class="empty">Нет поставок за выбранный день</td></tr>';
+  }).join('') || '<tr><td colspan="9" class="empty">Нет поставок за выбранный период</td></tr>';
 
   tbl.querySelectorAll('th').forEach((th) => th.onclick = () => {
     const j = +th.dataset.j;
@@ -334,4 +395,5 @@ function render() {
   renderDaysChart(state.thr);
   renderTable(idxs);
 }
+wireRangeInputs();
 render();

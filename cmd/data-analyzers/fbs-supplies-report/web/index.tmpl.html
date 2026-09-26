@@ -21,11 +21,15 @@
   <div class="controls">
     <div class="group" id="presets">
       <button data-day="__ALL__" class="active">Все дни</button>
+      <input type="date" id="d-from" title="Начало периода формирования" aria-label="Период с">
+      <span class="dash">—</span>
+      <input type="date" id="d-to" title="Конец периода формирования" aria-label="Период по">
     </div>
     <div class="seg" id="seg-threshold" title="Целевое окно от первого задания до приёмки">
       <button data-h="12">12ч</button>
       <button data-h="24" class="active">24ч</button>
       <button data-h="36">36ч</button>
+      <button data-h="48">48ч</button>
     </div>
     <button id="glossary-btn" class="glossary-btn" title="Определения всех метрик и терминов">Глоссарий</button>
   </div>
@@ -58,7 +62,7 @@
 
   <section class="grid">
     <div class="card span2">
-      <h2>Поставки по дням формирования <span class="hint">столбики — поставки: зелёные уложились в окно, красные нет, серые ждут приёмки · линия — заданий в поставках дня · клик по столбику — выбор дня</span></h2>
+      <h2>Поставки по дням формирования <span class="hint">столбики — поставки: зелёные уложились в окно, красные нет, серые ждут приёмки · линия — заданий в поставках дня · период — в шапке · клик по столбику — выбор дня</span></h2>
       <div class="chart tall" id="chart-days"></div>
     </div>
 
