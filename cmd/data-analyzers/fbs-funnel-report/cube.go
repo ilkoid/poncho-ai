@@ -25,7 +25,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// cubeQuery — факты куба. $1 = all_models, $2 = since по дате создания.
+// cubeQuery — факты куба. $1 = all_models, $2 = since по дате создания,
+// $3 = until (режет и created_at, и updated_at: «без сегодняшнего» не должно
+// оставлять частичный день ни в когортах, ни в событиях).
 const cubeQuery = `
 WITH top_cities AS (
   SELECT destination_city
@@ -48,6 +50,8 @@ SELECT
 FROM public.order_feed
 WHERE ($1 OR is_mp)
   AND ($2::date IS NULL OR (created_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (created_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)
+  AND ($3::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)
 GROUP BY 1, 2, 3, 4, 5, 6`
 
 // cubeNmQueryOneC — словарь номенклатур с категориями 1С.

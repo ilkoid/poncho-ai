@@ -20,8 +20,11 @@
 //   - public.cards             — справочник артикулов/предметов (для читаемости).
 //
 // Параметры всех запросов: $1 = all_models (true → без фильтра is_mp),
-// $2 = since (date | NULL → без ограничения снизу). Дни — МСК:
-// (ts AT TIME ZONE 'Europe/Moscow')::date.
+// $2 = since (date | NULL → без ограничения снизу), $3 = until (date | NULL →
+// без ограничения сверху; в запросах v3-снимка это $2). Дни — МСК:
+// (ts AT TIME ZONE 'Europe/Moscow')::date. until режет каждую дату, которую
+// запрос уже фильтрует since-ом: когорты — по created_at, события — по
+// updated_at (например --exclude-today убирает неполный текущий день всюду).
 package main
 
 import (
@@ -58,7 +61,8 @@ SELECT
   COALESCE(sum(seller_price) FILTER (WHERE status IN ('cancel', 'return', 'returnDefective')), 0)::float8
 FROM public.order_feed
 WHERE ($1 OR is_mp)
-  AND ($2::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)`
+  AND ($2::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)`
 
 // funnelDailyQuery — события по дням: день = дата перехода (updated_at по МСК).
 const funnelDailyQuery = `
@@ -74,6 +78,7 @@ SELECT
 FROM public.order_feed
 WHERE ($1 OR is_mp)
   AND ($2::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)
 GROUP BY 1 ORDER BY 1`
 
 // cohortsFeedQuery — когорты по дню создания (лента). Полноту когорты видно из
@@ -91,6 +96,7 @@ SELECT
 FROM public.order_feed
 WHERE ($1 OR is_mp)
   AND ($2::date IS NULL OR (created_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (created_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)
 GROUP BY 1 ORDER BY 1`
 
 // cohortsV3Query — те же когорты из v3-снимка (fbs_orders × статусы): снимок на
@@ -108,6 +114,7 @@ SELECT
 FROM public.fbs_orders o
 JOIN public.fbs_orders_status s ON s.order_id = o.id
 WHERE ($1::date IS NULL OR (o.created_at AT TIME ZONE 'Europe/Moscow')::date >= $1::date)
+  AND ($2::date IS NULL OR (o.created_at AT TIME ZONE 'Europe/Moscow')::date <= $2::date)
 GROUP BY 1 ORDER BY 1`
 
 // v3TotalsQuery — итоговая воронка по v3-снимку (для «Сводки»); $1 — since.
@@ -120,7 +127,8 @@ SELECT
     ('waiting', 'sorted', 'ready_for_pickup', 'accepted_by_carrier', 'sent_to_carrier', 'postponed_delivery'))
 FROM public.fbs_orders o
 JOIN public.fbs_orders_status s ON s.order_id = o.id
-WHERE ($1::date IS NULL OR (o.created_at AT TIME ZONE 'Europe/Moscow')::date >= $1::date)`
+WHERE ($1::date IS NULL OR (o.created_at AT TIME ZONE 'Europe/Moscow')::date >= $1::date)
+  AND ($2::date IS NULL OR (o.created_at AT TIME ZONE 'Europe/Moscow')::date <= $2::date)`
 
 // cancelReasonsQuery — причины отмен по дням (только status='cancel').
 const cancelReasonsQuery = `
@@ -134,6 +142,7 @@ SELECT
 FROM public.order_feed
 WHERE ($1 OR is_mp) AND status = 'cancel'
   AND ($2::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)
 GROUP BY 1 ORDER BY 1`
 
 // lifecycleOverallQuery — скорость цикла заказ→выкуп по всем выкупам окна.
@@ -144,7 +153,8 @@ SELECT
   percentile_cont(0.9) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at)) / 3600.0)
 FROM public.order_feed
 WHERE ($1 OR is_mp) AND status = 'buyout'
-  AND ($2::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)`
+  AND ($2::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (updated_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)`
 
 // lifecycleByCohortQuery — медиана/p90 цикла по когортам создания.
 const lifecycleByCohortQuery = `
@@ -156,6 +166,7 @@ SELECT
 FROM public.order_feed
 WHERE ($1 OR is_mp) AND status = 'buyout'
   AND ($2::date IS NULL OR (created_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (created_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)
 GROUP BY 1 ORDER BY 1`
 
 // geoQuery — география доставки (город/район): заказы, выкуп, выручка.
@@ -171,6 +182,7 @@ SELECT
 FROM public.order_feed
 WHERE ($1 OR is_mp)
   AND ($2::date IS NULL OR (created_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (created_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)
 GROUP BY 1, 2 ORDER BY orders DESC, 1 LIMIT 50`
 
 // topNmQuery — воронка по номенклатурам (артикул WB), сортировка по упущенной
@@ -193,6 +205,7 @@ FROM public.order_feed f
 LEFT JOIN public.cards c ON c.nm_id = f.nm_id
 WHERE ($1 OR f.is_mp)
   AND ($2::date IS NULL OR (f.created_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (f.created_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)
 GROUP BY f.nm_id, c.vendor_code, c.subject_name
 ORDER BY lost_rub DESC`
 
@@ -207,6 +220,7 @@ SELECT
 FROM public.fbs_orders o
 LEFT JOIN public.order_feed f ON f.srid = o.rid AND ($1 OR f.is_mp)
 WHERE ($2::date IS NULL OR (o.created_at AT TIME ZONE 'Europe/Moscow')::date >= $2::date)
+  AND ($3::date IS NULL OR (o.created_at AT TIME ZONE 'Europe/Moscow')::date <= $3::date)
 GROUP BY 1 ORDER BY 1`
 
 // ============================================================================
@@ -668,27 +682,35 @@ func loadCross(ctx context.Context, pool *pgxpool.Pool, q queryParams) ([]CrossR
 	return out, rows.Err()
 }
 
-// queryParams — общие параметры запросов: allModels и окно since ("" = без него).
+// queryParams — общие параметры запросов: allModels и окно ("" = без границы).
 type queryParams struct {
 	allModels bool
-	since     string // YYYY-MM-DD или ""
+	since     string // YYYY-MM-DD, нижняя граница, или ""
+	until     string // YYYY-MM-DD, верхняя граница (--exclude-today), или ""
 }
 
 func (q queryParams) args() []any {
-	var since any
+	var since, until any
 	if q.since != "" {
 		since = q.since
 	}
-	return []any{q.allModels, since}
+	if q.until != "" {
+		until = q.until
+	}
+	return []any{q.allModels, since, until}
 }
 
-// sinceOnly — параметры для запросов, где фильтра is_mp нет (v3-таблицы).
+// sinceOnly — параметры для запросов, где фильтра is_mp нет (v3-таблицы):
+// там since/until сдвигаются на $1/$2.
 func (q queryParams) sinceOnly() []any {
-	var since any
+	var since, until any
 	if q.since != "" {
 		since = q.since
 	}
-	return []any{since}
+	if q.until != "" {
+		until = q.until
+	}
+	return []any{since, until}
 }
 
 // loadAll собирает отчёт целиком. Зрелость когорт проставляется здесь же:

@@ -46,6 +46,9 @@ Options:
   --config PATH   Путь к конфигу (default: config.yaml рядом с утилитой)
   --days N        Окно в сутках: события/когорты за последние N сут МСК
                   (default 0 = весь диапазон данных)
+  --exclude-today Исключить сегодняшний неполный день: окно заканчивается
+                  вчера (МСК). Данные утра, когда лента ещё лилась, не
+                  портят последнюю точку графиков.
   --all-models    Учитывать все модели выполнения (incl. FBW), а не только
                   склад продавца (is_mp)
   --db NAME       БД (overrides storage.pg_database)
@@ -64,6 +67,7 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "Путь к конфигу")
 	flag.StringVar(configPath, "c", "config.yaml", "Путь к конфигу (short)")
 	days := flag.Int("days", -1, "Окно в сутках (0 = весь диапазон)")
+	excludeToday := flag.Bool("exclude-today", false, "Исключить сегодняшний неполный день (окно кончается вчера)")
 	allModels := flag.Bool("all-models", false, "Все модели выполнения (incl. FBW)")
 	dbName := flag.String("db", "", "БД (overrides storage.pg_database)")
 	xlsxPath := flag.String("xlsx", "", "Выходной xlsx (overrides config)")
@@ -86,6 +90,9 @@ func main() {
 	cfg.applyDefaults()
 	if *days >= 0 {
 		cfg.Days = *days
+	}
+	if *excludeToday {
+		cfg.ExcludeToday = true
 	}
 	if *allModels {
 		cfg.AllModels = true
@@ -123,13 +130,16 @@ func main() {
 	if cfg.Days > 0 {
 		window = fmt.Sprintf("последние %d сут", cfg.Days)
 	}
+	if cfg.ExcludeToday {
+		window += ", без сегодняшнего"
+	}
 	fmt.Printf("  Отбор:     %s | окно: %s\n", scope, window)
 	fmt.Println(sep)
 
 	if *dryRun {
 		fmt.Println("\n  --dry-run: параметры (без обращения к БД):")
-		fmt.Printf("    backend: %s\n    база:    %s\n    days=%d, all_models=%v\n",
-			cfg.Storage.Backend, cfg.Storage.DisplayDB(), cfg.Days, cfg.AllModels)
+		fmt.Printf("    backend: %s\n    база:    %s\n    days=%d, exclude_today=%v, all_models=%v\n",
+			cfg.Storage.Backend, cfg.Storage.DisplayDB(), cfg.Days, cfg.ExcludeToday, cfg.AllModels)
 		return
 	}
 
@@ -150,6 +160,9 @@ func main() {
 	q := queryParams{allModels: cfg.AllModels}
 	if cfg.Days > 0 {
 		q.since = nowMoscow().AddDate(0, 0, -cfg.Days).Format("2006-01-02")
+	}
+	if cfg.ExcludeToday {
+		q.until = nowMoscow().AddDate(0, 0, -1).Format("2006-01-02")
 	}
 
 	fmt.Print("  Запросы воронки (read-only)...")
@@ -227,6 +240,9 @@ func main() {
 type Config struct {
 	// Days — окно отчёта в сутках (0 = весь диапазон данных).
 	Days int `yaml:"days"`
+	// ExcludeToday — исключить сегодняшний неполный день: верхняя граница
+	// окна = вчера (МСК).
+	ExcludeToday bool `yaml:"exclude_today"`
 	// AllModels — учитывать все модели выполнения (incl. FBW), а не только is_mp.
 	AllModels bool `yaml:"all_models"`
 	// Storage — параметры подключения к БД.

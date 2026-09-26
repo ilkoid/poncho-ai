@@ -55,22 +55,27 @@ func TestSQLInvariants(t *testing.T) {
 	}
 }
 
-// queryParams: since="" уходит как NULL ($2::date IS NULL → без ограничения).
+// queryParams: since/until="" уходят как NULL ($N::date IS NULL → без ограничения).
 func TestQueryParams(t *testing.T) {
 	q := queryParams{allModels: false, since: ""}
 	args := q.args()
-	if len(args) != 2 {
-		t.Fatalf("args = %d, want 2", len(args))
+	if len(args) != 3 {
+		t.Fatalf("args = %d, want 3 (allModels, since, until)", len(args))
 	}
-	if args[1] != nil {
-		t.Errorf("пустое since должно уходить nil (NULL), got %v", args[1])
+	if args[1] != nil || args[2] != nil {
+		t.Errorf("пустые since/until должны уходить nil (NULL), got since=%v until=%v", args[1], args[2])
 	}
 	q.since = "2026-08-18"
-	if got := q.args()[1]; got != "2026-08-18" {
-		t.Errorf("since = %v, want строку-дату", got)
+	q.until = "2026-09-25"
+	args = q.args()
+	if args[1] != "2026-08-18" || args[2] != "2026-09-25" {
+		t.Errorf("since/until = %v/%v, want строки-даты", args[1], args[2])
 	}
-	if len(q.sinceOnly()) != 1 {
-		t.Errorf("sinceOnly = %d аргумента, want 1", len(q.sinceOnly()))
+	if len(q.sinceOnly()) != 2 {
+		t.Errorf("sinceOnly = %d аргумента, want 2 (since, until)", len(q.sinceOnly()))
+	}
+	if got := q.sinceOnly()[1]; got != "2026-09-25" {
+		t.Errorf("sinceOnly until = %v, want 2026-09-25", got)
 	}
 }
 
