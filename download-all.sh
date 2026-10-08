@@ -187,6 +187,13 @@ run go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$C/
 maint whremains
 run go run "$PONCHO/cmd/data-downloaders/download-wb-whremains-v2" --config "$C/download-wb-whremains-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)
 
+# ── Phase 6b: Size availability — аналитический снапшот «недоступно на WB,
+#    но лежит на 1С»: analytical.size_availability_daily(+_sizes_daily) +
+#    reports/size-availability-<дата>.html. Сырьё готово (стоки — Phase 4,
+#    остатки 1С — Phase 1). ──
+echo "── Phase 6b: Size availability (analytical) ──"
+run go run "$PONCHO/cmd/data-analyzers/size-availability-report" --config "$C/size-availability-PG.yaml"
+
 # ── Phase 7: PG Maintenance — финальный лёгкий проход (ANALYZE всех таблиц,
 #    чтобы дневные отчёты/анализаторы работали по свежим статистикам) ──
 echo "── Phase 7: PG Maintenance (ANALYZE all) ──"

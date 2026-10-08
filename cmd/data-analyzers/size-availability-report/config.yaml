@@ -1,0 +1,11 @@
+# Доступность размеров на WB vs остаток 1С (size-availability-report).
+# Наполняет analytical.size_availability_daily(+_sizes_daily) и собирает HTML.
+min_units_per_size: 2   # размер «представлен», если остаток WB строго больше N шт
+min_sizes_presented: 4  # карточка «недоступна», если представлено менее N размеров
+onec_storage: "Внуково" # склад 1С для меры остатка (free); «Склад ОПТ» — его зеркало-дубль
+retention_days: 90      # сколько суток истории снапшотов хранить в analytical.*
+html: auto              # auto = reports/size-availability-<дата>.html; "" = не собирать
+storage:
+  backend: postgres
+  pg_database: wb_data_prod
+  pg_password_env: PG_PWD
