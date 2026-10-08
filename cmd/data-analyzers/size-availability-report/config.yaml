@@ -4,6 +4,7 @@ min_units_per_size: 2   # размер «представлен», если ос
 min_sizes_presented: 4  # карточка «недоступна», если представлено менее N размеров
 onec_storage: "Внуково" # склад 1С для меры остатка (free); «Склад ОПТ» — его зеркало-дубль
 retention_days: 90      # сколько суток истории снапшотов хранить в analytical.*
+max_stocks_age_days: 2  # запись снапшота на стоках старше N сут = ошибка (--allow-stale = осознанный сброс)
 html: auto              # auto = reports/size-availability-<дата>.html; "" = не собирать
 storage:
   backend: postgres

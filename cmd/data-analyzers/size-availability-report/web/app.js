@@ -8,6 +8,10 @@ const A = P.arts, Z = P.sizes, M = P.meta;
 
 const C = { green: '#018849', red: '#E41A2A', grey: '#9E9AA8', violet: '#7758B3', ink2: '#757575' };
 
+/* сентинел фильтра «категория пуста в 1С»: '' занят как «фильтр выключен» */
+const CAT_EMPTY = '∅';
+const catLabel = (c) => (c === CAT_EMPTY ? '— без категории —' : c);
+
 const state = {
   cat1: '', cat2: '', year: '', season: '', search: '',
   units: M.min_units,       // размер представлен ⇔ qty > units
@@ -39,9 +43,10 @@ const unavail = (i) => presCnt(i, state.units) < state.minSizes;
 /* ── фильтры ── */
 function rowsInView() {
   const q = state.search.trim().toUpperCase();
+  const c1 = state.cat1 === CAT_EMPTY ? '' : state.cat1;
   const out = [];
   for (let i = 0; i < A.article.length; i++) {
-    if (state.cat1 && A.cat1[i] !== state.cat1) continue;
+    if (state.cat1 && A.cat1[i] !== c1) continue;
     if (state.cat2 && A.cat2[i] !== state.cat2) continue;
     if (state.year && String(A.year[i] || '—') !== state.year) continue;
     if (state.season && A.season[i] !== state.season) continue;
@@ -82,7 +87,7 @@ function renderHeader() {
     el.querySelector('.x').onclick = clear;
     chips.appendChild(el);
   };
-  mk('Категория', state.cat1, () => { state.cat1 = ''; state.cat2 = ''; wireSelects(); render(); });
+  mk('Категория', catLabel(state.cat1), () => { state.cat1 = ''; state.cat2 = ''; wireSelects(); render(); });
   mk('Подкатегория', state.cat2, () => { state.cat2 = ''; wireSelects(); render(); });
   mk('Год', state.year, () => { state.year = ''; wireSelects(); render(); });
   mk('Сезон', state.season, () => { state.season = ''; wireSelects(); render(); });
@@ -92,13 +97,14 @@ function renderHeader() {
 /* опции селектов строятся из данных с учётом уже выбранных фильтров
    (cat1 фильтрует список cat2, остальные независимы) */
 function wireSelects() {
+  const c1 = state.cat1 === CAT_EMPTY ? '' : state.cat1;
   const uniqOf = (vals) => {
     const seen = new Set();
     const out = [];
     for (let i = 0; i < vals.length; i++) {
       const v = vals[i];
       if (v === '' || seen.has(v)) continue;
-      if (vals === A.cat2 && state.cat1 && A.cat1[i] !== state.cat1) continue;
+      if (vals === A.cat2 && c1 && A.cat1[i] !== c1) continue;
       seen.add(v);
       out.push(v);
     }
@@ -130,18 +136,29 @@ function bindControls() {
     tmr = setTimeout(() => { state.search = e.target.value; render(); }, 150);
   };
 
-  const seg = (id, attr, apply) => {
+  /* пороги — числа, view — строка: конвертер задаёт каждый сегмент;
+     dataset всегда строка, +'' = 0 (а не «строка 0 как truthy») */
+  const seg = (id, attr, apply, num = true) => {
     document.querySelectorAll('#' + id + ' button').forEach((b) => b.onclick = () => {
       document.querySelectorAll('#' + id + ' button').forEach((x) => x.classList.remove('active'));
       b.classList.add('active');
-      apply(+b.dataset[attr] || b.dataset[attr]);
+      apply(num ? +b.dataset[attr] : b.dataset[attr]);
       render();
       if (state.sel >= 0) openDetail(state.sel);
     });
   };
   seg('seg-units', 'u', (v) => { state.units = v; });
   seg('seg-sizes', 's', (v) => { state.minSizes = v; });
-  seg('seg-view', 'v', (v) => { state.view = v; });
+  seg('seg-view', 'v', (v) => { state.view = v; }, false);
+
+  /* активная кнопка порогов — из state (пороги приходят из конфига,
+     зашитая в шаблоне подсветка врала бы при нестандартных порогах) */
+  const markSeg = (id, attr, val) => {
+    document.querySelectorAll('#' + id + ' button').forEach((b) =>
+      b.classList.toggle('active', +b.dataset[attr] === val));
+  };
+  markSeg('seg-units', 'u', state.units);
+  markSeg('seg-sizes', 's', state.minSizes);
 }
 
 /* ── KPI ── */
@@ -182,8 +199,7 @@ function renderCatsChart(idxs) {
     if (!unavail(i)) continue;
     const c = A.cat1[i];
     let o = byCat.get(c);
-    if (!o) { o = { key: c, label: c || '— без категории —', n: 0, card: 0, nocard: 0, free: 0 }; byCat.set(c, o); }
-    o.n++; o.free += A.onec_free[i];
+    if (!o) { o = { key: c, label: c || '— без категории —', n: 0, card: 0, nocard: 0, free: 0 }; byCat.set(c, o); }    o.n++; o.free += A.onec_free[i];
     if (A.has_card[i]) o.card++; else o.nocard++;
   }
   const top = [...byCat.values()].sort((x, y) => y.free - x.free).slice(0, 12);
@@ -210,7 +226,7 @@ function renderCatsChart(idxs) {
   catsChart.on('click', (p) => {
     const hit = top[p.dataIndex];
     if (!hit) return;
-    state.cat1 = hit.key;
+    state.cat1 = hit.key || CAT_EMPTY; // пустая категория 1С — тоже фильтр, '' занят как «выкл»
     state.cat2 = '';
     wireSelects();
     render();
@@ -293,11 +309,12 @@ function openDetail(i) {
 
   const arr = sizesOf.get(A.nm_id[i]) || [];
   const maxQ = Math.max(1, ...arr.map((k) => Z.qty[k]));
+  const notPres = state.units === 0 ? '0 шт' : `≤ ${state.units} шт`;
   const rows = arr.map((k) => {
     const pres = Z.qty[k] > state.units;
     return `<tr><td class="tl">${esc(Z.size[k] || '—')}</td>` +
       `<td><span class="sz-bar" style="width:${Math.max(2, 60 * Z.qty[k] / maxQ)}px;${pres ? '' : 'background:var(--grey)'};opacity:${pres ? 1 : .55}"></span>${fmtN(Z.qty[k])}</td>` +
-      `<td>${pres ? `<span class="verdict ok">представлен</span>` : `<span class="verdict bad">&lt;= ${state.units} шт</span>`}</td></tr>`;
+      `<td>${pres ? `<span class="verdict ok">представлен</span>` : `<span class="verdict bad">${notPres}</span>`}</td></tr>`;
   }).join('');
 
   document.getElementById('d-body').innerHTML =

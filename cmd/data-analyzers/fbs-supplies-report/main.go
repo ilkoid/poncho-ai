@@ -46,8 +46,8 @@ Options:
   --days N        Поставки, сформированные за последние N сут МСК
                   (default 0 = весь диапазон данных)
   --db NAME       БД (overrides storage.pg_database)
-  --html PATH     Выходной HTML (default: reports/fbs-supplies-<date>.html;
-                  пусто = не собирать)
+  --html PATH     Выходной HTML: "auto" = reports/fbs-supplies-<дата>.html,
+                  "" (в конфиге) = не собирать, путь = своё имя
   --dry-run       Показать параметры без обращения к БД
   -h, --help      Справка
 
@@ -156,15 +156,21 @@ func main() {
 
 	cube := assembleCube(rows, cfg.Storage.PgDatabase)
 
-	if cfg.HTML == "" {
+	// "auto" → reports/fbs-supplies-<сегодня>.html; "" → не собирать
+	// (до фикса 09.10 «auto» из конфига уходило в имя файла буквально).
+	if cfg.HTML == "auto" {
 		cfg.HTML = filepath.Join("reports", fmt.Sprintf("fbs-supplies-%s.html", time.Now().Format("2006-01-02")))
 	}
-	fmt.Print("  Сборка HTML-дашборда...")
-	size, err := exportHTML(cube, cfg.HTML)
-	if err != nil {
-		log.Fatalf("  HTML: %v", err)
+	if cfg.HTML != "" {
+		fmt.Print("  Сборка HTML-дашборда...")
+		size, err := exportHTML(cube, cfg.HTML)
+		if err != nil {
+			log.Fatalf("  HTML: %v", err)
+		}
+		fmt.Printf(" ok (%.1f МБ) → %s\n", float64(size)/1024/1024, cfg.HTML)
+	} else {
+		fmt.Println("  HTML отключён (html: \"\")")
 	}
-	fmt.Printf(" ok (%.1f МБ) → %s\n", float64(size)/1024/1024, cfg.HTML)
 
 	// Консольная сводка.
 	fmt.Println("\n  ── СВОДКА ──")
@@ -196,7 +202,11 @@ func main() {
 		sort.Float64s(lags)
 		fmt.Printf("    Лаг до приёмки: медиана %.1f ч\n", lags[len(lags)/2])
 	}
-	fmt.Printf("  Готово за %s → %s\n", time.Since(start).Round(time.Second), cfg.HTML)
+	if cfg.HTML != "" {
+		fmt.Printf("  Готово за %s → %s\n", time.Since(start).Round(time.Second), cfg.HTML)
+	} else {
+		fmt.Printf("  Готово за %s\n", time.Since(start).Round(time.Second))
+	}
 }
 
 // ── Конфигурация ──
@@ -222,6 +232,7 @@ func loadConfig(path string) (*Config, error) {
 func defaultConfig() *Config {
 	return &Config{
 		Days: 0,
+		HTML: "auto",
 		Storage: config.V2StorageConfig{
 			Backend:       "postgres",
 			PgDatabase:    "wb_data_prod",

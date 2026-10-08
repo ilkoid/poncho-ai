@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -28,33 +29,51 @@ import (
 )
 
 // fillDailySQL — наполняет analytical.size_availability_daily снапшотом $1.
-// $2 = min_units_per_size (строго больше), $3 = склад 1С, $4 = min_sizes_presented.
+// $2 = min_units_per_size (строго больше), $3 = склад 1С, $4 = min_sizes_presented,
+// $5 = дата среза onec_rests (пин: если SQL пересчитает MAX сам, параллельная
+// дозагрузка навесит свежие данные на чужую дату снапшота).
 // Год выпуска: символы 2-3 артикула (конвенция репо, как allowed_years
 // collection-readiness и pkg/config FilterNmIDsByYear).
+// Дедуп-джойны (иначе дубль ключа роняет upsert ошибкой «cannot affect row
+// a second time»): карточки схлопываются по vendor_code в MIN(nm_id),
+// справочник 1С — DISTINCT ON по article (свежая строка), остатки 1С
+// суммируются по статье через ВСЕ guid артикула.
+// sizes_total/sizes_presented/wb_qty считаются по сетке card_sizes — тот же
+// источник, что у sizes-таблицы и JS-пересчёта на дашборде.
 const fillDailySQL = `
-WITH latest_stock AS (SELECT MAX(snapshot_date) AS d FROM public.stocks_daily_warehouses),
-latest_rests  AS (SELECT MAX(snapshot_date) AS d FROM public.onec_rests),
-wb_size AS (
+WITH wb_size AS (
     SELECT nm_id, chrt_id, SUM(quantity) AS qty
     FROM public.stocks_daily_warehouses
-    WHERE snapshot_date = (SELECT d FROM latest_stock)
+    WHERE snapshot_date = $1
     GROUP BY nm_id, chrt_id
 ),
-sizes_total AS (
-    SELECT nm_id, COUNT(*) AS cnt FROM public.card_sizes GROUP BY nm_id
-),
 presented AS (
-    SELECT nm_id,
-           COUNT(*) FILTER (WHERE qty > $2) AS presented_cnt,
-           COALESCE(SUM(qty), 0) AS wb_qty
-    FROM wb_size
-    GROUP BY nm_id
+    SELECT cs.nm_id,
+           COUNT(*) AS total_cnt,
+           COUNT(*) FILTER (WHERE COALESCE(w.qty, 0) > $2) AS presented_cnt,
+           COALESCE(SUM(w.qty), 0) AS wb_qty
+    FROM public.card_sizes cs
+    LEFT JOIN wb_size w ON w.chrt_id = cs.chrt_id
+    GROUP BY cs.nm_id
 ),
 rests AS (
-    SELECT good_guid, COALESCE(SUM(reserv), 0) AS reserv, COALESCE(SUM(free), 0) AS free
-    FROM public.onec_rests
-    WHERE snapshot_date = (SELECT d FROM latest_rests) AND storage_name = $3
-    GROUP BY good_guid
+    SELECT g.article,
+           COALESCE(SUM(r.reserv), 0) AS reserv,
+           COALESCE(SUM(r.free), 0) AS free
+    FROM public.onec_rests r
+    JOIN public.onec_goods g ON g.guid = r.good_guid
+    WHERE r.snapshot_date = $5 AND r.storage_name = $3
+    GROUP BY g.article
+),
+cards AS (
+    SELECT vendor_code, MIN(nm_id) AS nm_id
+    FROM public.cards
+    GROUP BY vendor_code
+),
+goods AS (
+    SELECT DISTINCT ON (article) article, brand, category_level1_name, category_level2_name, season, category
+    FROM public.onec_goods
+    ORDER BY article, downloaded_at DESC, guid
 )
 INSERT INTO analytical.size_availability_daily (
     snapshot_date, article, nm_id, brand, category_l1, category_l2, season, year_of_issue,
@@ -69,7 +88,7 @@ SELECT
     COALESCE(o.season, ''),
     CASE WHEN substring(o.article FROM 2 FOR 2) ~ '^[0-9]{2}$'
          THEN 2000 + substring(o.article FROM 2 FOR 2)::int ELSE 0 END,
-    COALESCE(st.cnt, 0),
+    COALESCE(p.total_cnt, 0),
     COALESCE(p.presented_cnt, 0),
     COALESCE(p.wb_qty, 0),
     COALESCE(r.free, 0),
@@ -77,11 +96,10 @@ SELECT
     c.nm_id IS NOT NULL,
     COALESCE(p.presented_cnt, 0) < $4,
     TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
-FROM public.onec_goods o
-LEFT JOIN public.cards c      ON c.vendor_code = o.article
-LEFT JOIN sizes_total st      ON st.nm_id = c.nm_id
-LEFT JOIN presented p         ON p.nm_id = c.nm_id
-LEFT JOIN rests r             ON r.good_guid = o.guid
+FROM goods o
+LEFT JOIN cards c     ON c.vendor_code = o.article
+LEFT JOIN presented p ON p.nm_id = c.nm_id
+LEFT JOIN rests r     ON r.article = o.article
 WHERE COALESCE(r.free, 0) > 0
 ON CONFLICT (snapshot_date, article) DO UPDATE SET
     nm_id = EXCLUDED.nm_id, brand = EXCLUDED.brand,
@@ -96,11 +114,10 @@ ON CONFLICT (snapshot_date, article) DO UPDATE SET
 // (включая нулевые — «размер есть в карточке, но на WB его нет»).
 // $2 = min_units_per_size.
 const fillSizesSQL = `
-WITH latest_stock AS (SELECT MAX(snapshot_date) AS d FROM public.stocks_daily_warehouses),
-wb_size AS (
+WITH wb_size AS (
     SELECT chrt_id, SUM(quantity) AS qty
     FROM public.stocks_daily_warehouses
-    WHERE snapshot_date = (SELECT d FROM latest_stock)
+    WHERE snapshot_date = $1
     GROUP BY chrt_id
 ),
 universe AS (
@@ -148,12 +165,17 @@ WHERE snapshot_date = (
 GROUP BY snapshot_date`
 
 // coverageSQL — свежесть RAW-источников для шапки и fail-fast.
+// $1 = склад конфига: считаем строки склада в последнем срезе onec_rests,
+// чтобы переименование/пропажа склада роняли прогон ДО записи пустого снапшота.
 const coverageSQL = `
 SELECT
   (SELECT COALESCE(MAX(snapshot_date), '') FROM public.stocks_daily_warehouses),
   (SELECT COALESCE(MAX(snapshot_date), '') FROM public.onec_rests),
   (SELECT COALESCE(MAX(downloaded_at), '') FROM public.onec_goods),
-  (SELECT COUNT(*) FROM public.card_sizes)`
+  (SELECT COUNT(*) FROM public.card_sizes),
+  (SELECT COUNT(*) FROM public.onec_rests
+     WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM public.onec_rests)
+       AND storage_name = $1)`
 
 // Coverage — свежесть источников.
 type Coverage struct {
@@ -161,6 +183,7 @@ type Coverage struct {
 	RestsDate     string // последний снапшот остатков 1С
 	OnecGoodsDate string // последняя выгрузка справочника 1С
 	CardSizes     int64  // размеров карточек всего
+	StorageRows   int64  // строк склада конфига в последнем срезе onec_rests
 }
 
 // articleRow — строка снапшота (артикул).
@@ -182,62 +205,100 @@ type articleRow struct {
 
 // sizeRow — строка пер-размерной детализации.
 type sizeRow struct {
-	NmID  int64
-	Size  string
-	Qty   int64
+	NmID int64
+	Size string
+	Qty  int64
 }
 
-func loadCoverage(ctx context.Context, pool *pgxpool.Pool) (Coverage, error) {
+func loadCoverage(ctx context.Context, pool *pgxpool.Pool, storage string) (Coverage, error) {
 	var c Coverage
-	err := pool.QueryRow(ctx, coverageSQL).Scan(
-		&c.StocksDate, &c.RestsDate, &c.OnecGoodsDate, &c.CardSizes)
+	err := pool.QueryRow(ctx, coverageSQL, storage).Scan(
+		&c.StocksDate, &c.RestsDate, &c.OnecGoodsDate, &c.CardSizes, &c.StorageRows)
 	if err != nil {
 		return c, fmt.Errorf("coverage: %w", err)
 	}
 	return c, nil
 }
 
-func fillDaily(ctx context.Context, pool *pgxpool.Pool, date string, cfg *Config) (int64, error) {
-	tag, err := pool.Exec(ctx, fillDailySQL,
-		date, cfg.MinUnitsPerSize, cfg.OnecStorage, cfg.MinSizesPresented)
-	if err != nil {
-		return 0, fmt.Errorf("fill daily: %w", err)
-	}
-	return tag.RowsAffected(), nil
-}
+// deleteDailySQL / deleteSizesSQL — снос снапшота даты перед вставкой: upsert
+// обновляет только выжившие ключи, без DELETE артикул, вышедший из universe,
+// и размер, удалённый из card_sizes, оставались бы «призраками» дня.
+const (
+	deleteDailySQL = `DELETE FROM analytical.size_availability_daily WHERE snapshot_date = $1`
+	deleteSizesSQL = `DELETE FROM analytical.size_availability_sizes_daily WHERE snapshot_date = $1`
+)
 
-func fillSizes(ctx context.Context, pool *pgxpool.Pool, date string, minUnits int) (int64, error) {
-	tag, err := pool.Exec(ctx, fillSizesSQL, date, minUnits)
+// fillSnapshot — пересобирает снапшот даты stocksDate в ОБОИХ таблицах одной
+// транзакцией: DELETE + INSERT атомарно, при ошибке на середине старый снапшот
+// остаётся нетронутым, рассинхрон daily/sizes невозможен. Пустой universe —
+// ошибка (склад переименован/остатки не доехали), а не молчаливый отчёт «0».
+func fillSnapshot(ctx context.Context, pool *pgxpool.Pool, stocksDate, restsDate string, cfg *Config) (daily, sizes int64, err error) {
+	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("fill sizes: %w", err)
+		return 0, 0, fmt.Errorf("tx begin: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if _, err = tx.Exec(ctx, deleteDailySQL, stocksDate); err != nil {
+		return 0, 0, fmt.Errorf("delete daily: %w", err)
+	}
+	if _, err = tx.Exec(ctx, fillDailySQL,
+		stocksDate, cfg.MinUnitsPerSize, cfg.OnecStorage, cfg.MinSizesPresented, restsDate); err != nil {
+		return 0, 0, fmt.Errorf("fill daily: %w", err)
+	}
+	var universe int64
+	if err = tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM analytical.size_availability_daily WHERE snapshot_date = $1`, stocksDate).
+		Scan(&universe); err != nil {
+		return 0, 0, fmt.Errorf("count universe: %w", err)
+	}
+	if universe == 0 {
+		return 0, 0, fmt.Errorf(
+			"снапшот %s собрался пустым: на складе %q нет свободных остатков в срезе onec_rests %s (склад переименован? остатки не доехали?)",
+			stocksDate, cfg.OnecStorage, restsDate)
+	}
+	if _, err = tx.Exec(ctx, deleteSizesSQL, stocksDate); err != nil {
+		return 0, 0, fmt.Errorf("delete sizes: %w", err)
+	}
+	stag, err := tx.Exec(ctx, fillSizesSQL, stocksDate, cfg.MinUnitsPerSize)
+	if err != nil {
+		return 0, 0, fmt.Errorf("fill sizes: %w", err)
+	}
+	sizes = stag.RowsAffected()
+	if err = tx.Commit(ctx); err != nil {
+		return 0, 0, fmt.Errorf("tx commit: %w", err)
+	}
+	return universe, sizes, nil
 }
 
 // trimRetention удаляет снапшоты старше retentionDays из обеих таблиц.
-// Возвращает число удалённых дней-снапшотов; чистка не фатальна для отчёта.
-func trimRetention(ctx context.Context, pool *pgxpool.Pool, retentionDays int) int {
+// Возвращает число удалённых дней-снапшотов; ошибка не фатальна для отчёта,
+// но возвращается наверх — молчаливое глотание скрывало бы вечный рост таблиц.
+func trimRetention(ctx context.Context, pool *pgxpool.Pool, retentionDays int) (int, error) {
 	if retentionDays <= 0 {
-		return 0
+		return 0, nil
 	}
 	cutoff := nowMoscow().AddDate(0, 0, -retentionDays).Format("2006-01-02")
 	var n int
 	if err := pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT snapshot_date) FROM analytical.size_availability_daily
 		WHERE snapshot_date < $1`, cutoff).Scan(&n); err != nil {
-		return 0
+		return 0, fmt.Errorf("retention count: %w", err)
 	}
 	if n == 0 {
-		return 0
+		return 0, nil
 	}
 	for _, table := range []string{
 		`analytical.size_availability_daily`, `analytical.size_availability_sizes_daily`} {
 		if _, err := pool.Exec(ctx,
 			fmt.Sprintf(`DELETE FROM %s WHERE snapshot_date < $1`, table), cutoff); err != nil {
-			return 0
+			return 0, fmt.Errorf("retention delete %s: %w", table, err)
 		}
 	}
-	return n
+	return n, nil
 }
 
 func loadArticles(ctx context.Context, pool *pgxpool.Pool, date string) ([]articleRow, error) {
@@ -282,7 +343,7 @@ func loadPrevKpi(ctx context.Context, pool *pgxpool.Pool, date string) (*PrevKpi
 	var p PrevKpi
 	err := pool.QueryRow(ctx, prevKpiSQL, date).Scan(
 		&p.Date, &p.Unavailable, &p.OnecFree, &p.NoCard, &p.ZeroSizes)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
