@@ -145,6 +145,8 @@ tbody tr.active{background:var(--violet-soft)}
 .verdict.ok{background:var(--green-bg);color:var(--green)}
 .verdict.bad{background:var(--red-bg);color:var(--red)}
 .verdict.wait{background:var(--grey-bg);color:var(--grey)}
+.verdict.quick{background:var(--green-bg);color:var(--green)}
+.verdict.mid{background:#FFF3E0;color:var(--orange)}
 
 /* ── Деталь артикула: сетка размеров ── */
 .badge-line{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}

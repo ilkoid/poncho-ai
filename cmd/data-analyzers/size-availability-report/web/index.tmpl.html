@@ -19,6 +19,9 @@
   </div>
 
   <div class="controls">
+    <div class="seg" id="seg-mode" title="Интерпретация среза: каталог дефицита («кто недоступен») или план восстановления («что оживит артикул») — проба пера v1.5">
+      <button data-m="deficit" class="active">Дефицит</button><button data-m="recovery">Восстановление</button>
+    </div>
     <select id="f-cat1" class="sel" title="Категория 1С (товарная группа)"></select>
     <select id="f-cat2" class="sel" title="Подкатегория 1С"></select>
     <select id="f-year" class="sel" title="Год выпуска (символы 2–3 артикула)"></select>
@@ -68,7 +71,7 @@
 
   <section class="grid">
     <div class="card span2">
-      <h2>Недоступность по категориям <span class="hint">столбики — недоступные артикулы: фиолетовые с карточкой, серые без карточки WB · линия — свободный остаток 1С по недоступным, шт · топ-12 категорий · клик по столбику — фильтр категории</span></h2>
+      <h2 id="chart-title">Недоступность по категориям <span class="hint" id="chart-hint">столбики — недоступные артикулы: фиолетовые с карточкой, серые без карточки WB · линия — свободный остаток 1С по недоступным, шт · топ-12 категорий · клик по столбику — фильтр категории</span></h2>
       <div class="chart tall" id="chart-cats"></div>
     </div>
 
