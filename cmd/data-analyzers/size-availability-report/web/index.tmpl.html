@@ -22,7 +22,10 @@
     <select id="f-cat1" class="sel" title="Категория 1С (товарная группа)"></select>
     <select id="f-cat2" class="sel" title="Подкатегория 1С"></select>
     <select id="f-year" class="sel" title="Год выпуска (символы 2–3 артикула)"></select>
-    <select id="f-season" class="sel" title="Сезон 1С"></select>
+    <div class="mselect" id="m-season" title="Сезон 1С — можно отметить несколько">
+      <button type="button" class="sel msel-btn" id="f-season-btn">Все сезоны</button>
+      <div class="msel-pop" id="f-season-pop"></div>
+    </div>
     <input type="search" id="f-search" class="search" placeholder="Артикул…" title="Поиск по артикулу (подстрока)">
 
     <div class="seg" id="seg-units" title="Размер представлен, когда его остаток WB больше порога">

@@ -51,6 +51,24 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   border:1px solid #D5CCE8;background:var(--violet-faint);color:var(--violet-2);transition:.15s}
 .glossary-btn:hover{background:var(--violet-soft)}
 
+/* ── Мультиселект сезонов (дропдаун с чекбоксами) ── */
+.mselect{position:relative}
+.msel-btn{display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap}
+.msel-btn::after{content:'▾';font-size:10px;color:var(--grey)}
+.msel-btn.active{color:var(--violet-2);box-shadow:inset 0 0 0 2px var(--violet-soft)}
+.msel-pop{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:50;min-width:230px;
+  background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+  padding:6px;max-height:320px;overflow-y:auto}
+.mselect.open .msel-pop{display:block}
+.msel-all{display:block;width:100%;padding:7px 10px;border-radius:8px;text-align:left;
+  font-size:12.5px;font-weight:700;color:var(--violet-2)}
+.msel-all:hover{background:var(--violet-faint)}
+.msel-item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border-radius:8px;
+  font-size:12.5px;font-weight:600;color:var(--ink);text-align:left;cursor:pointer}
+.msel-item:hover{background:var(--violet-faint)}
+.msel-item input{accent-color:var(--violet);width:14px;height:14px;flex:none}
+.msel-item .cnt{margin-left:auto;font-size:11px;color:var(--ink-2);font-weight:500}
+
 /* ── Чипы активных фильтров ── */
 .chips{display:flex;gap:8px;flex-wrap:wrap;min-height:4px}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;

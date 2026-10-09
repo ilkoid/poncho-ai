@@ -13,7 +13,8 @@ const CAT_EMPTY = '∅';
 const catLabel = (c) => (c === CAT_EMPTY ? '— без категории —' : c);
 
 const state = {
-  cat1: '', cat2: '', year: '', season: '', search: '',
+  cat1: '', cat2: '', year: '', search: '',
+  seasons: new Set(),       // выбранные сезоны; пустое множество = все
   units: M.min_units,       // размер представлен ⇔ qty > units
   minSizes: M.min_sizes,    // недоступен ⇔ представлено < minSizes
   view: 'unavail',          // unavail | all | nocard
@@ -49,7 +50,7 @@ function rowsInView() {
     if (state.cat1 && A.cat1[i] !== c1) continue;
     if (state.cat2 && A.cat2[i] !== state.cat2) continue;
     if (state.year && String(A.year[i] || '—') !== state.year) continue;
-    if (state.season && A.season[i] !== state.season) continue;
+    if (state.seasons.size && !state.seasons.has(A.season[i])) continue;
     if (q && !A.article[i].toUpperCase().includes(q)) continue;
     if (state.view === 'unavail' && !unavail(i)) continue;
     if (state.view === 'nocard' && A.has_card[i]) continue;
@@ -89,8 +90,10 @@ function renderHeader() {
   };
   mk('Категория', catLabel(state.cat1), () => { state.cat1 = ''; state.cat2 = ''; wireSelects(); render(); });
   mk('Подкатегория', state.cat2, () => { state.cat2 = ''; wireSelects(); render(); });
+  for (const s of [...state.seasons].sort((a, b) => a.localeCompare(b, 'ru'))) {
+    mk('Сезон', s, () => { state.seasons.delete(s); syncSeasonUI(); render(); });
+  }
   mk('Год', state.year, () => { state.year = ''; wireSelects(); render(); });
-  mk('Сезон', state.season, () => { state.season = ''; wireSelects(); render(); });
   mk('Поиск', state.search.trim(), () => { state.search = ''; document.getElementById('f-search').value = ''; render(); });
 }
 
@@ -121,7 +124,39 @@ function wireSelects() {
   fill('f-cat1', ru, state.cat1, 'Все категории');
   fill('f-cat2', uniqOf(A.cat2), state.cat2, 'Все подкатегории');
   fill('f-year', years, state.year, 'Все годы');
-  fill('f-season', uniqOf(A.season), state.season, 'Все сезоны');
+  buildSeasonPop();
+}
+
+/* ── мультиселект сезонов: дропдаун с чекбоксами и счётчиком артикулов ── */
+const seasonCnt = (() => {
+  const m = new Map();
+  for (const s of A.season) if (s) m.set(s, (m.get(s) || 0) + 1);
+  return m;
+})();
+
+function buildSeasonPop() {
+  const pop = document.getElementById('f-season-pop');
+  const items = [...seasonCnt.keys()].sort((a, b) => a.localeCompare(b, 'ru')).map((s) =>
+    `<label class="msel-item"><input type="checkbox" value="${esc(s)}"${state.seasons.has(s) ? ' checked' : ''}>` +
+    `<span>${esc(s)}</span><span class="cnt">${fmtN(seasonCnt.get(s))}</span></label>`).join('');
+  pop.innerHTML = `<button type="button" class="msel-all">Все сезоны</button>` + items;
+  pop.querySelector('.msel-all').onclick = () => { state.seasons.clear(); syncSeasonUI(); render(); };
+  pop.querySelectorAll('input').forEach((cb) => cb.onchange = () => {
+    if (cb.checked) state.seasons.add(cb.value); else state.seasons.delete(cb.value);
+    syncSeasonUI();
+    render();
+  });
+}
+
+/* кнопка и открытый дропдаун синхронизируются с state.seasons */
+function syncSeasonUI() {
+  const btn = document.getElementById('f-season-btn');
+  const n = state.seasons.size;
+  btn.classList.toggle('active', n > 0);
+  btn.childNodes[0].nodeValue = n === 0 ? 'Все сезоны'
+    : n === 1 ? [...state.seasons][0]
+    : n + ' ' + ((n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) ? 'сезона' : 'сезонов');
+  buildSeasonPop();
 }
 
 function bindControls() {
@@ -129,12 +164,19 @@ function bindControls() {
   document.getElementById('f-cat1').onchange = (e) => { state.cat1 = e.target.value; state.cat2 = ''; wireSelects(); render(); };
   document.getElementById('f-cat2').onchange = (e) => { state.cat2 = e.target.value; render(); };
   document.getElementById('f-year').onchange = (e) => { state.year = e.target.value; render(); };
-  document.getElementById('f-season').onchange = (e) => { state.season = e.target.value; render(); };
   let tmr = null;
   document.getElementById('f-search').oninput = (e) => {
     clearTimeout(tmr);
     tmr = setTimeout(() => { state.search = e.target.value; render(); }, 150);
   };
+
+  /* мультиселект сезонов: открыть/закрыть, клик мимо закрывает */
+  const msel = document.getElementById('m-season');
+  document.getElementById('f-season-btn').onclick = (e) => {
+    e.stopPropagation();
+    msel.classList.toggle('open');
+  };
+  document.addEventListener('click', (e) => { if (!msel.contains(e.target)) msel.classList.remove('open'); });
 
   /* пороги — числа, view — строка: конвертер задаёт каждый сегмент;
      dataset всегда строка, +'' = 0 (а не «строка 0 как truthy») */
@@ -353,7 +395,13 @@ document.getElementById('glossary-btn').onclick = () => { gloss.classList.add('o
 const closeGloss = () => { gloss.classList.remove('open'); document.getElementById('glossary-back').classList.remove('open'); };
 document.getElementById('glossary-close').onclick = closeGloss;
 document.getElementById('glossary-back').onclick = closeGloss;
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeGloss(); closeDetail(); } });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    document.getElementById('m-season').classList.remove('open');
+    closeGloss();
+    closeDetail();
+  }
+});
 
 /* ── главный рендер ── */
 function render() {
