@@ -10,23 +10,23 @@ import (
 
 // AvailabilityData — весь payload дашборда.
 type AvailabilityData struct {
-	Meta Meta      `json:"meta"`
-	Arts ArticleCol `json:"arts"`
-	Sizes SizeCol   `json:"sizes"`
+	Meta  Meta       `json:"meta"`
+	Arts  ArticleCol `json:"arts"`
+	Sizes SizeCol    `json:"sizes"`
 }
 
 // Meta — служебные данные (шапка, свежесть, пороги, дельта к прошлому снапшоту).
 type Meta struct {
-	GeneratedAt  string   `json:"generated_at"`   // МСК, «02.01.2006 15:04»
-	Db           string   `json:"db"`             // имя БД (не прод → бейдж «ТЕСТ»)
-	SnapshotDate string   `json:"snapshot_date"`  // день снапшота стоков WB
-	StocksDate   string   `json:"stocks_date"`
-	RestsDate    string   `json:"rests_date"`
-	OnecGoodsDate string  `json:"onec_goods_date"`
-	MinUnits     int      `json:"min_units"`  // порог «представлен» (шт, строго больше)
-	MinSizes     int      `json:"min_sizes"`  // порог «недоступен» (меньше размеров)
-	OnecStorage  string   `json:"onec_storage"`
-	Prev         *PrevKpi `json:"prev,omitempty"` // прошлый снапшот, если история есть
+	GeneratedAt   string   `json:"generated_at"`  // МСК, «02.01.2006 15:04»
+	Db            string   `json:"db"`            // имя БД (не прод → бейдж «ТЕСТ»)
+	SnapshotDate  string   `json:"snapshot_date"` // день снапшота стоков WB
+	StocksDate    string   `json:"stocks_date"`
+	RestsDate     string   `json:"rests_date"`
+	OnecGoodsDate string   `json:"onec_goods_date"`
+	MinUnits      int      `json:"min_units"` // порог «представлен» (шт, строго больше)
+	MinSizes      int      `json:"min_sizes"` // порог «недоступен» (меньше размеров)
+	OnecStorage   string   `json:"onec_storage"`
+	Prev          *PrevKpi `json:"prev,omitempty"` // прошлый снапшот, если история есть
 }
 
 // PrevKpi — агрегат предыдущего снапшота для дельт KPI.
@@ -40,19 +40,19 @@ type PrevKpi struct {
 
 // ArticleCol — артикулы колонками (колонка = массив одной длины).
 type ArticleCol struct {
-	Article  []string `json:"article"`
-	NmID     []int64  `json:"nm_id"` // 0 = карточки WB нет
-	Brand    []string `json:"brand"`
-	Cat1     []string `json:"cat1"`
-	Cat2     []string `json:"cat2"`
-	Season   []string `json:"season"`
-	Year     []int    `json:"year"` // 0 = год по артикулу не определился
-	SizesTotal []int  `json:"sizes_total"`
-	SizesPres  []int  `json:"sizes_pres"` // по порогу конфига; UI пересчитывает своим порогом
-	WbQty    []int64  `json:"wb_qty"`
-	OnecFree []int64  `json:"onec_free"`
-	OnecReserv []int64 `json:"onec_reserv"`
-	HasCard  []bool   `json:"has_card"`
+	Article    []string `json:"article"`
+	NmID       []int64  `json:"nm_id"` // 0 = карточки WB нет
+	Brand      []string `json:"brand"`
+	Cat1       []string `json:"cat1"`
+	Cat2       []string `json:"cat2"`
+	Season     []string `json:"season"`
+	Year       []int    `json:"year"` // 0 = год по артикулу не определился
+	SizesTotal []int    `json:"sizes_total"`
+	SizesPres  []int    `json:"sizes_pres"` // по порогу конфига; UI пересчитывает своим порогом
+	WbQty      []int64  `json:"wb_qty"`
+	OnecFree   []int64  `json:"onec_free"`
+	OnecReserv []int64  `json:"onec_reserv"`
+	HasCard    []bool   `json:"has_card"`
 }
 
 // SizeCol — размеры universe-карточек колонками (без nm-ключа в каждой строке:

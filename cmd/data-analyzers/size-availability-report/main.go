@@ -104,15 +104,19 @@ func main() {
 	fmt.Println("  ДОСТУПНОСТЬ РАЗМЕРОВ · WB ↔ 1С")
 	fmt.Println(sep)
 	fmt.Printf("  База:        %s\n", cfg.Storage.DisplayDB())
-	fmt.Printf("  Определение: представлен = остаток WB > %d шт; недоступно = представлено < %d размеров\n",
-		cfg.MinUnitsPerSize, cfg.MinSizesPresented)
+	exclude := "нет (exclude_lengths: [])"
+	if len(cfg.ExcludeLengths) > 0 {
+		exclude = "артикулы длиной " + intList(cfg.ExcludeLengths) + " симв"
+	}
+	fmt.Printf("  Определение: представлен = остаток WB > %d шт; недоступно = представлено < %d размеров\n  Исключение:  %s\n",
+		cfg.MinUnitsPerSize, cfg.MinSizesPresented, exclude)
 	fmt.Printf("  Склад 1С:    %s (мера free; reserv — колонкой)\n", cfg.OnecStorage)
 	fmt.Println(sep)
 
 	if *dryRun {
 		fmt.Println("\n  --dry-run: параметры (без обращения к БД):")
-		fmt.Printf("    backend: %s\n    база:    %s\n    пороги:  >%d шт / <%d размеров\n    склад:   %s\n    стоки:   max age %d дн (allow-stale=%v)\n",
-			cfg.Storage.Backend, cfg.Storage.DisplayDB(), cfg.MinUnitsPerSize, cfg.MinSizesPresented, cfg.OnecStorage,
+		fmt.Printf("    backend: %s\n    база:    %s\n    пороги:  >%d шт / <%d размеров\n    исключ.: %v\n    склад:   %s\n    стоки:   max age %d дн (allow-stale=%v)\n",
+			cfg.Storage.Backend, cfg.Storage.DisplayDB(), cfg.MinUnitsPerSize, cfg.MinSizesPresented, cfg.ExcludeLengths, cfg.OnecStorage,
 			cfg.MaxStocksAgeDays, *allowStale)
 		return
 	}
@@ -223,6 +227,11 @@ type Config struct {
 	MinUnitsPerSize int `yaml:"min_units_per_size"`
 	// MinSizesPresented — карточка «недоступна», если представлено менее N размеров.
 	MinSizesPresented int `yaml:"min_sizes_presented"`
+	// ExcludeLengths — исключить артикулы заданной длины (точное совпадение; конвенция
+	// репо: exclude_lengths в даунлоадерах/фиксёрах/collection-readiness).
+	// По умолчанию [6, 7]: 6-значные = легаси-нумерация (мусорный «год» 2081/2083/2094
+	// по символам 2-3), 7-значные = старая нумерация «совсем старые». [] = не фильтровать.
+	ExcludeLengths []int `yaml:"exclude_lengths"`
 	// OnecStorage — имя склада 1С для меры остатка (onec_rests.storage_name).
 	OnecStorage string `yaml:"onec_storage"`
 	// RetentionDays — сколько суток истории снапшотов хранить в analytical.*.
@@ -249,6 +258,7 @@ func defaultConfig() *Config {
 	return &Config{
 		MinUnitsPerSize:   2,
 		MinSizesPresented: 4,
+		ExcludeLengths:    []int{6, 7},
 		OnecStorage:       "Внуково",
 		RetentionDays:     90,
 		MaxStocksAgeDays:  2,
@@ -322,6 +332,15 @@ func nowMoscow() time.Time {
 		return time.Now().In(time.FixedZone("MSK", 3*3600))
 	}
 	return time.Now().In(loc)
+}
+
+// intList — [6, 7] → "6, 7" (консольная шапка exclude_lengths).
+func intList(vs []int) string {
+	parts := make([]string, len(vs))
+	for i, v := range vs {
+		parts[i] = fmt.Sprintf("%d", v)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // fmtInt — тысячи с пробелом (консольная сводка).

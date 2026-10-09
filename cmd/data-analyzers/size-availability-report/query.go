@@ -31,7 +31,8 @@ import (
 // fillDailySQL — наполняет analytical.size_availability_daily снапшотом $1.
 // $2 = min_units_per_size (строго больше), $3 = склад 1С, $4 = min_sizes_presented,
 // $5 = дата среза onec_rests (пин: если SQL пересчитает MAX сам, параллельная
-// дозагрузка навесит свежие данные на чужую дату снапшота).
+// дозагрузка навесит свежие данные на чужую дату снапшота),
+// $6 = exclude_lengths []int (конвенция репо; пустой массив ничего не исключает).
 // Год выпуска: символы 2-3 артикула (конвенция репо, как allowed_years
 // collection-readiness и pkg/config FilterNmIDsByYear).
 // Дедуп-джойны (иначе дубль ключа роняет upsert ошибкой «cannot affect row
@@ -73,6 +74,7 @@ cards AS (
 goods AS (
     SELECT DISTINCT ON (article) article, brand, category_level1_name, category_level2_name, season, category
     FROM public.onec_goods
+    WHERE char_length(article) <> ALL($6::int[])
     ORDER BY article, downloaded_at DESC, guid
 )
 INSERT INTO analytical.size_availability_daily (
@@ -246,7 +248,7 @@ func fillSnapshot(ctx context.Context, pool *pgxpool.Pool, stocksDate, restsDate
 		return 0, 0, fmt.Errorf("delete daily: %w", err)
 	}
 	if _, err = tx.Exec(ctx, fillDailySQL,
-		stocksDate, cfg.MinUnitsPerSize, cfg.OnecStorage, cfg.MinSizesPresented, restsDate); err != nil {
+		stocksDate, cfg.MinUnitsPerSize, cfg.OnecStorage, cfg.MinSizesPresented, restsDate, cfg.ExcludeLengths); err != nil {
 		return 0, 0, fmt.Errorf("fill daily: %w", err)
 	}
 	var universe int64

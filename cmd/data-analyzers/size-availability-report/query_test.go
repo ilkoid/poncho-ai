@@ -12,23 +12,24 @@ import (
 // связка article↔vendor_code, presented по сетке card_sizes.
 func TestFillDailyGuards(t *testing.T) {
 	checks := map[string]string{
-		"universe: свободный остаток":        "WHERE COALESCE(r.free, 0) > 0",
-		"склад 1С — параметр":                "storage_name = $3",
-		"дата rests — пин среза $5":          "r.snapshot_date = $5",
-		"дата стоков — пин среза $1":         "WHERE snapshot_date = $1",
-		"порог шт — параметр":                "COALESCE(w.qty, 0) > $2",
-		"порог размеров — параметр":          "COALESCE(p.presented_cnt, 0) < $4",
-		"presented по сетке card_sizes":      "FROM public.card_sizes cs",
-		"связка артикул-карточка":            "c.vendor_code = o.article",
-		"дедуп карточек в MIN(nm_id)":        "MIN(nm_id)",
-		"дедуп карточек по vendor_code":      "GROUP BY vendor_code",
-		"дедуп справочника 1С по артикулу":   "DISTINCT ON (article)",
-		"остатки 1С по всем guid артикула":   "GROUP BY g.article",
-		"остаток размера = сумма складов":    "GROUP BY nm_id, chrt_id",
-		"год по символам 2-3":                "substring(o.article FROM 2 FOR 2)",
-		"год 20XX":                           "2000 + substring(o.article FROM 2 FOR 2)::int",
-		"идемпотентный upsert":               "ON CONFLICT (snapshot_date, article) DO UPDATE SET",
-		"категория L1 с fallback":            "COALESCE(NULLIF(o.category_level1_name, ''), o.category, '')",
+		"universe: свободный остаток":      "WHERE COALESCE(r.free, 0) > 0",
+		"склад 1С — параметр":              "storage_name = $3",
+		"дата rests — пин среза $5":        "r.snapshot_date = $5",
+		"дата стоков — пин среза $1":       "WHERE snapshot_date = $1",
+		"порог шт — параметр":              "COALESCE(w.qty, 0) > $2",
+		"порог размеров — параметр":        "COALESCE(p.presented_cnt, 0) < $4",
+		"presented по сетке card_sizes":    "FROM public.card_sizes cs",
+		"исключение длин — параметр":       "char_length(article) <> ALL($6::int[])",
+		"связка артикул-карточка":          "c.vendor_code = o.article",
+		"дедуп карточек в MIN(nm_id)":      "MIN(nm_id)",
+		"дедуп карточек по vendor_code":    "GROUP BY vendor_code",
+		"дедуп справочника 1С по артикулу": "DISTINCT ON (article)",
+		"остатки 1С по всем guid артикула": "GROUP BY g.article",
+		"остаток размера = сумма складов":  "GROUP BY nm_id, chrt_id",
+		"год по символам 2-3":              "substring(o.article FROM 2 FOR 2)",
+		"год 20XX":                         "2000 + substring(o.article FROM 2 FOR 2)::int",
+		"идемпотентный upsert":             "ON CONFLICT (snapshot_date, article) DO UPDATE SET",
+		"категория L1 с fallback":          "COALESCE(NULLIF(o.category_level1_name, ''), o.category, '')",
 	}
 	for name, substr := range checks {
 		if !strings.Contains(fillDailySQL, substr) {
@@ -102,6 +103,24 @@ func TestSummarize(t *testing.T) {
 	unavail, nocard, zero, stuck := summarize(cube)
 	if unavail != 3 || nocard != 1 || zero != 1 || stuck != 130 {
 		t.Fatalf("summarize: got (%d,%d,%d,%d), want (3,1,1,130)", unavail, nocard, zero, stuck)
+	}
+}
+
+// exclude_lengths: дефолт [6, 7] (конвенция репо); явный [] в yaml отключает
+// фильтр — applyDefaults список не трогает, а loadConfig всегда стартует от
+// defaultConfig(); intList форматирует для консольной шапки.
+func TestExcludeLengthsConfig(t *testing.T) {
+	if cfg := defaultConfig(); len(cfg.ExcludeLengths) != 2 || cfg.ExcludeLengths[0] != 6 || cfg.ExcludeLengths[1] != 7 {
+		t.Fatalf("defaultConfig: ExcludeLengths = %v, want [6 7]", cfg.ExcludeLengths)
+	}
+	cfg := defaultConfig()
+	cfg.ExcludeLengths = []int{}
+	cfg.applyDefaults()
+	if len(cfg.ExcludeLengths) != 0 {
+		t.Fatalf("пустой список [] должен отключать фильтр, got %v", cfg.ExcludeLengths)
+	}
+	if got := intList([]int{6, 7}); got != "6, 7" {
+		t.Fatalf("intList = %q, want %q", got, "6, 7")
 	}
 }
 
