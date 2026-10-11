@@ -1,0 +1,25 @@
+# Рассылка SLA-дашборда FBS-поставок (run-fbs-supplies-mail.sh).
+# Формат = типы pkg/email; smtp-секция = копия config.yaml (тот же relay).
+# Производственный список получателей — recipients.to ниже: рассылка
+# уходит по нему; тестовый прогон (--test) переопределяет адреса флагом --to.
+#
+# Пароль: ${SMTP_PASSWORD} разворачивается pkg/config.LoadYAML (os.ExpandEnv)
+# из env — лежит в .env. Не коммитить значение!
+# tls_mode: starttls (587) — единственный рабочий режим этого relay;
+# tls_certcheck: false; auth_mechanism: login — MS Exchange после STARTTLS.
+smtp:
+  host: 10.120.11.31
+  port: 587
+  from: it_service@playtoday.ru
+  username: it_service@playtoday.ru
+  password: ${SMTP_PASSWORD}
+  auth: true
+  auth_mechanism: login
+  tls_mode: starttls
+  tls_certcheck: false
+  keepbcc: false
+  timeout: 30s
+
+recipients:
+  to:
+    - kashparov.i@playtoday.ru

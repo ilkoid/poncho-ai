@@ -7,6 +7,9 @@
 // из env, разворачивается config.LoadYAML + os.ExpandEnv — как у PG_PWD).
 // Флаг --to переопределяет получателей конфига (не мерджится — см. email.Message).
 // Флаг --selftest отправляет тестовое письмо (stdin/subject не нужны).
+// Флаг --attach PATH прикладывает файл (content-type по расширению) — так
+// рассылаются офлайн-HTML-дашборды (run-fbs-supplies-mail.sh): в тело их
+// встраивать нельзя — клиенты режут/не исполняют JS.
 //
 // Почему не curl smtp://: по IP relay curl даёт exit 60 (сертификат CN не
 // совпадает с IP), по хостнейму — exit 94 (AUTH-механизм Exchange). pkg/email
@@ -19,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,6 +34,7 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "путь к YAML с секциями smtp/recipients (типы pkg/email)")
 	subject := flag.String("subject", "", "тема письма (обязательна без --selftest)")
 	to := flag.String("to", "", "переопределить получателей: адреса через запятую (иначе recipients.to из конфига)")
+	attach := flag.String("attach", "", "приложить файл (content-type по расширению)")
 	selftest := flag.Bool("selftest", false, "отправить тестовое письмо (stdin и --subject не нужны)")
 	flag.Parse()
 
@@ -72,6 +77,17 @@ func main() {
 				msg.To = append(msg.To, addr)
 			}
 		}
+	}
+	if strings.TrimSpace(*attach) != "" {
+		content, err := os.ReadFile(*attach)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAIL: чтение вложения %s: %v\n", *attach, err)
+			os.Exit(2)
+		}
+		msg.Attachments = append(msg.Attachments, email.Attachment{
+			Filename: filepath.Base(*attach),
+			Content:  content, // ContentType пустой = авто-детект по расширению
+		})
 	}
 
 	sender, err := email.NewSender(cfg)
