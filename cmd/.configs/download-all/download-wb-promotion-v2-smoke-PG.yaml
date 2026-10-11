@@ -1,0 +1,51 @@
+# WB Promotion v2 Downloader — SMOKE-конфиг для smoke-pg-promo.sh.
+# Отличия от продового download-wb-promotion-v2-PG.yaml:
+#   - цель: тестовая БД (wb_data_test), НЕ прод;
+#   - включены только фазы, затронутые фиксом 4a4c92c:
+#     normquery (camelCase list, bid_kopecks, archived) + budgets (v2-API);
+#   - выключены finance/calendar/recommendations/min_bids — меньше шума,
+#     и НЕ ходим на штормовые seller-analytics хосты (calendar) —
+#     смоук мерит только advert-api.wildberries.ru;
+#   - skip_bids: true как в проде (campaign_bids берутся из деталей, без API).
+wb:
+  api_key: "WB_API_KEY"
+  analytics_api_key: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  timeout: 120s
+
+promotion_v2:
+  db_path: "/var/db/wb-sales.db"
+  days: 3
+  statuses: [9]
+  skip_bids: true
+  skip_normquery: false
+  skip_recommendations: true
+  skip_finance: true
+  skip_calendar: true
+  skip_budgets: false          # ← проверяем новый POST /api/advert/v2/budget
+  skip_min_bids: true
+  changed_days: 0              # на пустой тест-БД = full scan всех кампаний статуса 9
+  rate_limits:
+    normquery: 300             # list/bids/minus: у wb 5/sec — конфиг = сваггеру
+    normquery_burst: 5
+    normquery_stats: 8         # у wb 10/min, но осторожнее (тяжёлый эндпоинт)
+    normquery_stats_burst: 1
+    bid_rec: 5
+    bid_rec_burst: 1
+    finance: 60
+    finance_burst: 5
+    budget_v2: 20              # POST /api/advert/v2/budget: swagger 20/min burst 4
+    budget_v2_burst: 4
+    calendar: 100
+    calendar_burst: 5
+    min_bids: 20
+    min_bids_burst: 3
+  adaptive_probe_after: 15
+  max_backoff_seconds: 60
+
+# Storage backend: ТЕСТОВАЯ база
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_test"
+  pg_password_env: "PG_PWD"
