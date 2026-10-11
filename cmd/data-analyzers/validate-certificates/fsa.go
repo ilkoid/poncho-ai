@@ -63,8 +63,8 @@ func statusName(id int) string {
 type FSASearchResult struct {
 	ID         int    `json:"id"`
 	Number     string `json:"number"`
-	RegDate    string `json:"date"`           // "2023-05-25" or "28.12.2024"
-	EndDate    string `json:"endDate"`        // "24.05.2026" (DD.MM.YYYY) or "2029-12-26" (YYYY-MM-DD)
+	RegDate    string `json:"date"`    // "2023-05-25" or "28.12.2024"
+	EndDate    string `json:"endDate"` // "24.05.2026" (DD.MM.YYYY) or "2029-12-26" (YYYY-MM-DD)
 	StatusID   int    `json:"idStatus"`
 	CertType   string `json:"certType"`       // "Сертификат соответствия..." or "Декларация о соответствии..."
 	ObjectType string `json:"certObjectType"` // "Серийный выпуск"
@@ -88,7 +88,7 @@ type FSADeclarationSearchResponse struct {
 type FSADeclarationResult struct {
 	ID             int    `json:"id"`
 	Number         string `json:"number"`
-	DeclDate       string `json:"declDate"`      // "2024-12-28" (YYYY-MM-DD)
+	DeclDate       string `json:"declDate"`       // "2024-12-28" (YYYY-MM-DD)
 	DeclEndDate    string `json:"declEndDate"`    // "2029-12-26" (YYYY-MM-DD)
 	StatusID       int    `json:"idStatus"`       // Same status codes as certificates
 	DeclType       string `json:"declType"`       // "Декларация о соответствии..."

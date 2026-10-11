@@ -23,18 +23,20 @@ import (
 
 	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/filter"
+	"github.com/ilkoid/poncho-ai/pkg/fsa"
 )
 
 // Config — конфигурация утилиты (config.yaml + CLI overrides).
 type Config struct {
-	DBPath       string        `yaml:"db_path"`
-	Filters      filter.Filter `yaml:"filters"`
-	Limit        int           `yaml:"limit"`
-	DelayMin     float64       `yaml:"delay_min"`
-	DelayMax     float64       `yaml:"delay_max"`
-	ChromiumPath string        `yaml:"chromium_path"`
-	CSV          string        `yaml:"csv"`
-	XLSX         string        `yaml:"xlsx"`
+	DBPath       string                 `yaml:"db_path"`
+	Filters      filter.Filter          `yaml:"filters"`
+	Limit        int                    `yaml:"limit"`
+	DelayMin     float64                `yaml:"delay_min"`
+	DelayMax     float64                `yaml:"delay_max"`
+	ChromiumPath string                 `yaml:"chromium_path"`
+	CSV          string                 `yaml:"csv"`
+	XLSX         string                 `yaml:"xlsx"`
+	Storage      config.V2StorageConfig `yaml:"storage"`
 }
 
 // loadConfig загружает конфигурацию из YAML файла.
@@ -55,6 +57,10 @@ func defaultConfig() *Config {
 		DelayMax:     4.0,
 		ChromiumPath: "/usr/bin/chromium-browser",
 		CSV:          "",
+		Storage: config.V2StorageConfig{
+			Backend:    "postgres",
+			PgDatabase: "wb_data_prod",
+		},
 	}
 }
 
@@ -79,6 +85,14 @@ func (c *Config) applyDefaults() {
 	if c.ChromiumPath == "" {
 		c.ChromiumPath = d.ChromiumPath
 	}
+	// Запись результатов: конфиг без блока storage не должен молча
+	// свалиться в sqlite-бэкенд (GetDefaults дефолтит пустой backend в sqlite).
+	if c.Storage.Backend == "" {
+		c.Storage.Backend = "postgres"
+	}
+	if c.Storage.PgDatabase == "" {
+		c.Storage.PgDatabase = "wb_data_prod"
+	}
 }
 
 func printHelp() {
@@ -95,6 +109,8 @@ Options:
   --number NUM     Проверить конкретный номер (без обращения к БД)
   --delay MIN,MAX  Мин/макс задержка между запросами, сек (default: 1,4)
   --chromium PATH  Путь к Chromium (default: /usr/bin/chromium-browser)
+  --pg-database N  Целевая PG база записи результатов (default: wb_data_prod)
+  --no-pg          Не записывать результаты в PostgreSQL
   --csv PATH       Экспорт результатов в CSV
   --xlsx PATH      Экспорт результатов в XLSX
   --mock           Использовать тестовые данные (без API-запросов, без браузера)
@@ -130,6 +146,8 @@ func main() {
 	testNumber := flag.String("number", "", "Проверить конкретный номер (без обращения к БД)")
 	delayStr := flag.String("delay", "", "Задержка между запросами (мин,макс, overrides config)")
 	chromiumPath := flag.String("chromium", "", "Путь к Chromium (overrides config)")
+	pgDatabase := flag.String("pg-database", "", "Целевая PG база записи результатов (overrides config)")
+	noPG := flag.Bool("no-pg", false, "Не записывать результаты в PostgreSQL")
 	help := flag.Bool("help", false, "Показать справку")
 	flag.BoolVar(help, "h", false, "Показать справку")
 	flag.Parse()
@@ -163,6 +181,9 @@ func main() {
 	if *chromiumPath != "" {
 		cfg.ChromiumPath = *chromiumPath
 	}
+	if *pgDatabase != "" {
+		cfg.Storage.PgDatabase = *pgDatabase
+	}
 	if *delayStr != "" {
 		if parts := strings.SplitN(*delayStr, ",", 2); len(parts) == 2 {
 			fmt.Sscanf(parts[0], "%f", &cfg.DelayMin)
@@ -192,6 +213,11 @@ func main() {
 	fmt.Printf("  Задержка: %.1f — %.1f сек\n", cfg.DelayMin, cfg.DelayMax)
 	if !cfg.Filters.Empty() {
 		fmt.Printf("  Фильтр:   активен\n")
+	}
+	if *noPG {
+		fmt.Printf("  Запись в PG: отключена (--no-pg)\n")
+	} else {
+		fmt.Printf("  Запись в PG: %s → public.fsa_certificates\n", cfg.Storage.GetDefaults().PgDatabase)
 	}
 	fmt.Println(sep)
 
@@ -228,13 +254,31 @@ func main() {
 
 	// Step 3: Validate certificates.
 	var results []ValidationResult
+	var checks []fsa.CheckResult
 
 	if *mock {
 		results = mockValidate(certs)
 	} else {
-		results, err = liveValidate(ctx, certs, cfg.DelayMin, cfg.DelayMax, cfg.ChromiumPath)
+		results, checks, err = liveValidate(ctx, certs, cfg.DelayMin, cfg.DelayMax, cfg.ChromiumPath)
 		if err != nil {
 			log.Fatalf("Ошибка валидации: %v", err)
+		}
+
+		// Persist RAW results to PG before reporting: провал записи не должен
+		// молча терять результаты — fail fast с честным сообщением.
+		// Прерванный прогон (Ctrl+C) не пишет partial-результаты, но отчёт печатаем.
+		switch {
+		case *noPG:
+			// Запись отключена флагом.
+		case ctx.Err() != nil:
+			fmt.Printf("\n  Прервано: результаты НЕ записаны в PG (частичный прогон).\n")
+		default:
+			fmt.Printf("  Запись в PG (%s)...", cfg.Storage.GetDefaults().PgDatabase)
+			n, err := persistChecks(ctx, cfg.Storage, checks)
+			if err != nil {
+				log.Fatalf(" ОШИБКА записи в PG: %v\n  Результаты НЕ сохранены. Перезапустите с --no-pg для отчёта без записи.", err)
+			}
+			fmt.Printf(" ok (%d строк)\n", n)
 		}
 	}
 
@@ -265,12 +309,13 @@ func main() {
 }
 
 // liveValidate performs real FSA API validation for each unique certificate number.
-func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax float64, chromiumPath string) ([]ValidationResult, error) {
+// Returns per-article validation results and per-number RAW checks (for PG persist).
+func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax float64, chromiumPath string) ([]ValidationResult, []fsa.CheckResult, error) {
 	// Launch headless Chromium and capture Bearer token.
 	fmt.Print("  Запуск headless Chromium для получения токена...")
 	fsaClient, err := NewFSAClient(ctx, chromiumPath)
 	if err != nil {
-		return nil, fmt.Errorf("FSA client: %w", err)
+		return nil, nil, fmt.Errorf("FSA client: %w", err)
 	}
 	defer fsaClient.Close()
 	fmt.Println(" ok (токен получен)")
@@ -318,6 +363,7 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	var results []ValidationResult
+	var checks []fsa.CheckResult
 
 	for i, j := range jobs {
 		if ctx.Err() != nil {
@@ -328,6 +374,7 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 		// Skip non-searchable numbers (KG417, KZ, old formats).
 		if j.skip {
 			fmt.Printf("  [%d/%d] %s... ПРОПУСК (не-RU формат)\n", i+1, len(jobs), j.number)
+			checks = append(checks, skippedCheck(j.number, j.certs[0].CertificateType, time.Now()))
 			for _, c := range j.certs {
 				results = append(results, ValidationResult{
 					Article:           c.Article,
@@ -361,6 +408,7 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 
 		if searchErr != nil {
 			fmt.Printf(" ОШИБКА: %v\n", searchErr)
+			checks = append(checks, errorCheck(j.number, j.certs[0].CertificateType, searchErr.Error(), time.Now()))
 			for _, c := range j.certs {
 				results = append(results, ValidationResult{
 					Article:           c.Article,
@@ -375,6 +423,8 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 				})
 			}
 		} else {
+			checks = append(checks, checkResultFromFSA(j.number, j.certs[0].CertificateType, fsaResult, exactMatch, time.Now()))
+
 			// Map FSA result to all articles sharing this certificate number.
 			for _, c := range j.certs {
 				vr := ValidationResult{
@@ -418,7 +468,7 @@ func liveValidate(ctx context.Context, certs []CertRecord, delayMin, delayMax fl
 		}
 	}
 
-	return results, nil
+	return results, checks, nil
 }
 
 // isSearchable returns true if the certificate number is likely findable in Russian FSA registry.

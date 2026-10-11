@@ -3,7 +3,8 @@
 Проверка реального статуса и сроков действия сертификатов/деклараций соответствия
 через ФГИС РОСАККРЕДИТАЦИИ ([pub.fsa.gov.ru](https://pub.fsa.gov.ru/rss/certificate)).
 
-Читает номера из `onec_goods` (read-only), сверяет с реестром ФСА, выводит отчёт.
+Читает номера из `onec_goods` (read-only), сверяет с реестром ФСА, выводит отчёт
+и дописывает RAW-результаты в PostgreSQL (`public.fsa_certificates`, append-only).
 
 ## Как это работает
 
@@ -87,6 +88,12 @@ go run .
 # config.yaml
 db_path: "/var/db/wb-sales.db"
 
+# Запись RAW-результатов в PostgreSQL (fsa_certificates + analytical- view)
+storage:
+  backend: "postgres"
+  pg_database: "wb_data_prod"   # wb_data_test для смоук-тестов
+  pg_password_env: "PG_PWD"
+
 # Фильтрация (pkg/filter.Filter) — все поля опциональны
 # AND между полями, OR внутри списков, пустые = игнорируются
 filters:
@@ -124,6 +131,8 @@ csv: ""
 | `--number` | `""` | Проверить один номер (без БД) |
 | `--delay` | `1,4` | Мин,макс задержка в секундах |
 | `--chromium` | auto | Путь к Chromium |
+| `--pg-database` | `wb_data_prod` | Целевая PG база записи (overrides config; `$PGDATABASE`, если задан, перекрывает и флаг — конвенция env > YAML > default) |
+| `--no-pg` | `false` | Не записывать результаты в PostgreSQL |
 | `--csv` | `""` | Экспорт результатов в CSV |
 | `--xlsx` | `""` | Экспорт результатов в XLSX (Excel с форматированием) |
 | `--mock` | `false` | Фейковые данные, без браузера |
@@ -174,6 +183,41 @@ API возвращает `idStatus` — числовой код:
 ### CSV-экспорт
 
 Колонки: `article, good_name, cert_type, cert_number, local_end, fsa_status, fsa_end_date, date_match, days_remaining, error`
+
+## Persist в PostgreSQL (RAW-слой)
+
+Каждый живой прогон дописывает результаты в `public.fsa_certificates` — одна строка
+на один поиск одного номера (append-only, история смен статусов бесплатно). Даты
+хранятся как вернул API; фильтрация/нормализация — задача consumers, не хранилища.
+
+| Колонка | Что хранит |
+|---------|------------|
+| `certificate_number`, `doc_kind` | номер, `certificate` \| `declaration` |
+| `fsa_id`, `reg_date`, `end_date`, `id_status`, `cert_type`, `object_type` | ответ реестра как есть |
+| `found`, `exact_match` | найден ли; точный матч или первый результат (approx) |
+| `skipped_reason` | непусто = не искали (не-RU формат KG/KZ/legacy) |
+| `error` | непусто = API-запрос упал |
+| `checked_at` | момент проверки (`TIMESTAMPTZ`) |
+
+Поверх таблицы создаётся view **`analytical.certificate_validity`** (первый view
+аналитического слоя): последняя проверка номера (`DISTINCT ON`) + `LEFT JOIN
+onec_goods` + вычисляемые на лету `verdict`, `days_remaining`, `date_match`,
+`fsa_status` — всегда свежи относительно текущей даты, ничего не протухает:
+
+```sql
+SELECT article, certificate_number, fsa_status, days_remaining, verdict
+FROM analytical.certificate_validity
+WHERE verdict IN ('❌ Протух', '⚠️ Скоро истекает');
+```
+
+Правила записи:
+
+- `--mock` **никогда** не пишет в PG; `--number` — эфемерный пробник, тоже не пишет.
+- Прерванный прогон (Ctrl+C) не пишет partial-результаты (проверка `ctx.Err()`), но отчёт печатается.
+- Ошибка записи — fatal ДО печати отчёта (результаты не теряются молча); ремедиация — перезапуск с `--no-pg`.
+- DSN из env: `PGHOST`/`PGPORT`/`PGUSER`/`PG_PWD`; `$PGDATABASE` перекрывает `pg_database` конфига.
+- Read-only права: `InitSchema` выдаёт `USAGE`+`SELECT` на схему `analytical` ролям из env `ANALYTICAL_RO_ROLES` (default `mcp_ro`; роли без login пропускаются; пустое значение = гранты off) — MCP-роль видит view, но не может писать.
+- Смоук-тесты — только в `wb_data_test` (`--pg-database wb_data_test`).
 
 ## Сертификаты и декларации
 

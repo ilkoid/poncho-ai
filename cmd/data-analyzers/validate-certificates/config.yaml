@@ -62,6 +62,20 @@ delay_max: 4.0
 # Используется для получения Bearer-токена через headless-режим
 chromium_path: "/usr/bin/chromium-browser"
 
+# ─── Запись результатов (RAW-слой) ─────────────────────────
+#
+# Каждый прогон дописывает строки в public.fsa_certificates (append-only,
+# один поиск одного номера). Производные (verdict, days_remaining) считает
+# view analytical.certificate_validity — всегда свежие.
+# Отключить запись: флаг --no-pg. Смоук-тесты: --pg-database wb_data_test.
+# DSN из env: PGHOST/PGPORT/PGUSER/PG_PWD (см. pkg/config/pgconfig.go);
+# $PGDATABASE перекрывает pg_database.
+
+storage:
+  backend: "postgres"
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"
+
 # ─── Экспорт ───────────────────────────────────────────────
 
 # Путь к CSV-файлу для экспорта результатов (пустая строка = без экспорта)

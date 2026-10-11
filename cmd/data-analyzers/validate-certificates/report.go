@@ -15,13 +15,13 @@ import (
 
 // Verdict constants — single-source-of-truth for result categorization.
 const (
-	VerdictOK            = "✅ Ок"
-	VerdictExpiringSoon  = "⚠️ Скоро истекает"
-	VerdictExpired       = "❌ Протух"
-	VerdictNotFound      = "❓ Не найден"
-	VerdictApproxMatch   = "❓ Неточный"
-	VerdictNonRU         = "🔧 KG/KZ"
-	VerdictError         = "⛔ Ошибка"
+	VerdictOK           = "✅ Ок"
+	VerdictExpiringSoon = "⚠️ Скоро истекает"
+	VerdictExpired      = "❌ Протух"
+	VerdictNotFound     = "❓ Не найден"
+	VerdictApproxMatch  = "❓ Неточный"
+	VerdictNonRU        = "🔧 KG/KZ"
+	VerdictError        = "⛔ Ошибка"
 )
 
 // ValidationResult combines local data with FSA lookup result.

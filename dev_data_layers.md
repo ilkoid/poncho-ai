@@ -161,7 +161,7 @@ WB API (мутация) → recommendation.status = applied + wb_response + ау
 - Сырые даунлоадеры — **ничего**. Пишут неквалифицированные имена → `public` → работает (`search_path` по умолчанию).
 - Новые analytical/recommendation репозитории в [pkg/storage/postgres/](pkg/storage/postgres/) квалифицируют имя: `INSERT INTO analytical.ma_sku_daily ...`.
 - `search_path` глобально **не трогаем**.
-- Права (когда созреет): `GRANT SELECT ON ALL TABLES IN SCHEMA analytical, recommendation TO arm_ai_ro;` — AI/аналитик получает читку обоих слоёв одной строкой.
+- Права: для `analytical` — выданы (2026-09-24, «созрело»): `initFSASchema` автоматически даёт `USAGE` + `SELECT` + default-права на будущие объекты ролям из env `ANALYTICAL_RO_ROLES` (default `mcp_ro`; роли без login в pg_roles пропускаются; пустое значение = гранты off). Для `recommendation` — выдадим тем же паттерном при создании схемы.
 
 **Cross-layer запрос** — главный payoff: AI-агент читает все слои одним SELECT:
 
@@ -194,7 +194,7 @@ WHERE  a.ma_28d > 0;
 | Слой | Опора сегодня | Пробел |
 |------|---------------|--------|
 | **RAW** | Сильная: ~70 таблиц PG + SQLite-зеркало, 29 даунлоадеров, per-domain `*_schema.go` / `*_repo.go`. | Нет изоляции слоёв (всё в `public`). Ozon — пусто на всех слоях. |
-| **ANALYTICAL** | Фрагментарная: MA-снапшоты, category-analysis (6 таблиц), price-comparison, mapping — в **разрозненных SQLite** (`bi.db`, `category-sales.db`). `ComputeMA` в [pkg/analytics/ma.go](pkg/analytics/ma.go). | В PG — 0 views / matviews. Нет каталога KPI. AI не может ходить в аналитику рядом с raw. |
+| **ANALYTICAL** | Фрагментарная: MA-снапшоты, category-analysis (6 таблиц), price-comparison, mapping — в **разрозненных SQLite** (`bi.db`, `category-sales.db`). `ComputeMA` в [pkg/analytics/ma.go](pkg/analytics/ma.go). | В PG — ровно один view: `analytical.certificate_validity` (verdict/days сертификатов на лету; в wb_data_test с 2026-09-24, в wb_data_prod — после первого прогона validate-certificates; создаётся `initFSASchema` из `pkg/storage/postgres/fsa_schema.go`). Каталога KPI нет. |
 | **RECOMMENDATION** | Почти greenfield. Прото-кейс: `card_analysis` (LLM-vision `new_title`/`desc`). Seed WB: `bid_recommendations` / `min_bids`. | Нет persistent-таблицы «предлагаемое изменение», нет модели количественных параметров, нет `status`-lifecycle. |
 | **ACTION** | `pkg/cardupdate` + `--stage` / `--apply` / `--dry-run` в fixers. | Только `UpdateCards`. Нет мутаций цены / бида / статуса. Agent-tools 100 % read-only. |
 
@@ -206,4 +206,4 @@ WHERE  a.ma_28d > 0;
 - Big-bang миграция ~70 таблиц в `raw.` (если когда-то понадобится).
 - Реализация AI **write-tools** (`change_price` / `set_bid` / `pause_campaign`).
 - Per-utility миграционный бэклог: каждая утилита [cmd/data-analyzers/](cmd/data-analyzers/) → конкретная analytical-таблица.
-- Реальное `CREATE SCHEMA analytical, recommendation;` — создаётся при первом переносе аналитики в PG, не сейчас.
+- ~~Реальное `CREATE SCHEMA analytical`~~ — создано 2026-09-24 первым запуском validate-certificates (`initFSASchema`). Схема `recommendation` всё ещё не создана — появится при первой recommendation-миграции.
