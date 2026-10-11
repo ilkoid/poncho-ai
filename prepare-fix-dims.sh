@@ -111,11 +111,12 @@ cat <<EOF
 
 #  set -a; source $PONCHO/.env; set +a      # ключи WB (нужны для --check/--apply)
 
-#  go run $FIXDIR --compare --config $FIXDIR/config-fixdims.yaml --db $DB    # расхождения WB vs 1С
-#  go run $FIXDIR --stage   --config $FIXDIR/config-fixdims.yaml --db $DB    # staging: пустые габариты
-#  go run $FIXDIR --diff    --config $FIXDIR/config-fixdims.yaml --db $DB    # before/after
-#  go run $FIXDIR --check   --config $FIXDIR/config-fixdims.yaml             # ошибки WB (API)
+cd /Users/ilkoid/dev/poncho-ai
+go run $FIXDIR --compare --config $FIXDIR/config-fixdims.yaml --db $DB    # расхождения WB vs 1С
+go run $FIXDIR --stage   --config $FIXDIR/config-fixdims.yaml --db $DB    # staging: пустые габариты
+go run $FIXDIR --diff    --config $FIXDIR/config-fixdims.yaml --db $DB    # before/after
+go run $FIXDIR --check   --config $FIXDIR/config-fixdims.yaml             # ошибки WB (API)
 
-#  go run $FIXDIR --apply --dry-run --config $FIXDIR/config-fixdims.yaml --db $DB   # payload без отправки
-#  go run $FIXDIR --apply --config $FIXDIR/config-fixdims.yaml --db $DB             # ⚠️ запись в WB API
+go run $FIXDIR --apply --dry-run --config $FIXDIR/config-fixdims.yaml --db $DB   # payload без отправки
+go run $FIXDIR --apply --config $FIXDIR/config-fixdims.yaml --db $DB             # ⚠️ запись в WB API
 EOF
