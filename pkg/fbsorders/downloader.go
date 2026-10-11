@@ -127,7 +127,7 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 
 	// ---- Фаза 4: лента заказов (нефатально) ----------------------------
 	if !d.opts.DisableFeed {
-		feedFrom := time.Now().UTC().AddDate(0, 0, -d.opts.FeedDays)
+		feedFrom := feedWindowStart(time.Now(), d.opts.FeedDays)
 		d.progress("фаза 4/4: лента заказов с %s (по дате текущего статуса)", feedFrom.Format("2006-01-02"))
 
 		feedPage := 0
@@ -249,4 +249,17 @@ func (d *Downloader) progress(format string, args ...any) {
 	if d.opts.OnProgress != nil {
 		d.opts.OnProgress(fmt.Sprintf(format, args...))
 	}
+}
+
+// feedWindowStart — старт ленты: полночь МСК N суток назад. Лента отдаёт
+// события по дате ТЕКУЩЕГО статуса юнита, аналитический срез режет их по
+// МСК-суткам; без усечения до полуночи первый день окна недобирает часы от
+// момента запуска (смоук 11.10: за 04.10 легли строки только с 22:54).
+func feedWindowStart(now time.Time, days int) time.Time {
+	loc, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		loc = time.FixedZone("MSK", 3*3600)
+	}
+	n := now.In(loc)
+	return time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -days)
 }

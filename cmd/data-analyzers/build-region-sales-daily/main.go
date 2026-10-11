@@ -137,6 +137,15 @@ func main() {
 		from = today.AddDate(0, 0, -cfg.Days)
 		to = today.AddDate(0, 0, -1)
 	}
+	// Границы окна — ПОЛНОЧИ МСК. Без усечения from/to несут время суток
+	// запуска: первый день окна недобирает часы до момента запуска, а строки
+	// «сегодня» вставляются за пределами DELETE-окна — повторный прогон того
+	// же дня падает по PK, а в таблице остаются дни вне заявленного окна.
+	to = dayFloor(to, loc)
+	if !from.IsZero() {
+		from = dayFloor(from, loc)
+	}
+
 	if !from.IsZero() && from.After(to) {
 		log.Fatalf("  Окно вывернуто: from %s > to %s", from.Format("2006-01-02"), to.Format("2006-01-02"))
 	}
@@ -178,6 +187,9 @@ func main() {
 			log.Fatalf("  public.order_feed пуста — сначала прогоните download-wb-fbs-orders-v2 (feed_mp_only=false).")
 		}
 		from, _ = time.ParseInLocation("2006-01-02 15:04:05", minTS, loc)
+		// Полночь: DELETE-окно должно накрывать сутки целиком, даже если
+		// история ленты начинается среди дня.
+		from = dayFloor(from, loc)
 		fmt.Printf("  История ленты с %s\n", from.Format("2006-01-02"))
 	} else if from.IsZero() {
 		log.Fatalf("  --rebuild-all без истории ленты: order_feed пуста.")
@@ -257,6 +269,12 @@ func moscowLoc() *time.Location {
 		return time.FixedZone("MSK", 3*3600)
 	}
 	return loc
+}
+
+// dayFloor — полночь МСК суток t (t ожидается в loc). Окно агрегата живёт
+// целыми сутками: время запуска не должно влиять на границы окна.
+func dayFloor(t time.Time, loc *time.Location) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
 }
 
 func dayOr(t time.Time, alt string) string {

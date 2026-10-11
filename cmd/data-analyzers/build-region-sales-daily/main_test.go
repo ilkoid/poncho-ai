@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // Guard-инварианты fillSQL: окно параметрами (не в SQL), МСК-день текущего
@@ -32,5 +33,19 @@ func TestFillSQLGuards(t *testing.T) {
 		if !strings.Contains(fillSQL, substr) {
 			t.Errorf("fillSQL потерял %s: нет %q", name, substr)
 		}
+	}
+}
+
+// Регрессия смоука 11.10: окно считалось от «сейчас−Nд» без усечения до
+// полуночи МСК — первый день окна был обрезан временем запуска (за 04.10 в
+// агрегат попали только строки с 23:20), а строки «сегодня» вставлялись за
+// пределами DELETE-окна и роняли повторный прогон по PK.
+func TestDayFloor_MidnightMSK(t *testing.T) {
+	loc := moscowLoc()
+	run := time.Date(2026, 10, 11, 23, 20, 56, 0, loc) // момент запуска смоука
+	got := dayFloor(run.AddDate(0, 0, -7), loc)
+	want := time.Date(2026, 10, 4, 0, 0, 0, 0, loc)
+	if !got.Equal(want) {
+		t.Fatalf("from = %s, хочу полночь МСК %s", got, want)
 	}
 }

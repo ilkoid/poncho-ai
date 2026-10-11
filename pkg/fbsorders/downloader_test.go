@@ -429,3 +429,19 @@ func TestSuppliesPhaseNonFatalAndDisable(t *testing.T) {
 		t.Errorf("SuppliesRows=%d err=%q, want 1/empty", res3.SuppliesRows, res3.SuppliesErr)
 	}
 }
+
+// Регрессия смоука 11.10: старт ленты «now−Nд» без усечения до полуночи МСК
+// обрезал первый день окна часами от момента запуска — за 04.10 лента легла
+// только с 22:54:54. Границы суток ленты должны быть МСК-полуночами.
+func TestFeedWindowStart_MidnightMSK(t *testing.T) {
+	now := time.Date(2026, 10, 11, 19, 54, 35, 0, time.UTC) // 22:54:35 МСК
+	got := feedWindowStart(now, 7)
+	want := time.Date(2026, 10, 3, 21, 0, 0, 0, time.UTC) // 04.10 00:00 МСК
+	if !got.Equal(want) {
+		t.Fatalf("feedWindowStart = %s (%s), хочу %s (%s)",
+			got.Format(time.RFC3339), got.Location(), want.Format(time.RFC3339), want.Location())
+	}
+	if s := got.Format(time.RFC3339); !strings.HasPrefix(s, "2026-10-04T00:00:00+03:00") {
+		t.Fatalf("граница должна быть полночью МСК, получила %s", s)
+	}
+}

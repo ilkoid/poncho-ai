@@ -137,6 +137,12 @@ SELECT stat_day, count(*) AS cells, sum(events_qty) AS events,
        sum(for_pay_sales_sum - for_pay_returns_sum)::bigint AS net_pay
 FROM analytical.region_sales_daily GROUP BY stat_day ORDER BY stat_day;"
 
+echo "── контроль окна: строк новее «вчера МСК» быть не должно (0 = ок)"
+psql_db -c "
+SELECT count(*) AS leaked_rows_after_yesterday
+FROM analytical.region_sales_daily
+WHERE stat_day > to_char((now() AT TIME ZONE 'Europe/Moscow') - interval '1 day', 'YYYY-MM-DD');"
+
 echo "── топ-5 регионов по выкупам (окно)"
 psql_db -c "
 SELECT region_name, sum(buyout_qty) AS buyouts,
