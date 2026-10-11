@@ -101,7 +101,9 @@ function agg(idxs, thr) {
 
 /* ── форматирование ── */
 const fmtN = (v) => v.toLocaleString('ru-RU');
-const fmtP = (num, den) => den > 0 ? (100 * num / den).toFixed(0) + '%' : '—';
+/* процент с одним знаком: «99,9%» вместо «100%» — целые маскируют почти-100
+   рядом с просроченными поставками (заданий в срок 3783/3788 = 99,87%) */
+const fmtP = (num, den) => den > 0 ? (100 * num / den).toFixed(1).replace('.', ',') + '%' : '—';
 function dayShort(d) { const [y, m, dd] = d.split('-'); return `${dd}.${m}`; }
 function timeShort(ts) { return ts ? ts.slice(11) : '—'; }          // 'HH:MM'
 function dtShort(ts) { return ts ? ts.slice(8, 10) + '.' + ts.slice(5, 7) + ' ' + ts.slice(11) : '—'; }
@@ -178,7 +180,7 @@ function renderKpis(idxs) {
     kpi('Заданий', fmtN(a.tasks), 'сборочных в поставках') +
     kpi('Поставок в срок', fmtP(a.ok, verdicts), `≤${state.thr}ч от 1-го задания · ${a.ok} из ${verdicts}`, verdicts && a.ok >= a.bad ? 'good' : 'bad') +
     kpi('Заданий в срок', fmtP(a.tasksOk, a.tasksDen), 'по своим часам каждого задания', a.tasksDen && a.tasksOk >= a.tasksDen / 2 ? 'good' : 'bad') +
-    kpi('Медиана лага', a.medLag != null ? a.medLag.toFixed(1) + ' ч' : '—', '1-е задание → приёмка') +
+    kpi('Средний срок доставки', a.medLag != null ? a.medLag.toFixed(1) + ' ч' : '—', '1-е задание → приёмка (медиана)') +
     kpi('Цель', state.thr + ' ч', 'окно SLA, переключатель в шапке');
 }
 
@@ -242,7 +244,7 @@ const COLS = [
   { t: 'Закрыта', get: (i) => timeShort(S.closed[i]), num: false },
   { t: 'Приёмка', get: (i) => timeShort(S.scanned[i]), num: false },
   { t: 'Заданий', get: (i) => S.n_tasks[i], num: true },
-  { t: 'В срок %', get: (i) => { const den = histSum(i); return den ? okCount(i, state.thr) / den : null; }, num: true, fmt: (v) => (100 * v).toFixed(0) + '%', cls: (i) => { const den = histSum(i); if (!den) return ''; return okCount(i, state.thr) / den >= 0.5 ? 'pct-good' : 'pct-bad'; } },
+  { t: 'В срок %', get: (i) => { const den = histSum(i); return den ? okCount(i, state.thr) / den : null; }, num: true, fmt: (v) => (100 * v).toFixed(1).replace('.', ',') + '%', cls: (i) => { const den = histSum(i); if (!den) return ''; return okCount(i, state.thr) / den >= 0.5 ? 'pct-good' : 'pct-bad'; } },
   { t: 'Вердикт', get: (i) => verdict(i, state.thr).rank, num: true, badge: (i) => verdict(i, state.thr) },
 ];
 
