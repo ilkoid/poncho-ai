@@ -25,8 +25,10 @@ promotion_v2:
   skip_min_bids: true
   changed_days: 0              # на пустой тест-БД = full scan всех кампаний статуса 9
   rate_limits:
-    normquery: 300             # list/bids/minus: у wb 5/sec — конфиг = сваггеру
+    normquery: 300             # list/get-minus: swagger 5/sec = 300/min
     normquery_burst: 5
+    normquery_bids: 100        # get-bids: swagger 2/sec = 120/min (ужесточение спеки 11.10) — 0.83x; фаза в этом смоуке выключена (skip_bids)
+    normquery_bids_burst: 4
     normquery_stats: 8         # у wb 10/min, но осторожнее (тяжёлый эндпоинт)
     normquery_stats_burst: 1
     bid_rec: 5

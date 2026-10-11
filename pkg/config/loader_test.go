@@ -111,3 +111,21 @@ func searchString(s, substr string) bool {
 	}
 	return false
 }
+
+// Регрессия аудита 11.10: get-bids ужесточен спекой до 2 req/sec (120/min) —
+// у него свой ключ normquery_bids; старые конфиги без ключа должны получать
+// консервативный дефолт 100/min, а не наследовать normquery=300 (2.5x сваггера).
+func TestPromotionV2Defaults_NormqueryBids(t *testing.T) {
+	cfg := (&PromotionV2Config{}).GetDefaults()
+	if cfg.RateLimits.NormqueryBids != 100 || cfg.RateLimits.NormqueryBidsApi != 100 {
+		t.Fatalf("normquery_bids default = %d/%d, хочу 100/100", cfg.RateLimits.NormqueryBids, cfg.RateLimits.NormqueryBidsApi)
+	}
+	if cfg.RateLimits.NormqueryBidsBurst != 4 || cfg.RateLimits.NormqueryBidsApiBurst != 4 {
+		t.Fatalf("normquery_bids burst = %d/%d, хочу 4/4", cfg.RateLimits.NormqueryBidsBurst, cfg.RateLimits.NormqueryBidsApiBurst)
+	}
+	// Явное значение в конфиге не затирается дефолтом.
+	cfg = (&PromotionV2Config{RateLimits: PromotionV2RateLimits{NormqueryBids: 60, NormqueryBidsBurst: 2}}).GetDefaults()
+	if cfg.RateLimits.NormqueryBids != 60 || cfg.RateLimits.NormqueryBidsBurst != 2 {
+		t.Fatalf("явный normquery_bids затёрт дефолтом: %d/%d", cfg.RateLimits.NormqueryBids, cfg.RateLimits.NormqueryBidsBurst)
+	}
+}

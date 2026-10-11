@@ -338,6 +338,11 @@ type PromotionV2RateLimits struct {
 	NormqueryApi      int `yaml:"normquery_api"`
 	NormqueryApiBurst int `yaml:"normquery_api_burst"`
 
+	NormqueryBids         int `yaml:"normquery_bids"`
+	NormqueryBidsBurst    int `yaml:"normquery_bids_burst"`
+	NormqueryBidsApi      int `yaml:"normquery_bids_api"`
+	NormqueryBidsApiBurst int `yaml:"normquery_bids_api_burst"`
+
 	NormqueryStats         int `yaml:"normquery_stats"`
 	NormqueryStatsBurst    int `yaml:"normquery_stats_burst"`
 	NormqueryStatsApi      int `yaml:"normquery_stats_api"`
@@ -371,7 +376,8 @@ type PromotionV2RateLimits struct {
 
 func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
 	result := *c
-	// Normquery (shared rate for list/bids/minus): swagger 5 req/sec = 300/min
+	// Normquery (list/get-minus): swagger 5 req/sec = 300/min. Get-bids —
+	// отдельный ключ ниже: swagger ужесточил его до 2 req/sec (спека 11.10).
 	if result.RateLimits.NormqueryApi == 0 {
 		result.RateLimits.NormqueryApi = 300
 	}
@@ -384,7 +390,21 @@ func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
 	if result.RateLimits.NormqueryBurst == 0 {
 		result.RateLimits.NormqueryBurst = result.RateLimits.NormqueryApiBurst
 	}
-	// Normquery stats: swagger 10 req/min (much stricter than list/bids/minus)
+	// Normquery get-bids (POST /adv/v0/normquery/get-bids): swagger 2 req/sec
+	// = 120/min, burst 4/500ms — дефолт консервативнее (0.83x): 100/min.
+	if result.RateLimits.NormqueryBidsApi == 0 {
+		result.RateLimits.NormqueryBidsApi = 100
+	}
+	if result.RateLimits.NormqueryBids == 0 {
+		result.RateLimits.NormqueryBids = result.RateLimits.NormqueryBidsApi
+	}
+	if result.RateLimits.NormqueryBidsApiBurst == 0 {
+		result.RateLimits.NormqueryBidsApiBurst = 4
+	}
+	if result.RateLimits.NormqueryBidsBurst == 0 {
+		result.RateLimits.NormqueryBidsBurst = result.RateLimits.NormqueryBidsApiBurst
+	}
+	// Normquery stats: swagger 10 req/min (stricter than list/get-minus)
 	if result.RateLimits.NormqueryStatsApi == 0 {
 		result.RateLimits.NormqueryStatsApi = 10
 	}

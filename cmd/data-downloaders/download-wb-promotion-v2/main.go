@@ -357,7 +357,7 @@ func resolveCalendarKey(cfg *Config) string {
 func applyRateLimits(client *wb.Client, rl config.PromotionV2RateLimits) {
 	client.SetRateLimit("normquery_stats", rl.NormqueryStats, rl.NormqueryStatsBurst, rl.NormqueryStatsApi, rl.NormqueryStatsApiBurst)
 	client.SetRateLimit("normquery_list", rl.Normquery, rl.NormqueryBurst, rl.NormqueryApi, rl.NormqueryApiBurst)
-	client.SetRateLimit("normquery_bids", rl.Normquery, rl.NormqueryBurst, rl.NormqueryApi, rl.NormqueryApiBurst)
+	client.SetRateLimit("normquery_bids", rl.NormqueryBids, rl.NormqueryBidsBurst, rl.NormqueryBidsApi, rl.NormqueryBidsApiBurst)
 	client.SetRateLimit("normquery_minus", rl.Normquery, rl.NormqueryBurst, rl.NormqueryApi, rl.NormqueryApiBurst)
 	client.SetRateLimit("bid_recommendations", rl.BidRec, rl.BidRecBurst, rl.BidRecApi, rl.BidRecApiBurst)
 	client.SetRateLimit("expenses", rl.Finance, rl.FinanceBurst, rl.FinanceApi, rl.FinanceApiBurst)

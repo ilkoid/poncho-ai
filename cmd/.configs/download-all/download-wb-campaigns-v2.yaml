@@ -12,12 +12,12 @@ campaigns:
   rate_limits:
     # Campaign list: GET /adv/v1/promotion/count — swagger: 300/min
     promotion_count: 300
-    promotion_count_burst: 10
+    promotion_count_burst: 5   # swagger burst 5
     promotion_count_api: 300
     promotion_count_api_burst: 5
     # Campaign details: GET /api/advert/v2/adverts — swagger: 300/min
     advert_details: 300
-    advert_details_burst: 10
+    advert_details_burst: 5   # swagger burst 5
     advert_details_api: 300
     advert_details_api_burst: 5
     # Fullstats: GET /adv/v3/fullstats — swagger: 3/min (MOST RESTRICTIVE)

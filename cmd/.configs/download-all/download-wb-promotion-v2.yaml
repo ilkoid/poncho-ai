@@ -19,10 +19,14 @@ promotion_v2:
   calendar_days_past: 7
   calendar_days_future: 7
   rate_limits:
-    normquery: 300
+    normquery: 300             # list/get-minus: swagger 5/sec = 300/min
     normquery_burst: 5
     normquery_api: 300
     normquery_api_burst: 5
+    normquery_bids: 100        # get-bids: swagger 2/sec = 120/min (ужесточение спеки 11.10) — берём 0.83x
+    normquery_bids_burst: 4
+    normquery_bids_api: 100
+    normquery_bids_api_burst: 4
     normquery_stats: 70
     normquery_stats_burst: 1
     normquery_stats_api: 7
