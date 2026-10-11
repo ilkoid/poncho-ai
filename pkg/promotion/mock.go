@@ -69,6 +69,7 @@ func (m *MockSource) GetNormqueryList(ctx context.Context, req wb.NormqueryListR
 			NormQueries: wb.NormqueryClusters{
 				Active:   []string{"платье женское", "платье летнее"},
 				Excluded: []string{"платье мужское"},
+			Archived: []string{"платье зимнее"},
 			},
 		}
 	}
@@ -78,7 +79,13 @@ func (m *MockSource) GetNormqueryList(ctx context.Context, req wb.NormqueryListR
 func (m *MockSource) GetNormqueryBids(ctx context.Context, req wb.NormqueryBidsRequest, rateLimit, burst int) (*wb.NormqueryBidsResponse, error) {
 	bids := make([]wb.NormqueryBidItem, len(req.Items))
 	for i, item := range req.Items {
-		bids[i] = wb.NormqueryBidItem{AdvertID: item.AdvertID, NmID: item.NmID, Bid: 350 + i}
+		bids[i] = wb.NormqueryBidItem{
+			AdvertID:   item.AdvertID,
+			NmID:       item.NmID,
+			Bid:        350 + i,
+			BidKopecks: (350 + i) * 100, // канон: копейки (bid — рубли, см. wb.NormqueryBidItem)
+			Currency:   "RUB",
+		}
 	}
 	return &wb.NormqueryBidsResponse{Bids: bids}, nil
 }
@@ -186,8 +193,12 @@ func (m *MockSource) GetCalendarPromotionNomenclatures(ctx context.Context, prom
 	}, nil
 }
 
-func (m *MockSource) GetCampaignBudget(ctx context.Context, advertID int, rateLimit, burst int) (*wb.BudgetResponse, error) {
-	return &wb.BudgetResponse{Total: 5000 + advertID%1000}, nil
+func (m *MockSource) GetCampaignBudgets(ctx context.Context, advertIDs []int, rateLimit, burst int) ([]wb.AdvertBudget, error) {
+	out := make([]wb.AdvertBudget, len(advertIDs))
+	for i, id := range advertIDs {
+		out[i] = wb.AdvertBudget{AdvertID: id, Currency: "RUB", Total: 5000 + id%1000}
+	}
+	return out, nil
 }
 
 func (m *MockSource) GetMinBids(ctx context.Context, req wb.MinBidsRequest, rateLimit, burst int) (*wb.MinBidsResponse, error) {
@@ -283,7 +294,7 @@ func (w *DiscardWriter) SaveCalendarPromotionNomenclatures(ctx context.Context, 
 	return nil
 }
 
-func (w *DiscardWriter) SaveCampaignBudget(ctx context.Context, advertID int, budget wb.BudgetResponse, snapshotDate string) error {
+func (w *DiscardWriter) SaveCampaignBudget(ctx context.Context, advertID int, budget wb.AdvertBudget, snapshotDate string) error {
 	w.saved.Add(1)
 	return nil
 }

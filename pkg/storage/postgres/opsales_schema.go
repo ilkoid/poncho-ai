@@ -79,6 +79,7 @@ CREATE INDEX IF NOT EXISTS idx_opsales_sale_date ON operational_sales(sale_date)
 CREATE INDEX IF NOT EXISTS idx_opsales_g_number ON operational_sales(g_number);
 CREATE INDEX IF NOT EXISTS idx_opsales_supplier_article ON operational_sales(supplier_article);
 CREATE INDEX IF NOT EXISTS idx_opsales_last_change_date ON operational_sales(last_change_date);
+CREATE INDEX IF NOT EXISTS idx_opsales_srid ON operational_sales(srid);
 `
 )
 

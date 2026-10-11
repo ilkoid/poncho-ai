@@ -14,6 +14,7 @@ package whremains
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/wb"
@@ -59,6 +60,37 @@ type WhRemainsFlatRow struct {
 	Volume        float64
 	WarehouseName string
 	Quantity      int64
+	// RowKind классифицирует строку: WB кладёт в warehouses[] не только реальные
+	// склады, но и служебные строки-итоги (пример ответа — 12-reports.yaml:685-689:
+	// «В пути до получатели», «В пути возвраты на склад WB», «Всего находится на
+	// складах»). Псевдостроки пишутся с меткой, а не отбрасываются («в пути» —
+	// полезная метрика); «складские» выборки обязаны фильтровать row_kind='warehouse',
+	// иначе SUM(quantity) считает товар дважды (итог + склады + «в пути»).
+	RowKind string
+}
+
+// Классы строк warehouse_remains.
+const (
+	RowKindWarehouse     = "warehouse"         // реальный склад
+	RowKindTotal         = "total"             // «Всего находится на складах» — уже посчитанный итог
+	RowKindInTransitOut  = "in_transit_out"    // «В пути до получателей» — едет к покупателям
+	RowKindInTransitRet  = "in_transit_return" // «В пути возвраты на склад WB»
+)
+
+// ClassifyWarehouseRow разбирает warehouse_name на класс строки. Точные имена
+// служебных строк — из примера ответа спеки; префиксные ветки устойчивы к
+// будущим вариациям формулировок WB.
+func ClassifyWarehouseRow(name string) string {
+	switch {
+	case strings.HasPrefix(name, "Всего"):
+		return RowKindTotal
+	case strings.HasPrefix(name, "В пути возвраты"):
+		return RowKindInTransitRet
+	case strings.HasPrefix(name, "В пути"):
+		return RowKindInTransitOut
+	default:
+		return RowKindWarehouse
+	}
 }
 
 // DownloadOptions configures the warehouse remains download behavior.

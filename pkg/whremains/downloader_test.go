@@ -208,6 +208,73 @@ func TestFlattenRemains_NoWarehouses(t *testing.T) {
 	}
 }
 
+// TestFlattenRemains_RowKind проверяет классификацию служебных строк остатков:
+// WB кладёт в warehouses[] строки-итоги («Всего…», «В пути…» — пример ответа
+// 12-reports.yaml:685-689). Наивный SUM(quantity) без фильтра row_kind='warehouse'
+// считает товар дважды (аудит dev_wb_stocks_data_notes.md: ×2,0 на живых данных).
+func TestFlattenRemains_RowKind(t *testing.T) {
+	items := []wb.WarehouseRemainsItem{
+		{
+			NmID: 13692811, TechSize: "42",
+			Warehouses: []wb.WarehouseRemainsEntry{
+				{WarehouseName: "Коледино", Quantity: 539},
+				{WarehouseName: "Электросталь", Quantity: 7},
+				{WarehouseName: "В пути до получателей", Quantity: 14},
+				{WarehouseName: "В пути возвраты на склад WB", Quantity: 4},
+				{WarehouseName: "Всего находится на складах", Quantity: 267},
+			},
+		},
+	}
+
+	rows := flattenRemains(items)
+	want := map[string]string{
+		"Коледино":                    RowKindWarehouse,
+		"Электросталь":                RowKindWarehouse,
+		"В пути до получателей":       RowKindInTransitOut,
+		"В пути возвраты на склад WB": RowKindInTransitRet,
+		"Всего находится на складах":  RowKindTotal,
+	}
+	for _, r := range rows {
+		if r.RowKind != want[r.WarehouseName] {
+			t.Errorf("row %q: RowKind = %q, want %q", r.WarehouseName, r.RowKind, want[r.WarehouseName])
+		}
+	}
+
+	// Двойной счёт: наивная сумма против суммы по реальным складам.
+	var naive, real int64
+	for _, r := range rows {
+		naive += r.Quantity
+		if r.RowKind == RowKindWarehouse {
+			real += r.Quantity
+		}
+	}
+	if naive != 831 {
+		t.Errorf("naive SUM = %d, want 831 (539+7+14+4+267)", naive)
+	}
+	if real != 546 {
+		t.Errorf("SUM(row_kind='warehouse') = %d, want 546 (539+7)", real)
+	}
+}
+
+// TestClassifyWarehouseRow_prefixes — префиксные ветки устойчивы к вариациям
+// формулировок WB (точные имена сегодня — из примера спеки).
+func TestClassifyWarehouseRow_prefixes(t *testing.T) {
+	cases := map[string]string{
+		"Всего находится на складах":  RowKindTotal,
+		"Всего":                       RowKindTotal,
+		"В пути до получателей":       RowKindInTransitOut,
+		"В пути возвраты на склад WB": RowKindInTransitRet,
+		"В пути возвраты (новое имя)": RowKindInTransitRet,
+		"Коледино":                    RowKindWarehouse,
+		"":                            RowKindWarehouse,
+	}
+	for name, want := range cases {
+		if got := ClassifyWarehouseRow(name); got != want {
+			t.Errorf("ClassifyWarehouseRow(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
 // TestDownloader_DefaultDate tests that snapshot date defaults to today.
 func TestDownloader_DefaultDate(t *testing.T) {
 	source := NewMockSource()

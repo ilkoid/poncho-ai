@@ -34,7 +34,7 @@ const (
 	pgWhRemainsChunkSize = 500
 
 	// Multi-row INSERT SQL fragments.
-	insertWhRemainsPrefixSQL = `INSERT INTO warehouse_remains (snapshot_date, nm_id, barcode, tech_size, warehouse_name, brand, subject_name, vendor_code, volume, quantity) VALUES `
+	insertWhRemainsPrefixSQL = `INSERT INTO warehouse_remains (snapshot_date, nm_id, barcode, tech_size, warehouse_name, brand, subject_name, vendor_code, volume, quantity, row_kind) VALUES `
 	insertWhRemainsOnConflictSQL = `
 ON CONFLICT (snapshot_date, nm_id, tech_size, warehouse_name) DO UPDATE SET
     barcode        = EXCLUDED.barcode,
@@ -42,8 +42,9 @@ ON CONFLICT (snapshot_date, nm_id, tech_size, warehouse_name) DO UPDATE SET
     subject_name   = EXCLUDED.subject_name,
     vendor_code    = EXCLUDED.vendor_code,
     volume         = EXCLUDED.volume,
-    quantity       = EXCLUDED.quantity`
-	insertWhRemainsCols = 10
+    quantity       = EXCLUDED.quantity,
+    row_kind       = EXCLUDED.row_kind`
+	insertWhRemainsCols = 11
 )
 
 // Pre-built query for full chunks (500 rows).
@@ -86,10 +87,15 @@ func (r *PgWhRemainsRepo) saveWhRemainsChunk(ctx context.Context, chunk []whrema
 
 	args := make([]any, 0, len(chunk)*insertWhRemainsCols)
 	for _, row := range chunk {
+		rowKind := row.RowKind
+		if rowKind == "" {
+			rowKind = whremains.RowKindWarehouse // защита от ручного конструирования без классификации
+		}
 		args = append(args,
 			snapshotDate,
 			row.NmID, row.Barcode, row.TechSize, row.WarehouseName,
 			row.Brand, row.SubjectName, row.VendorCode, row.Volume, row.Quantity,
+			rowKind,
 		)
 	}
 

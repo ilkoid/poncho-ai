@@ -1,0 +1,9 @@
+# build-region-sales-daily — «продажи по регионам» из уже скачанных данных.
+# Замена отчёта region-sale (off 3.11.2026, release-notes id=590).
+# Истоки: public.order_feed ⋈ public.orders ⋈ public.operational_sales (srid).
+days: 7                                # окно обновления: статусы ленты живут
+                                       # в пределах feed_days окна загрузчика
+storage:
+  backend: "postgres"
+  pg_database: "wb_data_test"
+  pg_password_env: "PG_PWD"

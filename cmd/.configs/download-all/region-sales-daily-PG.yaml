@@ -1,0 +1,8 @@
+# build-region-sales-daily — конфиг для download-all.sh (прод-БД).
+# Запуск после download-wb-fbs-orders-v2 (лента) и download-wb-opsales-v2
+# (деньги): агрегат сшивает их по srid с заказами (регион).
+days: 7
+storage:
+  backend: "postgres"
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

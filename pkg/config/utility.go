@@ -331,7 +331,7 @@ type PromotionV2Config struct {
 
 // PromotionV2RateLimits — rate limits для V2 endpoints.
 // Swagger rates: normquery_stats=10/min, normquery_list/bids/minus=5/sec,
-// bid_recommendations=5/min, finance=1/sec, calendar=10/6sec, budget=4/sec, min_bids=20/min.
+// bid_recommendations=5/min, finance=1/sec, calendar=10/6sec, budget_v2=20/min burst 4 (v1 GET off 16.11.2026), min_bids=20/min.
 type PromotionV2RateLimits struct {
 	Normquery         int `yaml:"normquery"`
 	NormqueryBurst    int `yaml:"normquery_burst"`
@@ -352,6 +352,11 @@ type PromotionV2RateLimits struct {
 	FinanceBurst    int `yaml:"finance_burst"`
 	FinanceApi      int `yaml:"finance_api"`
 	FinanceApiBurst int `yaml:"finance_api_burst"`
+
+	BudgetV2         int `yaml:"budget_v2"`
+	BudgetV2Burst    int `yaml:"budget_v2_burst"`
+	BudgetV2Api      int `yaml:"budget_v2_api"`
+	BudgetV2ApiBurst int `yaml:"budget_v2_api_burst"`
 
 	Calendar         int `yaml:"calendar"`
 	CalendarBurst    int `yaml:"calendar_burst"`

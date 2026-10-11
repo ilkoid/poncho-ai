@@ -479,9 +479,21 @@ type NormqueryStatRow struct {
 	Spend     float64  `json:"spend"`
 }
 
+// NormqueryListRequestItem — элемент запроса POST /adv/v0/normquery/list.
+// Спека (V0GetNormQueryListRequestItem, 08-promotion.yaml:5071) требует
+// camelCase-ключи advertId/nmId — в отличие от остальных normquery-методов
+// (stats/get-bids/get-minus — snake_case). Общий NormqueryItem на все методы
+// был ошибкой: list получал чужие snake_case-ключи и мог молча терять данные
+// (аудит dev_wb_promo_fixes.md §3). Новый v1-метод normquery/bids — тоже
+// camelCase (+ bidMinorUnits).
+type NormqueryListRequestItem struct {
+	AdvertID int `json:"advertId"`
+	NmID     int `json:"nmId"`
+}
+
 // NormqueryListRequest — body для POST /adv/v0/normquery/list.
 type NormqueryListRequest struct {
-	Items []NormqueryItem `json:"items"` // max 100
+	Items []NormqueryListRequestItem `json:"items"` // max 100
 }
 
 // NormqueryListResponse — ответ от POST /adv/v0/normquery/list.
@@ -489,17 +501,20 @@ type NormqueryListResponse struct {
 	Items []NormqueryListItem `json:"items"`
 }
 
-// NormqueryListItem — активные/исключённые кластеры для одного (advert_id, nm_id).
+// NormqueryListItem — активные/исключённые/архивные кластеры для одного (advert_id, nm_id).
 type NormqueryListItem struct {
-	AdvertID    int                 `json:"advertId"`
-	NmID        int                 `json:"nmId"`
-	NormQueries NormqueryClusters   `json:"normQueries"`
+	AdvertID    int               `json:"advertId"`
+	NmID        int               `json:"nmId"`
+	NormQueries NormqueryClusters `json:"normQueries"`
 }
 
-// NormqueryClusters — активные и исключённые поисковые кластеры.
+// NormqueryClusters — активные, исключённые и архивные поисковые кластеры.
+// Archived существуют в ответе list (пример — 08-promotion.yaml:4310-4319),
+// до 2026-10-11 терялись при маппинге.
 type NormqueryClusters struct {
 	Active   []string `json:"active"`
 	Excluded []string `json:"excluded"`
+	Archived []string `json:"archived"`
 }
 
 // NormqueryBidsRequest — body для POST /adv/v0/normquery/get-bids.
@@ -513,11 +528,22 @@ type NormqueryBidsResponse struct {
 }
 
 // NormqueryBidItem — ставка для одного поискового кластера.
+//
+// ЕДИНИЦЫ (спека V0GetNormQueryBidsItem, 08-promotion.yaml:5494+):
+//   - Bid — БАЗОВЫЕ единицы валюты (рубли), integer — дробные рубли WB
+//     отдаёт усечёнными (5,50 ₽ → 5);
+//   - BidKopecks — РАЗМЕННЫЕ единицы (0,01), канон ставки без потерь;
+//   - Currency — ISO 4217.
+// Канон для расчётов/установки — BidKopecks (в /adv/v1/upd поле bid_kopecks,
+// в новом /api/advert/v1/normquery/bids — bidMinorUnits). Сверка:
+// Bid*100 ≈ BidKopecks ±1, расхождение — в лог (аудит dev_wb_promo_fixes.md §2).
 type NormqueryBidItem struct {
-	AdvertID  int    `json:"advert_id"`
-	NmID      int    `json:"nm_id"`
-	Bid       int    `json:"bid"`        // копейки
-	NormQuery string `json:"norm_query"` // поисковый кластер
+	AdvertID   int    `json:"advert_id"`
+	NmID       int    `json:"nm_id"`
+	Bid        int    `json:"bid"`         // рубли (базовые единицы), усечённо до целого
+	BidKopecks int    `json:"bid_kopecks"` // копейки — канон ставки
+	Currency   string `json:"currency"`    // ISO 4217
+	NormQuery  string `json:"norm_query"`  // поисковый кластер
 }
 
 // NormqueryMinusRequest — body для POST /adv/v0/normquery/get-minus.
@@ -700,9 +726,23 @@ type CalendarPromotionNomsData struct {
 
 // --- Campaign Budget ---
 
-// BudgetResponse — ответ от GET /adv/v1/budget.
-type BudgetResponse struct {
-	Total int `json:"total"` // Бюджет кампании, ₽
+// AdvertBudget — бюджет одной кампании из POST /api/advert/v2/budget
+// (V1BudgetAdvert, 08-promotion.yaml): total — базовые единицы валюты (₽).
+type AdvertBudget struct {
+	AdvertID int    `json:"advertId"`
+	Currency string `json:"currency"` // ISO 4217
+	Total    int    `json:"total"`    // бюджет, ₽
+}
+
+// V2BudgetRequest — body для POST /api/advert/v2/budget: advertIds 1..50
+// (08-promotion.yaml:4770+, V2BudgetRequest).
+type V2BudgetRequest struct {
+	AdvertIDs []int `json:"advertIds"`
+}
+
+// V2BudgetResponse — ответ POST /api/advert/v2/budget.
+type V2BudgetResponse struct {
+	Adverts []AdvertBudget `json:"adverts"`
 }
 
 // --- Minimum Bids ---

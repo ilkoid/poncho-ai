@@ -69,8 +69,12 @@ func (s *WBSource) GetCalendarPromotionNomenclatures(ctx context.Context, promot
 	return s.client.GetCalendarPromotionNomenclatures(ctx, promotionID, inAction, limit, offset, rateLimit, burst)
 }
 
-func (s *WBSource) GetCampaignBudget(ctx context.Context, advertID int, rateLimit, burst int) (*wb.BudgetResponse, error) {
-	return s.client.GetCampaignBudget(ctx, advertID, rateLimit, burst)
+func (s *WBSource) GetCampaignBudgets(ctx context.Context, advertIDs []int, rateLimit, burst int) ([]wb.AdvertBudget, error) {
+	resp, err := s.client.GetCampaignBudgets(ctx, advertIDs, rateLimit, burst)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Adverts, nil
 }
 
 func (s *WBSource) GetMinBids(ctx context.Context, req wb.MinBidsRequest, rateLimit, burst int) (*wb.MinBidsResponse, error) {

@@ -166,6 +166,7 @@ func flattenRemains(items []wb.WarehouseRemainsItem) []WhRemainsFlatRow {
 				Volume:        item.Volume,
 				WarehouseName: wh.WarehouseName,
 				Quantity:      wh.Quantity,
+				RowKind:       ClassifyWarehouseRow(wh.WarehouseName),
 			})
 		}
 	}

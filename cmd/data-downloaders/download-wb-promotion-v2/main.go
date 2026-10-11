@@ -179,6 +179,8 @@ func main() {
 			BidRecBurst: rl.BidRecBurst,
 			Finance:      rl.Finance,
 			FinanceBurst: rl.FinanceBurst,
+			BudgetV2:      rl.BudgetV2,
+			BudgetV2Burst: rl.BudgetV2Burst,
 			Calendar:      rl.Calendar,
 			CalendarBurst: rl.CalendarBurst,
 			MinBids:      rl.MinBids,
@@ -356,7 +358,8 @@ func applyRateLimits(client *wb.Client, rl config.PromotionV2RateLimits) {
 	client.SetRateLimit("payments", rl.Finance, rl.FinanceBurst, rl.FinanceApi, rl.FinanceApiBurst)
 	client.SetRateLimit("calendar_promotions", rl.Calendar, rl.CalendarBurst, rl.CalendarApi, rl.CalendarApiBurst)
 	client.SetRateLimit("get_advert_details", rl.Normquery, rl.NormqueryBurst, rl.NormqueryApi, rl.NormqueryApiBurst)
-	client.SetRateLimit("budget", rl.Finance, rl.FinanceBurst, rl.FinanceApi, rl.FinanceApiBurst)
+	// budget_v2: ToolID обязан совпадать с вызовом в GetCampaignBudgets (гатч ToolID-mismatch)
+	client.SetRateLimit("budget_v2", rl.BudgetV2, rl.BudgetV2Burst, rl.BudgetV2Api, rl.BudgetV2ApiBurst)
 	client.SetRateLimit("min_bids", rl.MinBids, rl.MinBidsBurst, rl.MinBidsApi, rl.MinBidsApiBurst)
 }
 

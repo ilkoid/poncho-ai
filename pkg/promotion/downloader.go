@@ -164,7 +164,7 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 	if hasV1Data && !d.opts.SkipBudgets {
 		stepNum++
 		dllog.Log("[%d/%d] Campaign Budgets...", stepNum, totalSteps)
-		if err := d.downloadCampaignBudgets(ctx, rl.Finance, rl.FinanceBurst); err != nil {
+		if err := d.downloadCampaignBudgets(ctx, rl.BudgetV2, rl.BudgetV2Burst); err != nil {
 			dllog.Error("Campaign Budgets: %v", err)
 			result.Errors++
 		}
@@ -393,7 +393,13 @@ func (d *Downloader) downloadNormqueryStats(ctx context.Context, rateLimit, burs
 
 func (d *Downloader) downloadNormqueryClusters(ctx context.Context, rateLimit, burst int) error {
 	return d.downloadBatched(ctx, "clusters", func(ctx context.Context, batch []wb.NormqueryItem) (int, error) {
-		resp, err := d.source.GetNormqueryList(ctx, wb.NormqueryListRequest{Items: batch}, rateLimit, burst)
+		// list требует camelCase-ключи (спека 08-promotion.yaml:5071),
+		// остальные normquery-методы — snake_case: маппинг из предметного типа.
+		items := make([]wb.NormqueryListRequestItem, len(batch))
+		for i, b := range batch {
+			items[i] = wb.NormqueryListRequestItem{AdvertID: b.AdvertID, NmID: b.NmID}
+		}
+		resp, err := d.source.GetNormqueryList(ctx, wb.NormqueryListRequest{Items: items}, rateLimit, burst)
 		if err != nil {
 			return 0, err
 		}
@@ -404,7 +410,7 @@ func (d *Downloader) downloadNormqueryClusters(ctx context.Context, rateLimit, b
 		}
 		total := 0
 		for _, item := range resp.Items {
-			total += len(item.NormQueries.Active) + len(item.NormQueries.Excluded)
+			total += len(item.NormQueries.Active) + len(item.NormQueries.Excluded) + len(item.NormQueries.Archived)
 		}
 		return total, nil
 	})
@@ -731,26 +737,30 @@ func (d *Downloader) downloadCampaignBudgets(ctx context.Context, rateLimit, bur
 	total := 0
 	totalAds := len(advertIDs)
 
-	for i, id := range advertIDs {
+	// v2-бюджет батчевый: до 50 advertIds за запрос (V2BudgetRequest),
+	// лимит 20/min burst 4 — вместо по-ID GET /adv/v1/budget (off 16.11.2026).
+	const batchSize = 50
+	for start := 0; start < totalAds; start += batchSize {
 		if ctx.Err() != nil {
-			dllog.Log("interrupted [%d/%d]", i, totalAds)
+			dllog.Log("interrupted [%d/%d]", min(start+batchSize, totalAds), totalAds)
 			return ctx.Err()
 		}
-		budget, err := d.source.GetCampaignBudget(ctx, id, rateLimit, burst)
+		end := min(start+batchSize, totalAds)
+		budgets, err := d.source.GetCampaignBudgets(ctx, advertIDs[start:end], rateLimit, burst)
 		if err != nil {
-			dllog.Error("advert=%d: %v", id, err)
+			dllog.Error("budgets batch [%d:%d]: %v", start, end, err)
 			continue
 		}
-		if !d.opts.DryRun {
-			if err := d.writer.SaveCampaignBudget(ctx, id, *budget, snapshotDate); err != nil {
-				dllog.Error("saving budget advert=%d: %v", id, err)
-				continue
+		for _, b := range budgets {
+			if !d.opts.DryRun {
+				if err := d.writer.SaveCampaignBudget(ctx, b.AdvertID, b, snapshotDate); err != nil {
+					dllog.Error("saving budget advert=%d: %v", b.AdvertID, err)
+					continue
+				}
 			}
+			total++
 		}
-		total++
-		if (i+1)%100 == 0 || i+1 == totalAds {
-			dllog.Progress(i+1, totalAds, "budgets", fmt.Sprintf("%d saved", total), t0)
-		}
+		dllog.Progress(end, totalAds, "budgets", fmt.Sprintf("%d saved", total), t0)
 	}
 
 	dllog.Done(time.Since(t0), "%d campaign budgets", total)

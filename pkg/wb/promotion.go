@@ -399,20 +399,30 @@ func (c *Client) GetCalendarPromotionNomenclatures(ctx context.Context, promotio
 	return &resp, nil
 }
 
-// GetCampaignBudget returns campaign budget from GET /adv/v1/budget.
-// Rate limit: 4 req/sec (swagger).
-func (c *Client) GetCampaignBudget(ctx context.Context, advertID int, rateLimit, burst int) (*BudgetResponse, error) {
-	if c.IsDemoKey() {
-		return &BudgetResponse{Total: 5000}, nil
+// GetCampaignBudgets возвращает бюджеты кампаний из POST /api/advert/v2/budget.
+// Миграция 2026-10-11: GET /adv/v1/budget отключается WB 16 ноября 2026
+// (deprecated, release-notes id=582 — 08-promotion.yaml:1534,1551); старый
+// путь удалён. Лимит v2: 20 req/min, burst 4. advertIDs — до 50 за запрос
+// (V2BudgetRequest): батчинг на стороне вызывающего.
+func (c *Client) GetCampaignBudgets(ctx context.Context, advertIDs []int, rateLimit, burst int) (*V2BudgetResponse, error) {
+	if len(advertIDs) == 0 {
+		return &V2BudgetResponse{}, nil
 	}
-	params := url.Values{}
-	params.Set("id", fmt.Sprintf("%d", advertID))
-	path := "/adv/v1/budget?" + params.Encode()
-
-	var resp BudgetResponse
-	err := c.Get(ctx, "budget", promotionEndpoint, rateLimit, burst, path, nil, &resp)
+	if len(advertIDs) > 50 {
+		return nil, fmt.Errorf("campaign budgets: %d advertIds > 50 (спека V2BudgetRequest), батчите на вызывающем", len(advertIDs))
+	}
+	if c.IsDemoKey() {
+		adverts := make([]AdvertBudget, len(advertIDs))
+		for i, id := range advertIDs {
+			adverts[i] = AdvertBudget{AdvertID: id, Currency: "RUB", Total: 5000}
+		}
+		return &V2BudgetResponse{Adverts: adverts}, nil
+	}
+	body := V2BudgetRequest{AdvertIDs: advertIDs}
+	var resp V2BudgetResponse
+	err := c.Post(ctx, "budget_v2", promotionEndpoint, rateLimit, burst, "/api/advert/v2/budget", body, &resp)
 	if err != nil {
-		return nil, fmt.Errorf("campaign budget: %w", err)
+		return nil, fmt.Errorf("campaign budgets: %w", err)
 	}
 	return &resp, nil
 }
@@ -465,6 +475,7 @@ func (c *Client) getMockNormqueryList(req NormqueryListRequest) *NormqueryListRe
 			NormQueries: NormqueryClusters{
 				Active:   []string{"платье женское", "платье летнее"},
 				Excluded: []string{"платье мужское"},
+			Archived: []string{"платье зимнее"},
 			},
 		})
 	}

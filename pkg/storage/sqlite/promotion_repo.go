@@ -1145,7 +1145,7 @@ func (r *SQLiteSalesRepository) GetNormqueryLastRun(ctx context.Context) (string
 }
 
 // SaveCampaignBudget saves budget snapshot for one campaign.
-func (r *SQLiteSalesRepository) SaveCampaignBudget(ctx context.Context, advertID int, budget wb.BudgetResponse, snapshotDate string) error {
+func (r *SQLiteSalesRepository) SaveCampaignBudget(ctx context.Context, advertID int, budget wb.AdvertBudget, snapshotDate string) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO campaign_budget (advert_id, snapshot_date, total_budget)
 		VALUES (?, ?, ?)

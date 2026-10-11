@@ -60,6 +60,39 @@ func initPromotionSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, promotionMigrations); err != nil {
 		return fmt.Errorf("promotion migrations (int4→bigint): %w", err)
 	}
+	// 2026-10-11, нормграфик (аудит dev_wb_promo_fixes.md §2-3): канон ставки —
+	// копейки + валюта; кластеры получают kind active|excluded|archived
+	// (архивные раньше терялись). UPDATE с CASE и DROP — отдельными Exec:
+	// pgx не парсит CASE в multi-statement блоках (гатч AGENTS.md).
+	for _, stmt := range []string{
+		`ALTER TABLE normquery_bids ADD COLUMN IF NOT EXISTS bid_kopecks BIGINT DEFAULT 0`,
+		`ALTER TABLE normquery_bids ADD COLUMN IF NOT EXISTS currency TEXT DEFAULT ''`,
+		`ALTER TABLE normquery_clusters ADD COLUMN IF NOT EXISTS kind TEXT`,
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("normquery 2026-10 migration: %w", err)
+		}
+	}
+	// Бэкфил kind из is_excluded — только на старой таблице: на свежей
+	// (создана уже с kind) колонки is_excluded нет, UPDATE молча пропускаем.
+	var hasOldCol bool
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) = 1 FROM information_schema.columns
+		WHERE table_name = 'normquery_clusters' AND column_name = 'is_excluded'`).Scan(&hasOldCol); err != nil {
+		return fmt.Errorf("check normquery_clusters is_excluded: %w", err)
+	}
+	if hasOldCol {
+		for _, stmt := range []string{
+			`UPDATE normquery_clusters SET kind = CASE WHEN is_excluded THEN 'excluded' ELSE 'active' END WHERE kind IS NULL`,
+			`ALTER TABLE normquery_clusters ALTER COLUMN kind SET DEFAULT 'active'`,
+			`ALTER TABLE normquery_clusters ALTER COLUMN kind SET NOT NULL`,
+			`ALTER TABLE normquery_clusters DROP COLUMN IF EXISTS is_excluded`,
+		} {
+			if _, err := pool.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("normquery clusters kind backfill: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -103,12 +136,16 @@ CREATE TABLE IF NOT EXISTS normquery_stats (
 
 var pgNormqueryBidsDDL = `
 CREATE TABLE IF NOT EXISTS normquery_bids (
-    id         BIGSERIAL PRIMARY KEY,
-    advert_id  BIGINT NOT NULL,
-    nm_id      BIGINT NOT NULL,
-    normquery  TEXT NOT NULL,
-    bid        BIGINT DEFAULT 0,
-    created_at TEXT DEFAULT TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+    id          BIGSERIAL PRIMARY KEY,
+    advert_id   BIGINT NOT NULL,
+    nm_id       BIGINT NOT NULL,
+    normquery   TEXT NOT NULL,
+    bid         BIGINT DEFAULT 0,
+    -- Канон ставки (аудит dev_wb_promo_fixes.md §2): bid — базовые единицы
+    -- (рубли, WB отдаёт усечённо до целого), bid_kopecks — копейки без потерь.
+    bid_kopecks BIGINT DEFAULT 0,
+    currency    TEXT DEFAULT '',
+    created_at  TEXT DEFAULT TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
     UNIQUE(advert_id, nm_id, normquery)
 )`
 
@@ -124,12 +161,14 @@ CREATE TABLE IF NOT EXISTS normquery_minus (
 
 var pgNormqueryClustersDDL = `
 CREATE TABLE IF NOT EXISTS normquery_clusters (
-    id          BIGSERIAL PRIMARY KEY,
-    advert_id   BIGINT NOT NULL,
-    nm_id       BIGINT NOT NULL,
-    normquery   TEXT NOT NULL,
-    is_excluded BOOLEAN DEFAULT FALSE,
-    created_at  TEXT DEFAULT TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+    id         BIGSERIAL PRIMARY KEY,
+    advert_id  BIGINT NOT NULL,
+    nm_id      BIGINT NOT NULL,
+    normquery  TEXT NOT NULL,
+    -- active | excluded | archived. До 2026-10-11 был только is_excluded
+    -- (active/excluded), архивные кластеры терялись (аудит §3).
+    kind       TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT DEFAULT TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
     UNIQUE(advert_id, nm_id, normquery)
 )`
 
@@ -272,6 +311,7 @@ CREATE TABLE IF NOT EXISTS campaign_budget (
     advert_id     BIGINT NOT NULL,
     snapshot_date TEXT NOT NULL,
     total_budget  BIGINT DEFAULT 0,
+    currency      TEXT DEFAULT '',
     created_at    TEXT DEFAULT TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
     UNIQUE(advert_id, snapshot_date)
 )`
@@ -357,6 +397,7 @@ ALTER TABLE wb_calendar_promotion_nomenclatures ALTER COLUMN nm_id TYPE BIGINT;
 -- campaign_budget
 ALTER TABLE campaign_budget ALTER COLUMN advert_id TYPE BIGINT;
 ALTER TABLE campaign_budget ALTER COLUMN total_budget TYPE BIGINT;
+ALTER TABLE campaign_budget ADD COLUMN IF NOT EXISTS currency TEXT DEFAULT '';
 -- min_bids
 ALTER TABLE min_bids ALTER COLUMN nm_id TYPE BIGINT;
 ALTER TABLE min_bids ALTER COLUMN advert_id TYPE BIGINT;

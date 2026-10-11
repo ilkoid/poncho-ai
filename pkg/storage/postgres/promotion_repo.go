@@ -239,7 +239,7 @@ func (r *PgPromotionRepo) SaveNormqueryBids(ctx context.Context, items []wb.Norm
 			return fmt.Errorf("delete normquery_bids advert=%d nm=%d: %w", item.AdvertID, item.NmID, err)
 		}
 		_, err = tx.Exec(ctx, pgInsertNormqueryBidsSQL,
-			item.AdvertID, item.NmID, item.NormQuery, item.Bid)
+			item.AdvertID, item.NmID, item.NormQuery, item.Bid, item.BidKopecks, item.Currency)
 		if err != nil {
 			return fmt.Errorf("insert normquery_bids advert=%d nm=%d: %w", item.AdvertID, item.NmID, err)
 		}
@@ -276,8 +276,9 @@ func (r *PgPromotionRepo) SaveNormqueryMinus(ctx context.Context, items []wb.Nor
 	return tx.Commit(ctx)
 }
 
-// SaveNormqueryClusters saves active/excluded clusters per (advert_id, nm_id).
+// SaveNormqueryClusters saves active/excluded/archived clusters per (advert_id, nm_id).
 // DELETE+INSERT pattern: replaces all clusters for each (advert_id, nm_id).
+// Archived раньше терялись при маппинге (аудит dev_wb_promo_fixes.md §3).
 func (r *PgPromotionRepo) SaveNormqueryClusters(ctx context.Context, items []wb.NormqueryListItem) error {
 	if len(items) == 0 {
 		return nil
@@ -294,18 +295,17 @@ func (r *PgPromotionRepo) SaveNormqueryClusters(ctx context.Context, items []wb.
 		if err != nil {
 			return fmt.Errorf("delete normquery_clusters advert=%d nm=%d: %w", item.AdvertID, item.NmID, err)
 		}
-		for _, q := range item.NormQueries.Active {
-			_, err := tx.Exec(ctx, pgInsertNormqueryClustersSQL,
-				item.AdvertID, item.NmID, q, false)
-			if err != nil {
-				return fmt.Errorf("insert normquery_clusters active advert=%d nm=%d: %w", item.AdvertID, item.NmID, err)
-			}
-		}
-		for _, q := range item.NormQueries.Excluded {
-			_, err := tx.Exec(ctx, pgInsertNormqueryClustersSQL,
-				item.AdvertID, item.NmID, q, true)
-			if err != nil {
-				return fmt.Errorf("insert normquery_clusters excluded advert=%d nm=%d: %w", item.AdvertID, item.NmID, err)
+		for kind, queries := range map[string][]string{
+			"active":   item.NormQueries.Active,
+			"excluded": item.NormQueries.Excluded,
+			"archived": item.NormQueries.Archived,
+		} {
+			for _, q := range queries {
+				_, err = tx.Exec(ctx, pgInsertNormqueryClustersSQL,
+					item.AdvertID, item.NmID, q, kind)
+				if err != nil {
+					return fmt.Errorf("insert normquery_clusters %s advert=%d nm=%d: %w", kind, item.AdvertID, item.NmID, err)
+				}
 			}
 		}
 	}
@@ -626,9 +626,9 @@ func (r *PgPromotionRepo) SaveCalendarPromotionNomenclatures(ctx context.Context
 }
 
 // SaveCampaignBudget saves per-campaign budget snapshot using ON CONFLICT upsert.
-func (r *PgPromotionRepo) SaveCampaignBudget(ctx context.Context, advertID int, budget wb.BudgetResponse, snapshotDate string) error {
+func (r *PgPromotionRepo) SaveCampaignBudget(ctx context.Context, advertID int, budget wb.AdvertBudget, snapshotDate string) error {
 	// Single-row multi-row insert (consistent pattern).
-	args := []any{advertID, snapshotDate, budget.Total}
+	args := []any{advertID, snapshotDate, budget.Total, budget.Currency}
 	query := BuildMultiRowInsert(insertPromoCampaignBudgetPrefixSQL, insertPromoCampaignBudgetOnConflictSQL, 1, insertPromoCampaignBudgetCols)
 	if _, err := r.pool.Exec(ctx, query, args...); err != nil {
 		return fmt.Errorf("upsert campaign_budget advert=%d: %w", advertID, err)
@@ -947,13 +947,14 @@ ON CONFLICT (promotion_id) DO UPDATE SET
 
 // --- 10. campaign_budget ---
 const (
-	insertPromoCampaignBudgetCols = 3 // $1-$3
+	insertPromoCampaignBudgetCols = 4 // $1-$4
 
-	insertPromoCampaignBudgetPrefixSQL = `INSERT INTO campaign_budget (advert_id, snapshot_date, total_budget) VALUES `
+	insertPromoCampaignBudgetPrefixSQL = `INSERT INTO campaign_budget (advert_id, snapshot_date, total_budget, currency) VALUES `
 
 	insertPromoCampaignBudgetOnConflictSQL = `
 ON CONFLICT (advert_id, snapshot_date) DO UPDATE SET
-    total_budget = EXCLUDED.total_budget`
+    total_budget = EXCLUDED.total_budget,
+    currency     = EXCLUDED.currency`
 )
 
 // --- 11. min_bids (bonus: also migrated) ---
@@ -974,19 +975,21 @@ var insertPromoMinBidsFullChunkSQL = BuildMultiRowInsert(insertPromoMinBidsPrefi
 // ============================================================================
 
 var (
-	// Normquery Bids — simple insert (DELETE done separately)
+	// Normquery Bids — simple insert (DELETE done separately).
+	// bid — базовые единицы (рубли), bid_kopecks — канон (копейки): аудит
+	// dev_wb_promo_fixes.md §2.
 	pgInsertNormqueryBidsSQL = `
-INSERT INTO normquery_bids (advert_id, nm_id, normquery, bid)
-VALUES ($1, $2, $3, $4)`
+INSERT INTO normquery_bids (advert_id, nm_id, normquery, bid, bid_kopecks, currency)
+VALUES ($1, $2, $3, $4, $5, $6)`
 
 	// Normquery Minus — simple insert
 	pgInsertNormqueryMinusSQL = `
 INSERT INTO normquery_minus (advert_id, nm_id, minus_query)
 VALUES ($1, $2, $3)`
 
-	// Normquery Clusters — simple insert with BOOLEAN
+	// Normquery Clusters — simple insert with kind (DELETE done separately)
 	pgInsertNormqueryClustersSQL = `
-INSERT INTO normquery_clusters (advert_id, nm_id, normquery, is_excluded)
+INSERT INTO normquery_clusters (advert_id, nm_id, normquery, kind)
 VALUES ($1, $2, $3, $4)`
 
 	// Cashback — simple insert (DELETE done separately)

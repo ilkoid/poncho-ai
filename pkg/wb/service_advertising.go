@@ -29,6 +29,9 @@ func (s *advertisingService) GetCampaigns(ctx context.Context) ([]PromotionAdver
 		return s.getMockCampaigns()
 	}
 
+	// Путь вне спеки (аудит dev_wb_promo_fixes.md, приложение): актуальный —
+	// GET /api/advert/v2/adverts (08-promotion.yaml:155). Живой WB пока
+	// отвечает и на v0; мигрировать при первом живом прогоне инструмента.
 	var response []PromotionAdvertGroup
 	err := s.client.Get(ctx, "get_wb_campaigns",
 		"https://advert-api.wildberries.ru", 60, 1,
@@ -102,6 +105,10 @@ func (s *advertisingService) GetCampaignStats(ctx context.Context, advertIDs []i
 		"dates":    dates,
 	}
 
+	// Путь вне спеки (аудит dev_wb_promo_fixes.md, приложение): актуальный —
+	// GET /adv/v3/fullstats (реализован в GetCampaignFullstats ниже, лимит
+	// 3/min по спеке). Опечатка в теле "adverIds" — сверить с живым WB при
+	// первой возможности (возможная причина тихих пустых ответов).
 	var response []CampaignDailyStats
 	err = s.client.Post(ctx, "get_wb_campaign_stats2",
 		"https://advert-api.wildberries.ru", 60, 1,
@@ -233,8 +240,10 @@ func (s *advertisingService) GetCampaignFullstats(ctx context.Context, req Campa
 		strings.Join(idStrs, ","), req.BeginDate, req.EndDate)
 
 	var response []CampaignFullstatsResponse
+	// Лимит по спеке: 3 req/min, burst 1 (08-promotion.yaml:3588). До 2026-10-11
+	// был 20/min — источник 429 (аудит dev_wb_promo_fixes.md, приложение).
 	err = s.client.Get(ctx, "get_wb_campaign_fullstats2",
-		"https://advert-api.wildberries.ru", 20, 1,
+		"https://advert-api.wildberries.ru", 3, 1,
 		path, nil, &response)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get campaign fullstats: %w", err)

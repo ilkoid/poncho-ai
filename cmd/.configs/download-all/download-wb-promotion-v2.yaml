@@ -35,6 +35,10 @@ promotion_v2:
     finance_burst: 5
     finance_api: 60
     finance_api_burst: 5
+    budget_v2: 20 # POST /api/advert/v2/budget: swagger 20/min burst 4 (v1 GET off 16.11.2026)
+    budget_v2_burst: 4
+    budget_v2_api: 20
+    budget_v2_api_burst: 4
     calendar: 100
     calendar_burst: 5
     calendar_api: 100

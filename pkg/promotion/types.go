@@ -78,8 +78,9 @@ type Source interface {
 	// Paginated: (limit, offset).
 	GetCalendarPromotionNomenclatures(ctx context.Context, promotionID int, inAction bool, limit, offset, rateLimit, burst int) (*wb.CalendarPromotionNomsResponse, error)
 
-	// GetCampaignBudget fetches budget for one campaign.
-	GetCampaignBudget(ctx context.Context, advertID int, rateLimit, burst int) (*wb.BudgetResponse, error)
+	// GetCampaignBudgets fetches budgets for up to 50 campaigns per call
+	// (POST /api/advert/v2/budget — v1 GET отключается 16.11.2026).
+	GetCampaignBudgets(ctx context.Context, advertIDs []int, rateLimit, burst int) ([]wb.AdvertBudget, error)
 
 	// GetMinBids fetches minimum bids per product per placement.
 	GetMinBids(ctx context.Context, req wb.MinBidsRequest, rateLimit, burst int) (*wb.MinBidsResponse, error)
@@ -131,8 +132,8 @@ type Writer interface {
 	// SaveCalendarPromotionNomenclatures saves eligible products per promotion.
 	SaveCalendarPromotionNomenclatures(ctx context.Context, promotionID int, noms []wb.CalendarPromotionNom, snapshotDate string) error
 
-	// SaveCampaignBudget saves per-campaign budget snapshot.
-	SaveCampaignBudget(ctx context.Context, advertID int, budget wb.BudgetResponse, snapshotDate string) error
+	// SaveCampaignBudget saves per-campaign budget snapshot (v2: + currency).
+	SaveCampaignBudget(ctx context.Context, advertID int, budget wb.AdvertBudget, snapshotDate string) error
 
 	// SaveMinBids saves minimum bids per product per placement.
 	SaveMinBids(ctx context.Context, advertID int, items []wb.MinBidItem, snapshotDate string) error
@@ -178,8 +179,10 @@ type RateLimits struct {
 	NormqueryStatsBurst int
 	BidRec      int // bid recommendations (5/min)
 	BidRecBurst int
-	Finance      int // expenses, balance, payments, budget
+	Finance      int // expenses, balance, payments
 	FinanceBurst int
+	BudgetV2      int // POST /api/advert/v2/budget: 20/min, burst 4
+	BudgetV2Burst int
 	Calendar      int // calendar promotions, details, noms
 	CalendarBurst int
 	MinBids      int // minimum bids
