@@ -1,23 +1,20 @@
 ---
 name: supply-time-report
 description: >-
-  Анализ среднего времени поставок Wildberries на конкретные склады WB из PostgreSQL
-  (таблицы public.supplies + public.supply_goods). Считает лаг create_date → updated_date
-  при status_id=5 (Принято) с quality-фильтром ready_for_sale_quantity>0, агрегирует по
-  складам и выдаёт mean, медиану P50, перцентили P25/P75/P90, min/max через Python
-  (numpy/psycopg2). Опциональный cross-check: сверка с первой датой quantity>0 в
-  public.stocks_daily_warehouses (через словарь синонимов складов). Use this skill
-  whenever the user asks про время поставки, средний срок доставки на склад WB, как
-  быстро товары становятся доступны к отгрузке, лаг приёмки WB, поставки на
-  Коледино/Электросталь/Подольск/Новосемейкино/Шушары/Невинномысск/Краснодар/...,
-  readiness/ready_for_sale_quantity, status_id поставок (1=Не запланировано,
-  2=Запланировано, 3=Отгрузка разрешена, 4=Идёт приёмка, 5=Принято,
-  6=Отгружено на воротах), или упоминает supply-time-report, supplies.create_date,
-  supplies.updated_date, supplies.fact_date, supplies.ready_for_sale_quantity,
-  supplies.warehouse_name, supply_goods, stocks_daily_warehouses. Триггерить на
-  «сколько в среднем идёт поставка на склад X», «время от создания поставки до
-  появления в продаже», «какой склад быстрее принимает поставки», «лаг между
-  созданием и приёмкой поставки», «средний срок поставки WB».
+  Анализ среднего времени поставок Wildberries на склады WB из PostgreSQL
+  (public.supplies + public.supply_goods): лаг create_date → updated_date при
+  status_id=5 (Принято) с фильтром ready_for_sale_quantity>0; агрегация по
+  складам — mean, медиана P50, перцентили P25/P75/P90, min/max (Python,
+  numpy/psycopg2); опциональный cross-check по первой дате quantity>0 в
+  public.stocks_daily_warehouses. Use whenever the user asks про время/срок
+  поставки WB, средний срок доставки на склад, скорость приёмки, лаг между
+  созданием поставки и появлением товаров в продаже или доступностью к
+  отгрузке, сравнение складов (Коледино/Электросталь/Шушары/…),
+  readiness/ready_for_sale_quantity, status_id поставок (1–6), или упоминает
+  supply-time-report,
+  supplies.create_date/updated_date/fact_date/ready_for_sale_quantity/warehouse_name,
+  supply_goods, stocks_daily_warehouses. Триггерить на «сколько в среднем
+  идёт поставка на склад X» и «какой склад быстрее принимает поставки».
 when_to_use: >-
   Вопросы про время/срок поставки WB на конкретный склад: «сколько идёт поставка на
   Коледино», «какой склад быстрее принимает», «среднее время поставки», «лаг
