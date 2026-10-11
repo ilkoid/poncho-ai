@@ -283,6 +283,11 @@ maint supplies
 run go run "$PONCHO/cmd/data-downloaders/download-wb-supplies-v2" --config "$C/download-wb-supplies-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint fbs-orders
 run go run "$PONCHO/cmd/data-downloaders/download-wb-fbs-orders-v2" --config "$C/download-wb-fbs-orders-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# Агрегат «продажи по регионам» (ANALYTICAL) из уже скачанного: order_feed ⋈
+# orders ⋈ operational_sales по srid. Замена отчёта region-sale — WB отключает
+# метод 3.11.2026 (release-notes id=590); фаза region-sales выше погаснет.
+maint region-sales-agg
+run go run "$PONCHO/cmd/data-analyzers/build-region-sales-daily" --config "$C/region-sales-daily-PG.yaml"
 
 ###############################################################################
 #  Phase 5: Advertising
