@@ -231,6 +231,13 @@ func createBackend(ctx context.Context, cfg config.V2StorageConfig) (
 			pool.Close()
 			return nil, nil, func() {}, fmt.Errorf("postgres schema: %w", err)
 		}
+		// Кросс-доменное чтение: product IDs для normquery/budgets лежат в
+		// campaign_products (схема campaigns-загрузчика). На чистой БД без
+		// этого чтение падает 42P01 вместо ветки «нет V1-продуктов».
+		if err := postgres.NewPgCampaignsRepo(pool.DB()).InitSchema(ctx); err != nil {
+			pool.Close()
+			return nil, nil, func() {}, fmt.Errorf("campaigns schema: %w", err)
+		}
 		return repo, repo, pool.Close, nil // repo implements BOTH Writer + Reader
 
 	default: // "sqlite"

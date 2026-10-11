@@ -12,6 +12,9 @@
 #
 # Фазы только на advert-api.wildberries.ru (calendar/finance выключены —
 # не трогаем штормовые seller-analytics хенды и не добавляем шум в замер).
+# Phase 0 — пререквизит download-wb-campaigns-v2 (тоже advert-api: count +
+# adverts): наполняет campaign_products, без которой у promo нет пар
+# advert×nm (на чистой БД таблицы просто нет — первый смоук упал 42P01).
 # Конфиг: cmd/.configs/download-all/download-wb-promotion-v2-smoke-PG.yaml
 # (статусы [9], full scan, days 3). БД по умолчанию wb_data_test — НЕ прод.
 #
@@ -48,9 +51,12 @@ psql_db() {
 
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "--dry-run: план без запуска:"
+  echo "  0. download-wb-campaigns-v2 --config download-wb-campaigns-v2-PG.yaml"
+  echo "     пререквизит: наполняет campaign_products (на чистой БД её нет)"
   echo "  1. download-wb-promotion-v2 --config <smoke-PG> --backend postgres --db $DB"
   echo "     фазы: campaigns → normquery (stats/list/bids/minus) → budgets (v2)"
-  echo "  2. вердикт 429 из лога: grep 'status 429' (фатальные vs ретраи)"
+  echo "  2. вердикт 429 из лога: grep 'status 429' (фатальные vs ретраи);"
+  echo "     если прогон упал — вердикт НЕДЕЙСТВИТЕЛЕН (запросов могло не быть)"
   echo "  3. SQL: campaign_budget+currency, normquery_clusters by kind,"
   echo "     normquery_bids инвариант floor + currency, normquery_stats окно"
   exit 0
@@ -61,6 +67,18 @@ echo "════════════════════════�
 echo "  SMOKE PG PROMO (4a4c92c) · БД: $DB · только advert-api"
 echo "  $(date '+%Y-%m-%d %H:%M:%S') · лог: $LOG"
 echo "══════════════════════════════════════════════════════════════"
+
+echo ""
+echo "── Phase 0: пререквизит — download-wb-campaigns-v2 (наполняет campaign_products) ──"
+CAMP_RC=0
+go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" \
+  --config "$PONCHO/cmd/.configs/download-all/download-wb-campaigns-v2-PG.yaml" \
+  --backend postgres --pg-database "$DB" 2>&1 || CAMP_RC=$?
+if [[ "$CAMP_RC" != "0" ]]; then
+  echo "  !! Phase 0 упал (exit $CAMP_RC) — без campaign_products прогон promo"
+  echo "     бессмыслен (нет ни одной пары advert×nm). Чините причину, перезапустите."
+  exit 1
+fi
 
 echo ""
 echo "── Phase 1: download-wb-promotion-v2 (smoke-конфиг) ──"
@@ -78,8 +96,11 @@ OTHER_ERRS=$(grep "error:" "$LOG" | grep -vc "status 429" || true)
 echo "  упоминаний 'status 429' всего:   $TOTAL_429  (включая пережитые ретраями)"
 echo "  фатальных ошибок с 429:         $FATAL_429"
 echo "  прочих ошибок:                  $OTHER_ERRS"
-if [[ "$FATAL_429" == "0" && "$TOTAL_429" == "0" ]]; then
-  echo "  ВЕРДИКТ: 429 НЕТ — ведра advert-api чистые в этом окне."
+if [[ "$PROMO_RC" != "0" ]]; then
+  echo "  !! ПРОГОН НЕ ДОШЁЛ ДО КОНЦА (exit $PROMO_RC) — ВЕРДИКТ ПО 429 НЕДЕЙСТВИТЕЛЕН:"
+  echo "     до падения могло не быть ни одного запроса к advert-api."
+elif [[ "$FATAL_429" == "0" && "$TOTAL_429" == "0" ]]; then
+  echo "  ВЕРДИКТ: 429 НЕТ — ведра advert-api чистые в этом окне (прогон дошёл до конца)."
 elif [[ "$FATAL_429" == "0" ]]; then
   echo "  ВЕРДИКТ: 429 были, но все пережиты ретраями/бэкоффом (адаптивный лимитер отработал)."
 else
