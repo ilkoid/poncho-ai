@@ -1,0 +1,41 @@
+# API Specs Downloader — спеки WB и Ozon в docs/.
+#
+# Каналы: http (прямой GET) + cdp (браузер: челленджи и capture Ozon).
+# Пути outputs относительные — от корня poncho-ai.
+
+http:
+  timeout_seconds: 30
+  pause_ms: 1000
+  retries: 3
+
+cdp:
+  browser_path: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+  profile_dir: "~/.cache/poncho-cdp-profile"   # свежий профиль, НЕ копия повседневного
+  headless: false                              # headed — меньше похоже на бота
+  timeout_seconds: 90
+
+targets:
+  - name: wb
+    files:
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/01-general.yaml",       path: "docs/wb_api_swagger/01-general.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/02-items.yaml",         path: "docs/wb_api_swagger/02-items.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/03-orders-fbs.yaml",    path: "docs/wb_api_swagger/03-orders-fbs.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/04-orders-dbw.yaml",    path: "docs/wb_api_swagger/04-orders-dbw.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/05-dbs.yaml",           path: "docs/wb_api_swagger/05-dbs.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/06-in-store-pickup.yaml", path: "docs/wb_api_swagger/06-in-store-pickup.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/07-orders-fbw.yaml",    path: "docs/wb_api_swagger/07-orders-fbw.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/08-promotion.yaml",     path: "docs/wb_api_swagger/08-promotion.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/09-communications.yaml", path: "docs/wb_api_swagger/09-communications.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/10-rates.yaml",         path: "docs/wb_api_swagger/10-rates.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/11-analytics.yaml",     path: "docs/wb_api_swagger/11-analytics.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/12-reports.yaml",       path: "docs/wb_api_swagger/12-reports.yaml"}
+      - {url: "https://dev.wildberries.ru/api/swagger/yaml/ru/13-finances.yaml",      path: "docs/wb_api_swagger/13-finances.yaml"}
+
+  - name: ozon
+    capture:
+      page_url: "https://docs.ozon.ru/api/seller/"
+      contains: ["openapi", "swagger", "schema"]
+      min_size: 100000                      # полная спека ~4 МБ, мусор отфильтруется
+      outputs:
+        - "docs/ozon_api_swagger/ozon_api.json"
+        - "../poncho-oz/docs/ozon_api_swagger/ozon_api.json"

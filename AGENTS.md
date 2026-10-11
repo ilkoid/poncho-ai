@@ -131,6 +131,7 @@ cmd/.../download-<domain>-v2/ → flags → config → switch backend → DI →
 
 ## WB API Swagger (LOCAL — read first, do NOT google)
 - **The full official WB OpenAPI spec is checked into the repo at `docs/wb_api_swagger/`** (13 YAML files, split per domain). Before querying the web (`dev.wildberries.ru`, GitHub mirrors, web search) for any WB API question — field semantics, endpoint params, response schema, rate limits, error codes — **grep the local YAML first**. The web portal is behind anti-bot and often returns a challenge page instead of JSON; community mirrors drift and miss fields. Local is authoritative and offline.
+- **Spec refresh is automated:** `bash download-api-specs.sh` (or `go run ./cmd/data-downloaders/download-api-specs`) refetches the 13 WB YAMLs over plain HTTP and captures the Ozon spec (`docs/ozon_api_swagger/ozon_api.json`, mirrored into `../poncho-oz/docs/ozon_api_swagger/`) via a real Edge window (CDP — docs.ozon.ru has no public spec URL and sits behind its own anti-bot). The utility only updates files and prints a report; **git commit is manual** (`docs(swagger): автообновление спек WB и Ozon (<date>)`).
 - **Search by endpoint path**, e.g. `grep -n "supplier/orders" docs/wb_api_swagger/*.yaml`. File map (by domain):
   - `02-items.yaml` — cards / content (карточки товаров, характеристики)
   - `03-orders-fbs.yaml`, `04-orders-dbw.yaml`, `05-orders-dbs.yaml`, `06-in-store-pickup.yaml`, `07-orders-fbw.yaml` — fulfillment orders (FBS/DBW/DBS/PVZ/FBW)
