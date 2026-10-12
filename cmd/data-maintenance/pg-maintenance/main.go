@@ -489,23 +489,27 @@ func reclaimSuffix(deadBefore, deadAfter int64) string {
 	return fmt.Sprintf(" (reclaimed %d dead tuples)", reclaimed)
 }
 
-// loadExistingTables returns the set of table names present in the public schema
-// of the connected database. Used to skip maintenance entries whose backing
-// relation isn't there (test-only schemas like wbscraper, not-yet-migrated prod).
+// loadExistingTables returns the set of table names present in the connected
+// database. Used to skip maintenance entries whose backing relation isn't
+// there (test-only schemas like wbscraper, not-yet-migrated prod). Bare names
+// cover the public schema (исторический формат конфигов); qualified
+// "schema.table" covers остальные слои (analytical.*, recommendation.*) —
+// регресс 12.10: analytical.region_sales_daily молча skip'ался «not present».
 // One round-trip; returns an empty (non-nil) map on a database with no tables.
 func loadExistingTables(ctx context.Context, conn *pgxpool.Conn) (map[string]struct{}, error) {
-	rows, err := conn.Query(ctx, "SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+	rows, err := conn.Query(ctx, "SELECT schemaname, tablename FROM pg_tables")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := make(map[string]struct{})
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var schema, name string
+		if err := rows.Scan(&schema, &name); err != nil {
 			return nil, err
 		}
 		out[name] = struct{}{}
+		out[schema+"."+name] = struct{}{}
 	}
 	return out, rows.Err()
 }

@@ -282,6 +282,15 @@ type orderFeedEnvelope struct {
 	Data orderFeedResponse `json:"data"`
 }
 
+// orderFeedPeriodStartEnd — границы периода ленты в RFC3339, ОБЕ в UTC.
+// WB валидирует одинаковое представление зоны у selectedPeriod.start и .end
+// (400 «different timezone»). Регресс ночи 12.10: from пришёл МСК-полночью
+// (+03:00), end — UTC (Z) — вся фаза ленты упала 400 на обеих машинах.
+// Нормализация в UTC не меняет инстанты — окно остаётся тем же.
+func orderFeedPeriodStartEnd(from, now time.Time) (string, string) {
+	return from.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339)
+}
+
 // OrderFeedIterator итерирует по ленте заказов за период [from, now]
 // (по дате текущего статуса). Пагинация offset + snapshotTime из ПЕРВОГО ответа
 // (swagger: запросы одной выборки — с одним snapshotTime, иначе пропуски/дубли).
@@ -299,10 +308,11 @@ func (c *Client) OrderFeedIterator(
 	}
 
 	const limit = 10000 // максимум по swagger
+	startStr, endStr := orderFeedPeriodStartEnd(from, now)
 	req := orderFeedRequest{
 		SelectedPeriod: orderFeedPeriod{
-			Start: from.Format(time.RFC3339),
-			End:   now.Format(time.RFC3339),
+			Start: startStr,
+			End:   endStr,
 		},
 	}
 

@@ -57,6 +57,9 @@ groups:
   region-sales:         # download-wb-region-sales-v2
     depth: vacuum
     tables: [region_sales]
+  region-sales-agg:     # build-region-sales-daily (ANALYTICAL, delete+insert окна)
+    depth: vacuum
+    tables: [analytical.region_sales_daily]
 
   # ── Phase 4: Stock & Logistics ──
   stocks:               # download-wb-stocks-v2: 5.6 ГБ, новые даты = INSERT
@@ -103,6 +106,9 @@ groups:
   penalties:            # download-wb-penalties-v2
     depth: vacuum
     tables: [measurement_penalties]
+  item-rating:         # download-wb-item-rating-v2
+    depth: vacuum
+    tables: [item_ratings, item_rating_seller]
   whremains:            # download-wb-whremains-v2: 5.6 ГБ, новые даты = INSERT
     depth: analyze
     tables: [warehouse_remains]

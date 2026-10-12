@@ -281,3 +281,26 @@ func TestOrderFeedIterator_SnapshotAndClamp(t *testing.T) {
 		t.Errorf("start age = %v, want ≤ 31 суток (клампинг не сработал)", age)
 	}
 }
+
+// Регресс ночи 12.10: лента падала 400 «selectedPeriod.start and
+// selectedPeriod.end different timezone» — from пришёл МСК-полночью (+03:00
+// из feedWindowStart), end был UTC (Z). Обе границы должны уходить в запрос
+// в одном представлении зоны (UTC), инстанты не меняются.
+func TestOrderFeedPeriodStartEnd_SameTimezone(t *testing.T) {
+	msk := time.FixedZone("MSK", 3*3600)
+	from := time.Date(2026, 10, 4, 0, 0, 0, 0, msk) // полночь МСК из feedWindowStart
+	now := time.Date(2026, 10, 11, 19, 54, 35, 0, time.UTC)
+
+	start, end := orderFeedPeriodStartEnd(from, now)
+	if !strings.HasSuffix(start, "Z") || !strings.HasSuffix(end, "Z") {
+		t.Fatalf("start=%s end=%s — обе границы должны быть в UTC (Z)", start, end)
+	}
+	// Инстант сохранён: МСК-полночь 04.10 = 03.10 21:00 UTC.
+	if got := start; got != "2026-10-03T21:00:00Z" {
+		t.Fatalf("start = %s, жду 2026-10-03T21:00:00Z", got)
+	}
+	ps, err := time.Parse(time.RFC3339, start)
+	if err != nil || !ps.Equal(from) {
+		t.Fatalf("start-инстант сместился: %v (err=%v), жду %v", ps, err, from)
+	}
+}
