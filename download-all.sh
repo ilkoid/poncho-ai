@@ -172,7 +172,7 @@ echo "── Phase 6: Analytics ──"
 
 #run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-v2" --config "$C/download-wb-funnel-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint funnel-agg
-#run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 # Самодолив дырок funnel-агрегатов: ночное окно, убитое 429-штормом, не
 # самолечется — здесь находим отсутствующие/частичные окна за 2 недели и
 # перекачиваем явными датами. Нефатально для прогона; лог: logs/funnel-holes-*.log
@@ -186,9 +186,15 @@ maint search-vis
 # 1/min = постоянный дефицит для обеих. Владелец ручки — VPS2; при необходимости
 # локальный разовый сбор: go run ./cmd/data-downloaders/download-wb-search-vis-v2
 #   --config cmd/.configs/download-all/download-wb-search-vis-v2-PG.yaml --backend postgres
-#run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# ВКЛЮЧЕНО ОБРАТНО 12.10.2026: окна машин больше не пересекаются (VPS2 крон 00:05
+# завершается ~01:25, Mac стартует 04:30) — исходный конфликт одного аккаунт-ведра
+# снят; писать стали в РАЗНЫЕ базы (VPS2 — своя, Mac — локальная). Риск внешнего
+# дренажа ведра остаётся — адаптив + rescue (d782fbc) переживают, смотреть ночи.
+run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint penalties
 run go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$C/download-wb-penalties-v2-PG.yaml" --backend postgres
+maint item-rating
+run go run "$PONCHO/cmd/data-downloaders/download-wb-item-rating-v2" --config "$C/download-wb-item-rating-v2-PG.yaml" --backend postgres
 maint whremains
 run go run "$PONCHO/cmd/data-downloaders/download-wb-whremains-v2" --config "$C/download-wb-whremains-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)
 
