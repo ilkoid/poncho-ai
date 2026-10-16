@@ -295,10 +295,13 @@ run go run "$PONCHO/cmd/data-analyzers/build-region-sales-daily" --config "$C/re
 
 log "── Phase 5: Advertising ──"
 
-#maint campaigns
+maint campaigns
 run go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" --config "$C/download-wb-campaigns-v2-PG.yaml" --backend postgres
-#maint promotion
-#run go run "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" --config "$C/download-wb-promotion-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# ВКЛЮЧЕНО ОБРАТНО 16.10 (было выкл 12.10 «до локальной обкатки»): обкатка
+# завершена — смоуки 16.10 на живом шторме (ε110/retries 10/шторм-флаг/rescue,
+# 39м58с против 1ч09м, exit 0). Профиль = оттестированный Mac-профиль.
+maint promotion
+run go run "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" --config "$C/download-wb-promotion-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 
 ###############################################################################
 #  Phase 6: Analytics
@@ -312,7 +315,10 @@ run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C
 # Самодолив дырок funnel-агрегатов: ночное окно, убитое 429-штормом, не
 # самолечется — здесь находим отсутствующие/частичные окна за 2 недели и
 # перекачиваем явными датами. Нефатально для прогона.
-bash "$PONCHO/refill-funnel-holes.sh" || log "⚠️  refill-funnel-holes: сбой (нефатально)"
+# ВЫКЛЮЧЕНО 16.10 (паритет с Mac-профилем, там выкл с 19.09): на VPS2 вариант
+# без бюджета съел 19,5ч прогона (ночь 14-15.10); с схемой «подсказка+ε» дыр
+# почти не будет, разовый долив при необходимости.
+#bash "$PONCHO/refill-funnel-holes.sh" || log "⚠️  refill-funnel-holes: сбой (нефатально)"
 maint funnel-csv
 run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" --config "$C/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint search-vis
