@@ -1,5 +1,9 @@
 # fix-card-dimensions
 
+> **DEPRECATED** — рабочая версия: [`../fix-card-dimensions-v1.5/`](../fix-card-dimensions-v1.5/)
+> (compare/force/volume-padding, изолированный кеш `prepare-fix-dims.sh`, гард свежести,
+> round-trip документов). Эта версия остаётся для истории; не запускать.
+
 Обновление весо-габаритных характеристик карточек WB из данных 1С WMS.
 
 Данные из XLS (дециметры) → таблица `onec_dimensions` → агрегация MAX по размерам → staging → WB API.

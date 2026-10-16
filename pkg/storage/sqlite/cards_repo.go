@@ -21,8 +21,9 @@ INSERT OR REPLACE INTO cards (
 	need_kiz, kiz_marked, video,
 	wholesale_enabled, wholesale_quantum,
 	dim_length, dim_width, dim_height, dim_weight_brutto, dim_is_valid,
+	exclude_documents,
 	created_at, updated_at, downloaded_at
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`
 
 	// Photo insert
 	insertPhotoSQL = `
@@ -44,11 +45,19 @@ VALUES (?,?,?,?)`
 INSERT INTO card_tags (nm_id, tag_id, name, color)
 VALUES (?,?,?,?)`
 
+	// Document insert (разрешительные документы, спека 2026-10-11)
+	insertDocumentSQL = `
+INSERT OR REPLACE INTO card_documents (
+	nm_id, doc_id, type, number, product_number, trade_name, applicant,
+	start_date, end_date, is_endless
+) VALUES (?,?,?,?,?,?,?,?,?,?)`
+
 	// Delete child records for a card (before re-insert)
-	deletePhotosSQL = `DELETE FROM card_photos WHERE nm_id = ?`
-	deleteSizesSQL = `DELETE FROM card_sizes WHERE nm_id = ?`
+	deletePhotosSQL         = `DELETE FROM card_photos WHERE nm_id = ?`
+	deleteSizesSQL          = `DELETE FROM card_sizes WHERE nm_id = ?`
 	deleteCharacteristicsSQL = `DELETE FROM card_characteristics WHERE nm_id = ?`
-	deleteTagsSQL = `DELETE FROM card_tags WHERE nm_id = ?`
+	deleteTagsSQL           = `DELETE FROM card_tags WHERE nm_id = ?`
+	deleteDocumentsSQL      = `DELETE FROM card_documents WHERE nm_id = ?`
 )
 
 const cardsChunkSize = 500 // Conservative: each card has many child records
@@ -130,6 +139,12 @@ func (r *SQLiteSalesRepository) saveCardsChunk(ctx context.Context, chunk []wb.P
 	}
 	defer tagStmt.Close()
 
+	docStmt, err := tx.PrepareContext(ctx, insertDocumentSQL)
+	if err != nil {
+		return 0, fmt.Errorf("prepare document statement: %w", err)
+	}
+	defer docStmt.Close()
+
 	// Delete statements
 	deletePhotosStmt, err := tx.PrepareContext(ctx, deletePhotosSQL)
 	if err != nil {
@@ -155,6 +170,12 @@ func (r *SQLiteSalesRepository) saveCardsChunk(ctx context.Context, chunk []wb.P
 	}
 	defer deleteTagsStmt.Close()
 
+	deleteDocsStmt, err := tx.PrepareContext(ctx, deleteDocumentsSQL)
+	if err != nil {
+		return 0, fmt.Errorf("prepare delete documents statement: %w", err)
+	}
+	defer deleteDocsStmt.Close()
+
 	for _, card := range chunk {
 		// Extract wholesale fields (nullable pointer)
 		wholesaleEnabled := 0
@@ -175,6 +196,12 @@ func (r *SQLiteSalesRepository) saveCardsChunk(ctx context.Context, chunk []wb.P
 			dimIsValid = boolToInt(card.Dimensions.IsValid)
 		}
 
+		// Extract documents flag (nullable: nil object/field → NULL → «снапшот без documents»)
+		var excludeDocuments any
+		if card.Documents != nil && card.Documents.ExcludeDocuments != nil {
+			excludeDocuments = boolToInt(*card.Documents.ExcludeDocuments)
+		}
+
 		// Insert main card
 		_, err := cardStmt.ExecContext(ctx,
 			card.NmID, card.ImtID, card.NmUUID, card.SubjectID, card.SubjectName,
@@ -182,6 +209,7 @@ func (r *SQLiteSalesRepository) saveCardsChunk(ctx context.Context, chunk []wb.P
 			boolToInt(card.NeedKiz), boolToInt(card.KizMarked), card.Video,
 			wholesaleEnabled, wholesaleQuantum,
 			dimLength, dimWidth, dimHeight, dimWeight, dimIsValid,
+			excludeDocuments,
 			card.CreatedAt, card.UpdatedAt,
 		)
 		if err != nil {
@@ -193,6 +221,7 @@ func (r *SQLiteSalesRepository) saveCardsChunk(ctx context.Context, chunk []wb.P
 		deleteSizesStmt.ExecContext(ctx, card.NmID)
 		deleteCharsStmt.ExecContext(ctx, card.NmID)
 		deleteTagsStmt.ExecContext(ctx, card.NmID)
+		deleteDocsStmt.ExecContext(ctx, card.NmID)
 
 		// Insert photos
 		for _, photo := range card.Photos {
@@ -239,6 +268,20 @@ func (r *SQLiteSalesRepository) saveCardsChunk(ctx context.Context, chunk []wb.P
 			)
 			if err != nil {
 				return 0, fmt.Errorf("insert tag nm_id=%d: %w", card.NmID, err)
+			}
+		}
+
+		// Insert разрешительные документы (round-trip при /content/v2/cards/update)
+		if card.Documents != nil {
+			for _, doc := range card.Documents.Items {
+				_, err := docStmt.ExecContext(ctx,
+					card.NmID, doc.ID, doc.Type, doc.Number, doc.ProductNumber,
+					doc.TradeName, doc.Applicant, doc.StartDate, doc.EndDate,
+					boolToInt(doc.IsEndless),
+				)
+				if err != nil {
+					return 0, fmt.Errorf("insert document nm_id=%d doc_id=%s: %w", card.NmID, doc.ID, err)
+				}
 			}
 		}
 	}

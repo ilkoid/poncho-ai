@@ -47,12 +47,16 @@ func (v VolumeConfig) normalized() (VolumeConfig, error) {
 }
 
 type Config struct {
-	DBPath   string                    `yaml:"db_path"`
-	OnlyNew  bool                      `yaml:"only_new"` // только карточки с нулевыми размерами WB, L×W×H=0 (вес не важен)
+	DBPath   string `yaml:"db_path"`
+	OnlyNew  bool   `yaml:"only_new"` // только карточки с нулевыми размерами WB, L×W×H=0 (вес не важен)
 	Filters  filter.Filter             `yaml:"filters"`
 	WBUpdate cardupdate.WBUpdateConfig `yaml:"wb_update"`
 	Compare  CompareConfig             `yaml:"compare"`
 	Volume   VolumeConfig              `yaml:"volume"`
+	// Отказ реального --apply, если карточный снапшот в базе старше N часов:
+	// round-trip documents/kizMarked/характеристик по протухшему кешу откатывает
+	// свежие правки из ЛК. nil/отсутствует = 24ч, 0 = гард выключен.
+	MaxSnapshotAgeHours *int `yaml:"max_snapshot_age_hours"`
 }
 
 func loadConfig(path string) (*Config, error) {

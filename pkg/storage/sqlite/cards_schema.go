@@ -41,6 +41,11 @@ CREATE TABLE IF NOT EXISTS cards (
 	kiz_marked INTEGER,
 	video TEXT NOT NULL DEFAULT '',
 
+	-- Разрешительные документы: карточный флаг «документы не требуются» из
+	-- documents.excludeDocuments (спека 2026-10-11). NULL = объекта documents
+	-- в ответе не было (старый снапшот) → cardupdate опускает documents в payload.
+	exclude_documents INTEGER,
+
 	-- Wholesale (flattened from object)
 	wholesale_enabled INTEGER NOT NULL DEFAULT 0,  -- boolean
 	wholesale_quantum INTEGER NOT NULL DEFAULT 0,
@@ -114,6 +119,29 @@ CREATE TABLE IF NOT EXISTS card_tags (
 	color TEXT NOT NULL DEFAULT '',
 
 	UNIQUE(nm_id, tag_id),
+
+	FOREIGN KEY (nm_id) REFERENCES cards(nm_id) ON DELETE CASCADE
+);
+
+-- Documents table (1 row per разрешительный документ per card).
+-- Спека 2026-10-11: WB генерирует документы из сертификатных характеристик (15001135-38)
+-- и проверяет асинхронно. При /content/v2/cards/update объект documents перезаписывается
+-- целиком → cardupdate.LoadFullCard round-trip'ит строки с их doc_id («без изменений»).
+-- verdict/createdAt/overallVerdict — read-only, не хранятся.
+CREATE TABLE IF NOT EXISTS card_documents (
+	nm_id INTEGER NOT NULL,
+	doc_id TEXT NOT NULL,           -- ID документа из cards/list (UUID)
+
+	type INTEGER NOT NULL DEFAULT 0, -- 1=Сертификат, 2=Декларация, 3=СГР, 4/5/9=РУ, 7/8=пестициды/агрохимикаты
+	number TEXT NOT NULL DEFAULT '',
+	product_number TEXT NOT NULL DEFAULT '',
+	trade_name TEXT NOT NULL DEFAULT '',
+	applicant TEXT NOT NULL DEFAULT '',
+	start_date TEXT NOT NULL DEFAULT '', -- date-time, эхом в payload
+	end_date TEXT NOT NULL DEFAULT '',
+	is_endless INTEGER NOT NULL DEFAULT 0,  -- boolean
+
+	PRIMARY KEY (nm_id, doc_id),
 
 	FOREIGN KEY (nm_id) REFERENCES cards(nm_id) ON DELETE CASCADE
 );

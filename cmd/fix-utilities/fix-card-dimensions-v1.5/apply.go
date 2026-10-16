@@ -32,7 +32,13 @@ func buildDimensionUpdatePayload(ctx context.Context, u *cardupdate.CardUpdater,
 }
 
 // runApply sends staged dimension updates to WB API (or prints payloads in dry-run mode).
-func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg cardupdate.WBUpdateConfig, dryRun bool) error {
+func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg *Config, dryRun bool) error {
+	if !dryRun {
+		if err := checkSnapshotFreshness(ctx, db, cfg.maxSnapshotAgeHours()); err != nil {
+			return err
+		}
+	}
+
 	rows, err := db.QueryContext(ctx, `
 		SELECT nm_id, vendor_code, old_length, old_width, old_height, old_weight,
 		       new_length, new_width, new_height, new_weight, status, error_msg
@@ -71,20 +77,20 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg cardupdate
 		return nil
 	}
 
-	fmt.Printf("Applying %d cards (batch size %d, dry-run=%v)\n", len(batch), cfg.BatchSize, dryRun)
+	fmt.Printf("Applying %d cards (batch size %d, dry-run=%v)\n", len(batch), cfg.WBUpdate.BatchSize, dryRun)
 
 	updater := cardupdate.NewCardUpdater(db)
 	sent := 0
 	failed := 0
 
-	for i := 0; i < len(batch); i += cfg.BatchSize {
+	for i := 0; i < len(batch); i += cfg.WBUpdate.BatchSize {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
-		end := i + cfg.BatchSize
+		end := i + cfg.WBUpdate.BatchSize
 		if end > len(batch) {
 			end = len(batch)
 		}
@@ -113,7 +119,7 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg cardupdate
 			continue
 		}
 
-		_, errorText, err := client.UpdateCards(ctx, wb.CardsBaseURL, cfg.RatePerMin, cfg.RateBurst, items)
+		_, errorText, err := client.UpdateCards(ctx, wb.CardsBaseURL, cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst, items)
 		if err != nil {
 			log.Printf("batch %d-%d: %v (WB: %s)", i+1, end, err, errorText)
 			for _, r := range chunk {
@@ -133,8 +139,8 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg cardupdate
 			}
 		}
 
-		if i+cfg.BatchSize < len(batch) {
-			time.Sleep(time.Duration(cfg.IntervalSeconds) * time.Second)
+		if i+cfg.WBUpdate.BatchSize < len(batch) {
+			time.Sleep(time.Duration(cfg.WBUpdate.IntervalSeconds) * time.Second)
 		}
 	}
 
@@ -143,9 +149,9 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg cardupdate
 }
 
 // checkWBErrors queries WB error list after a successful UpdateCards batch.
-func checkWBErrors(ctx context.Context, client *wb.Client, cfg cardupdate.WBUpdateConfig, batch []stagedDimRow) error {
+func checkWBErrors(ctx context.Context, client *wb.Client, cfg *Config, batch []stagedDimRow) error {
 	items, err := client.GetCardErrorsList(ctx, wb.CardsBaseURL,
-		cfg.RatePerMin, cfg.RateBurst,
+		cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst,
 		wb.CardErrorsListRequest{
 			Cursor: &wb.CardErrorsCursor{Limit: 100},
 			Order:  &wb.CardErrorsOrder{Ascending: false},
@@ -212,6 +218,41 @@ func checkWBErrors(ctx context.Context, client *wb.Client, cfg cardupdate.WBUpda
 	}
 
 	return fmt.Errorf("WB validation errors found for %d vendor_codes — see %s", len(foundErrors), filename)
+}
+
+// maxSnapshotAgeHours возвращает порог свежести карточного снапшота:
+// nil/отсутствует в yaml = 24ч (fail-safe), 0 = гард выключен.
+func (c *Config) maxSnapshotAgeHours() int {
+	if c.MaxSnapshotAgeHours == nil {
+		return 24
+	}
+	return *c.MaxSnapshotAgeHours
+}
+
+// checkSnapshotFreshness отказывает реальный apply по протухшему кешу карточек:
+// round-trip documents/kizMarked/характеристик из старого снапшота откатывает
+// свежие правки, сделанные в ЛК после последнего prepare-fix-dims.sh.
+func checkSnapshotFreshness(ctx context.Context, db *sql.DB, maxAgeHours int) error {
+	if maxAgeHours <= 0 {
+		return nil
+	}
+	var maxDL sql.NullString
+	if err := db.QueryRowContext(ctx, "SELECT MAX(downloaded_at) FROM cards").Scan(&maxDL); err != nil {
+		return fmt.Errorf("snapshot freshness: %w", err)
+	}
+	if !maxDL.Valid || maxDL.String == "" {
+		return fmt.Errorf("snapshot freshness: таблица cards пуста — прогоните prepare-fix-dims.sh перед --apply")
+	}
+	// SQLite CURRENT_TIMESTAMP → UTC "2006-01-02 15:04:05"
+	ts, err := time.Parse("2006-01-02 15:04:05", maxDL.String)
+	if err != nil {
+		return fmt.Errorf("snapshot freshness: не разобрать downloaded_at %q: %w", maxDL.String, err)
+	}
+	if age := time.Since(ts); age > time.Duration(maxAgeHours)*time.Hour {
+		return fmt.Errorf("snapshot freshness: карточный снапшот протух (%s = %.1f ч назад > max_snapshot_age_hours=%d) — прогоните prepare-fix-dims.sh перед --apply",
+			maxDL.String, age.Hours(), maxAgeHours)
+	}
+	return nil
 }
 
 // runCheck queries the WB error list and prints all card validation errors.

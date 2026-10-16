@@ -333,6 +333,7 @@ type ProductCard struct {
 	Characteristics []CardCharacteristic  `json:"characteristics"`
 	Sizes           []CardSize            `json:"sizes"`
 	Tags            []CardTag             `json:"tags"`
+	Documents       *CardDocuments        `json:"documents,omitempty"`
 	CreatedAt       string                `json:"createdAt"`
 	UpdatedAt       string                `json:"updatedAt"`
 }
@@ -404,23 +405,76 @@ type CardTag struct {
 	Color string `json:"color"`
 }
 
+// CardDocuments — разрешительные документы карточки из ответа
+// /content/v2/get/cards/list (спека 2026-10-11).
+// WB генерирует документы из сертификатных характеристик (15001135-38) и проверяет
+// их асинхронно (verdict/overallVerdict — read-only результаты, в payload не идут).
+// При /content/v2/cards/update объект перезаписывается целиком — round-trip
+// через ToUpdateItem передаёт документы с их id, что означает «без изменений».
+type CardDocuments struct {
+	Items            []CardDocument `json:"items"`
+	ExcludeDocuments *bool          `json:"excludeDocuments,omitempty"` // true = продавец подтвердил «документы не требуются»
+}
+
+// CardDocument — один разрешительный документ в ответе cards/list.
+// Type: 1=Сертификат соответствия, 2=Декларация о соответствии, 3=СГР, 4=РУ медизделия,
+// 5=РУ Беларусь, 7/8=пестициды/агрохимикаты, 9=РУ лекпрепараты (02-items.yaml:2411).
+type CardDocument struct {
+	ID            string `json:"id"`
+	Type          int    `json:"type"`
+	Number        string `json:"number"`
+	ProductNumber string `json:"productNumber"`
+	TradeName     string `json:"tradeName"`
+	Applicant     string `json:"applicant"`
+	StartDate     string `json:"startDate"` // date-time, эхом в payload
+	EndDate       string `json:"endDate"`
+	IsEndless     bool   `json:"isEndless"`
+}
+
 // CardUpdateItem — карточка в теле запроса POST /content/v2/cards/update.
 // API полностью перезаписывает карточку — все поля отправляются явно, без omitempty.
 //
-// Исключение — KizMarked: pointer с omitempty (3-value logic). WB НЕ возвращает
-// это поле в /content/v2/get/cards/list, поэтому источник истины отсутствует:
-// nil = «неизвестно» → поле опускается в JSON → WB ставит default false;
-// *true / *false = явное значение (источник: cards.kiz_marked, ручной SQL/audit).
+// Исключения (pointer + omitempty, «нет локальных данных → не отправлять»):
+//   - KizMarked: 3-value logic. WB ВОЗВРАЩАЕТ kizMarked в /content/v2/get/cards/list
+//     (nullable:false), поэтому cards.kiz_marked наполняется загрузчиком; nil остаётся
+//     только у строк, не перезакачанных после фикса, — поле опускается, WB применяет
+//     default false. Источник явного значения — cards.kiz_marked.
+//   - Documents: спека 2026-10-11 — «объект documents полностью перезаписывается».
+//     nil = документов в локальном снапшоте нет (старая БД без card_documents) →
+//     поле опускается. Non-nil = полный round-trip: каждый документ со своим id
+//     и теми же данными = «без изменений», повторная проверка не запускается.
 type CardUpdateItem struct {
-	NmID            int                `json:"nmID"`
-	VendorCode      string             `json:"vendorCode"`
-	Brand           string             `json:"brand"`
-	Title           string             `json:"title"`
-	Description     string             `json:"description"`
-	Dimensions      *CardDimensions    `json:"dimensions"`
-	Characteristics []CardUpdateCharc  `json:"characteristics"`
-	Sizes           []CardSize         `json:"sizes"`
-	KizMarked       *bool              `json:"kizMarked,omitempty"`
+	NmID            int                  `json:"nmID"`
+	VendorCode      string               `json:"vendorCode"`
+	Brand           string               `json:"brand"`
+	Title           string               `json:"title"`
+	Description     string               `json:"description"`
+	Dimensions      *CardDimensions      `json:"dimensions"`
+	Characteristics []CardUpdateCharc    `json:"characteristics"`
+	Sizes           []CardSize           `json:"sizes"`
+	Documents       *CardUpdateDocuments `json:"documents,omitempty"`
+	KizMarked       *bool                `json:"kizMarked,omitempty"`
+}
+
+// CardUpdateDocuments — объект documents в теле POST /content/v2/cards/update.
+type CardUpdateDocuments struct {
+	Items            []CardUpdateDocument `json:"items"`
+	ExcludeDocuments bool                 `json:"excludeDocuments"`
+}
+
+// CardUpdateDocument — разрешительный документ в запросе обновления.
+// Непустой ID = изменить существующий документ (id из cards/list); без id — добавить новый.
+// Поля должны повторять значения из ответа cards/list один в один (даты — date-time эхом).
+type CardUpdateDocument struct {
+	ID            string `json:"id,omitempty"`
+	Type          int    `json:"type"`
+	Number        string `json:"number"`
+	ProductNumber string `json:"productNumber"`
+	TradeName     string `json:"tradeName"`
+	Applicant     string `json:"applicant"`
+	StartDate     string `json:"startDate"`
+	EndDate       string `json:"endDate"`
+	IsEndless     bool   `json:"isEndless"`
 }
 
 // CardUpdateCharc — характеристика в запросе обновления.

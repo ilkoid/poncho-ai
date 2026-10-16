@@ -30,19 +30,26 @@ import (
 // WB API fully overwrites cards — every field must be present in the update payload.
 // Loading through this struct guarantees no field is accidentally zeroed.
 //
-// KizMarked is a pointer for 3-value logic: nil = «unknown» (WB doesn't return the
-// field in /get/cards/list; cards.kiz_marked is NULL) → omitted from the payload →
+// KizMarked is a pointer for 3-value logic: nil = «unknown» (cards.kiz_marked is NULL,
+// строка не перезакачана после фикса парсинга) → omitted from the payload →
 // WB applies default false. Non-nil carries an explicit value from cards.kiz_marked.
+//
+// Documents/ExcludeDocuments — разрешительные документы (спека 2026-10-11):
+// WB перезаписывает объект documents целиком, поэтому они round-trip'ятся с их id
+// («без изменений» — без повторной проверки). ExcludeDocuments == nil И пустой
+// Documents = снапшот без данных о документах → объект опускается в payload.
 type FullCardData struct {
-	NmID            int
-	VendorCode      string
-	Brand           string
-	Title           string
-	Description     string
-	Dimensions      wb.CardDimensions
-	Characteristics []CardChar
-	Sizes           []wb.CardSize
-	KizMarked       *bool
+	NmID             int
+	VendorCode       string
+	Brand            string
+	Title            string
+	Description      string
+	Dimensions       wb.CardDimensions
+	Characteristics  []CardChar
+	Sizes            []wb.CardSize
+	Documents        []wb.CardDocument
+	ExcludeDocuments *bool
+	KizMarked        *bool
 }
 
 // CardUpdater loads card data from SQLite and helps build safe WB update payloads.
@@ -56,27 +63,27 @@ func NewCardUpdater(db *sql.DB) *CardUpdater {
 }
 
 // LoadFullCard loads all card data from SQLite for a safe WB update.
-// Queries brand/title/description, dimensions, characteristics, and sizes
-// in a single pass for the given nmID. Also reads kiz_marked (nullable: NULL →
-// KizMarked=nil → field omitted from the WB payload; WB then applies default false).
+// Queries brand/title/description, dimensions, characteristics, sizes, documents
+// in a single pass for the given nmID. Also reads kiz_marked and exclude_documents
+// (nullable: NULL → nil → соответствующее поле опускается в WB payload).
 func (u *CardUpdater) LoadFullCard(ctx context.Context, nmID int) (FullCardData, error) {
 	var card FullCardData
 	var dimValid int
-	var kizMarked sql.NullInt64
+	var kizMarked, excludeDocs sql.NullInt64
 
 	err := u.db.QueryRowContext(ctx, `
 		SELECT nm_id, COALESCE(vendor_code,''), COALESCE(brand,''),
 		       COALESCE(title,''), COALESCE(description,''),
 		       COALESCE(dim_length,0), COALESCE(dim_width,0),
 		       COALESCE(dim_height,0), COALESCE(dim_weight_brutto,0),
-		       COALESCE(dim_is_valid,0), kiz_marked
+		       COALESCE(dim_is_valid,0), kiz_marked, exclude_documents
 		FROM cards WHERE nm_id = ?
 	`, nmID).Scan(
 		&card.NmID, &card.VendorCode, &card.Brand,
 		&card.Title, &card.Description,
 		&card.Dimensions.Length, &card.Dimensions.Width,
 		&card.Dimensions.Height, &card.Dimensions.WeightBrutto,
-		&dimValid, &kizMarked,
+		&dimValid, &kizMarked, &excludeDocs,
 	)
 	if err != nil {
 		return FullCardData{}, fmt.Errorf("load card core for nm_id=%d: %w", nmID, err)
@@ -85,6 +92,10 @@ func (u *CardUpdater) LoadFullCard(ctx context.Context, nmID int) (FullCardData,
 	if kizMarked.Valid {
 		v := kizMarked.Int64 != 0
 		card.KizMarked = &v
+	}
+	if excludeDocs.Valid {
+		v := excludeDocs.Int64 != 0
+		card.ExcludeDocuments = &v
 	}
 
 	chars, err := u.loadCharacteristics(ctx, nmID)
@@ -99,7 +110,41 @@ func (u *CardUpdater) LoadFullCard(ctx context.Context, nmID int) (FullCardData,
 	}
 	card.Sizes = sizes
 
+	docs, err := u.loadDocuments(ctx, nmID)
+	if err != nil {
+		return FullCardData{}, fmt.Errorf("load documents: %w", err)
+	}
+	card.Documents = docs
+
 	return card, nil
+}
+
+// loadDocuments loads разрешительные документы for one card from card_documents.
+func (u *CardUpdater) loadDocuments(ctx context.Context, nmID int) ([]wb.CardDocument, error) {
+	rows, err := u.db.QueryContext(ctx, `
+		SELECT doc_id, type, number, product_number, trade_name, applicant,
+		       start_date, end_date, is_endless
+		FROM card_documents WHERE nm_id = ?
+	`, nmID)
+	if err != nil {
+		return nil, fmt.Errorf("query documents: %w", err)
+	}
+	defer rows.Close()
+
+	var docs []wb.CardDocument
+	for rows.Next() {
+		var d wb.CardDocument
+		var isEndless int
+		if err := rows.Scan(
+			&d.ID, &d.Type, &d.Number, &d.ProductNumber, &d.TradeName, &d.Applicant,
+			&d.StartDate, &d.EndDate, &isEndless,
+		); err != nil {
+			return nil, fmt.Errorf("scan document: %w", err)
+		}
+		d.IsEndless = isEndless != 0
+		docs = append(docs, d)
+	}
+	return docs, rows.Err()
 }
 
 // LoadBulkCharacteristics loads characteristics for multiple cards.
@@ -184,11 +229,13 @@ func (u *CardUpdater) LoadBulkSizes(ctx context.Context, nmIDs []int) (map[int][
 // ToUpdateItem converts FullCardData to wb.CardUpdateItem ready for the WB API.
 // Unwraps characteristic values from DB format (JSON arrays) to WB API format (scalars).
 //
-// kizMarked: carried through as *bool (3-value logic). nil (cards.kiz_marked IS NULL)
-// → omitted from JSON → WB applies default false on rewrite. To preserve an explicit
-// marking state, populate cards.kiz_marked (manual SQL or audit tool) — WB API does
-// NOT return the field in /content/v2/get/cards/list, so there is no automatic source.
-// Audit-WARN recommended when need_kiz=1 AND kiz_marked IS NULL before --apply.
+// kizMarked: carried through as *bool (3-value logic). nil (cards.kiz_marked IS NULL,
+// строка не перезакачана после фикса парсинга) → omitted from JSON → WB applies
+// default false on rewrite. Свежие загрузки пишут колонку из ответа cards/list.
+//
+// documents: round-trip по спеке 2026-10-11 — каждый документ со своим id и теми же
+// данными = «без изменений» (повторная проверка не запускается). Объект опускается,
+// только если в снапшоте нет ни документов, ни флага exclude_documents.
 func ToUpdateItem(card FullCardData) wb.CardUpdateItem {
 	chars := make([]wb.CardUpdateCharc, 0, len(card.Characteristics))
 	for _, c := range card.Characteristics {
@@ -200,6 +247,29 @@ func ToUpdateItem(card FullCardData) wb.CardUpdateItem {
 		chars = append(chars, wb.CardUpdateCharc{ID: c.CharID, Value: val})
 	}
 
+	var documents *wb.CardUpdateDocuments
+	if len(card.Documents) > 0 || card.ExcludeDocuments != nil {
+		items := make([]wb.CardUpdateDocument, 0, len(card.Documents))
+		for _, d := range card.Documents {
+			items = append(items, wb.CardUpdateDocument{
+				ID:            d.ID,
+				Type:          d.Type,
+				Number:        d.Number,
+				ProductNumber: d.ProductNumber,
+				TradeName:     d.TradeName,
+				Applicant:     d.Applicant,
+				StartDate:     d.StartDate,
+				EndDate:       d.EndDate,
+				IsEndless:     d.IsEndless,
+			})
+		}
+		exclude := false
+		if card.ExcludeDocuments != nil {
+			exclude = *card.ExcludeDocuments
+		}
+		documents = &wb.CardUpdateDocuments{Items: items, ExcludeDocuments: exclude}
+	}
+
 	return wb.CardUpdateItem{
 		NmID:            card.NmID,
 		VendorCode:      card.VendorCode,
@@ -209,6 +279,7 @@ func ToUpdateItem(card FullCardData) wb.CardUpdateItem {
 		Dimensions:      &card.Dimensions,
 		Characteristics: chars,
 		Sizes:           card.Sizes,
+		Documents:       documents,
 		KizMarked:       card.KizMarked,
 	}
 }

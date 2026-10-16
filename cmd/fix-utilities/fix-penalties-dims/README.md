@@ -143,12 +143,13 @@ go run "$PONCHO/cmd/data-downloaders/download-wb-cards"         --config "$CFG/c
 
 ## Известные ограничения
 
-- **kizMarked не round-trip'ится** (отложено). `POST /content/v2/cards/update` принимает
-  `kizMarked` (default false), но поля нет в `ProductCard`/`CardUpdateItem`/`cards`/
-  загрузчике → при перезаписи подтверждение маркировки «Честный ЗНАК» может сброситься.
-  Для маркированной одежды (needKiz=true) учитывать вручную. См. `pkg/cardupdate`
-  (`KNOWN GAP` у `ToUpdateItem`) и memory `cardupdate_kizmarked_gap`. Не влияет на
-  габариты — поэтому в scope этой утилиты не входит.
-- Сертификаты/декларации, photos/video/tags/wholesale, imtID/subject*/needKz/timestamps —
-  **безопасны** (audit сверен со swagger): либо не входят в объект карточки, либо
-  read-only, либо явно «невозможно обновлять» через этот эндпоинт.
+- **kizMarked round-trip'ится автоматически**: WB ВОЗВРАЩАЕТ поле в
+  `/content/v2/get/cards/list` (фикс парсинга 2026-07-07), загрузчик пишет
+  `cards.kiz_marked`, `ToUpdateItem` несёт явное значение. NULL — только у строк,
+  не перезакачанных после фикса; фиксер грузит cards перед каждым прогоном.
+- **Сертификаты/декларации — round-trip через `documents`** (спека 2026-10-11):
+  WB перезаписывает объект `documents` целиком; загрузчик cards пишет
+  `card_documents`, `cardupdate.ToUpdateItem` возвращает документы с их `id`
+  («без изменений», без повторной проверки). photos/video/tags/wholesale,
+  imtID/subject*/needKz/timestamps — вне payload: либо read-only, либо «нельзя
+  обновлять» через этот эндпоинт.

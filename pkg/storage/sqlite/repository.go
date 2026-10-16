@@ -230,10 +230,16 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		_, _ = r.db.Exec(m)
 	}
 
-	// Migration: kiz_marked on cards. WB accepts kizMarked in /content/v2/cards/update
-	// but does NOT return it in /get/cards/list → nullable (NULL=unknown, 0/1=explicit).
-	// LoadFullCard (pkg/cardupdate) reads this column; fixers rely on it existing.
+	// Migration: kiz_marked on cards. WB и ВОЗВРАЩАЕТ поле в /get/cards/list
+	// (nullable:false, парсится даунлоадером), и ПРИНИМАЕТ в /content/v2/cards/update
+	// (default:false). Колонка nullable исторически; новые загрузки пишут 0/1.
+	// LoadFullCard (pkg/cardupdate) читает её; fixers rely on it existing.
 	_, _ = r.db.Exec("ALTER TABLE cards ADD COLUMN kiz_marked INTEGER")
+
+	// Migration: exclude_documents on cards — флаг documents.excludeDocuments
+	// (спека 2026-10-11). NULL = снапшот без объекта documents → cardupdate
+	// опускает documents в payload (легаси-поведение).
+	_, _ = r.db.Exec("ALTER TABLE cards ADD COLUMN exclude_documents INTEGER")
 
 	// Create feedbacks tables (Feedbacks API: feedbacks + questions)
 	_, err = r.db.Exec(GetFeedbacksSchemaSQL())

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"github.com/ilkoid/poncho-ai/pkg/cardupdate"
 	"log"
 	"os"
 	"os/signal"
@@ -127,7 +128,7 @@ func main() {
 		client.SetRateLimit("cards_content",
 			cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst,
 			cfg.WBUpdate.APIFloorPerMin, cfg.WBUpdate.APIFloorBurst)
-		if err := runApply(ctx, dbConn, client, cfg.WBUpdate, *dryRun); err != nil {
+		if err := runApply(ctx, dbConn, client, cfg, *dryRun); err != nil {
 			log.Fatalf("apply: %v", err)
 		}
 	}
@@ -140,6 +141,9 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	// База могла быть создана старым бинарём до documents-фикса — применяем
+	// идемпотентные миграции карточных таблиц (см. cardupdate.EnsureCardsMigrations).
+	cardupdate.EnsureCardsMigrations(db)
 	return db, nil
 }
 

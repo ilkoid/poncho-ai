@@ -26,11 +26,7 @@ WB API (`POST /content/v2/cards/update`) **полностью перезапис
   - `cards.kiz_marked = 1` → `"kizMarked":true` (подтверждение сохранено)
   - `cards.kiz_marked = 0` → `"kizMarked":false` (явный отказ)
   - `cards.kiz_marked IS NULL` → поле опускается → WB применяет default `false`
-- **WB НЕ возвращает `kizMarked` в `/content/v2/get/cards/list`**, поэтому для большинства существующих карточек колонка `NULL`. Apply на маркированной карточке (`need_kiz=1`) с `NULL` сбросит подтверждение в ЛК WB. Перед `--apply` проверьте пересечение:
-  ```sql
-  SELECT nm_id, vendor_code, subject_name FROM cards WHERE need_kiz=1 AND kiz_marked IS NULL;
-  ```
-  Для суженного scope предзаполните `cards.kiz_marked` вручную (источник истины — ЛК WB продавца) либо начните apply с НЕ-маркированных категорий. Memory: `cardupdate_kizmarked_gap`.
+- **(Актуализация 12.10)** WB **возвращает** `kizMarked` в `/content/v2/get/cards/list`, загрузчик cards пишет колонку (0/1); NULL остаётся только у строк, не перезакачанных после фикса парсинга. Достаточно свежей выгрузки карточек перед `--apply` (round-trip закрывает и `documents` — см. `pkg/cardupdate`). Истор.: memory `cardupdate_kizmarked_gap`.
 
 ### Фильтрация
 

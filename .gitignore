@@ -241,3 +241,4 @@ cmd/fix-utilities/fix-card-dimensions-v1.5/*.yaml
 /size-availability-report
 /collection-readiness
 /mail-notify
+/.fill-dims.lock

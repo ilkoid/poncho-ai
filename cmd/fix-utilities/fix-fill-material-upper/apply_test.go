@@ -26,9 +26,11 @@ func TestBuildMaterialPayload_FullCardInvariant(t *testing.T) {
 	for _, q := range []string{
 		`CREATE TABLE cards (nm_id INTEGER PRIMARY KEY, vendor_code TEXT, brand TEXT, title TEXT, description TEXT,
 			dim_length REAL, dim_width REAL, dim_height REAL, dim_weight_brutto REAL, dim_is_valid INTEGER,
-			kiz_marked INTEGER)`,
+			kiz_marked INTEGER, exclude_documents INTEGER)`,
 		`CREATE TABLE card_characteristics (nm_id INTEGER, char_id INTEGER, name TEXT, json_value TEXT)`,
 		`CREATE TABLE card_sizes (nm_id INTEGER, chrt_id INTEGER, tech_size TEXT, wb_size TEXT, skus_json TEXT)`,
+		`CREATE TABLE card_documents (nm_id INTEGER, doc_id TEXT, type INTEGER, number TEXT, product_number TEXT,
+			trade_name TEXT, applicant TEXT, start_date TEXT, end_date TEXT, is_endless INTEGER, PRIMARY KEY (nm_id, doc_id))`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatalf("exec %q: %v", q, err)

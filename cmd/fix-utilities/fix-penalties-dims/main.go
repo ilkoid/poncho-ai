@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"github.com/ilkoid/poncho-ai/pkg/cardupdate"
 	"log"
 	"os"
 	"os/signal"
@@ -151,6 +152,7 @@ func openSQLite(ctx context.Context, dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open %s: %w", dbPath, err)
 	}
 	db.SetMaxOpenConns(1)
+	cardupdate.EnsureCardsMigrations(db)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping %s: %w", dbPath, err)

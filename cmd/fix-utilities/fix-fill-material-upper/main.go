@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"github.com/ilkoid/poncho-ai/pkg/cardupdate"
 	"log"
 	"os"
 	"os/signal"
@@ -68,6 +69,7 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	cardupdate.EnsureCardsMigrations(db)
 	return db, nil
 }
 
