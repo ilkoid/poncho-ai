@@ -1,0 +1,26 @@
+# WB Item Rating Downloader v2 — download-all (PostgreSQL backend).
+# Сваггер (11-analytics.yaml): 3 req/min, интервал 20 сек, burst 3.
+
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+  timeout: "60s"
+
+item_rating:
+  days: 1                # окно «вчера»; прошлый период (динамика) — авто
+  order_by_field: "feedbackCount"
+  order_by_mode: "desc"
+  page_size: 1000
+  rate_limits:
+    item_rating: 3          # желаемый, req/min (swagger: 3/min, 20 сек интервал)
+    item_rating_burst: 3
+    item_rating_api: 3      # swagger-пол, req/min
+    item_rating_api_burst: 3
+  adaptive_probe_after: 10
+  max_backoff_seconds: 60
+
+storage:
+  backend: "postgres"
+  db_path: "/var/db/wb-sales.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

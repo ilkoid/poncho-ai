@@ -319,6 +319,8 @@ maint search-vis
 run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint penalties
 run go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$C/download-wb-penalties-v2-PG.yaml" --backend postgres
+maint item-rating
+run go run "$PONCHO/cmd/data-downloaders/download-wb-item-rating-v2" --config "$C/download-wb-item-rating-v2-PG.yaml" --backend postgres
 maint whremains
 run go run "$PONCHO/cmd/data-downloaders/download-wb-whremains-v2" --config "$C/download-wb-whremains-v2-PG.yaml" --backend postgres --date $(date +%Y-%m-%d)
 

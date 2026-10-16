@@ -1490,6 +1490,80 @@ func (c *SearchVisibilityConfig) GetDefaults() SearchVisibilityConfig {
 }
 
 // ============================================================================
+// Item Rating («Оценка товара» — POST /api/analytics/v2/item-rating)
+// ============================================================================
+
+// ItemRatingConfig — параметры загрузчика отчёта «Оценка товара».
+type ItemRatingConfig struct {
+	Days  int    `yaml:"days"`  // длина окна текущего периода (default 1 = вчера; НЕ дефолтится здесь — Rule 6)
+	Begin string `yaml:"begin"` // точное начало окна (приоритет над Days)
+	End   string `yaml:"end"`   // точное окончание окна (приоритет над Days)
+
+	OrderByField string `yaml:"order_by_field"` // default feedbackCount (детерминированный полный проход)
+	OrderByMode  string `yaml:"order_by_mode"`  // default desc
+	PageSize     int    `yaml:"page_size"`      // default/max 1000 (swagger limit)
+
+	APIKeyEnv          string               `yaml:"api_key_env"`
+	RateLimits         ItemRatingRateLimits `yaml:"rate_limits"`
+	AdaptiveProbeAfter int                  `yaml:"adaptive_probe_after"`
+	MaxBackoffSeconds  int                  `yaml:"max_backoff_seconds"`
+}
+
+// ItemRatingRateLimits — rate limits для item-rating endpoint.
+//
+// Seller Analytics API: 3 req/min, интервал 20 сек, burst 3 (swagger 11-analytics.yaml).
+//
+// Два уровня rate:
+//   - desired: желаемый rate (adaptive limiter обработает 429)
+//   - api:     swagger-documented rate (recovery floor после 429)
+type ItemRatingRateLimits struct {
+	ItemRating         int `yaml:"item_rating"`
+	ItemRatingBurst    int `yaml:"item_rating_burst"`
+	ItemRatingApi      int `yaml:"item_rating_api"`
+	ItemRatingApiBurst int `yaml:"item_rating_api_burst"`
+}
+
+// GetDefaults возвращает дефолтные значения для незаполненных полей.
+func (c *ItemRatingConfig) GetDefaults() ItemRatingConfig {
+	result := *c
+	// NOTE: Days is NOT defaulted here — default in main.go only when Begin/End empty.
+	if result.OrderByField == "" {
+		result.OrderByField = "feedbackCount"
+	}
+	if result.OrderByMode == "" {
+		result.OrderByMode = "desc"
+	}
+	if result.PageSize == 0 || result.PageSize > 1000 {
+		result.PageSize = 1000
+	}
+	if result.APIKeyEnv == "" {
+		result.APIKeyEnv = "WB_API_ANALYTICS_AND_PROMO_KEY"
+	}
+
+	// Item rating rate limits (3 req/min, burst 3 — swagger)
+	if result.RateLimits.ItemRatingApi == 0 {
+		result.RateLimits.ItemRatingApi = 3
+	}
+	if result.RateLimits.ItemRating == 0 {
+		result.RateLimits.ItemRating = result.RateLimits.ItemRatingApi
+	}
+	if result.RateLimits.ItemRatingApiBurst == 0 {
+		result.RateLimits.ItemRatingApiBurst = 3
+	}
+	if result.RateLimits.ItemRatingBurst == 0 {
+		result.RateLimits.ItemRatingBurst = result.RateLimits.ItemRatingApiBurst
+	}
+
+	if result.AdaptiveProbeAfter == 0 {
+		result.AdaptiveProbeAfter = 10
+	}
+	if result.MaxBackoffSeconds == 0 {
+		result.MaxBackoffSeconds = 60
+	}
+	return result
+}
+
+// ============================================================================
 // Analytics (shared types for data-analyzers utilities)
 // ============================================================================
 

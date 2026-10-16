@@ -406,6 +406,11 @@ func (r *SQLiteSalesRepository) initSchema() error {
 		if err != nil {
 			return err
 		}
+		// Create item rating tables (WB Seller Analytics API — /api/analytics/v2/item-rating)
+		_, err = r.db.Exec(GetItemRatingSchemaSQL())
+		if err != nil {
+			return err
+		}
 		// Create stock products metrics table (Seller Analytics API — /api/v2/stocks-report/products/products)
 		_, err = r.db.Exec(GetStockProductsSchemaSQL())
 		if err != nil {
