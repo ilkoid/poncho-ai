@@ -150,7 +150,7 @@ cmd/.../download-<domain>-v2/ → flags → config → switch backend → DI →
 - `wb.NewFromConfig(...)` creates client defaults but per-tool adaptive limiter behavior depends on explicit `SetRateLimit(toolID, ...)`.
 - `toolID` must match between limiter setup and request path usage; mismatches create separate limiter state.
 - Analytics/search endpoints are configured around strict low limits (notably 3 req/min for funnel/search visibility related flows); keep this in mind when changing batch/concurrency.
-- promotion-v2 rate limits: конфиги `download-all` (`cmd/.configs/download-all/download-wb-promotion-v2.yaml`, `-PG.yaml`, `-smoke-PG.yaml`) стоят НА сваггере или ниже. Свега normquery после обновления спек 11.10 НЕ единая: list/get-minus 5 req/sec (300/min), **get-bids 2 req/sec (120/min)** — у него отдельный ключ `normquery_bids` (дефолт 100/min, burst 4), stats 10/min (конфиг 8). Не считать, что в конфиге стоит сваггеровское значение — сверять и документировать оба. `download-wb-promotion-v2/main.go` зовёт `client.SetRateLimit(...)` под каждый toolID — ToolID должен совпадать (см. ToolID-mismatch ниже).
+- promotion-v2 rate limits: конфиги `download-all` (`cmd/.configs/download-all/download-wb-promotion-v2.yaml`, `-PG.yaml`, `-smoke-PG.yaml`) выровнены РОВНО на сваггер (16.10): list/get-minus 5 req/sec (300/min), **get-bids 5 req/sec (300/min, burst 10)** — ключевое `normquery_bids`; stats 10/min (ключ `normquery_stats`). Спека 12.10: get-bids снова 5/сек (08-promotion.yaml:2521-2526) — прежнее «2/сек ужесточение 11.10» устарело. Ретраи 429 — `wb.retry_attempts: 10` + `wb.retry_epsilon_ms: 110` (паритет с funnel-agg, см. память rate-limit-retry-scheme). Не считать, что в конфиге стоит сваггеровское значение — сверять и документировать оба. `download-wb-promotion-v2/main.go` зовёт `client.SetRateLimit(...)` под каждый toolID — ToolID должен совпадать (см. ToolID-mismatch ниже).
 
 ## fix-utilities (`cmd/fix-utilities/`)
 Point-fix tools that POST to `POST /content/v2/cards/update` (e.g. `fix-certificates`, `fix-card-fields`, plus siblings like `fix-card-dimensions`, `fix-fill-material-upper`, `fix-penalties-dims`, `fix-scrub-substring`). **Only the user runs `--apply`.**
@@ -211,7 +211,7 @@ Rule: more specific document overrides more general.
 - `client.IsDemoKey()` returns true for `demo_key`, enables mock responses
 - API keys are separate: `WB_API_KEY` (content/analytics/ad; также fallback для finance endpoint при 401 "token scope not allowed"), `WB_API_FEEDBACK_KEY` (feedbacks), `WB_STAT` (statistics: orders/opsales), WB_API_CONTENT_KEY (только контент)
 - Seller Analytics v2 (`seller-analytics-api.wildberries.ru`): search-report endpoints, 3 req/min
-- Promotion V2 normquery: stats **10 req/min**; list/get-minus 5 req/sec; **get-bids 2 req/sec** (ужесточение спеки 11.10 — отдельный конфиг-ключ `normquery_bids`, дефолт 100/min)
+- Promotion V2 normquery: stats **10 req/min**; list/get-minus 5 req/sec; get-bids **5 req/sec** (спека 12.10; «2/сек ужесточение 11.10» устарело — отдельный конфиг-ключ `normquery_bids`, стоит 300/min burst 10)
 - Date columns in `sales` table use `_dt` suffix: `order_dt`, `sale_dt`, `rr_dt` (not `sale_date`)
 - год выпуска (производства) товара определяется по 2 и 3 символам в артикуле продавца, например: 12345678 -> 2023 год
 - в API WB при обновлении карточки товара при записи нужно передавать ВСЕ ПОЛЯ! Иначе, которые не передал, они обнулятся. Это критический момент для любых проверок утилит!

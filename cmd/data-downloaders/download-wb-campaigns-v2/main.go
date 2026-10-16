@@ -38,9 +38,9 @@ import (
 
 // Config holds YAML configuration for the campaigns v2 downloader.
 type Config struct {
-	WB        config.WBClientConfig     `yaml:"wb"`
-	Campaigns config.PromotionConfig    `yaml:"campaigns"`
-	Storage   config.V2StorageConfig    `yaml:"storage"`
+	WB        config.WBClientConfig  `yaml:"wb"`
+	Campaigns config.PromotionConfig `yaml:"campaigns"`
+	Storage   config.V2StorageConfig `yaml:"storage"`
 }
 
 func main() {
@@ -110,7 +110,14 @@ func main() {
 		if apiKey == "" {
 			log.Fatal("no API key. Set WB_API_ANALYTICS_AND_PROMO_KEY or WB_API_KEY")
 		}
-		wbClient := wb.New(apiKey)
+		// Клиент из конфига: wb.retry_attempts / wb.retry_epsilon_ms доходят
+		// из yaml (ключ резолвит утилита и подставляет).
+		wbc := cfg.WB
+		wbc.APIKey = apiKey
+		wbClient, err := wb.NewFromConfig(wbc.ToWBConfig())
+		if err != nil {
+			log.Fatalf("create WB client: %v", err)
+		}
 
 		// Set rate limits for 3 ToolIDs
 		rl := promCfg.RateLimits

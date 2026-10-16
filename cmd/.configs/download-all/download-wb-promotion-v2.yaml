@@ -3,6 +3,9 @@ wb:
   analytics_api_key: "WB_API_ANALYTICS_AND_PROMO_KEY"
   calendar_api_key: "${WB_API_KEY}"
   timeout: 240s
+  # Ретраи 429 — как в проде (см. download-wb-promotion-v2-PG.yaml).
+  retry_attempts: 10
+  retry_epsilon_ms: 110
 
 promotion_v2:
   db_path: "/var/db/wb-sales.db"

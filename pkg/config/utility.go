@@ -269,19 +269,25 @@ type WBClientConfig struct {
 	RateLimit       int    `yaml:"rate_limit"`        // Запросов в минуту
 	BurstLimit      int    `yaml:"burst"`             // Burst для rate limiter
 	RetryAttempts   int    `yaml:"retry_attempts"`    // Попыток на запрос (5xx/429/сетевые; default 3)
-	Timeout         string `yaml:"timeout"`           // Timeout HTTP запросов
-	Endpoint        string `yaml:"endpoint"`          // Альтернативный endpoint (опционально)
+	// Надбавка к подсказке сервера X-Ratelimit-Retry при 429, миллисекунды
+	// (0 = дефолт клиента 200мс). Каноническое место настройки ε для всех
+	// утилит; доменные ключи (напр. funnel_aggregated.page_retry_epsilon_ms)
+	// применяются поверх и главнее.
+	RetryEpsilonMs int    `yaml:"retry_epsilon_ms"`
+	Timeout        string `yaml:"timeout"` // Timeout HTTP запросов
+	Endpoint       string `yaml:"endpoint"` // Альтернативный endpoint (опционально)
 }
 
 // ToWBConfig конвертирует WBClientConfig в стандартную WBConfig.
 func (c *WBClientConfig) ToWBConfig() WBConfig {
 	return WBConfig{
-		APIKey:        c.APIKey,
-		BaseURL:       c.BaseURL,
-		RateLimit:     c.RateLimit,
-		BurstLimit:    c.BurstLimit,
-		RetryAttempts: c.RetryAttempts,
-		Timeout:       c.Timeout,
+		APIKey:         c.APIKey,
+		BaseURL:        c.BaseURL,
+		RateLimit:      c.RateLimit,
+		BurstLimit:     c.BurstLimit,
+		RetryAttempts:  c.RetryAttempts,
+		RetryEpsilonMs: c.RetryEpsilonMs,
+		Timeout:        c.Timeout,
 	}
 }
 
@@ -327,6 +333,13 @@ type PromotionV2Config struct {
 	CalendarDaysPast    int                   `yaml:"calendar_days_past"`
 	CalendarDaysFuture  int                   `yaml:"calendar_days_future"`
 	ChangedDays         int                   `yaml:"changed_days"`
+
+	// Rescue-долив упавших батчей normquery-stats (паттерн search-vis):
+	// проходы по неудачникам до бюджета; остаток потерь > max_allowed_errors
+	// → фаза FAIL (честный exit 1), а не «done» с дыркой.
+	RescueTimeoutMinutes   int `yaml:"rescue_timeout_minutes"`   // бюджет долива (0 = 10)
+	RescuePassSleepSeconds int `yaml:"rescue_pass_sleep_seconds"` // пауза между проходами (0 = 30)
+	MaxAllowedErrors       int `yaml:"max_allowed_errors"`        // потеряно после долива > порога → FAIL (0 = любое потеря)
 }
 
 // PromotionV2RateLimits — rate limits для V2 endpoints.
@@ -390,16 +403,16 @@ func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
 	if result.RateLimits.NormqueryBurst == 0 {
 		result.RateLimits.NormqueryBurst = result.RateLimits.NormqueryApiBurst
 	}
-	// Normquery get-bids (POST /adv/v0/normquery/get-bids): swagger 2 req/sec
-	// = 120/min, burst 4/500ms — дефолт консервативнее (0.83x): 100/min.
+	// Normquery get-bids (POST /adv/v0/normquery/get-bids): swagger 5 req/sec
+	// = 300/min, burst 10 (спека 12.10; прежнее «2/сек ужесточение 11.10» устарело).
 	if result.RateLimits.NormqueryBidsApi == 0 {
-		result.RateLimits.NormqueryBidsApi = 100
+		result.RateLimits.NormqueryBidsApi = 300
 	}
 	if result.RateLimits.NormqueryBids == 0 {
 		result.RateLimits.NormqueryBids = result.RateLimits.NormqueryBidsApi
 	}
 	if result.RateLimits.NormqueryBidsApiBurst == 0 {
-		result.RateLimits.NormqueryBidsApiBurst = 4
+		result.RateLimits.NormqueryBidsApiBurst = 10
 	}
 	if result.RateLimits.NormqueryBidsBurst == 0 {
 		result.RateLimits.NormqueryBidsBurst = result.RateLimits.NormqueryBidsApiBurst
@@ -481,6 +494,13 @@ func (c *PromotionV2Config) GetDefaults() PromotionV2Config {
 	}
 	if result.CalendarDaysFuture == 0 {
 		result.CalendarDaysFuture = 60
+	}
+	// Rescue-долив normquery-stats (паттерн search-vis)
+	if result.RescueTimeoutMinutes == 0 {
+		result.RescueTimeoutMinutes = 10
+	}
+	if result.RescuePassSleepSeconds == 0 {
+		result.RescuePassSleepSeconds = 30
 	}
 	return result
 }

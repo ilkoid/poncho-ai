@@ -9,6 +9,10 @@ wb:
   # Falls back to WB_API_MARKET_KEY env var, then to main api_key
   calendar_api_key: "${WB_API_KEY}"
   timeout: 120s
+  # Ретраи 429: попытки (гонки по подсказке) и ε — см. комментарии в
+  # cmd/.configs/download-all/download-wb-promotion-v2-PG.yaml (прод).
+  retry_attempts: 10
+  retry_epsilon_ms: 110
 
 # Promotion V2 Settings
 promotion_v2:

@@ -44,6 +44,20 @@ type Config struct {
 	Storage    config.V2StorageConfig  `yaml:"storage"`
 }
 
+// retryScheme — строка схемы ретраев 429 для шапки лога (по образцу
+// funnel-agg/search-vis): значения из конфига с дефолтами.
+func retryScheme(cfg Config) string {
+	retries := cfg.WB.RetryAttempts
+	if retries == 0 {
+		retries = 3 // GetDefaults WBClientConfig
+	}
+	eps := cfg.WB.RetryEpsilonMs
+	if eps == 0 {
+		eps = 200 // дефолт клиента (см. wb.NewFromConfig/Set429RetryEpsilon)
+	}
+	return fmt.Sprintf("hint+eps %dms · retries %d", eps, retries)
+}
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config.yaml")
 	dbPath := flag.String("db", "", "Database path (overrides config)")
@@ -97,6 +111,7 @@ func main() {
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
 		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DisplayDB()},
 		dllog.HeaderField{Key: "Period", Value: fmt.Sprintf("%s → %s (past: %s → %s)", periodStart, periodEnd, pastStart, pastEnd)},
+		dllog.HeaderField{Key: "Retry", Value: retryScheme(*cfg)},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
@@ -126,7 +141,14 @@ func main() {
 		if apiKey == "" {
 			log.Fatalf("API key is empty: set wb.api_key or wb.api_key_env in config")
 		}
-		wbClient := wb.New(apiKey)
+		// Клиент из конфига: wb.retry_attempts / wb.retry_epsilon_ms доходят
+		// из yaml (ключ резолвит утилита и подставляет).
+		wbc := cfg.WB
+		wbc.APIKey = apiKey
+		wbClient, err := wb.NewFromConfig(wbc.ToWBConfig())
+		if err != nil {
+			log.Fatalf("create WB client: %v", err)
+		}
 		rl := cfg.ItemRating.RateLimits
 		wbClient.SetRateLimit(wb.ToolIDItemRating,
 			rl.ItemRating, rl.ItemRatingBurst,
@@ -190,8 +212,8 @@ func resolvePeriod(cfg config.ItemRatingConfig) (periodStart, periodEnd, pastSta
 	}
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()) // локальная полночь
-	endDate := today.AddDate(0, 0, -1)              // вчера — исключаем сегодня (незавершённый день)
-	startDate := endDate.AddDate(0, 0, -(days - 1)) // окно длины days
+	endDate := today.AddDate(0, 0, -1)                                                 // вчера — исключаем сегодня (незавершённый день)
+	startDate := endDate.AddDate(0, 0, -(days - 1))                                    // окно длины days
 	pastEndDate := startDate.AddDate(0, 0, -1)
 	pastStartDate := pastEndDate.AddDate(0, 0, -(days - 1))
 

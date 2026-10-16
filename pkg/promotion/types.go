@@ -7,20 +7,20 @@
 //   - Downloader — business logic depends only on interfaces
 //
 // Covers 14 phases:
-//   1.  Campaign Bids — from AdvertDetails.NmSettings
-//   2.  Normquery Stats — search cluster statistics per (advert_id, nm_id, date)
-//   3.  Normquery Clusters — active/excluded search clusters
-//   4.  Normquery Bids — current bid per search cluster
-//   5.  Normquery Minus — minus phrases
-//   6.  Bid Recommendations — recommended bid levels (5 req/min)
-//   7.  Expenses — campaign write-off history
-//   8.  Balance — account balance snapshot
-//   9.  Payments — payment history
-//   10. Calendar Promotions — WB promotion calendar
-//   11. Calendar Details — promotion details, advantages, ranging
-//   12. Calendar Nomenclatures — eligible products per promotion
-//   13. Campaign Budgets — per-campaign budget snapshot
-//   14. Min Bids — minimum bids per product per placement
+//  1. Campaign Bids — from AdvertDetails.NmSettings
+//  2. Normquery Stats — search cluster statistics per (advert_id, nm_id, date)
+//  3. Normquery Clusters — active/excluded search clusters
+//  4. Normquery Bids — current bid per search cluster
+//  5. Normquery Minus — minus phrases
+//  6. Bid Recommendations — recommended bid levels (5 req/min)
+//  7. Expenses — campaign write-off history
+//  8. Balance — account balance snapshot
+//  9. Payments — payment history
+//  10. Calendar Promotions — WB promotion calendar
+//  11. Calendar Details — promotion details, advantages, ranging
+//  12. Calendar Nomenclatures — eligible products per promotion
+//  13. Campaign Budgets — per-campaign budget snapshot
+//  14. Min Bids — minimum bids per product per placement
 package promotion
 
 import (
@@ -173,20 +173,20 @@ type Reader interface {
 // RateLimits holds per-phase rate limit configuration.
 // Mapped from config.PromotionV2RateLimits in CLI.
 type RateLimits struct {
-	Normquery      int // normquery list/bids/minus + advert details
-	NormqueryBurst int
+	Normquery           int // normquery list/bids/minus + advert details
+	NormqueryBurst      int
 	NormqueryStats      int // normquery stats (separate, 10/min)
 	NormqueryStatsBurst int
-	BidRec      int // bid recommendations (5/min)
-	BidRecBurst int
-	Finance      int // expenses, balance, payments
-	FinanceBurst int
-	BudgetV2      int // POST /api/advert/v2/budget: 20/min, burst 4
-	BudgetV2Burst int
-	Calendar      int // calendar promotions, details, noms
-	CalendarBurst int
-	MinBids      int // minimum bids
-	MinBidsBurst int
+	BidRec              int // bid recommendations (5/min)
+	BidRecBurst         int
+	Finance             int // expenses, balance, payments
+	FinanceBurst        int
+	BudgetV2            int // POST /api/advert/v2/budget: 20/min, burst 4
+	BudgetV2Burst       int
+	Calendar            int // calendar promotions, details, noms
+	CalendarBurst       int
+	MinBids             int // minimum bids
+	MinBidsBurst        int
 }
 
 // ============================================================================
@@ -220,6 +220,16 @@ type DownloadOptions struct {
 
 	// DryRun skips all DB writes.
 	DryRun bool
+
+	// Rescue-долив упавших батчей normquery-stats (паттерн search-vis d782fbc):
+	// основной цикл не тормозит (батчи независимы), в конце фазы неудачники
+	// перезапрашиваются проходами, пока не иссякнут или не кончится бюджет.
+	// Остаток потерь > MaxAllowedErrors → ошибка фазы (честный FAIL, а не
+	// «done» с дыркой; ночь 16.10: 12 батчей исчерпали клиентские попытки,
+	// долив вытащил 12/12, но потери могли остаться молча).
+	RescueTimeout    time.Duration // бюджет долива на фазу (0 = 10м)
+	RescuePassSleep  time.Duration // пауза между проходами (анти-hot-loop; 0 = 30с)
+	MaxAllowedErrors int           // потеряно после долива > порога → ошибка фазы
 
 	// OnProgress callback for status messages (nil = silent).
 	OnProgress func(msg string)

@@ -10,6 +10,10 @@
 
 wb:
   timeout: "120s"
+  # Попыток (гонок по подсказке сервера) на запрос при 429; 0 = дефолт 3.
+  retry_attempts: 10
+  # Надбавка к подсказке X-Ratelimit-Retry (мс); 0 = дефолт клиента 200.
+  retry_epsilon_ms: 200
 
 search_visibility:
   days: 7
@@ -17,16 +21,18 @@ search_visibility:
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
 
   rate_limits:
-    # Эмпирика 2026-08-28: фактический лимит WB ≈1 req/min (429 при 2/min и тем
-    # более при 3/min = swagger-лимиту, который реальности не соответствует).
-    search_report: 1           # desired rate (req/min)
-    search_report_burst: 1
-    search_report_api: 1       # recovery floor after 429
-    search_report_api_burst: 1
-    search_texts: 1
-    search_texts_burst: 1
-    search_texts_api: 1
-    search_texts_api_burst: 1
+    # РОВНО сваггер (3 req/min, 3 за 20с): при конкуренте в общем ведре
+    # самоограничение ниже документа лишь режет наши легальные гонки.
+    # (История: эмпирика 2026-08-28 «фактически ≈1 req/min» — до схемы
+    # «подсказка+ε» с повтором без пейсинга.)
+    search_report: 3           # desired rate (req/min)
+    search_report_burst: 3
+    search_report_api: 3       # recovery floor after 429
+    search_report_api_burst: 3
+    search_texts: 3
+    search_texts_burst: 3
+    search_texts_api: 3
+    search_texts_api_burst: 3
 
   adaptive_probe_after: 10     # probes after N consecutive OK responses
   max_backoff_seconds: 60

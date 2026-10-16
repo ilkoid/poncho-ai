@@ -2,7 +2,9 @@ package promotion
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -65,10 +67,10 @@ func TestRun_AllSkipped(t *testing.T) {
 		ProductIDs: []wb.NormqueryItem{
 			{AdvertID: 12345, NmID: 100001},
 		},
-		BeginDate:     "2026-05-28",
-		EndDate:       "2026-06-03",
-		CalendarBegin: "2026-05-04",
-		CalendarEnd:   "2026-07-04",
+		BeginDate:           "2026-05-28",
+		EndDate:             "2026-06-03",
+		CalendarBegin:       "2026-05-04",
+		CalendarEnd:         "2026-07-04",
 		SkipBids:            true,
 		SkipNormquery:       true,
 		SkipRecommendations: true,
@@ -194,7 +196,7 @@ func TestRun_DryRun(t *testing.T) {
 		EndDate:       "2026-06-03",
 		CalendarBegin: "2026-05-04",
 		CalendarEnd:   "2026-07-04",
-		DryRun: true,
+		DryRun:        true,
 		RateLimits: RateLimits{
 			Normquery:           300,
 			NormqueryBurst:      10,
@@ -224,5 +226,96 @@ func TestRun_DryRun(t *testing.T) {
 	// In DryRun mode, writer is never called (each phase checks !d.opts.DryRun before saving)
 	if dw.Saved() != 0 {
 		t.Errorf("DiscardWriter.Saved() = %d, want 0 (DryRun should skip all writes)", dw.Saved())
+	}
+}
+
+// rescueTestSource fails the first N GetNormqueryStats calls (429-подобное),
+// дальше отвечает как обычный мок — для тестов rescue-долива.
+type rescueTestSource struct {
+	*MockSource
+	failCalls int
+	calls     int
+}
+
+func (s *rescueTestSource) GetNormqueryStats(ctx context.Context, req wb.NormqueryStatsRequest, rateLimit, burst int) (*wb.NormqueryStatsResponse, error) {
+	s.calls++
+	if s.calls <= s.failCalls {
+		return nil, fmt.Errorf("429 rate limited: test storm")
+	}
+	return s.MockSource.GetNormqueryStats(ctx, req, rateLimit, burst)
+}
+
+func rescueTestOpts() DownloadOptions {
+	return DownloadOptions{
+		ProductIDs: []wb.NormqueryItem{
+			{AdvertID: 12345, NmID: 100001},
+			{AdvertID: 12345, NmID: 100002},
+			{AdvertID: 67890, NmID: 200001},
+		},
+		BeginDate: "2026-10-13",
+		EndDate:   "2026-10-15",
+		// Только normquery-фазы: stats + clusters + bids + minus.
+		SkipBids: true, SkipRecommendations: true, SkipFinance: true,
+		SkipCalendar: true, SkipBudgets: true, SkipMinBids: true,
+		RescueTimeout:   5 * time.Second,
+		RescuePassSleep: 5 * time.Millisecond,
+	}
+}
+
+// TestNormqueryStatsRescue_Recovers: батч упал в основном проходе → rescue-долив
+// вытащил его первым же проходом → фаза без ошибок (ночь 16.10: 12/12 так).
+func TestNormqueryStatsRescue_Recovers(t *testing.T) {
+	src := &rescueTestSource{MockSource: NewMockSource(), failCalls: 1}
+	dl := NewDownloader(src, NewDiscardWriter(), NewMockReader(), rescueTestOpts())
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if result.Errors != 0 {
+		t.Errorf("Errors = %d, want 0 (долив должен вытащить упавший батч)", result.Errors)
+	}
+	if src.calls != 2 {
+		t.Errorf("GetNormqueryStats calls = %d, want 2 (основной + rescue-проход)", src.calls)
+	}
+}
+
+// TestNormqueryStatsRescue_LostAfterBudget: батч падает всегда → проходы до
+// исчерпания бюджета → остаток потерь → честная ошибка фазы (а не «done» с дыркой).
+func TestNormqueryStatsRescue_LostAfterBudget(t *testing.T) {
+	src := &rescueTestSource{MockSource: NewMockSource(), failCalls: 1_000_000}
+	opts := rescueTestOpts()
+	opts.RescueTimeout = 40 * time.Millisecond
+	opts.RescuePassSleep = 5 * time.Millisecond
+	dl := NewDownloader(src, NewDiscardWriter(), NewMockReader(), opts)
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v (Run считает ошибки шагов, не фейлит сам)", err)
+	}
+	if result.Errors != 1 {
+		t.Errorf("Errors = %d, want 1 (normquery-stats: потери после бюджета)", result.Errors)
+	}
+	if src.calls < 3 {
+		t.Errorf("calls = %d, want ≥ 3 (основной + несколько rescue-проходов в бюджете)", src.calls)
+	}
+}
+
+// TestNormqueryStatsRescue_AllowedThreshold: потери в пределах max_allowed_errors
+// не валят фазу (порог задаётся явно).
+func TestNormqueryStatsRescue_AllowedThreshold(t *testing.T) {
+	src := &rescueTestSource{MockSource: NewMockSource(), failCalls: 1_000_000}
+	opts := rescueTestOpts()
+	opts.RescueTimeout = 40 * time.Millisecond
+	opts.RescuePassSleep = 5 * time.Millisecond
+	opts.MaxAllowedErrors = 100 // 3 потерянных items — в пределах порога
+	dl := NewDownloader(src, NewDiscardWriter(), NewMockReader(), opts)
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if result.Errors != 0 {
+		t.Errorf("Errors = %d, want 0 (потери 3 ≤ порога 100)", result.Errors)
 	}
 }

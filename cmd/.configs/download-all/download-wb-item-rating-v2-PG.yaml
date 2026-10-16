@@ -4,6 +4,10 @@
 wb:
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
   timeout: "60s"
+  # Ретраи 429 «подсказка + ε» — паритет с остальными утилитами семьи
+  # ag-contentanalytics (см. download-wb-funnel-agg-PG.yaml — полная история).
+  retry_attempts: 10
+  retry_epsilon_ms: 110
 
 item_rating:
   days: 1                # окно «вчера»; прошлый период (динамика) — авто

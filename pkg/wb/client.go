@@ -184,6 +184,7 @@ type Client struct {
 	adaptive        map[string]*rateLimitState // tool ID → adaptive state (for 429 recovery)
 	lastRequestTime map[string]time.Time       // tool ID → last HTTP request time (for min interval check)
 	limiterAliases  map[string]string          // alias tool ID → canonical tool ID (for shared rate limits)
+	stormSkip       map[string]bool            // resolved tool ID → шторм-режим: следующая ПЕРВАЯ попытка без очереди
 }
 
 // rateLimitState tracks adaptive rate limiting after 429 responses.
@@ -269,6 +270,7 @@ func New(apiKey string) *Client {
 		adaptive:        make(map[string]*rateLimitState),
 		lastRequestTime: make(map[string]time.Time),
 		limiterAliases:  make(map[string]string),
+		stormSkip:       make(map[string]bool),
 	}
 }
 
@@ -327,7 +329,7 @@ func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 		ForceAttemptHTTP2: true,
 	}
 
-	return &Client{
+	client := &Client{
 		apiKey:               cfg.APIKey,
 		retryAttempts:        cfg.RetryAttempts,
 		retry429Epsilon:      200 * time.Millisecond,
@@ -342,7 +344,14 @@ func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 		adaptive:        make(map[string]*rateLimitState),
 		lastRequestTime: make(map[string]time.Time),
 		limiterAliases:  make(map[string]string),
-	}, nil
+		stormSkip:       make(map[string]bool),
+	}
+	// wb.retry_epsilon_ms из конфига (каноническое место настройки ε;
+	// 0/отсутствие = дефолт 200мс). Доменные сеттеры поверх — главнее.
+	if cfg.RetryEpsilonMs > 0 {
+		client.Set429RetryEpsilon(time.Duration(cfg.RetryEpsilonMs) * time.Millisecond)
+	}
+	return client, nil
 }
 
 // ClassifyError классифицирует ошибку по типу для лучшей диагностики.
@@ -436,14 +445,15 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 
 	// Retry loop.
 	//
-	// hintDriven — повтор после живой подсказки сервера (сон «X-RateLimit-Retry
-	// + ε» уже выдержан в 429-ветке): локальный pacing (limiter.Wait + jitter-гард)
-	// пропускаем. Он добавляет 0,5–2с поверх подсказки (цикл попыток 18–19,5с
-	// короче 20-секундной раздачи токена → ведро пустеет → limiter ждёт; замер
-	// 16.10: интервалы попыток 20/21с при сне 18,2/19,2с) и сдвигает выстрел
-	// мимо раздачи. Пейсинг такого повтора делает сам сервер: до выстрела
-	// выдержано ≥ hint секунд.
-	hintDriven := false
+	// hintDriven — попытка без локального пейсинга: (а) повтор после живой
+	// подсказки сервера (сон «X-RateLimit-Retry + ε» уже выдержан в 429-ветке —
+	// пейсинг добавлял 0,5–2с поверх подсказки и сдвигал выстрел мимо раздачи,
+	// замер 16.10); (б) ПЕРВАЯ попытка следующего запроса после 429 (шторм-режим
+	// stormSkip): в пустом ведре ждать слот бессмысленно — сразу в гонку, свежая
+	// подсказка скажет, когда стрелять. Пейсинг таких попыток делает сам сервер.
+	// Успех «вежливой» (через limiter.Wait) попытки возвращает обычную очередь —
+	// спокойная фаза не меняется.
+	hintDriven := c.takeStormSkip(resolvedID)
 	for i := 0; i < c.retryAttempts; i++ {
 		if hintDriven {
 			hintDriven = false
@@ -556,6 +566,11 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 				// pacing пропускаем (см. hintDriven наверху петли). Без подсказки
 				// (serverRetrySec=0, сон был по apiFloor) pacing остаётся.
 				hintDriven = serverRetrySec > 0
+				// Шторм-режим для СЛЕДУЮЩЕГО запроса этого tool'а: его первая
+				// попытка тоже пойдёт без очереди (ведро пусто — ждать слот
+				// бессмысленно). Гаснут флаг сам, как только «вежливая»
+				// попытка пройдёт без 429 (спокойная фаза).
+				c.setStormSkip(resolvedID, serverRetrySec > 0)
 				continue
 			}
 		}
@@ -692,30 +707,37 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit)) // 3/min → 20s
 	jitterRange := minInterval / 2                                          // 0–10s for 3/min
 
+	// hintDriven — повтор после живой подсказки или шторм-режим первой попытки:
+	// локальный pacing пропускаем, иначе выстрел сдвигается на 0,5–2с мимо
+	// раздачи токена (см. doRequest).
+	hintDriven := c.takeStormSkip(resolvedID)
 	for i := 0; i < c.retryAttempts; i++ {
-		if err := limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait: %w", err)
-		}
+		if hintDriven {
+			hintDriven = false
+		} else {
+			if err := limiter.Wait(ctx); err != nil {
+				return fmt.Errorf("rate limiter wait: %w", err)
+			}
 
-		// Additional delay: ensure minimum interval since last HTTP request
-		// This is needed because limiter.Wait() measures from last limiter.Wait() call,
-		// not from last actual HTTP request. After retries/429, this matters.
-		c.mu.RLock()
-		lastRequestTime := c.lastRequestTime[resolvedID]
-		c.mu.RUnlock()
+			// Additional delay: ensure minimum interval since last HTTP request
+			// This is needed because limiter.Wait() measures from last limiter.Wait() call,
+			// not from last actual HTTP request. After retries/429, this matters.
+			c.mu.RLock()
+			lastRequestTime := c.lastRequestTime[resolvedID]
+			c.mu.RUnlock()
 
-		if !lastRequestTime.IsZero() {
-			sinceLastReq := time.Since(lastRequestTime)
-			effectiveInterval := minInterval + time.Duration(rand.Int64N(int64(jitterRange)))
-			if sinceLastReq < effectiveInterval {
-				additionalWait := effectiveInterval - sinceLastReq
-				select {
-				case <-time.After(additionalWait):
-				case <-ctx.Done():
-					return ctx.Err()
+			if !lastRequestTime.IsZero() {
+				sinceLastReq := time.Since(lastRequestTime)
+				effectiveInterval := minInterval + time.Duration(rand.Int64N(int64(jitterRange)))
+				if sinceLastReq < effectiveInterval {
+					additionalWait := effectiveInterval - sinceLastReq
+					select {
+					case <-time.After(additionalWait):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 				}
 			}
-		} else {
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
@@ -791,6 +813,11 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(waitDur):
+				// Выжали подсказку: следующий выстрел — в её момент, локальный
+				// pacing пропускаем (см. hintDriven наверху петли) + шторм-флаг
+				// для следующего запроса tool'а.
+				hintDriven = serverRetrySec > 0
+				c.setStormSkip(resolvedID, serverRetrySec > 0)
 				continue
 			}
 		}
@@ -958,6 +985,36 @@ func (c *Client) Set429RetryEpsilon(d time.Duration) {
 	if d > 0 {
 		c.retry429Epsilon = d
 	}
+}
+
+// takeStormSkip возвращает и гасит шторм-флаг tool'а: если прошлая попытка
+// встретила 429 с живой подсказкой (ведро пусто — конкурент держит), первая
+// попытка СЛЕДУЮЩЕГО запроса идёт без очереди в лимитере (сразу занимает
+// место в гонке; отклонённый 429 для сервера бесплатен — ведро не трогает).
+// Успех «вежливой» попытки гасит флаг естественно: никто его больше не ставит.
+func (c *Client) takeStormSkip(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v := c.stormSkip[id]
+	c.stormSkip[id] = false
+	return v
+}
+
+// setStormSkip ставит/снимает шторм-флаг (см. takeStormSkip).
+func (c *Client) setStormSkip(id string, v bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stormSkip[id] = v
+}
+
+// RetryScheme возвращает человекочитаемую строку схемы ретраев 429 для шапки
+// лога утилиты: значения из самого клиента (актуальные ε и попытки), а не из
+// конфига — в логе виден факт, а не замысел. Пример: «hint+eps 110ms · retries 10».
+func (c *Client) RetryScheme() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return fmt.Sprintf("hint+eps %dms · retries %d",
+		c.retry429Epsilon.Milliseconds(), c.retryAttempts)
 }
 
 // SetHTTPClient injects a custom HTTP client (for testing).

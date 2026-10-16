@@ -338,48 +338,80 @@ func (d *Downloader) downloadNormqueryStats(ctx context.Context, rateLimit, burs
 			fmt.Sprintf("%d clusters (api=%.1fs, db=%.1fs)", totalStats, apiDur.Seconds(), dbDur.Seconds()), t0)
 	}
 
-	// Retry failed batches in a second pass
+	// Rescue-долив упавших батчей (паттерн search-vis): проходы по неудачникам
+	// до исчерпания бюджета; остаток потерь > MaxAllowedErrors → честная
+	// ошибка фазы (раньше — один проход, остаток только логировался).
 	if len(failedBatches) > 0 {
-		retryTotal := (len(failedBatches) + batchSize - 1) / batchSize
-		retrySaved := 0
-		retrySkipped := 0
-		dllog.Log("retrying %d failed batches (%d items)...", retryTotal, len(failedBatches))
-		for i := 0; i < len(failedBatches); i += batchSize {
+		rescueTimeout := d.opts.RescueTimeout
+		if rescueTimeout <= 0 {
+			rescueTimeout = 10 * time.Minute
+		}
+		passSleep := d.opts.RescuePassSleep
+		if passSleep <= 0 {
+			passSleep = 30 * time.Second
+		}
+		deadline := time.Now().Add(rescueTimeout)
+		pass := 0
+		recovered := 0
+
+		for len(failedBatches) > 0 {
 			if ctx.Err() != nil {
-				dllog.Log("interrupted during retry")
+				dllog.Log("interrupted during rescue")
 				return ctx.Err()
 			}
-			endIdx := min(i+batchSize, len(failedBatches))
-			batch := failedBatches[i:endIdx]
-			batchNum := i/batchSize + 1
+			if pass > 0 {
+				if time.Now().After(deadline) {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(passSleep):
+				}
+			}
+			pass++
+			var still []wb.NormqueryItem
+			retryTotal := (len(failedBatches) + batchSize - 1) / batchSize
+			dllog.Log("rescue pass %d: %d failed batches (%d items)...",
+				pass, retryTotal, len(failedBatches))
+			for i := 0; i < len(failedBatches); i += batchSize {
+				endIdx := min(i+batchSize, len(failedBatches))
+				batch := failedBatches[i:endIdx]
+				batchNum := i/batchSize + 1
 
-			req := wb.NormqueryStatsRequest{
-				From:  beginDate,
-				To:    endDate,
-				Items: batch,
-			}
-			resp, err := d.source.GetNormqueryStats(ctx, req, rateLimit, burst)
-			if err != nil {
-				retrySkipped += len(batch)
-				dllog.Error("retry batch %d/%d: %v — skipped %d items", batchNum, retryTotal, err, len(batch))
-				continue
-			}
-			if len(resp.Stats) > 0 && !d.opts.DryRun {
-				if err := d.writer.SaveNormqueryStatsBatch(ctx, resp.Stats, beginDate); err != nil {
-					dllog.Error("retry batch save: %v", err)
+				req := wb.NormqueryStatsRequest{
+					From:  beginDate,
+					To:    endDate,
+					Items: batch,
 				}
-				for _, group := range resp.Stats {
-					totalStats += len(group.Stats)
+				resp, err := d.source.GetNormqueryStats(ctx, req, rateLimit, burst)
+				if err != nil {
+					still = append(still, batch...)
+					dllog.Error("rescue batch %d/%d: %v — kept %d items",
+						batchNum, retryTotal, err, len(batch))
+					continue
 				}
+				if len(resp.Stats) > 0 && !d.opts.DryRun {
+					if err := d.writer.SaveNormqueryStatsBatch(ctx, resp.Stats, beginDate); err != nil {
+						dllog.Error("rescue batch save: %v", err)
+					}
+					for _, group := range resp.Stats {
+						totalStats += len(group.Stats)
+					}
+				}
+				recovered += len(batch)
 			}
-			retrySaved += len(batch)
-			dllog.Log("retry batch %d/%d ok", batchNum, retryTotal)
+			failedBatches = still
+			if len(failedBatches) > 0 {
+				dllog.Log("rescue pass %d: %d items remain", pass, len(failedBatches))
+			}
 		}
-		if retrySaved > 0 {
-			dllog.Log("retry recovered %d items", retrySaved)
+		if recovered > 0 {
+			dllog.Log("rescue recovered %d items in %d passes", recovered, pass)
 		}
-		if retrySkipped > 0 {
-			dllog.Error("%d items skipped (failed all retries)", retrySkipped)
+		if lost := len(failedBatches); lost > d.opts.MaxAllowedErrors {
+			return fmt.Errorf("normquery stats: %d items lost after %d rescue passes (budget %s, allowed %d)",
+				lost, pass, rescueTimeout, d.opts.MaxAllowedErrors)
 		}
 	}
 

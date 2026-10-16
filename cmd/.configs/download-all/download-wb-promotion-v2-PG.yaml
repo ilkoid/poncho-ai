@@ -3,6 +3,14 @@ wb:
   analytics_api_key: "WB_API_ANALYTICS_AND_PROMO_KEY"
   calendar_api_key: "${WB_API_KEY}"
   timeout: 120s
+  # Попыток (гонок по подсказке сервера) на один запрос при 429. Дефолт
+  # клиента 3 — мало в шторме: ночь 16.10 у 12 батчей исчерпала 5 попыток
+  # (долив тогда вытащил 12/12, но фаза заняла 41м35с).
+  retry_attempts: 10
+  # Надбавка к подсказке X-Ratelimit-Retry, мс (0 = дефолт 200). 110 — паритет
+  # с funnel-agg/search-vis; ведро ag-advert ДРУГОЕ (оптимум доказан на
+  # ag-contentanalytics) — тюнить по первому же логу: кулдаун «N.1s (server: Ns)».
+  retry_epsilon_ms: 110
 
 promotion_v2:
   db_path: "/var/db/wb-sales.db"
@@ -23,13 +31,13 @@ promotion_v2:
     normquery_burst: 5
     normquery_api: 300
     normquery_api_burst: 5
-    normquery_bids: 100        # get-bids: swagger 2/sec = 120/min (ужесточение спеки 11.10) — берём 0.83x
-    normquery_bids_burst: 4
-    normquery_bids_api: 100
-    normquery_bids_api_burst: 4
-    normquery_stats: 8 # у wb 10/min, но мы будем осторожнее, т.к. это может быть более тяжелый эндпоинт
-    normquery_stats_burst: 1
-    normquery_stats_api: 8 # у wb 10/min, но мы будем осторожнее, т.к. это может быть более тяжелый эндпоинт
+    normquery_bids: 300        # get-bids: swagger 5/sec = 300/min burst 10 (08-promotion.yaml:2521-2526;
+    normquery_bids_burst: 10   # прежнее «2/sec ужесточение 11.10» устарело — спека 12.10 вернула 5/sec)
+    normquery_bids_api: 300
+    normquery_bids_api_burst: 10
+    normquery_stats: 10        # normquery/stats: swagger 10/min, интервал 6с (08-promotion.yaml:2232) —
+    normquery_stats_burst: 1   # ровно сваггер: самоограничение ниже документа лишь режет наши гонки
+    normquery_stats_api: 10
     normquery_stats_api_burst: 1
     bid_rec: 5
     bid_rec_burst: 1
@@ -51,6 +59,17 @@ promotion_v2:
     min_bids_burst: 3
     min_bids_api: 20
     min_bids_api_burst: 3
+
+  # Rescue-долив упавших батчей normquery-stats (паттерн search-vis): основной
+  # цикл не тормозит, в конце неудачники перезапрашиваются проходами, пока не
+  # иссякнут или не кончится бюджет. Ночь 16.10: 12 батчей исчерпали клиентские
+  # попытки — тогда один проход вытащил 12/12; теперь проходы идут до бюджета,
+  # а остаток потерь > max_allowed_errors = честный FAIL фазы (раньше exit 0
+  # с дыркой). Оверран окна ограничен: ≤ rescue_timeout + один цикл батча.
+  rescue_timeout_minutes: 10    # бюджет долива
+  rescue_pass_sleep_seconds: 30 # пауза между проходами (анти-hot-loop)
+  max_allowed_errors: 0         # потеряно после долива > порога → exit 1
+
   adaptive_probe_after: 15
   max_backoff_seconds: 60
 

@@ -4,6 +4,10 @@
 wb:
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
   timeout: "60s"
+  # Ретраи 429 «подсказка + ε» — паритет с семьёй ag-contentanalytics
+  # (см. download-wb-item-rating-v2-PG.yaml).
+  retry_attempts: 10
+  retry_epsilon_ms: 110
 
 item_rating:
   # Окно текущего периода: 1 = вчера. Прошлый период (для динамики) —

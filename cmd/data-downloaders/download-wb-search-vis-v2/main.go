@@ -46,6 +46,21 @@ type Config struct {
 	Storage   config.V2StorageConfig        `yaml:"storage"`
 }
 
+// retryScheme — строка схемы ретраев 429 для шапки лога (по образцу funnel-agg):
+// значения из конфига с дефолтами, фактическое поведение подтверждается
+// кулдаун-строками «N.Ns (server: Ns)».
+func retryScheme(cfg Config) string {
+	retries := cfg.WB.RetryAttempts
+	if retries == 0 {
+		retries = 3 // GetDefaults WBClientConfig
+	}
+	eps := cfg.WB.RetryEpsilonMs
+	if eps == 0 {
+		eps = 200 // дефолт клиента (см. wb.NewFromConfig/Set429RetryEpsilon)
+	}
+	return fmt.Sprintf("hint+eps %dms · retries %d", eps, retries)
+}
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config.yaml")
 	dbPath := flag.String("db", "", "Database path (overrides config)")
@@ -110,6 +125,7 @@ func main() {
 		dllog.HeaderField{Key: "Snapshot", Value: snapshotDate},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
+		dllog.HeaderField{Key: "Retry", Value: fmt.Sprintf("%s · rescue %s", retryScheme(*cfg), svCfg.RescueTimeout)},
 	)
 
 	// ⚠️ Mock safety — writer + reader creation INSIDE if/else branches
@@ -149,7 +165,15 @@ func main() {
 		if apiKey == "" {
 			log.Fatal("no API key. Set WB_API_ANALYTICS_AND_PROMO_KEY or WB_API_KEY")
 		}
-		wbClient := wb.New(apiKey)
+		// Клиент из конфига: wb.retry_attempts / wb.retry_epsilon_ms доходят
+		// из yaml (ключ подставляем здесь — search-vis резолвит его сам:
+		// api_key_env > env > config).
+		wbc := cfg.WB
+		wbc.APIKey = apiKey
+		wbClient, err := wb.NewFromConfig(wbc.ToWBConfig())
+		if err != nil {
+			log.Fatalf("create WB client: %v", err)
+		}
 
 		// Set rate limits — both endpoints share 3 req/min
 		rl := svCfg.RateLimits

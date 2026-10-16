@@ -9,6 +9,9 @@
 wb:
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
   timeout: "30s"
+  # Ретраи 429 — паритет с остальными утилитами (см. download-wb-promotion-v2-PG.yaml).
+  retry_attempts: 10
+  retry_epsilon_ms: 110
 
 campaigns:
   # Date range: use begin/end OR days (days is fallback)

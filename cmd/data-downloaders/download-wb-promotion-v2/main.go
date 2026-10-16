@@ -46,6 +46,20 @@ type Config struct {
 	Storage     config.V2StorageConfig   `yaml:"storage"`
 }
 
+// retryScheme — строка схемы ретраев 429 для шапки лога (по образцу
+// funnel-agg/search-vis): значения из конфига с дефолтами.
+func retryScheme(cfg Config) string {
+	retries := cfg.WB.RetryAttempts
+	if retries == 0 {
+		retries = 3 // GetDefaults WBClientConfig
+	}
+	eps := cfg.WB.RetryEpsilonMs
+	if eps == 0 {
+		eps = 200 // дефолт клиента (см. wb.NewFromConfig/Set429RetryEpsilon)
+	}
+	return fmt.Sprintf("hint+eps %dms · retries %d", eps, retries)
+}
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config.yaml")
 	dbPath := flag.String("db", "", "Database path (overrides config)")
@@ -104,6 +118,7 @@ func main() {
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
 		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DisplayDB()},
 		dllog.HeaderField{Key: "Period", Value: beginDate + " -> " + endDate},
+		dllog.HeaderField{Key: "Retry", Value: retryScheme(*cfg) + " · retry-pass"},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
@@ -145,11 +160,11 @@ func main() {
 		if apiKey == "" {
 			log.Fatal("no API key. Set WB_API_ANALYTICS_AND_PROMO_KEY or WB_API_KEY")
 		}
-		wbClient, err := wb.NewFromConfig(config.WBConfig{
-			APIKey:        apiKey,
-			Timeout:       cfg.WB.Timeout,
-			RetryAttempts: 5,
-		})
+		// Клиент из конфига: wb.retry_attempts / wb.retry_epsilon_ms
+		// доходят из yaml (ключ резолвит утилита и подставляет).
+		wbc := cfg.WB
+		wbc.APIKey = apiKey
+		wbClient, err := wb.NewFromConfig(wbc.ToWBConfig())
 		if err != nil {
 			log.Fatalf("create WB client: %v", err)
 		}
@@ -171,20 +186,20 @@ func main() {
 		CalendarBegin: calBegin,
 		CalendarEnd:   calEnd,
 		RateLimits: promotion.RateLimits{
-			Normquery:      rl.Normquery,
-			NormqueryBurst: rl.NormqueryBurst,
+			Normquery:           rl.Normquery,
+			NormqueryBurst:      rl.NormqueryBurst,
 			NormqueryStats:      rl.NormqueryStats,
 			NormqueryStatsBurst: rl.NormqueryStatsBurst,
-			BidRec:      rl.BidRec,
-			BidRecBurst: rl.BidRecBurst,
-			Finance:      rl.Finance,
-			FinanceBurst: rl.FinanceBurst,
-			BudgetV2:      rl.BudgetV2,
-			BudgetV2Burst: rl.BudgetV2Burst,
-			Calendar:      rl.Calendar,
-			CalendarBurst: rl.CalendarBurst,
-			MinBids:      rl.MinBids,
-			MinBidsBurst: rl.MinBidsBurst,
+			BidRec:              rl.BidRec,
+			BidRecBurst:         rl.BidRecBurst,
+			Finance:             rl.Finance,
+			FinanceBurst:        rl.FinanceBurst,
+			BudgetV2:            rl.BudgetV2,
+			BudgetV2Burst:       rl.BudgetV2Burst,
+			Calendar:            rl.Calendar,
+			CalendarBurst:       rl.CalendarBurst,
+			MinBids:             rl.MinBids,
+			MinBidsBurst:        rl.MinBidsBurst,
 		},
 		SkipBids:            pCfg.SkipBids,
 		SkipNormquery:       pCfg.SkipNormquery,
@@ -194,6 +209,10 @@ func main() {
 		SkipBudgets:         pCfg.SkipBudgets,
 		SkipMinBids:         pCfg.SkipMinBids,
 		DryRun:              *dryRun,
+
+		RescueTimeout:    time.Duration(pCfg.RescueTimeoutMinutes) * time.Minute,
+		RescuePassSleep:  time.Duration(pCfg.RescuePassSleepSeconds) * time.Second,
+		MaxAllowedErrors: pCfg.MaxAllowedErrors,
 	}
 
 	dl := promotion.NewDownloader(source, writer, reader, opts)
@@ -204,6 +223,13 @@ func main() {
 
 	dllog.Done(result.Duration, "%d/%d phases completed (%d errors)",
 		result.CompletedSteps, result.TotalSteps, result.Errors)
+
+	// Честный FAIL фазы: ошибки шагов (в т.ч. остаток потерь после rescue-долива)
+	// раньше проглатывались (exit 0 при дырках — ночь 16.10: SUCCESS с 12
+	// упавшими батчами) — теперь Summary download-all видит реальность.
+	if result.Errors > 0 {
+		os.Exit(1)
+	}
 }
 
 // ============================================================================

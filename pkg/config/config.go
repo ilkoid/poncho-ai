@@ -61,12 +61,17 @@ type ChainConfig struct {
 
 type WBConfig struct {
 	APIKey        string `yaml:"api_key"`
-	BaseURL       string `yaml:"base_url"`        // Базовый URL WB Content API
-	RateLimit     int    `yaml:"rate_limit"`      // Запросов в минуту
-	BurstLimit    int    `yaml:"burst_limit"`     // Burst для rate limiter
-	RetryAttempts int    `yaml:"retry_attempts"`  // Количество retry попыток
-	Timeout       string `yaml:"timeout"`         // Timeout для HTTP запросов (например, "30s")
-	BrandsLimit   int    `yaml:"brands_limit"`    // Макс. кол-во брендов для get_wb_brands tool
+	BaseURL       string `yaml:"base_url"`       // Базовый URL WB Content API
+	RateLimit     int    `yaml:"rate_limit"`     // Запросов в минуту
+	BurstLimit    int    `yaml:"burst_limit"`    // Burst для rate limiter
+	RetryAttempts int    `yaml:"retry_attempts"` // Количество retry попыток
+	// Надбавка к подсказке сервера X-Ratelimit-Retry при 429, миллисекунды
+	// (0 = дефолт клиента 200мс). Каноническое место настройки ε для всех
+	// утилит; доменные ключи (напр. funnel_aggregated.page_retry_epsilon_ms)
+	// применяются поверх и главнее.
+	RetryEpsilonMs int    `yaml:"retry_epsilon_ms"`
+	Timeout        string `yaml:"timeout"`      // Timeout для HTTP запросов (например, "30s")
+	BrandsLimit    int    `yaml:"brands_limit"` // Макс. кол-во брендов для get_wb_brands tool
 }
 
 // GetDefaults возвращает дефолтные значения для незаполненных полей.

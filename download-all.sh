@@ -162,7 +162,7 @@ run go run "$PONCHO/cmd/data-analyzers/build-region-sales-daily" --config "$C/re
 # ── Phase 5: Advertising ──
 echo "── Phase 5: Advertising ──"
 
-#maint campaigns
+maint campaigns
 run go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" --config "$C/download-wb-campaigns-v2-PG.yaml" --backend postgres
 maint promotion
 run go run "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" --config "$C/download-wb-promotion-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
@@ -177,7 +177,7 @@ run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C
 # самолечется — здесь находим отсутствующие/частичные окна за 2 недели и
 # перекачиваем явными датами. Нефатально для прогона; лог: logs/funnel-holes-*.log
 #bash "$PONCHO/refill-funnel-holes.sh" || echo "⚠️  refill-funnel-holes: сбой (нефатально)"
-#maint funnel-csv
+maint funnel-csv
 run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" --config "$C/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint search-vis
 # Отключено 21.09.2026: шторма 429 на /product/search-texts каждую ночь с 15.09 —
@@ -190,7 +190,10 @@ maint search-vis
 # завершается ~01:25, Mac стартует 04:30) — исходный конфликт одного аккаунт-ведра
 # снят; писать стали в РАЗНЫЕ базы (VPS2 — своя, Mac — локальная). Риск внешнего
 # дренажа ведра остаётся — адаптив + rescue (d782fbc) переживают, смотреть ночи.
-# ВРЕМЕННО ВЫКЛ 15.10 (429-шторм): run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# ВКЛЮЧЕНО ОБРАТНО 16.10 (было ВЫКЛ 15.10 из-за 429-шторма): переведён на схему
+# «подсказка+ε» (wb.retry_attempts 10 + retry_epsilon_ms из yaml, лимиты ровно
+# сваггер 3/мин) + rescue-долив остаётся страховкой.
+run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint penalties
 run go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$C/download-wb-penalties-v2-PG.yaml" --backend postgres
 maint item-rating
