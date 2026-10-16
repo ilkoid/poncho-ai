@@ -39,9 +39,9 @@ import (
 
 // Config holds YAML configuration for the funnel-agg v2 downloader.
 type Config struct {
-	WB                config.WBClientConfig         `yaml:"wb"`
+	WB               config.WBClientConfig         `yaml:"wb"`
 	FunnelAggregated config.FunnelAggregatedConfig `yaml:"funnel_aggregated"`
-	Storage           config.V2StorageConfig        `yaml:"storage"`
+	Storage          config.V2StorageConfig        `yaml:"storage"`
 }
 
 func main() {
@@ -93,6 +93,8 @@ func main() {
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
 		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DisplayDB()},
 		dllog.HeaderField{Key: "Period", Value: fmt.Sprintf("%s -> %s", beginDate, endDate)},
+		// Схема ретраев — видна в каждом логе, без открытия yaml.
+		dllog.HeaderField{Key: "Retry", Value: retrySchemeSummary(aggCfg, cfg.WB)},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
@@ -122,7 +124,18 @@ func main() {
 		if apiKey == "" {
 			log.Fatal("no API key. Set WB_API_ANALYTICS_AND_PROMO_KEY or WB_API_KEY")
 		}
-		wbClient := wb.New(apiKey)
+		// NewFromConfig (а не deprecated wb.New), чтобы wb.retry_attempts из
+		// конфига доходил до клиента: цикл попыток = retry_attempts hint-гонок,
+		// трёх в 429-шторм мало (ночь 16.10.2026: 8/8 лестницы — все 429).
+		wbc := cfg.WB
+		wbc.APIKey = apiKey
+		wbClient, err := wb.NewFromConfig(wbc.ToWBConfig())
+		if err != nil {
+			log.Fatalf("wb client: %v", err)
+		}
+		if aggCfg.PageRetryEpsilonMs > 0 {
+			wbClient.Set429RetryEpsilon(time.Duration(aggCfg.PageRetryEpsilonMs) * time.Millisecond)
+		}
 		wbClient.SetRateLimit(funnelagg.ToolID,
 			aggCfg.RateLimits.FunnelAggregated, aggCfg.RateLimits.FunnelAggregatedBurst,
 			aggCfg.RateLimits.FunnelAggregatedApi, aggCfg.RateLimits.FunnelAggregatedApiBurst)
@@ -131,28 +144,29 @@ func main() {
 	}
 
 	opts := funnelagg.DownloadOptions{
-		SelectedStart:      beginDate,
-		SelectedEnd:        endDate,
-		PastStart:          pastStart,
-		PastEnd:            pastEnd,
-		PageSize:           aggCfg.PageSize,
-		MaxPageRetries:     aggCfg.MaxPageRetries, // 0 = default 3 (задаётся в NewDownloader)
-		RateLimit:          aggCfg.RateLimits.FunnelAggregated,
-		Burst:              aggCfg.RateLimits.FunnelAggregatedBurst,
-		NmIDs:              aggCfg.NmIDs,
-		BrandNames:         aggCfg.BrandNames,
-		SubjectIDs:         aggCfg.SubjectIDs,
-		TagIDs:             aggCfg.TagIDs,
-		SkipDeletedNm:      aggCfg.SkipDeletedNm,
-		OrderByField:       aggCfg.OrderByField,
-		OrderByMode:        aggCfg.OrderByMode,
-		DryRun:             *dryRun,
-		OnProgress: func() func(string) {
-			var page int
+		SelectedStart:   beginDate,
+		SelectedEnd:     endDate,
+		PastStart:       pastStart,
+		PastEnd:         pastEnd,
+		PageSize:        aggCfg.PageSize,
+		MaxPageRetries:  aggCfg.MaxPageRetries,                                      // 0 = default 3 (задаётся в NewDownloader)
+		PageRetryBudget: time.Duration(aggCfg.PageRetryBudgetMinutes) * time.Minute, // > 0 = бюджет-режим, 0 = лестница
+		RateLimit:       aggCfg.RateLimits.FunnelAggregated,
+		Burst:           aggCfg.RateLimits.FunnelAggregatedBurst,
+		NmIDs:           aggCfg.NmIDs,
+		BrandNames:      aggCfg.BrandNames,
+		SubjectIDs:      aggCfg.SubjectIDs,
+		TagIDs:          aggCfg.TagIDs,
+		SkipDeletedNm:   aggCfg.SkipDeletedNm,
+		OrderByField:    aggCfg.OrderByField,
+		OrderByMode:     aggCfg.OrderByMode,
+		DryRun:          *dryRun,
+		OnProgress: func() func(int, int, string) {
+			// Страницы и ETA — от downloader'а (он знает оценку числа страниц
+			// из distinct nmID); здесь фиксируем старт прогона и рендерим.
 			start := time.Now()
-			return func(msg string) {
-				page++
-				dllog.Progress(page, 0, "funnel-agg", msg, start)
+			return func(cur, total int, msg string) {
+				dllog.Progress(cur, total, "funnel-agg", msg, start)
 			}
 		}(),
 	}
@@ -195,6 +209,23 @@ func createWriter(ctx context.Context, cfg config.V2StorageConfig) (funnelagg.Wr
 		}
 		return repo, func() { repo.Close() }, nil
 	}
+}
+
+// retrySchemeSummary — человекочитаемая строка схемы ретраев для шапки лога:
+// какой режим активен (бюджет или legacy-лестница), ε, гонки в цикле.
+func retrySchemeSummary(agg config.FunnelAggregatedConfig, wbc config.WBClientConfig) string {
+	epsilon := agg.PageRetryEpsilonMs
+	if epsilon == 0 {
+		epsilon = 200 // дефолт клиента (см. wb.New/Set429RetryEpsilon)
+	}
+	retries := wbc.RetryAttempts
+	if retries == 0 {
+		retries = 3 // GetDefaults WBClientConfig
+	}
+	if agg.PageRetryBudgetMinutes > 0 {
+		return fmt.Sprintf("budget %dm/page, eps %dms, wb-retries %d", agg.PageRetryBudgetMinutes, epsilon, retries)
+	}
+	return fmt.Sprintf("ladder %d×2m, eps %dms, wb-retries %d", agg.MaxPageRetries, epsilon, retries)
 }
 
 // resolveAPIKey resolves the WB API key from config and environment.

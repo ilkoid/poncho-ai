@@ -72,15 +72,27 @@ type DownloadOptions struct {
 	Burst     int // burst (default: 3)
 
 	// Page retry for global limiter recovery
-	MaxPageRetries    int           // retries per page (default: 3)
-	PageRetryBaseSleep time.Duration // base sleep between retries (default: 2min)
+	//
+	// Два режима по PageRetryBudget:
+	//   - Budget > 0 — «бой за страницу по времени»: циклы попыток идут подряд
+	//     (пауза pageRetryCyclePause между ними, каждая попытка внутри цикла —
+	//     hint-гонка клиента с кулдауном «подсказка+ε»); бюджет исчерпан —
+	//     честная ошибка «page budget exhausted», offset-resume продолжит
+	//     со сохранённой страницы при следующем запуске.
+	//   - Budget == 0 — прежняя лестница: MaxPageRetries попыток с линейным
+	//     сном PageRetryBaseSleep×n (backcompat).
+	MaxPageRetries     int           // retries per page in ladder mode (default: 3)
+	PageRetryBaseSleep time.Duration // ladder mode: base sleep 2m×n (default: 2min)
+	PageRetryBudget    time.Duration // budget mode: wall-clock per page (0 = ladder)
 
 	// DryRun skips DB writes but still fetches data.
 	DryRun bool
 
-	// OnProgress is called with a human-readable progress message.
+	// OnProgress вызывается с прогрессом: cur/total — страница и оценка числа
+	// страниц (total=0 — оценка неизвестна, например пустая БД), msg —
+	// человекочитаемое сообщение. Инфо-строки (период, resume) идут с cur=0.
 	// nil = silent (Tool mode).
-	OnProgress func(msg string)
+	OnProgress func(cur, total int, msg string)
 }
 
 // DownloadResult holds the outcome of an aggregated funnel download run.

@@ -167,6 +167,13 @@ type Client struct {
 	httpClient    HTTPClient // Интерфейс вместо конкретного типа для testability
 	retryAttempts int        // Количество retry попыток
 
+	// retry429Epsilon — надбавка к подсказке сервера X-Ratelimit-Retry, с которой
+	// мы повторяем запрос после 429 (дефолт 200мс, меняется через Set429RetryEpsilon).
+	// Подсказка = момент освобождения слота; выстрел ровно на раздаче даёт шанс
+	// выиграть слот у конкурента, вычерпывающего ведро непрерывно, а сон дольше —
+	// гарантированный пропуск раздачи.
+	retry429Epsilon time.Duration
+
 	// Adaptive rate limiting tuning (configurable via SetAdaptiveParams)
 	adaptiveRecoverAfter int // consecutive OKs to restore to api floor after 429
 	adaptiveProbeAfter   int // consecutive OKs at api floor before probing desired again
@@ -251,6 +258,7 @@ func New(apiKey string) *Client {
 	return &Client{
 		apiKey:               cfg.APIKey,
 		retryAttempts:        cfg.RetryAttempts,
+		retry429Epsilon:      200 * time.Millisecond,
 		adaptiveRecoverAfter: 5,
 		adaptiveProbeAfter:   10,
 		maxBackoffSeconds:    60,
@@ -322,6 +330,7 @@ func NewFromConfig(cfg config.WBConfig) (*Client, error) {
 	return &Client{
 		apiKey:               cfg.APIKey,
 		retryAttempts:        cfg.RetryAttempts,
+		retry429Epsilon:      200 * time.Millisecond,
 		adaptiveRecoverAfter: 5,
 		adaptiveProbeAfter:   10,
 		maxBackoffSeconds:    60,
@@ -501,23 +510,24 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 			}
 			_ = json.Unmarshal(body, &err429)
 
-			serverRetrySec := 1
+			serverRetrySec := 0 // 0 = подсказки нет (заголовок отсутствует/некорректен)
 			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
 					serverRetrySec = sec
 				}
 			}
-			// Плоский cooldown без множителя на номер попытки: max(подсказка сервера
-			// X-Ratelimit-Retry, интервал apiFloor), cap уже внутри adaptiveReduce.
-			// Повтор раньше подсказки гарантированно даёт 429 (доки WB), а сон дольше
-			// сжигает попытки в конкурентно вычерпываемом ведре.
+			// Плоский cooldown без множителя на номер попытки: семантика внутри
+			// adaptiveReduce — «подсказка сервера + ε» при живой подсказке,
+			// интервал apiFloor без неё. Повтор раньше подсказки гарантированно
+			// даёт 429 (доки WB), а сон дольше сжигает попытки в конкурентно
+			// вычерпываемом ведре.
 			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
 
 			lastErr = fmt.Errorf("429 rate limited: %s", err429.Detail)
 
 			// Log 429 details
 			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)\n",
-				toolID, waitDur.Truncate(time.Second), serverRetrySec, i+1, c.retryAttempts)
+				toolID, waitDur.Truncate(100*time.Millisecond), serverRetrySec, i+1, c.retryAttempts)
 			if err429.Detail != "" {
 				fmt.Fprintf(os.Stderr, "    429 detail: %s | code: %s | origin: %s | time: %s\n",
 					err429.Detail, err429.Code, err429.Origin, err429.Timestamp)
@@ -735,23 +745,24 @@ func (c *Client) GetStream(ctx context.Context, toolID string, baseURL string, r
 			}
 			_ = json.Unmarshal(body, &err429)
 
-			serverRetrySec := 1
+			serverRetrySec := 0 // 0 = подсказки нет (заголовок отсутствует/некорректен)
 			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
 					serverRetrySec = sec
 				}
 			}
-			// Плоский cooldown без множителя на номер попытки: max(подсказка сервера
-			// X-Ratelimit-Retry, интервал apiFloor), cap уже внутри adaptiveReduce.
-			// Повтор раньше подсказки гарантированно даёт 429 (доки WB), а сон дольше
-			// сжигает попытки в конкурентно вычерпываемом ведре.
+			// Плоский cooldown без множителя на номер попытки: семантика внутри
+			// adaptiveReduce — «подсказка сервера + ε» при живой подсказке,
+			// интервал apiFloor без неё. Повтор раньше подсказки гарантированно
+			// даёт 429 (доки WB), а сон дольше сжигает попытки в конкурентно
+			// вычерпываемом ведре.
 			waitDur := c.adaptiveReduce(toolID, serverRetrySec)
 
 			lastErr = fmt.Errorf("429 rate limited: %s", err429.Detail)
 
 			// Log 429 details
 			fmt.Fprintf(os.Stderr, "⚠️  429 for %s, cooling down %v (server: %ds, attempt %d/%d)\n",
-				toolID, waitDur.Truncate(time.Second), serverRetrySec, i+1, c.retryAttempts)
+				toolID, waitDur.Truncate(100*time.Millisecond), serverRetrySec, i+1, c.retryAttempts)
 			if err429.Detail != "" {
 				fmt.Fprintf(os.Stderr, "    429 detail: %s | code: %s | origin: %s | time: %s\n",
 					err429.Detail, err429.Code, err429.Origin, err429.Timestamp)
@@ -921,6 +932,17 @@ func (c *Client) SetAdaptiveParams(recoverAfter, probeAfter, maxBackoff int) {
 	}
 }
 
+// Set429RetryEpsilon задаёт надбавку к подсказке сервера X-Ratelimit-Retry, с
+// которой повторяется запрос после 429 (см. adaptiveReduce; дефолт 200мс).
+// Значения <= 0 игнорируются.
+func (c *Client) Set429RetryEpsilon(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if d > 0 {
+		c.retry429Epsilon = d
+	}
+}
+
 // SetHTTPClient injects a custom HTTP client (for testing).
 func (c *Client) SetHTTPClient(hc HTTPClient) {
 	c.httpClient = hc
@@ -938,8 +960,9 @@ func (c *Client) RateLimiters() map[string]rate.Limit {
 }
 
 // adaptiveReduce immediately drops the rate limiter to api floor after a 429 response.
-// Calculates cooldown using server's X-Ratelimit-Retry header with minimum safety margin
-// based on api floor rate. Falls back to server header if no adaptive state configured.
+// Cooldown: при живой подсказке X-Ratelimit-Retry — «подсказка + ε» (retry429Epsilon,
+// сеттер Set429RetryEpsilon); без подсказки (serverRetrySec=0) — интервал apiFloor
+// (период генерации токена). Cap — maxBackoffSeconds.
 func (c *Client) adaptiveReduce(toolID string, serverRetrySec int) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -970,24 +993,21 @@ func (c *Client) adaptiveReduce(toolID string, serverRetrySec int) time.Duration
 		}
 	}
 
-	// Calculate cooldown: use server's X-Ratelimit-Retry hint, but ensure at least
-	// one full interval at api floor rate for safety.
-	// 3 req/min → 20s minimum interval.
-	// This ensures the rate limiter's token bucket has time to refill.
+	// Cooldown после 429: при живой подсказке X-Ratelimit-Retry ждём ровно
+	// «подсказка + ε» (retry429Epsilon) — сервер сам указывает момент освобождения
+	// слота, и только выстрел на раздаче даёт шанс выиграть её у конкурента,
+	// вычерпывающего ведро непрерывно. Прежний флор max(подсказка, интервал
+	// apiFloor) при подсказках 1–18с систематически перегонял момент раздачи
+	// (токен забирали до нашего выстрела). Без подсказки (serverRetrySec=0 —
+	// заголовка нет) ждём один интервал apiFloor — период генерации токена.
+	// Повтор РАНЬШЕ подсказки гарантированно даёт 429 (доки WB).
 	var waitDur time.Duration
-	if state.apiFloor > 0 {
-		// Minimum interval based on api floor rate
-		minInterval := time.Duration(float64(time.Second) / float64(state.apiFloor))
-		// Use server hint, but ensure at least minimum interval
-		serverWait := time.Duration(serverRetrySec) * time.Second
-		if serverWait < minInterval {
-			waitDur = minInterval
-		} else {
-			waitDur = serverWait
-		}
+	if serverRetrySec > 0 {
+		waitDur = time.Duration(serverRetrySec)*time.Second + c.retry429Epsilon
+	} else if state.apiFloor > 0 {
+		waitDur = time.Duration(float64(time.Second) / float64(state.apiFloor))
 	} else {
-		// No adaptive state — fall back to server header
-		waitDur = time.Duration(serverRetrySec) * time.Second
+		waitDur = 20 * time.Second
 	}
 
 	// Cap at maxBackoffSeconds
@@ -1203,7 +1223,7 @@ func (c *Client) GetRaw(ctx context.Context, toolID string, baseURL string, rate
 
 		// Handle rate limiting (429)
 		if resp.StatusCode == 429 {
-			serverRetrySec := 1
+			serverRetrySec := 0 // 0 = подсказки нет (заголовок отсутствует/некорректен)
 			if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 				if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
 					serverRetrySec = sec
@@ -1357,7 +1377,7 @@ func (c *Client) ReportDetailByPeriodPage(
 
 	// Handle 429 Too Many Requests — adaptive rate limiting
 	if resp.StatusCode == http.StatusTooManyRequests {
-		serverRetrySec := 1
+		serverRetrySec := 0 // 0 = подсказки нет (заголовок отсутствует/некорректен)
 		if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 			if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
 				serverRetrySec = sec
@@ -1528,7 +1548,7 @@ func (c *Client) ReportDetailByPeriodPageWithTime(
 
 	// Handle 429 Too Many Requests â adaptive rate limiting
 	if resp.StatusCode == http.StatusTooManyRequests {
-		serverRetrySec := 1
+		serverRetrySec := 0 // 0 = подсказки нет (заголовок отсутствует/некорректен)
 		if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 			if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
 				serverRetrySec = sec
@@ -1836,7 +1856,7 @@ func (c *Client) OrdersPage(
 
 	// Handle 429 Too Many Requests — adaptive rate limiting
 	if resp.StatusCode == http.StatusTooManyRequests {
-		serverRetrySec := 1
+		serverRetrySec := 0 // 0 = подсказки нет (заголовок отсутствует/некорректен)
 		if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 			if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
 				serverRetrySec = sec
@@ -2047,7 +2067,7 @@ func (c *Client) SalesPage(
 
 	// Handle 429 Too Many Requests — adaptive rate limiting
 	if resp.StatusCode == http.StatusTooManyRequests {
-		serverRetrySec := 1
+		serverRetrySec := 0 // 0 = подсказки нет (заголовок отсутствует/некорректен)
 		if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 			if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
 				serverRetrySec = sec

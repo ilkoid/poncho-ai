@@ -190,7 +190,7 @@ maint search-vis
 # завершается ~01:25, Mac стартует 04:30) — исходный конфликт одного аккаунт-ведра
 # снят; писать стали в РАЗНЫЕ базы (VPS2 — своя, Mac — локальная). Риск внешнего
 # дренажа ведра остаётся — адаптив + rescue (d782fbc) переживают, смотреть ночи.
-run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# ВРЕМЕННО ВЫКЛ 15.10 (429-шторм): run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 maint penalties
 run go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$C/download-wb-penalties-v2-PG.yaml" --backend postgres
 maint item-rating

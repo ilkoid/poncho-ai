@@ -72,6 +72,10 @@ func PrintHeader(title string, fields ...HeaderField) {
 func Progress(batch, total int, label, msg string, start time.Time) {
 	ts := time.Now().Format("15:04:05")
 	batchInfo := formatBatch(batch, total, start)
+	if batchInfo == "" {
+		fmt.Printf("%s %s: %s\n", ts, label, msg)
+		return
+	}
 	fmt.Printf("%s [%s] %s: %s\n", ts, batchInfo, label, msg)
 }
 
@@ -83,6 +87,10 @@ func Progress(batch, total int, label, msg string, start time.Time) {
 func ProgressDT(batch, total int, label, msg string, start time.Time) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	batchInfo := formatBatch(batch, total, start)
+	if batchInfo == "" {
+		fmt.Printf("%s %s: %s\n", ts, label, msg)
+		return
+	}
 	fmt.Printf("%s [%s] %s: %s\n", ts, batchInfo, label, msg)
 }
 
@@ -118,6 +126,10 @@ func Log(format string, args ...any) {
 // Returns "5/12" when total > 0 but no start time.
 // Returns just "5" when total is 0.
 func formatBatch(cur, total int, start time.Time) string {
+	// Инфо-строки (без счётчика): период, resume, «данных нет» — без [N/M].
+	if cur <= 0 && total <= 0 {
+		return ""
+	}
 	if total <= 0 {
 		return fmt.Sprintf("%d", cur)
 	}

@@ -6,6 +6,8 @@
 wb:
   api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
   timeout: "30s"
+  # Гонок (hint-повторов) в одном цикле запроса (default 3).
+  retry_attempts: 5
 
 funnel_aggregated:
   # Period in days (alternative to selected_start/end)
@@ -13,6 +15,12 @@ funnel_aggregated:
 
   # Pagination
   page_size: 100
+
+  # Ретраи при 429-штормах: см. полное описание параметров в
+  # cmd/.configs/download-all/download-wb-funnel-agg-PG.yaml (прод).
+  # Здесь — дефолты: бюджет-режим, ε 200мс (проверено 16.10 — оптимум).
+  page_retry_budget_minutes: 15
+  page_retry_epsilon_ms: 200
 
   # Rate limiting (3 req/min, shared with funnel/search-vis)
   rate_limits:

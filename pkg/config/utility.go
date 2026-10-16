@@ -599,9 +599,18 @@ type FunnelAggregatedConfig struct {
 	// Пагинация
 	PageSize int `yaml:"page_size"` // Товаров за запрос (0 = auto, max 1000)
 
-	// Устойчивость к 429-штормам: попыток на страницу (0 = default 3).
-	// Бэкофф линейный 2м×n; 8 попыток дают до ~часа запаса на страницу.
-	MaxPageRetries int `yaml:"max_page_retries"`
+	// Устойчивость к 429-штормам. Два режима по page_retry_budget_minutes:
+	//   - budget > 0 — «бой за страницу по времени»: циклы попыток идут подряд
+	//     (каждый цикл — до wb.retry_attempts hint-гонок с кулдауном
+	//     «подсказка сервера + page_retry_epsilon_ms»), страница берётся либо
+	//     в рамках бюджета, либо прогон падает с честной ошибкой
+	//     (offset-resume продолжит со сохранённой страницы при следующем запуске).
+	//   - budget = 0 — прежняя лестница max_page_retries × 2м×n (legacy).
+	// Конкурент, непрерывно вычерпывающий ведро, выбивает нас из длинных снов —
+	// выигрывает присутствующий на большем числе раздач токена, поэтому бюджет
+	// времени честнее числа попыток.
+	PageRetryBudgetMinutes int `yaml:"page_retry_budget_minutes"`
+	MaxPageRetries         int `yaml:"max_page_retries"` // лестница: попыток на страницу (0 = default 3; только при budget=0)
 
 	// Rate limiting (legacy fields for backwards compatibility)
 	RateLimit  int `yaml:"rate_limit"` // Запросов в минуту (deprecated: use rate_limits instead)
@@ -611,6 +620,12 @@ type FunnelAggregatedConfig struct {
 	RateLimits         FunnelAggregatedRateLimits `yaml:"rate_limits"`          // Rate limits per endpoint (req/min)
 	AdaptiveProbeAfter int                        `yaml:"adaptive_probe_after"` // OKs at api floor before probing desired (default: 10)
 	MaxBackoffSeconds  int                        `yaml:"max_backoff_seconds"`  // Cap for cooldown (default: 60)
+
+	// Надбавка к подсказке сервера X-Ratelimit-Retry, миллисекунды: после 429
+	// повторяем запрос через «подсказка + page_retry_epsilon_ms» — выстрел ровно
+	// в момент раздачи токена. Рабочий диапазон для настройки 100–2000 (0.1–2с);
+	// 0 = дефолт клиента 100.
+	PageRetryEpsilonMs int `yaml:"page_retry_epsilon_ms"`
 
 	// Хранилище
 	DBPath string `yaml:"db_path"` // Путь к SQLite базе

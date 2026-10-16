@@ -217,10 +217,10 @@ func TestAdaptiveRateLimit_RetryConsumesBackoffTime(t *testing.T) {
 }
 
 func Test429CooldownFlat_NoMultiplier(t *testing.T) {
-	// Cooldown при 429 плоский: max(X-Ratelimit-Retry, интервал apiFloor), без
-	// домножения на номер попытки. Три 429 с hint=2 дают ТРИ паузы по 2с ≈ 6с
-	// (пауза выполняется и после последней попытки, перед выходом из цикла);
-	// прежний множитель ×2/×3 дал бы 2+4+6=12с и тест падает (граница 9с).
+	// Cooldown при 429 плоский: подсказка X-Ratelimit-Retry + ε (Set429RetryEpsilon,
+	// тут 10мс), без домножения на номер попытки. Три 429 с hint=2 дают ТРИ паузы
+	// по ~2с ≈ 6с (пауза выполняется и после последней попытки, перед выходом из
+	// цикла); прежний множитель ×2/×3 дал бы 2+4+6=12с и тест падает (граница 9с).
 	mockHTTP := &mockHTTPClient{
 		responses: []*mockResponse{
 			{status: 429, header: map[string]string{"X-Ratelimit-Retry": "2"}},
@@ -231,6 +231,7 @@ func Test429CooldownFlat_NoMultiplier(t *testing.T) {
 	client := New("test_key")
 	client.SetHTTPClient(mockHTTP)
 	client.SetRateLimit("my_tool", testDesiredRate, testDesiredBurst, testAPIRate, testAPIBurst)
+	client.Set429RetryEpsilon(10 * time.Millisecond)
 
 	start := time.Now()
 	ctx := context.Background()
@@ -252,9 +253,9 @@ func Test429CooldownFlat_NoMultiplier(t *testing.T) {
 	}
 }
 
-func Test429Cooldown_ServerHintAboveFloor(t *testing.T) {
-	// max(подсказка, floor): hint "0" → default serverRetrySec=1с, floor
-	// apiRate=300/мин → интервал 0.2с — пауза равна подсказке 1с.
+func Test429Cooldown_NoHint_FloorInterval(t *testing.T) {
+	// Без подсказки (заголовок "0"/отсутствует) ждём один интервал apiFloor —
+	// период генерации токена. apiRate=300/мин → интервал 0.2с.
 	mockHTTP := newMockHTTP("0")
 	client := New("test_key")
 	client.SetHTTPClient(mockHTTP)
@@ -269,10 +270,52 @@ func Test429Cooldown_ServerHintAboveFloor(t *testing.T) {
 	if got := mockHTTP.requestCount(); got != 2 {
 		t.Errorf("request count = %d, want 2 (429 + retry)", got)
 	}
-	if elapsed < 900*time.Millisecond {
-		t.Errorf("elapsed = %v, want ≥ 0.9с (подсказка 1с выше floor 0.2с)", elapsed)
+	if elapsed < 150*time.Millisecond {
+		t.Errorf("elapsed = %v, want ≥ 0.15с (интервал floor 0.2с)", elapsed)
 	}
-	if elapsed > 3*time.Second {
-		t.Errorf("elapsed = %v, пауза не соответствует подсказке сервера", elapsed)
+	if elapsed > 2*time.Second {
+		t.Errorf("elapsed = %v, пауза не соответствует интервалу floor", elapsed)
+	}
+}
+
+func Test429Cooldown_HintPlusEpsilon(t *testing.T) {
+	// Новая семантика: при живой подсказке пауза = подсказка + ε, БЕЗ override
+	// флором. hint=2с, ε=100мс → ~2.1с; прежний max(hint, интервал floor) дал бы
+	// то же тут, но при коротких подсказках (1–5с) флор перегонял момент раздачи.
+	mockHTTP := newMockHTTP("2")
+	client := New("test_key")
+	client.SetHTTPClient(mockHTTP)
+	client.SetRateLimit("my_tool", testDesiredRate, testDesiredBurst, testAPIRate, testAPIBurst)
+	client.Set429RetryEpsilon(100 * time.Millisecond)
+
+	start := time.Now()
+	ctx := context.Background()
+	var result []map[string]interface{}
+	_ = client.Get(ctx, "my_tool", "https://api.example.com", testFallbackRate, testFallbackBurst, "/test", nil, &result)
+	elapsed := time.Since(start)
+
+	if got := mockHTTP.requestCount(); got != 2 {
+		t.Errorf("request count = %d, want 2 (429 + retry)", got)
+	}
+	if elapsed < 1900*time.Millisecond {
+		t.Errorf("elapsed = %v, want ≥ 1.9с (подсказка 2с + ε 100мс)", elapsed)
+	}
+	if elapsed > 4*time.Second {
+		t.Errorf("elapsed = %v, пауза больше подсказки+ε", elapsed)
+	}
+}
+
+func Test429RetryEpsilon_DefaultAndSetter(t *testing.T) {
+	client := New("test_key")
+	if client.retry429Epsilon != 200*time.Millisecond {
+		t.Errorf("дефолт ε = %v, want 200ms", client.retry429Epsilon)
+	}
+	client.Set429RetryEpsilon(300 * time.Millisecond)
+	if client.retry429Epsilon != 300*time.Millisecond {
+		t.Errorf("ε после сеттера = %v, want 300ms", client.retry429Epsilon)
+	}
+	client.Set429RetryEpsilon(0) // <= 0 игнорируется
+	if client.retry429Epsilon != 300*time.Millisecond {
+		t.Errorf("ε после игнорируемого сеттера = %v, want 300ms", client.retry429Epsilon)
 	}
 }

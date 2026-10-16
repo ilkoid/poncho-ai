@@ -1,0 +1,60 @@
+# download-wb-funnel-agg-TEST.yaml — минимальный прогон для ПРОВЕРКИ схемы
+# ретраев на Mac (схема «подсказка сервера + ε», 16.10.2026).
+#
+# Запуск (пользователь, любой терминал):  bash run-funnel-agg-test.sh
+# Из runner'а добавляется только --dry-run: НЕТ записей в БД. Бэкенд — локальный
+# PG (wb_data_prod): dry-run читает из него лишь оценку тотала (distinct nmID из
+# sales) и resume-счёт — благодаря этому в логе видны [N/M % ETA] по страницам,
+# как в проде. Записи — ноль при любом исходе.
+# Цель: в логе видно работу лимитера — «429 … cooling down (server: Ns)» = пауза
+# подсказка+ε; при шторме через ~3 мин честный «page budget exhausted» (exit 1),
+# при тишине страницы летят и «done» (exit 0).
+wb:
+  analytics_api_key: ${WB_API_ANALYTICS_AND_PROMO_KEY}
+  timeout: 60m
+  # Гонок в цикле (см. прод-конфиг) — как в проде, 5.
+  retry_attempts: 5
+
+funnel_aggregated:
+  # Сутки данных вместо 7+7 — тест короткий.
+  days: 1
+  nm_ids: []
+  brand_names: []
+  subject_ids: []
+  tag_ids: []
+  skip_deleted_nm: true
+  order_by_field: ""
+  order_by_mode: "desc"
+  page_size: 1000
+  # Бюджет на страницу всего 3 минуты: даже в шторме тест заканчивается ~3-5 мин.
+  page_retry_budget_minutes: 3
+  max_page_retries: 8          # (legacy, не используется при budget > 0)
+  # ε = 200мс — оптимум серии 16.10 (30/60/100/200: на 30-100 конкурент выбивал
+  # сериями повторов, на 200 — страница с 1-го повтора). В логе пауза
+  # «cooling down N.2s (server: Ns)», реальное ε — в шапке «eps 200ms».
+  # Диапазон для экспериментов 100-2000 (0.1-2с).
+  page_retry_epsilon_ms: 200
+  # Rate limiting — РОВНО сваггер (3 req/min, 3 за 20с), как в проде:
+  # тест должен видеть реальное поведение ведра.
+  rate_limit: 3
+  burst: 3
+  rate_limits:
+    funnel_aggregated: 3
+    funnel_aggregated_burst: 3
+    funnel_aggregated_api: 3
+    funnel_aggregated_api_burst: 3
+  adaptive_probe_after: 10
+  # Cap кулдауна 60с: в тесте хватит.
+  max_backoff_seconds: 60
+  db_path: "/tmp/test-funnelagg-test.db"
+
+# Локальный PG (хост/порт из .env: PGHOST/PGPORT): dry-run выполняет только
+# SELECT (оценка тотала + resume-счёт), записи нет. Если PG недоступен —
+# верни backend sqlite: тест продолжит работать, но без [N/M ETA] (оценке
+# на пустой /tmp-базе взяться неоткуда).
+storage:
+  backend: "postgres"
+  db_path: "/tmp/test-funnelagg-test.db"
+  pg_dsn: ""
+  pg_database: "wb_data_prod"
+  pg_password_env: "PG_PWD"

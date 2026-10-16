@@ -235,7 +235,7 @@ func (c *Client) SalesReportDetailedPage(
 
 	// 429 — адаптивное снижение лимита
 	if resp.StatusCode == http.StatusTooManyRequests {
-		serverRetrySec := 1
+		serverRetrySec := 0 // 0 = подсказки нет (заголовок отсутствует/некорректен)
 		if s := resp.Header.Get("X-Ratelimit-Retry"); s != "" {
 			if sec, err := strconv.Atoi(s); err == nil && sec > 0 {
 				serverRetrySec = sec

@@ -3,6 +3,7 @@ package funnelagg
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,11 +12,11 @@ import (
 
 // testWriter tracks calls for test assertions.
 type testWriter struct {
-	saved    int
-	count    int // GetFunnelAggregatedCount result
-	nmCount  int // GetDistinctNmIDCount result
-	saveErr  error
-	batches  [][]wb.FunnelAggregatedProduct
+	saved   int
+	count   int // GetFunnelAggregatedCount result
+	nmCount int // GetDistinctNmIDCount result
+	saveErr error
+	batches [][]wb.FunnelAggregatedProduct
 }
 
 func (w *testWriter) SaveFunnelAggregatedBatch(_ context.Context, products []wb.FunnelAggregatedProduct, _, _, _ string) (int, error) {
@@ -55,12 +56,12 @@ func TestBasicDownload(t *testing.T) {
 	writer := &testWriter{nmCount: 15}
 
 	dl := NewDownloader(src, writer, DownloadOptions{
-		SelectedStart:     "2026-01-01",
-		SelectedEnd:       "2026-01-07",
-		PageSize:          5,
-		RateLimit:         3,
-		Burst:             3,
-		MaxPageRetries:    1,
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PageSize:           5,
+		RateLimit:          3,
+		Burst:              3,
+		MaxPageRetries:     1,
 		PageRetryBaseSleep: 10 * time.Millisecond,
 	})
 
@@ -85,11 +86,11 @@ func TestDryRun(t *testing.T) {
 	writer := &testWriter{}
 
 	dl := NewDownloader(src, writer, DownloadOptions{
-		SelectedStart:     "2026-01-01",
-		SelectedEnd:       "2026-01-07",
-		PageSize:          3,
-		DryRun:            true,
-		MaxPageRetries:    1,
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PageSize:           3,
+		DryRun:             true,
+		MaxPageRetries:     1,
 		PageRetryBaseSleep: 10 * time.Millisecond,
 	})
 
@@ -114,10 +115,10 @@ func TestSinglePage(t *testing.T) {
 	writer := &testWriter{}
 
 	dl := NewDownloader(src, writer, DownloadOptions{
-		SelectedStart:     "2026-01-01",
-		SelectedEnd:       "2026-01-07",
-		PageSize:          10, // larger than data
-		MaxPageRetries:    1,
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PageSize:           10, // larger than data
+		MaxPageRetries:     1,
 		PageRetryBaseSleep: 10 * time.Millisecond,
 	})
 
@@ -140,12 +141,12 @@ func TestEmptyResponse(t *testing.T) {
 
 	var progressMsgs []string
 	dl := NewDownloader(src, writer, DownloadOptions{
-		SelectedStart:     "2026-01-01",
-		SelectedEnd:       "2026-01-07",
-		PageSize:          10,
-		MaxPageRetries:    1,
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PageSize:           10,
+		MaxPageRetries:     1,
 		PageRetryBaseSleep: 10 * time.Millisecond,
-		OnProgress: func(msg string) { progressMsgs = append(progressMsgs, msg) },
+		OnProgress:         func(_, _ int, msg string) { progressMsgs = append(progressMsgs, msg) },
 	})
 
 	result, err := dl.Run(context.Background())
@@ -176,10 +177,10 @@ func TestContextCancel(t *testing.T) {
 	cancel() // cancel immediately
 
 	dl := NewDownloader(src, writer, DownloadOptions{
-		SelectedStart:     "2026-01-01",
-		SelectedEnd:       "2026-01-07",
-		PageSize:          5,
-		MaxPageRetries:    1,
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PageSize:           5,
+		MaxPageRetries:     1,
 		PageRetryBaseSleep: 10 * time.Millisecond,
 	})
 
@@ -202,12 +203,12 @@ func TestWithPastPeriod(t *testing.T) {
 
 	writer := &testWriter{}
 	dl := NewDownloader(decoratedSrc, writer, DownloadOptions{
-		SelectedStart:     "2026-01-01",
-		SelectedEnd:       "2026-01-07",
-		PastStart:         "2025-12-25",
-		PastEnd:           "2025-12-31",
-		PageSize:          10,
-		MaxPageRetries:    1,
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PastStart:          "2025-12-25",
+		PastEnd:            "2025-12-31",
+		PageSize:           10,
+		MaxPageRetries:     1,
 		PageRetryBaseSleep: 10 * time.Millisecond,
 	})
 
@@ -231,15 +232,15 @@ func TestWithPastPeriod(t *testing.T) {
 func TestResumeFromOffset(t *testing.T) {
 	src := &MockSource{ProductCount: 5, TotalPages: 4} // 20 total
 	writer := &testWriter{
-		count:   10,                                // 10 already in DB
+		count:   10, // 10 already in DB
 		nmCount: 20,
 	}
 
 	dl := NewDownloader(src, writer, DownloadOptions{
-		SelectedStart:     "2026-01-01",
-		SelectedEnd:       "2026-01-07",
-		PageSize:          5,
-		MaxPageRetries:    1,
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PageSize:           5,
+		MaxPageRetries:     1,
 		PageRetryBaseSleep: 10 * time.Millisecond,
 	})
 
@@ -261,10 +262,10 @@ func TestSaveErrorStops(t *testing.T) {
 	}
 
 	dl := NewDownloader(src, writer, DownloadOptions{
-		SelectedStart:     "2026-01-01",
-		SelectedEnd:       "2026-01-07",
-		PageSize:          5,
-		MaxPageRetries:    1,
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PageSize:           5,
+		MaxPageRetries:     1,
 		PageRetryBaseSleep: 10 * time.Millisecond,
 	})
 
@@ -286,10 +287,10 @@ func TestAPIErrorExhausted(t *testing.T) {
 	writer := &testWriter{}
 
 	dl := NewDownloader(src, writer, DownloadOptions{
-		SelectedStart:     "2026-01-01",
-		SelectedEnd:       "2026-01-07",
-		PageSize:          5,
-		MaxPageRetries:    2,
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PageSize:           5,
+		MaxPageRetries:     2,
 		PageRetryBaseSleep: 10 * time.Millisecond,
 	})
 
@@ -314,4 +315,121 @@ type capturingSource struct {
 func (s *capturingSource) LoadAggregatedPage(ctx context.Context, req wb.FunnelAggregatedRequest) ([]wb.FunnelAggregatedProduct, string, error) {
 	s.onCall(req)
 	return s.inner.LoadAggregatedPage(ctx, req)
+}
+
+// TestProgressPassesPageAndTotal verifies OnProgress receives page number
+// and estimated pages total ([N/M % ETA] префикс dllog).
+func TestProgressPassesPageAndTotal(t *testing.T) {
+	src := &MockSource{ProductCount: 5, TotalPages: 3}
+	writer := &testWriter{nmCount: 10} // оценка: 10 товаров / 5 на страницу = 2 страницы
+
+	type call struct{ cur, total int }
+	var calls []call
+	var pageMsgs int
+	dl := NewDownloader(src, writer, DownloadOptions{
+		SelectedStart:      "2026-01-01",
+		SelectedEnd:        "2026-01-07",
+		PageSize:           5,
+		MaxPageRetries:     1,
+		PageRetryBaseSleep: 10 * time.Millisecond,
+		OnProgress: func(cur, total int, msg string) {
+			calls = append(calls, call{cur, total})
+			if strings.HasPrefix(msg, "📄") {
+				pageMsgs++
+			}
+		},
+	})
+
+	if _, err := dl.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// «📄 Page N» печатается ПЕРЕД запросом: 3 страницы данных + 1 холостая
+	// (за ней «✅ All data loaded») = 4 строки.
+	if pageMsgs != 4 {
+		t.Fatalf("page messages = %d, want 4 (3 данных + 1 холостая)", pageMsgs)
+	}
+	// Оценка страниц: ceil(10/5) = 2 (реальных 3 — оценка лишь для ETA).
+	// Проверяем только строки страниц; инфо-строки (период) идут cur=0, total=0.
+	for _, c := range calls {
+		if c.cur > 0 && c.total != 2 {
+			t.Errorf("page call total = %d, want 2 (estimate ceil(10/5))", c.total)
+		}
+	}
+	// Инфо-строки (период) идут с cur=0.
+	if len(calls) == 0 || calls[0].cur != 0 {
+		t.Errorf("первое сообщение должно быть инфо-строкой (cur=0): %+v", calls[0])
+	}
+}
+
+// TestBudgetModeExhausted verifies budget-mode: страница воюет циклами попыток
+// до исхода бюджета, после чего — честная ошибка «page budget exhausted»
+// (offset-resume продолжит со сохранённой страницы при следующем запуске).
+func TestBudgetModeExhausted(t *testing.T) {
+	oldPause := pageRetryCyclePause
+	pageRetryCyclePause = 1 * time.Millisecond
+	defer func() { pageRetryCyclePause = oldPause }()
+
+	src := &errorSource{}
+	writer := &testWriter{}
+
+	var progressMsgs []string
+	dl := NewDownloader(src, writer, DownloadOptions{
+		SelectedStart:   "2026-01-01",
+		SelectedEnd:     "2026-01-07",
+		PageSize:        5,
+		PageRetryBudget: 30 * time.Millisecond,
+		OnProgress:      func(_, _ int, msg string) { progressMsgs = append(progressMsgs, msg) },
+	})
+
+	start := time.Now()
+	result, err := dl.Run(context.Background())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Run should return error when page budget exhausted")
+	}
+	if !strings.Contains(err.Error(), "page budget") {
+		t.Errorf("error = %v, want 'page budget' exhausted", err)
+	}
+	if result.PagesLoaded != 0 {
+		t.Errorf("expected 0 pages on budget exhaustion, got %d", result.PagesLoaded)
+	}
+	if result.Errors != 1 {
+		t.Errorf("expected 1 error, got %d", result.Errors)
+	}
+	if elapsed < 30*time.Millisecond {
+		t.Errorf("elapsed = %v, fought less than the budget", elapsed)
+	}
+	cycles := 0
+	for _, msg := range progressMsgs {
+		if strings.Contains(msg, "page-budget") {
+			cycles++
+		}
+	}
+	if cycles == 0 {
+		t.Errorf("expected page-budget progress messages, got: %v", progressMsgs)
+	}
+}
+
+// TestBudgetModeSuccess verifies that budget-mode passes the happy path
+// (первая попытка успешна — бюджет не тратится).
+func TestBudgetModeSuccess(t *testing.T) {
+	src := &MockSource{ProductCount: 5, TotalPages: 2}
+	writer := &testWriter{nmCount: 10}
+
+	dl := NewDownloader(src, writer, DownloadOptions{
+		SelectedStart:   "2026-01-01",
+		SelectedEnd:     "2026-01-07",
+		PageSize:        5,
+		PageRetryBudget: 10 * time.Second,
+	})
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.PagesLoaded != 2 || result.ProductsLoaded != 10 {
+		t.Errorf("pages/products = %d/%d, want 2/10", result.PagesLoaded, result.ProductsLoaded)
+	}
 }
