@@ -319,3 +319,39 @@ func Test429RetryEpsilon_DefaultAndSetter(t *testing.T) {
 		t.Errorf("ε после игнорируемого сеттера = %v, want 300ms", client.retry429Epsilon)
 	}
 }
+
+// Test429HintRetry_SkipsLocalPacing: повтор после ЖИВОЙ подсказки сервера не
+// проходит локальный pacing (limiter.Wait + jitter-гард) — иначе выстрел
+// сдвигается на 0,5–2с мимо раздачи токена (замер 16.10: интервалы попыток
+// 20/21с при сне «подсказка+ε» 18,2/19,2с — лишнее ждал лимитер).
+//
+// Ловушка именно пейсинга: лимитер 12/мин burst 1 — первую попытку берёт
+// единственный токен, и без фикса повтор ждал бы следующий до ~5с.
+func Test429HintRetry_SkipsLocalPacing(t *testing.T) {
+	mockHTTP := newMockHTTP("1") // 429 (hint 1с) → 200
+	client := New("test_key")
+	client.SetHTTPClient(mockHTTP)
+	client.Set429RetryEpsilon(100 * time.Millisecond)
+	// lastRequestTime в прошлом: изолируем лимитер от jitter-гарда (он тоже
+	// часть пейсинга, но недетерминирован случайным джиттером).
+	client.mu.Lock()
+	client.lastRequestTime["my_tool"] = time.Now().Add(-time.Minute)
+	client.mu.Unlock()
+
+	start := time.Now()
+	ctx := context.Background()
+	var result []map[string]interface{}
+	_ = client.Get(ctx, "my_tool", "https://api.example.com", 12, 1, "/test", nil, &result)
+	elapsed := time.Since(start)
+
+	if got := mockHTTP.requestCount(); got != 2 {
+		t.Errorf("request count = %d, want 2 (429 + retry)", got)
+	}
+	if elapsed < 1*time.Second {
+		t.Errorf("elapsed = %v, want ≥ 1с (сон «подсказка 1с + ε»)", elapsed)
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("elapsed = %v, повтор ждал локальный pacing (лимитер 12/мин burst 1 "+
+			"держал бы токен до ~5с), want < 3с", elapsed)
+	}
+}

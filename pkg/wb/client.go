@@ -434,26 +434,39 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 	minInterval := time.Duration(float64(time.Minute) / float64(rateLimit)) // 3/min → 20s
 	jitterRange := minInterval / 2                                          // 0–10s for 3/min
 
-	// Retry loop
+	// Retry loop.
+	//
+	// hintDriven — повтор после живой подсказки сервера (сон «X-RateLimit-Retry
+	// + ε» уже выдержан в 429-ветке): локальный pacing (limiter.Wait + jitter-гард)
+	// пропускаем. Он добавляет 0,5–2с поверх подсказки (цикл попыток 18–19,5с
+	// короче 20-секундной раздачи токена → ведро пустеет → limiter ждёт; замер
+	// 16.10: интервалы попыток 20/21с при сне 18,2/19,2с) и сдвигает выстрел
+	// мимо раздачи. Пейсинг такого повтора делает сам сервер: до выстрела
+	// выдержано ≥ hint секунд.
+	hintDriven := false
 	for i := 0; i < c.retryAttempts; i++ {
-		if err := limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait: %w", err)
-		}
+		if hintDriven {
+			hintDriven = false
+		} else {
+			if err := limiter.Wait(ctx); err != nil {
+				return fmt.Errorf("rate limiter wait: %w", err)
+			}
 
-		// Additional delay: ensure minimum interval since last HTTP request
-		c.mu.RLock()
-		lastRequestTime := c.lastRequestTime[resolvedID]
-		c.mu.RUnlock()
+			// Additional delay: ensure minimum interval since last HTTP request
+			c.mu.RLock()
+			lastRequestTime := c.lastRequestTime[resolvedID]
+			c.mu.RUnlock()
 
-		if !lastRequestTime.IsZero() {
-			sinceLastReq := time.Since(lastRequestTime)
-			effectiveInterval := minInterval + time.Duration(rand.Int64N(int64(jitterRange)))
-			if sinceLastReq < effectiveInterval {
-				additionalWait := effectiveInterval - sinceLastReq
-				select {
-				case <-time.After(additionalWait):
-				case <-ctx.Done():
-					return ctx.Err()
+			if !lastRequestTime.IsZero() {
+				sinceLastReq := time.Since(lastRequestTime)
+				effectiveInterval := minInterval + time.Duration(rand.Int64N(int64(jitterRange)))
+				if sinceLastReq < effectiveInterval {
+					additionalWait := effectiveInterval - sinceLastReq
+					select {
+					case <-time.After(additionalWait):
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 				}
 			}
 		}
@@ -539,6 +552,10 @@ func (c *Client) doRequest(ctx context.Context, toolID string, rateLimit int, bu
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(waitDur):
+				// Выжали подсказку: следующий выстрел — в её момент, локальный
+				// pacing пропускаем (см. hintDriven наверху петли). Без подсказки
+				// (serverRetrySec=0, сон был по apiFloor) pacing остаётся.
+				hintDriven = serverRetrySec > 0
 				continue
 			}
 		}
