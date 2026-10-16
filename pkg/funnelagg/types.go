@@ -28,7 +28,7 @@ type Source interface {
 // Writer is the persistence interface for aggregated funnel data.
 // Declared here (consumer), implemented by pkg/storage/sqlite and pkg/storage/postgres (adapters).
 //
-// ISP-focused: only 3 methods — exactly what Downloader.Run() calls.
+// ISP-focused: only 4 methods — exactly what Downloader.Run() calls.
 type Writer interface {
 	// SaveFunnelAggregatedBatch saves a batch of aggregated products.
 	// Returns count of products actually saved.
@@ -38,8 +38,17 @@ type Writer interface {
 	// Used for offset resume: skip already-downloaded pages.
 	GetFunnelAggregatedCount(ctx context.Context, periodStart, periodEnd string) (int, error)
 
+	// GetHistoryProductCount returns the MAX product count among the last 3
+	// completed runs of the SAME window length, strictly older than currentEnd.
+	// История самой воронки — лучший оценщик тотала [N/M % ETA]: состав отчёта
+	// шире orders/sales (переходы в карточку, корзина), а ночь-к-ночи стабилен.
+	// MAX, а не последний прогон: незавершённый прогон (offset-resume после
+	// падения) не должен занижать оценку. 0 = истории такой длины окна нет.
+	GetHistoryProductCount(ctx context.Context, windowDays int, currentEnd string) (int, error)
+
 	// GetDistinctNmIDCount returns count of distinct nmIDs (from sales table).
-	// Used for progress estimation (best-effort — may return 0 if no sales data).
+	// Fallback оценки прогресса, когда истории воронки нет (best-effort,
+	// may return 0 if no sales data) — систематически ЗАНИЖАЕТ тотал.
 	GetDistinctNmIDCount(ctx context.Context) (int, error)
 }
 

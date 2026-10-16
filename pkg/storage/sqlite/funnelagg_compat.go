@@ -8,5 +8,6 @@ import (
 // Methods already exist on SQLiteSalesRepository with matching signatures:
 //   - SaveFunnelAggregatedBatch (funnel_agg.go:174)
 //   - GetFunnelAggregatedCount  (funnel_agg.go:347)
+//   - GetHistoryProductCount     (funnel_agg.go — own-run history estimate)
 //   - GetDistinctNmIDCount       (promotion_repo.go — queries sales table)
 var _ funnelagg.Writer = (*SQLiteSalesRepository)(nil)

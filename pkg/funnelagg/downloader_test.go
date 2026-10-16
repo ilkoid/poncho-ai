@@ -15,6 +15,7 @@ type testWriter struct {
 	saved   int
 	count   int // GetFunnelAggregatedCount result
 	nmCount int // GetDistinctNmIDCount result
+	history int // GetHistoryProductCount result (0 = истории нет)
 	saveErr error
 	batches [][]wb.FunnelAggregatedProduct
 }
@@ -30,6 +31,10 @@ func (w *testWriter) SaveFunnelAggregatedBatch(_ context.Context, products []wb.
 
 func (w *testWriter) GetFunnelAggregatedCount(_ context.Context, _, _ string) (int, error) {
 	return w.count, nil
+}
+
+func (w *testWriter) GetHistoryProductCount(_ context.Context, _ int, _ string) (int, error) {
+	return w.history, nil
 }
 
 func (w *testWriter) GetDistinctNmIDCount(_ context.Context) (int, error) {
@@ -359,6 +364,55 @@ func TestProgressPassesPageAndTotal(t *testing.T) {
 	// Инфо-строки (период) идут с cur=0.
 	if len(calls) == 0 || calls[0].cur != 0 {
 		t.Errorf("первое сообщение должно быть инфо-строкой (cur=0): %+v", calls[0])
+	}
+}
+
+// TestProgressEstimate_HistoryWinsOverSales: оценка тотала [N/M] берётся из
+// собственной истории воронки (последние прогонЫ той же длины окна), а не из
+// distinct sales — состав отчёта шире orders/sales (переходы, корзина), sales
+// занижал в 1,8–2,5 раза (инцидент 16.10: [15/9 166%], ночь — 40% под видом 98,4%).
+func TestProgressEstimate_HistoryWinsOverSales(t *testing.T) {
+	src := &emptySource{}
+	writer := &testWriter{history: 20000, nmCount: 8130} // история важнее sales
+
+	var pageTotal int
+	dl := NewDownloader(src, writer, DownloadOptions{
+		SelectedStart: "2026-10-10",
+		SelectedEnd:   "2026-10-16",
+		PageSize:      1000,
+		OnProgress: func(cur, total int, msg string) {
+			if cur > 0 && strings.HasPrefix(msg, "📄") && pageTotal == 0 {
+				pageTotal = total
+			}
+		},
+	})
+	if _, err := dl.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := (20000 + 1000 - 1) / 1000; pageTotal != want {
+		t.Errorf("page total = %d, want %d (история 20000, а не sales 8130)", pageTotal, want)
+	}
+}
+
+// TestPeriodWindowDays: длина окна для сверки с историей; мусорные даты → false.
+func TestPeriodWindowDays(t *testing.T) {
+	cases := []struct {
+		start, end string
+		want       int
+		ok         bool
+	}{
+		{"2026-10-09", "2026-10-15", 6, true},  // прод days=7
+		{"2026-10-15", "2026-10-15", 0, true},  // тест days=1 (истории 0-дневных нет → fallback)
+		{"2026-10-15", "2026-10-14", 0, false}, // end < start
+		{"", "2026-10-15", 0, false},           // пустая дата
+		{"15.10.2026", "16.10.2026", 0, false}, // не YYYY-MM-DD
+	}
+	for _, c := range cases {
+		got, ok := periodWindowDays(c.start, c.end)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Errorf("periodWindowDays(%q, %q) = (%d, %v), want (%d, %v)",
+				c.start, c.end, got, ok, c.want, c.ok)
+		}
 	}
 }
 

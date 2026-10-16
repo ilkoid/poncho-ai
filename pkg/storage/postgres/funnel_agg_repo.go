@@ -50,6 +50,26 @@ func (r *PgFunnelAggRepo) GetDistinctNmIDCount(ctx context.Context) (int, error)
 	return count, err
 }
 
+// GetHistoryProductCount возвращает MAX строк среди последних 3 завершённых
+// прогонов той же длины окна (windowDays = end−start в днях), строго раньше
+// currentEnd — оценка тотала [N/M % ETA] по собственной истории воронки.
+// MAX, а не последний прогон: незавершённый прогон (offset-resume после
+// падения) не должен занижать оценку. 0 = истории такой длины окна нет.
+func (r *PgFunnelAggRepo) GetHistoryProductCount(ctx context.Context, windowDays int, currentEnd string) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX(cnt), 0) FROM (
+			SELECT COUNT(*) AS cnt
+			FROM funnel_metrics_aggregated
+			WHERE period_start <> '' AND period_end <> '' AND period_end < $1
+			  AND (period_end::date - period_start::date) = $2
+			GROUP BY period_start
+			ORDER BY period_start DESC
+			LIMIT 3
+		) runs`, currentEnd, windowDays).Scan(&count)
+	return count, err
+}
+
 const (
 	pgFunnelAggChunkSize = 200
 

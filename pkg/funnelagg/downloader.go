@@ -36,10 +36,23 @@ func NewDownloader(source Source, writer Writer, opts DownloadOptions) *Download
 	return &Downloader{source: source, writer: writer, opts: opts}
 }
 
+// periodWindowDays возвращает длину окна периода в днях (end−start) для сверки
+// с историей прогонов GetHistoryProductCount. false = даты не парсятся или
+// end < start (историю не спрашиваем, сразу fallback).
+func periodWindowDays(start, end string) (int, bool) {
+	s, errS := time.Parse("2006-01-02", start)
+	e, errE := time.Parse("2006-01-02", end)
+	if errS != nil || errE != nil || e.Before(s) {
+		return 0, false
+	}
+	return int(e.Sub(s).Hours() / 24), true
+}
+
 // Run executes the full aggregated funnel download pipeline.
 //
 // Algorithm:
-//  1. Estimate progress via writer.GetDistinctNmIDCount() (best-effort).
+//  1. Estimate progress via writer.GetHistoryProductCount() (fallback:
+//     GetDistinctNmIDCount — best-effort).
 //  2. Offset resume: skip already-downloaded pages via writer.GetFunnelAggregatedCount().
 //  3. Pagination loop: offset += pageSize, page retry on API errors.
 //  4. Exit on empty response OR len(products) < pageSize.
@@ -47,14 +60,25 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 	start := time.Now()
 	result := &DownloadResult{}
 
-	// Progress estimation (best-effort — may be 0 if no sales data).
+	// Прогресс-оценка тотала (best-effort). Лучший источник — собственная
+	// история воронки: MAX по последним 3 завершённым прогонам той же длины
+	// окна (состав отчёта шире orders/sales — переходы в карточку, корзина;
+	// ночь-к-ночи стабилен ±0,01%). Fallback — distinct nmID из sales
+	// (систематически занижает, но лучше линейного счёта). API тотал не
+	// отдаёт (11-analytics.yaml: data = products + currency).
 	totalProducts := 0
-	if count, err := d.writer.GetDistinctNmIDCount(ctx); err == nil && count > 0 {
-		totalProducts = count
+	if windowDays, ok := periodWindowDays(d.opts.SelectedStart, d.opts.SelectedEnd); ok {
+		if c, err := d.writer.GetHistoryProductCount(ctx, windowDays, d.opts.SelectedEnd); err == nil && c > 0 {
+			totalProducts = c
+		}
 	}
-	// Оценка числа страниц для [N/M % ETA] в префиксе dllog. API тотал не
-	// отдаёт (11-analytics.yaml: data = products + currency), единственный
-	// источник — distinct nmID из sales; на пустой БД оценка 0 = линейный счёт.
+	if totalProducts == 0 {
+		if count, err := d.writer.GetDistinctNmIDCount(ctx); err == nil && count > 0 {
+			totalProducts = count
+		}
+	}
+	// Оценка числа страниц для [N/M % ETA] в префиксе dllog; на пустой БД
+	// оценка 0 = линейный счёт.
 	pagesTotal := 0
 	if totalProducts > 0 && d.opts.PageSize > 0 {
 		pagesTotal = (totalProducts + d.opts.PageSize - 1) / d.opts.PageSize

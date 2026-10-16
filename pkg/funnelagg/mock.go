@@ -39,6 +39,10 @@ func (w *DiscardWriter) GetFunnelAggregatedCount(_ context.Context, _, _ string)
 	return 0, nil // no existing data in discard mode
 }
 
+func (w *DiscardWriter) GetHistoryProductCount(_ context.Context, _ int, _ string) (int, error) {
+	return 0, nil // no history in discard mode
+}
+
 func (w *DiscardWriter) GetDistinctNmIDCount(_ context.Context) (int, error) {
 	return 0, nil // no sales data in discard mode
 }

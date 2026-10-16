@@ -356,6 +356,33 @@ func (r *SQLiteSalesRepository) GetFunnelAggregatedCount(
 	return count, err
 }
 
+// GetHistoryProductCount возвращает MAX строк среди последних 3 завершённых
+// прогонов той же длины окна (windowDays = end−start в днях), строго раньше
+// currentEnd — оценка тотала [N/M % ETA] по собственной истории воронки.
+// MAX, а не последний прогон: незавершённый прогон (offset-resume после
+// падения) не должен занижать оценку. 0 = истории такой длины окна нет.
+func (r *SQLiteSalesRepository) GetHistoryProductCount(
+	ctx context.Context,
+	windowDays int,
+	currentEnd string,
+) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(cnt), 0) FROM (
+			SELECT COUNT(*) AS cnt
+			FROM funnel_metrics_aggregated
+			WHERE period_start <> '' AND period_end <> '' AND period_end < ?
+			  AND CAST(julianday(period_end) - julianday(period_start) AS INTEGER) = ?
+			GROUP BY period_start
+			ORDER BY period_start DESC
+			LIMIT 3
+		) runs`, currentEnd, windowDays).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("history product count: %w", err)
+	}
+	return count, nil
+}
+
 // GetFunnelAggregatedByProduct возвращает данные по конкретному товару.
 func (r *SQLiteSalesRepository) GetFunnelAggregatedByProduct(
 	ctx context.Context,
