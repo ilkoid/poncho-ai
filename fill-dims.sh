@@ -12,7 +12,7 @@
 # Повторный запуск идемпотентен.
 #
 # Usage:  bash fill-dims.sh [конфиг]     (default: config-years-25-26.yaml)
-# Cron:   30 5 * * * bash /Users/ilkoid/dev/poncho-ai/fill-dims.sh >> /Users/ilkoid/dev/poncho-ai/logs/cron-fill-dims.log 2>&1
+# Cron:   30 2 * * * bash /Users/ilkoid/dev/poncho-ai/fill-dims.sh >> /Users/ilkoid/dev/poncho-ai/logs/cron-fill-dims.log 2>&1
 
 set -euo pipefail
 

@@ -290,39 +290,19 @@ maint region-sales-agg
 run go run "$PONCHO/cmd/data-analyzers/build-region-sales-daily" --config "$C/region-sales-daily-PG.yaml"
 
 ###############################################################################
-#  Phase 5: Advertising
+#  Phase 5: Advertising → ПЕРЕНЕСЕНО в download-all-promo-v2.sh (крон 10:00) 17.10:
+#  campaigns, promotion, funnel-agg, funnel-csv, search-vis — штормовые ручки
+#  аг-рекламы/аг-аналитики вынесены в дневной прогон: аг-адверт днём спокойнее
+#  (замер 15.10: 14×429 в полдень против 1816 ночью), окно 10:00–16:00 свободно
+#  от пересечений с Mac (его промо 05:30 финишем ~08:50).
 ###############################################################################
 
-log "── Phase 5: Advertising ──"
-
-maint campaigns
-run go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" --config "$C/download-wb-campaigns-v2-PG.yaml" --backend postgres
-# ВКЛЮЧЕНО ОБРАТНО 16.10 (было выкл 12.10 «до локальной обкатки»): обкатка
-# завершена — смоуки 16.10 на живом шторме (ε110/retries 10/шторм-флаг/rescue,
-# 39м58с против 1ч09м, exit 0). Профиль = оттестированный Mac-профиль.
-maint promotion
-run go run "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" --config "$C/download-wb-promotion-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
-
 ###############################################################################
-#  Phase 6: Analytics
+#  Phase 6: Catalog analytics — не штормовые методы (их per-method ведра
+#  внешними сервисами не дренятся)
 ###############################################################################
 
-log "── Phase 6: Analytics ──"
-
-#run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-v2" --config "$C/download-wb-funnel-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
-maint funnel-agg
-run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
-# Самодолив дырок funnel-агрегатов: ночное окно, убитое 429-штормом, не
-# самолечется — здесь находим отсутствующие/частичные окна за 2 недели и
-# перекачиваем явными датами. Нефатально для прогона.
-# ВЫКЛЮЧЕНО 16.10 (паритет с Mac-профилем, там выкл с 19.09): на VPS2 вариант
-# без бюджета съел 19,5ч прогона (ночь 14-15.10); с схемой «подсказка+ε» дыр
-# почти не будет, разовый долив при необходимости.
-#bash "$PONCHO/refill-funnel-holes.sh" || log "⚠️  refill-funnel-holes: сбой (нефатально)"
-maint funnel-csv
-run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" --config "$C/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
-maint search-vis
-run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+log "── Phase 6: Catalog analytics ──"
 maint penalties
 run go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$C/download-wb-penalties-v2-PG.yaml" --backend postgres
 maint item-rating

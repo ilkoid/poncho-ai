@@ -21,7 +21,7 @@
 # По субботам — Фаза 8: REINDEX CONCURRENTLY тяжёлых таблиц (без локов).
 #
 # Прогон вручную на Mac: запускай под caffeinate, чтобы сон Mac не рвал длинные
-# фазы (search-vis качает ~1.5ч): caffeinate -is bash download-all.sh
+# фазы (прогон ~50 мин): caffeinate -is bash download-all.sh
 
 export PGHOST="${PGHOST:-192.168.10.7}"
 export PGPORT="${PGPORT:-15432}"
@@ -159,41 +159,15 @@ run go run "$PONCHO/cmd/data-downloaders/download-wb-fbs-orders-v2" --config "$C
 maint region-sales-agg
 run go run "$PONCHO/cmd/data-analyzers/build-region-sales-daily" --config "$C/region-sales-daily-PG.yaml"
 
-# ── Phase 5: Advertising ──
-echo "── Phase 5: Advertising ──"
+# ── Phase 5: Advertising → ПЕРЕНЕСЕНО в download-all-promo.sh (крон 05:30) 17.10:
+#    campaigns, promotion, funnel-agg, funnel-csv, search-vis — штормовые ручки
+#    аг-рекламы/аг-аналитики вынесены в утренний прогон после волн финиширования
+#    авто-кампаний (массовый флип 02:30–02:45, вторая волна ~05:15) — тощая
+#    вселенная пар + спокойное окно ведер до старта внешних сервисов (~08:00). ──
 
-maint campaigns
-run go run "$PONCHO/cmd/data-downloaders/download-wb-campaigns-v2" --config "$C/download-wb-campaigns-v2-PG.yaml" --backend postgres
-maint promotion
-run go run "$PONCHO/cmd/data-downloaders/download-wb-promotion-v2" --config "$C/download-wb-promotion-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
-
-# ── Phase 6: Analytics ──
-echo "── Phase 6: Analytics ──"
-
-#run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-v2" --config "$C/download-wb-funnel-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
-maint funnel-agg
-run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-agg-v2" --config "$C/download-wb-funnel-agg-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
-# Самодолив дырок funnel-агрегатов: ночное окно, убитое 429-штормом, не
-# самолечется — здесь находим отсутствующие/частичные окна за 2 недели и
-# перекачиваем явными датами. Нефатально для прогона; лог: logs/funnel-holes-*.log
-#bash "$PONCHO/refill-funnel-holes.sh" || echo "⚠️  refill-funnel-holes: сбой (нефатально)"
-maint funnel-csv
-run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" --config "$C/download-wb-funnel-csv-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
-maint search-vis
-# Отключено 21.09.2026: шторма 429 на /product/search-texts каждую ночь с 15.09 —
-# ведро лимитов персчётное на аккаунт (~1/min фактической ёмкости), а VPS2 своим
-# download-all-v2.sh (~02:30) качает ту же ручку в пересекающемся окне: 2 машины ×
-# 1/min = постоянный дефицит для обеих. Владелец ручки — VPS2; при необходимости
-# локальный разовый сбор: go run ./cmd/data-downloaders/download-wb-search-vis-v2
-#   --config cmd/.configs/download-all/download-wb-search-vis-v2-PG.yaml --backend postgres
-# ВКЛЮЧЕНО ОБРАТНО 12.10.2026: окна машин больше не пересекаются (VPS2 крон 00:05
-# завершается ~01:25, Mac стартует 04:30) — исходный конфликт одного аккаунт-ведра
-# снят; писать стали в РАЗНЫЕ базы (VPS2 — своя, Mac — локальная). Риск внешнего
-# дренажа ведра остаётся — адаптив + rescue (d782fbc) переживают, смотреть ночи.
-# ВКЛЮЧЕНО ОБРАТНО 16.10 (было ВЫКЛ 15.10 из-за 429-шторма): переведён на схему
-# «подсказка+ε» (wb.retry_attempts 10 + retry_epsilon_ms из yaml, лимиты ровно
-# сваггер 3/мин) + rescue-долив остаётся страховкой.
-run go run "$PONCHO/cmd/data-downloaders/download-wb-search-vis-v2" --config "$C/download-wb-search-vis-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# ── Phase 6: Catalog analytics — не штормовые методы (их per-method ведра
+#    внешними сервисами не дренятся) ──
+echo "── Phase 6: Catalog analytics ──"
 maint penalties
 run go run "$PONCHO/cmd/data-downloaders/download-wb-penalties-v2" --config "$C/download-wb-penalties-v2-PG.yaml" --backend postgres
 maint item-rating

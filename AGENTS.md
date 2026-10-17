@@ -10,10 +10,13 @@
 - Build all cmd utilities: `go build ./cmd/...`
 
 ## Pipeline Commands That Matter
-- Full WB refresh: `bash download-all.sh [days]`
-  - Uses lock file: `.download-all.lock`
-  - Writes to: `/var/db/wb-sales.db`
-  - Phase order in script is intentional: Catalog → Feedbacks → Sales & Revenue → Stock & Logistics → Advertising → Analytics
+- Full WB refresh — РАЗДЕЛЁН (17.10) на ночной основной + дневной промо-блок на ОБЕИХ машинах:
+  - Мак: fill-dims 02:30 → `download-all.sh` 03:00 (основной, ~50 мин: Catalog → Feedbacks → Sales & Revenue → Stock & Logistics → Catalog analytics (penalties/item-rating/whremains) + ANALYZE; суббота REINDEX) → `download-all-promo.sh` 05:30 через `run-download-all-promo-daily.sh` (campaigns, promotion, funnel-agg, funnel-csv, search-vis + ANALYZE, ~3ч20м)
+  - VPS2: `download-all-v2.sh` 00:05 (основной, те же фазы) → `download-all-promo-v2.sh` 10:00 (тот же промо-набор; лог `download-all-promo-v2-*.log`, TG_TAG «promo», heartbeat-письмо)
+  - Порядок фаз промо не менять: campaigns → promotion (зависимость: promotion читает campaign_products свежего campaigns) → funnel-agg → funnel-csv → search-vis
+  - Слоты подобраны под 429-шторм внешних сервисов (купленные интеграции с нашим ключом, активны ~08:00–24:00): Мак 05:30 = тощая вселенная пар (после волн флипов авто-кампаний 02:30–02:45 и ~05:15) + спокойное окно аг-контентаналитикс; VPS2 10:00 = спокойнее аг-адверт днём
+  - Lock-файлы: основной `.download-all.lock` (его читают fetch-fbs-acceptance и др.), промо `.download-all-promo.lock` (протухший >4ч удаляется)
+  - Writes to: PostgreSQL (`wb_data_prod`); `bash download-all.sh [days]` — ручной запуск основного блока
 - Daily VPS pipeline: `run-daily-analytics.sh`
   - Expects prebuilt binaries in `bin/`
   - Loads env from `.env`
