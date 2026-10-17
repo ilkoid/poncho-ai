@@ -25,7 +25,11 @@ promotion_v2:
   skip_min_bids: false
   changed_days: 0  # 0 = auto-detect from last run, >0 = manual N-day window
   calendar_days_past: 7
-  calendar_days_future: 7
+  # +30 дней вперёд (было 7, 17.10): репрайсеру нужен запас ДО старта акции —
+  # довести цену трендом вместо разового демпинга. Стоимость ~0: акции почти
+  # все type=auto (noms-фаза их скипает, 422), details батчатся по 100 ID.
+  # Dev-конфиг утилиты уже 30/30; PG-схема — upsert по promotion_id.
+  calendar_days_future: 30
   rate_limits:
     normquery: 300             # list/get-minus: swagger 5/sec = 300/min (get-bids — отдельный ключ ниже)
     normquery_burst: 5

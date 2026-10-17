@@ -343,6 +343,10 @@ func (c *Client) GetCalendarPromotions(ctx context.Context, start, end string, a
 	params.Set("startDateTime", start)
 	params.Set("endDateTime", end)
 	params.Set("allPromo", fmt.Sprintf("%t", allPromo))
+	// Явный limit=максимум (08-promotion.yaml:6621): серверный дефолт не
+	// документирован, при широком окне календаря хвост акций режется молча —
+	// в ответе нет поля total, обрезку не детектить.
+	params.Set("limit", "1000")
 	var resp CalendarPromotionsResponse
 	err := c.getWithKey(ctx, "calendar_promotions", calendarEndpoint, rateLimit, burst, "/api/v1/calendar/promotions", params, c.calendarKey, &resp)
 	if err != nil {
