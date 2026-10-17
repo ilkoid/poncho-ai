@@ -9,6 +9,14 @@ _*/
 # ilkoid.sh — local launcher; carries WB API keys via export (secrets)
 ilkoid.sh
 
+# VPS2 machine-local launchers (живут мимо репо; ключи/env — только из ~/.bashrc)
+fix-dims.sh
+download-all-pg.sh
+backup-stocks-sqlite.sh
+redownload-failed.sh
+run-readiness-cron.sh
+runcheck.sh
+
 # Standard Go ignores
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
