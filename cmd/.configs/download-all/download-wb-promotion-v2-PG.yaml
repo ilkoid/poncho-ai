@@ -16,8 +16,15 @@ promotion_v2:
   db_path: "/var/db/wb-sales.db"
   days: 3
   statuses: [9]
-  skip_bids: true
+  # ВКЛ постоянно (решение 17.10: собирать bids на ОБЕИХ машинах — сырьё репрайсера):
+  # v2 /api/advert/v2/adverts (живой, НЕ депрекирован; 300/мин=5/сек сваггер, батчи по 50)
+  # → campaign_bids. VPS2 был заморожен с 17.09 (skip_bids true в коммите) —
+  # этот коммит возвращает сборку и там.
+  skip_bids: false
   skip_normquery: false
+  # ОСТАЁТСЯ ВЫКЛ: ручка /api/advert/v0/bids/recommendations — вызов на КАЖДУЮ пару
+  # (nm, advert): у нас 16 303 пары при лимите 5 req/min ≈ 54 часа. Не ночная фаза;
+  # осмысленно только сэмплированием по избранным кампаниям (будущее).
   skip_recommendations: true
   skip_finance: false
   skip_calendar: false
