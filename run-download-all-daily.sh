@@ -1,14 +1,12 @@
 #!/bin/bash
 # Ночной cron-прогон download-all.sh в ЛОКАЛЬНЫЙ PostgreSQL Mac Studio.
 #
-# Создан 2026-10-11, пока основной PG (192.168.10.7:15432) недоступен из локации.
-# Локальный сервер: brew postgresql@18 (launchd, `brew services`), 127.0.0.1:5432,
-# scram по TCP; PGHOST/PGPORT заданы в .env — download-all.sh подхватит их сам.
-#
-# Когда вернёмся на основной сервер:
-#   1. закомментировать export PGHOST/PGPORT в .env (блок «Локальный PG на Mac Studio»);
-#   2. закомментировать строку run-download-all-daily.sh в crontab (crontab -e);
-#   3. догнать данные на основном сервере повторным прогоном download-all с окном дней.
+# Создан 2026-10-11 при переезде с PG 192.168.10.7:15432; с 21.10 локальная база —
+# ОСНОВНАЯ и после возврата сети 192.168.10.x: загрузка в .7 не возобновляется,
+# прежние rollback-шаги (комментировать PGHOST/PGPORT в .env и строку в crontab)
+# НЕ выполнять. Локальный сервер: brew postgresql@18 (launchd, `brew services`),
+# 127.0.0.1:5432, scram по TCP; PGHOST/PGPORT заданы в .env — download-all.sh
+# подхватит их сам.
 #
 # Отличия от ручного запуска: PATH для go/psql (в cron его нет), dated-лог в logs/,
 # caffeinate от сна Mac, ротация логов старше 30 дней.

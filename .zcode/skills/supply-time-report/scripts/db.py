@@ -21,10 +21,11 @@ from psycopg2.extras import RealDictCursor
 # Канонический источник секретов проекта (см. AGENTS.md, раздел ".env").
 ENV_FILE = "/Users/ilkoid/dev/poncho-ai/.env"
 
-# Дефолты совпадают с pkg/config/pgconfig.go:187-193.
+# Дефолты совпадают с pkg/config/pgconfig.go (BuildPgDSN): localhost:5432.
+# С 2026-10-11 основная база — локальный PG Mac Studio; 192.168.10.7 не используется.
 DEFAULTS = {
-    "PGHOST": "192.168.10.7",
-    "PGPORT": "15432",
+    "PGHOST": "localhost",
+    "PGPORT": "5432",
     "PGUSER": "postgres",
     "PGDATABASE": "wb_data_prod",
 }
@@ -60,8 +61,8 @@ def load_env(env_file: str = ENV_FILE) -> dict[str, str]:
         )
     # Выводим нужные переменные через echo "${VAR:-}" внутри того же shell-процесса,
     # который уже source'ил .env. Используем ${VAR:-} (а не printenv VAR), потому что
-    # printenv с несуществующей переменной возвращает rc=1; в .env проекта обычно
-    # задан только PG_PWD, а PGHOST/PGPORT/PGUSER/PGDATABASE берутся из дефолтов.
+    # printenv с несуществующей переменной возвращает rc=1; отсутствующие в .env
+    # переменные (сейчас это PGUSER/PGDATABASE) резолвятся дефолтами DEFAULTS.
     keys = ["PGHOST", "PGPORT", "PGUSER", "PG_PWD", "PGDATABASE"]
     # Каждую переменную на своей строке через ${VAR:-} — пустая строка для unset.
     echo_lines = "\n".join(f'echo "${{{k}:-}}"' for k in keys)

@@ -11,7 +11,7 @@
 //   - PG_PWD         — PostgreSQL password (named via storage.pg_password_env)
 //
 // Two environments (see CLAUDE.md → "PostgreSQL setup"): local dev (RYZEN-ILKOID)
-// defaults to 192.168.10.7:15432 / postgres; prod VPS at 10.120.24.155 uses arm_ai_admin
+// defaults to localhost:5432 / postgres; prod VPS at 10.120.24.155 uses arm_ai_admin
 // via env (PGHOST/PGPORT/PGUSER set on the prod machine / download-all.sh).
 package config
 
@@ -172,21 +172,24 @@ func injectPassword(dsn, passwordEnv string) (string, error) {
 
 // BuildPgDSN constructs a PostgreSQL DSN from environment variables with defaults.
 //
-// Defaults (local dev — RYZEN-ILKOID):
-//   - host: 192.168.10.7 (override via PGHOST)
-//   - port: 15432 (override via PGPORT)
+// Defaults are the idiomatic local ones — a PostgreSQL on the same machine
+// needs no env at all:
+//   - host: localhost (override via PGHOST)
+//   - port: 5432 (override via PGPORT)
 //   - user: postgres (override via PGUSER)
 //   - password: from $PG_PWD (caller must inject via injectPassword)
 //   - sslmode: disable
 //
-// Prod VPS (10.120.24.155) overrides host/port/user via env (PGHOST/PGPORT/PGUSER set
-// in the machine profile / download-all.sh); password still from $PG_PWD (per-machine value).
-// The database name is passed in by the caller (postgresDSN passes the already-resolved
-// V2StorageConfig.PgDatabase, which GetDefaults overrides via $PGDATABASE). The returned
-// DSN does NOT include the password — call injectPassword() separately.
+// Prod VPS (10.120.24.155 — PG runs on that same host, so localhost is right
+// there too) may still override port/user via env (PGPORT/PGUSER set in the
+// machine profile / download-all.sh); password still from $PG_PWD (per-machine
+// value). The database name is passed in by the caller (postgresDSN passes the
+// already-resolved V2StorageConfig.PgDatabase, which GetDefaults overrides via
+// $PGDATABASE). The returned DSN does NOT include the password — call
+// injectPassword() separately.
 func BuildPgDSN(database string) string {
-	host := envOrDefault("PGHOST", "192.168.10.7")
-	port := envOrDefault("PGPORT", "15432")
+	host := envOrDefault("PGHOST", "localhost")
+	port := envOrDefault("PGPORT", "5432")
 	user := envOrDefault("PGUSER", "postgres")
 
 	return fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable", user, host, port, database)
