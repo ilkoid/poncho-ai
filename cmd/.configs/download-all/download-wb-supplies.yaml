@@ -1,6 +1,12 @@
 wb:
   api_key: ""
   timeout: "60s"
+  # Ретраи 429 «подсказка + ε»: попыток-гонок на запрос (дефолт клиента 3 —
+  # мало в шторме: ночь 27.10, 17 запросов исчерпали 3 попытки) и надбавка
+  # к подсказке X-Ratelimit-Retry в мс (0/нет = дефолт 200). Паритет с
+  # funnel-agg/search-vis/promotion/item-rating.
+  retry_attempts: 10
+  retry_epsilon_ms: 110
 
 supply:
   db_path: "/var/db/wb-sales.db"

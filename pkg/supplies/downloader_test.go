@@ -404,6 +404,49 @@ func (s *refBrokenSource) GetWarehouses(ctx context.Context) ([]wb.Warehouse, er
 	return nil, fmt.Errorf("wb api error: status 500, body: upstream boom")
 }
 
+// failingDetailsSource delegates to MockSource except GetSupplyDetails, which
+// fails for every supply. Locks the contract the honest exit gate in
+// cmd/.../download-wb-supplies-v2/main.go relies on: Run returns nil (не фатал),
+// Errors растёт по числу упавших запросов, а грузы/коробки той же поставки
+// продолжают скачиваться (ночь 27.10: errors=17 при exit 0 прятал потерю).
+type failingDetailsSource struct {
+	*MockSource
+}
+
+func (s *failingDetailsSource) GetSupplyDetails(ctx context.Context, supplyID int64) (*wb.SupplyDetails, error) {
+	return nil, fmt.Errorf("wb api error: status 429, body: rate limit exceeded (attempt 10/10)")
+}
+
+func TestSupplyDetailsErrorsAreCounted(t *testing.T) {
+	src := &failingDetailsSource{MockSource: NewMockSource(10)}
+	writer := NewDiscardWriter()
+
+	opts := DownloadOptions{
+		Begin:          "2026-01-01",
+		End:            "2026-01-31",
+		DateFilterType: "updatedDate",
+		OnProgress:     func(msg string) {},
+	}
+
+	dl := NewDownloader(src, writer, opts)
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("details errors must not fail the run (gate lives in main.go): %v", err)
+	}
+	if result.Errors != 10 {
+		t.Errorf("errors: got %d, want 10 (one per planned supply)", result.Errors)
+	}
+	if result.Supplies != 10 {
+		t.Errorf("supplies: got %d, want 10 (list phase unaffected)", result.Supplies)
+	}
+	if result.Goods == 0 {
+		t.Error("goods: got 0, want >0 (goods of the same supply must still download)")
+	}
+	if result.Packages == 0 {
+		t.Error("packages: got 0, want >0 (packages of the same supply must still download)")
+	}
+}
+
 // testFilter returns a minimal SuppliesFilterRequest for testing.
 func testFilter() wb.SuppliesFilterRequest {
 	return wb.SuppliesFilterRequest{

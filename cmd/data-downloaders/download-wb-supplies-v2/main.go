@@ -43,6 +43,20 @@ type Config struct {
 	Storage config.V2StorageConfig `yaml:"storage"`
 }
 
+// retryScheme — строка схемы ретраев 429 для шапки лога (по образцу
+// funnel-agg/search-vis/item-rating): значения из конфига с дефолтами.
+func retryScheme(cfg Config) string {
+	retries := cfg.WB.RetryAttempts
+	if retries == 0 {
+		retries = 3 // GetDefaults WBClientConfig
+	}
+	eps := cfg.WB.RetryEpsilonMs
+	if eps == 0 {
+		eps = 200 // дефолт клиента (см. wb.NewFromConfig/Set429RetryEpsilon)
+	}
+	return fmt.Sprintf("hint+eps %dms · retries %d", eps, retries)
+}
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config.yaml")
 	dbPath := flag.String("db", "", "Database path (overrides config)")
@@ -94,6 +108,7 @@ func main() {
 		dllog.HeaderField{Key: "Backend", Value: cfg.Storage.Backend},
 		dllog.HeaderField{Key: "DB", Value: cfg.Storage.DisplayDB()},
 		dllog.HeaderField{Key: "Period", Value: fmt.Sprintf("%s -> %s (filter: %s)", beginDate, endDate, supplyCfg.DateFilterType)},
+		dllog.HeaderField{Key: "Retry", Value: retryScheme(*cfg)},
 		dllog.HeaderField{Key: "Mock", Value: fmt.Sprintf("%v", *mockMode)},
 		dllog.HeaderField{Key: "DryRun", Value: fmt.Sprintf("%v", *dryRun)},
 	)
@@ -124,7 +139,16 @@ func main() {
 			log.Fatal("no API key. Set WB_API_KEY")
 		}
 
-		wbClient := wb.New(apiKey)
+		// Клиент из конфига: wb.retry_attempts / wb.retry_epsilon_ms доходят из
+		// yaml (канон схемы «подсказка+ε»; прежде deprecated wb.New = жёсткие
+		// 3 попытки — ночь 27.10: 17 запросов по 7 поставкам исчерпали повторы
+		// на 429, и потеря осталась невидимой при exit 0).
+		wbc := cfg.WB
+		wbc.APIKey = apiKey
+		wbClient, err := wb.NewFromConfig(wbc.ToWBConfig())
+		if err != nil {
+			log.Fatalf("create WB client: %v", err)
+		}
 		rl := supplyCfg.RateLimits
 
 		// Set rate limits for 3 ToolIDs
@@ -167,6 +191,13 @@ func main() {
 	dllog.Done(result.Duration, "warehouses=%d tariffs=%d supplies=%d goods=%d packages=%d api=%d errors=%d",
 		result.Warehouses, result.Tariffs, result.Supplies, result.Goods, result.Packages,
 		result.APICalls, result.Errors)
+
+	// Честный FAIL фазы: ошибки деталей/грузов/коробок поставок (в т.ч. DB)
+	// прежде проглатывались — exit 0 при errors=17 прятал потерю 7 поставок
+	// (ночь 27.10, VPS2: «40/40 успешно»). Summary download-all видит реальность.
+	if result.Errors > 0 {
+		os.Exit(1)
+	}
 }
 
 // createSuppliesWriter creates the appropriate Writer based on backend config.
