@@ -24,10 +24,44 @@ tags:
     x-displayName: Сборочные задания DBW
     description: ''
     x-tagKey: dbwAssemblyOrders
+    x-description: |
+      <div class="description_auth">
+        Для доступа к методам используйте <a href="./api-information#tag/authorization/Kak-sozdat-personalnyj-bazovyj-ili-testovyj-token">токен</a> для категории <strong>Маркетплейс</strong>
+      </div>
+
+      Для работы со сборочными заданиями DBW:
+      1. [Получите новое сборочное задание](./orders-dbw#tag/dbwAssemblyOrders/operation/getV3DbwOrdersNew).
+      2. [Переведите его на сборку](./orders-dbw#tag/dbwAssemblyOrders/operation/patchV3DbwOrdersOrderIdConfirm).
+      3. После перевода на сборку для заказа становится доступной [информация о курьере](./orders-dbw#tag/dbwAssemblyOrders/operation/postV3DbwOrdersCourier) (телефон, номер автомобиля).
+      <br>Чтобы курьер мог связаться с вами [привяжите](./item-management#tag/sellerWarehouses/operation/putV3DbwWarehousesWarehouseIdContacts) свои контакты к складу. Вы так же можете [получить](./item-management#tag/sellerWarehouses/operation/getV3DbwWarehousesWarehouseIdContacts) текущий список своих контактов.
+      4. [Получите](./orders-dbw#tag/dbwAssemblyOrders/operation/postV3DbwOrdersStickers), распечатайте и прикрепите стикеры.
+      5. [Переведите сборочное задание в доставку](./orders-dbw#tag/dbwAssemblyOrders/operation/postV3DbwOrdersStatusDeliver).
+      6. Дождитесь курьера.
+      7. Курьер забирает заказ и отвозит клиенту.
+      8. Клиент принимает заказ или отказывается от него.
+      9. Если клиент принимает заказ, курьер переводит сборочное задание в статус `receive`. Если отказывается — в `reject`.
+
+        <div class="description_important">
+          Узнать больше о сборочных заданиях DBW можно в <a href="https://seller.wildberries.ru/help-center/category/01956ff5-e134-74f3-a798-24b6b49a403b">справочном центре</a>
+        </div>
   - name: Идентификаторы маркировки DBW
     x-displayName: Идентификаторы маркировки DBW
     description: ''
     x-tagKey: dbwLabelIdentifiers
+    x-description: |
+      <div class="description_auth">
+        Для доступа к методам используйте <a href="./api-information#tag/authorization/Kak-sozdat-personalnyj-bazovyj-ili-testovyj-token">токен</a> для категории <strong>Маркетплейс</strong>
+      </div>
+
+      <div class="description_important">
+        Узнать больше об идентификаторах маркировки можно в <a href="https://seller.wildberries.ru/instructions/material/A-305?goBackOption=prevRoute&categoryId=6d85301c-719b-4145-9275-2ac8b793f345">справочном центре</a>
+      </div>
+
+      С помощью этих методов вы можете [получать](./orders-dbw#tag/dbwLabelIdentifiers/operation/postV3DbwOrdersMetaDetails), [удалять](./orders-dbw#tag/dbwLabelIdentifiers/operation/postV3DbwOrdersMetaDelete) и редактировать идентификаторы маркировки [сборочных заданий](./orders-dbw#tag/dbwAssemblyOrders):
+        - [Код маркировки Честного знака](./orders-dbw#tag/dbwLabelIdentifiers/operation/postV3DbwOrdersMetaSgtin)
+        - [УИН](./orders-dbw#tag/dbwLabelIdentifiers/operation/putV3DbwOrdersOrderIdMetaUin)
+        - [IMEI](./orders-dbw#tag/dbwLabelIdentifiers/operation/putV3DbwOrdersOrderIdMetaImei)
+        - [GTIN](./orders-dbw#tag/dbwLabelIdentifiers/operation/putV3DbwOrdersOrderIdMetaGtin)
 paths:
   /api/v3/dbw/orders/new:
     servers:
@@ -45,7 +79,7 @@ paths:
         Метод возвращает список всех новых [сборочных заданий](/openapi/orders-dbw#tag/dbwAssemblyOrders), которые есть у продавца на момент запроса.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -113,7 +147,7 @@ paths:
         Можно получить данные за заданный период, максимум 30 календарных дней одним запросом.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -206,7 +240,7 @@ paths:
         <br>
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -281,7 +315,7 @@ paths:
         Метод возвращает информацию о покупателях по ID сборочных заданий.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -389,7 +423,7 @@ paths:
         - `postponed_delivery` — курьерская доставка отложена
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -426,12 +460,18 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - orders
                 properties:
                   orders:
                     type: array
                     nullable: false
                     items:
                       type: object
+                      required:
+                        - supplierStatus
+                        - wbStatus
+                        - id
                       properties:
                         id:
                           type: integer
@@ -499,7 +539,7 @@ paths:
         Метод переводит [сборочное задание](/openapi/orders-dbw#tag/dbwAssemblyOrders) в [статус](/openapi/orders-dbw#tag/dbwAssemblyOrders/operation/postV3DbwOrdersStatus) `confirm` — на сборке.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -589,7 +629,7 @@ paths:
           - 400x300 px при `width=40&height=30` в запросе
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -740,7 +780,7 @@ paths:
         </div>
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -829,7 +869,7 @@ paths:
         Метод возвращает контактные данные и номер автомобиля курьера по ID сборочного задания. <br> Для сборочных заданий в статусах `confirm`, `complete`.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -906,7 +946,7 @@ paths:
         Метод отменяет [сборочное задание](/openapi/orders-dbw#tag/dbwAssemblyOrders) и переводит в [статус](/openapi/orders-dbw#tag/dbwAssemblyOrders/operation/postV3DbwOrdersStatus) `cancel` — отменено продавцом.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -993,7 +1033,7 @@ paths:
           - `sgtin` — [код маркировки Честного знака](/openapi/orders-dbw#tag/dbwLabelIdentifiers/operation/postV3DbwOrdersMetaSgtin)
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -1076,7 +1116,7 @@ paths:
         Можно передать только один ключ.
 
           <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -1165,7 +1205,7 @@ paths:
         Получить загруженные маркировки можно в [идентификаторах маркировки сборочного задания](/openapi/orders-dbw#tag/dbwLabelIdentifiers/operation/postV3DbwOrdersMetaDetails).
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для следующих методов DBW:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для следующих методов DBW:
         <ul>
             <li>получение и обновление списка контактов</li>
             <li>получение и удаление идентификаторов маркировки</li>
@@ -1253,7 +1293,7 @@ paths:
         Закрепить УИН можно только за сборочным заданием в [статусе](/openapi/orders-dbw#tag/dbwAssemblyOrders/operation/postV3DbwOrdersStatus) `confirm` и если в [идентификаторах маркировки сборочного задания](/openapi/orders-dbw#tag/dbwLabelIdentifiers/operation/postV3DbwOrdersMetaDetails) есть поле `uin`.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>закрепления идентификаторов маркировки DBW</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>закрепления идентификаторов маркировки DBW</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1345,7 +1385,7 @@ paths:
         Закрепить IMEI можно только за сборочным заданием в [статусе](/openapi/orders-dbw#tag/dbwAssemblyOrders/operation/postV3DbwOrdersStatus) `confirm` и если в [идентификаторах маркировки сборочного задания](/openapi/orders-dbw#tag/dbwLabelIdentifiers/operation/postV3DbwOrdersMetaDetails) есть поле `imei`.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>закрепления идентификаторов маркировки DBW</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>закрепления идентификаторов маркировки DBW</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1437,7 +1477,7 @@ paths:
         <br><br>
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>закрепления идентификаторов маркировки DBW</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>закрепления идентификаторов маркировки DBW</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1736,6 +1776,7 @@ components:
       type: object
       required:
         - results
+        - requestId
       example:
         requestId: 03615778-eb9e-4f55-b4Of-fd3ac0fad2сc
         results:
@@ -1833,6 +1874,7 @@ components:
       type: object
       required:
         - results
+        - requestId
       properties:
         requestId:
           type: string
@@ -1909,6 +1951,15 @@ components:
           example:
             - 123456789
     ClientInfo:
+      required:
+        - replacementPhone
+        - phone
+        - firstName
+        - fullName
+        - additionalPhones
+        - additionalPhoneCodes
+        - orderId
+        - phoneCode
       properties:
         replacementPhone:
           type: string
@@ -1970,6 +2021,8 @@ components:
           nullable: false
       type: object
     ClientInfoResp:
+      required:
+        - orders
       properties:
         orders:
           description: Информация о покупателях
@@ -1979,6 +2032,9 @@ components:
       type: object
     OrderCourierInfo:
       type: object
+      required:
+        - courierInfo
+        - orderID
       properties:
         courierInfo:
           type: object
@@ -1991,6 +2047,8 @@ components:
           example: 2876979713
     OrderCourierInfoResp:
       type: object
+      required:
+        - orders
       properties:
         orders:
           type: array
@@ -1998,6 +2056,10 @@ components:
             $ref: '#/components/schemas/OrderCourierInfo'
     CourierContactsResponse:
       type: object
+      required:
+        - phone
+        - carNumber
+        - fullName
       properties:
         carNumber:
           type: string
@@ -2025,6 +2087,10 @@ components:
           example: '2025-09-06T11:00:00Z'
     CourierInfo:
       type: object
+      required:
+        - contacts
+        - updatedAt
+        - mustBeAssigned
       properties:
         contacts:
           type: object
@@ -2050,6 +2116,7 @@ components:
       type: object
       required:
         - requestId
+        - orders
       properties:
         requestId:
           type: string
@@ -2062,6 +2129,8 @@ components:
             type: object
             required:
               - isError
+              - metaDetails
+              - orderId
             properties:
               orderId:
                 type: integer
@@ -2091,6 +2160,10 @@ components:
                 description: Идентификаторы маркировки и статусы их валидации
                 items:
                   type: object
+                  required:
+                    - key
+                    - value
+                    - decision
                   properties:
                     key:
                       type: string
@@ -2213,6 +2286,29 @@ components:
       example: 13833711
     OrderNewDBW:
       type: object
+      required:
+        - salePrice
+        - requiredMeta
+        - comment
+        - options
+        - address
+        - orderUid
+        - groupId
+        - article
+        - colorCode
+        - rid
+        - createdAt
+        - skus
+        - id
+        - warehouseId
+        - nmId
+        - chrtId
+        - price
+        - convertedPrice
+        - currencyCode
+        - convertedCurrencyCode
+        - cargoType
+        - isZeroOrder
       properties:
         address:
           type: object
@@ -2378,6 +2474,27 @@ components:
           example: false
     Order:
       type: object
+      required:
+        - options
+        - address
+        - comment
+        - orderUid
+        - groupId
+        - article
+        - colorCode
+        - rid
+        - createdAt
+        - skus
+        - id
+        - warehouseId
+        - nmId
+        - chrtId
+        - price
+        - convertedPrice
+        - currencyCode
+        - convertedCurrencyCode
+        - cargoType
+        - isZeroOrder
       properties:
         address:
           type: object
@@ -2529,11 +2646,21 @@ components:
           example: false
     DeliveryDatesInfoResp:
       type: object
+      required:
+        - orders
       properties:
         orders:
           type: array
           items:
             type: object
+            required:
+              - dTimeFrom
+              - dTimeTo
+              - dTimeFromOld
+              - dTimeToOld
+              - dDateOld
+              - dDate
+              - id
             properties:
               dTimeFrom:
                 type: string
@@ -2571,6 +2698,14 @@ components:
                 example: 1234567890
     Response4XX:
       type: object
+      required:
+        - title
+        - detail
+        - requestId
+        - origin
+        - status
+        - statusText
+        - timestamp
       properties:
         title:
           type: string

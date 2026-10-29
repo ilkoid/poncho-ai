@@ -22,10 +22,54 @@ tags:
     x-displayName: Сборочные задания DBS
     description: ''
     x-tagKey: dbsAssemblyOrders
+    x-description: |
+      <div class="description_auth">
+        Для доступа к методам используйте <a href="./api-information#tag/authorization/Kak-sozdat-personalnyj-bazovyj-ili-testovyj-token">токен</a> для категории <strong>Маркетплейс</strong>
+      </div>
+
+
+      <div class="description_ref">
+        Узнать, как использовать методы в бизнес-кейсах, можно в <a href="/knowledge-base/articles/019d49a3-ff7d-70ba-a872-828430b24ea1/zakazy-dbs">инструкции</a> по работе с <strong>заказами DBS</strong>
+      </div>
+
+
+      <div class="description_important">
+        Узнать больше о сборочных заданиях DBS можно в <a href="https://seller.wildberries.ru/instructions/material/A-108?goBackOption=prevRoute&categoryId=0fc94a39-22b1-4a54-8ef2-06dac1d8137b">справочном центре</a>
+      </div>
+
+      Для работы со сборочными заданиями DBS:
+      1. [Получите новое сборочное задание](./dbs#tag/dbsAssemblyOrders/operation/getV3DbsOrdersNew) и сохраните его до перевода на сборку. Если вы не сохраните информацию о сборочном задании заранее, вы сможете получить ее только после завершения задания (отмены или продажи). Проверяйте [дату и время доставки](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersDeliveryDate).
+      2. [Переведите его на сборку](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusConfirm).
+      3. После перевода на сборку для заказа становится доступной [информация о покупателе](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersClient) (имя, телефон).
+      4. [Переведите в доставку](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusDeliver).
+      5. После доставки задания покупателю вам необходимо сообщить на наш сервер, что [сборочное задание принято](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusReceive) покупателем или, что [покупатель отказался от сборочного задания](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusReject).
   - name: Идентификаторы маркировки DBS
     x-displayName: Идентификаторы маркировки DBS
     description: ''
     x-tagKey: dbsLabelIdentifiers
+    x-description: |
+      <div class="description_auth">
+        Для доступа к методам используйте <a href="./api-information#tag/authorization/Kak-sozdat-personalnyj-bazovyj-ili-testovyj-token">токен</a> для категории <strong>Маркетплейс</strong>
+      </div>
+
+
+      <div class="description_ref">
+        Узнать, как использовать методы в бизнес-кейсах, можно в <a href="/knowledge-base/articles/019d49a3-ff7d-70ba-a872-828430b24ea1/zakazy-dbs">инструкции</a> по работе с <strong>заказами DBS</strong>
+      </div>
+
+
+      <div class="description_important">
+        Узнать больше об идентификаторах маркировки можно в <a href="https://seller.wildberries.ru/instructions/material/A-305?goBackOption=prevRoute&categoryId=6d85301c-719b-4145-9275-2ac8b793f345">справочном центре</a>
+      </div>
+
+      С помощью этих методов вы можете [получать](./dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaDetails), [удалять](./dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaDelete) и редактировать идентификаторы маркировки [сборочных заданий](./dbs#tag/dbsAssemblyOrders):
+        - [Код маркировки Честного знака](./dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaSgtin)
+        - [УИН](./dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaUin)
+        - [IMEI](./dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaImei)
+        - [GTIN](./dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaGtin)
+        - [Номера ДТ и коды стран происхождения товара](./dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaCustomsDeclaration)
+
+      Заполнять идентификаторы маркировки сборочных заданий в песочнице необязательно
 paths:
   /api/v3/dbs/orders/new:
     servers:
@@ -48,7 +92,7 @@ paths:
         Метод возвращает список всех новых [сборочных заданий](/openapi/dbs#tag/dbsAssemblyOrders), которые есть у продавца на момент запроса.
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца для методов <strong>сборочных заданий DBS</strong>:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца для методов <strong>сборочных заданий DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -68,11 +112,11 @@ paths:
             application/json:
               schema:
                 type: object
-                nullable: false
+                required:
+                  - orders
                 properties:
                   orders:
                     type: array
-                    nullable: false
                     description: Список новых сборочных заданий
                     items:
                       $ref: '#/components/schemas/OrderNewDBS'
@@ -121,7 +165,7 @@ paths:
         Можно получить данные за заданный период, максимум 30 календарных дней одним запросом.
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца для методов <strong>сборочных заданий DBS</strong>:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца для методов <strong>сборочных заданий DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -157,7 +201,9 @@ paths:
             application/json:
               schema:
                 type: object
-                nullable: false
+                required:
+                  - orders
+                  - next
                 properties:
                   next:
                     $ref: '#/components/schemas/Next'
@@ -213,7 +259,7 @@ paths:
           - суммы к оплате покупателем с учетом всех скидок и кэшбека
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>получения и удаления идентификаторов маркировки DBS</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>получения и удаления идентификаторов маркировки DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -277,7 +323,7 @@ paths:
         Метод возвращает информацию о платной доставке сборочных заданий, которые поступили на один склад (`warehouseId`) в рамках одной транзакции покупателя (`orderUid`).
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца для методов <strong>сборочных заданий DBS</strong>:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца для методов <strong>сборочных заданий DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -356,7 +402,7 @@ paths:
         Метод возвращает информацию о покупателе по ID сборочных заданий.
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца для методов <strong>сборочных заданий DBS</strong>:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца для методов <strong>сборочных заданий DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -440,7 +486,7 @@ paths:
           - Наименование организации
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца для методов <strong>сборочных заданий DBS</strong>:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца для методов <strong>сборочных заданий DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -510,7 +556,7 @@ paths:
         <br>
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца для методов <strong>сборочных заданий DBS</strong>:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца для методов <strong>сборочных заданий DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -619,7 +665,7 @@ paths:
         - `canceled_by_missed_call` — отмена по причине недозвона
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца для методов <strong>сборочных заданий DBS</strong>:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца для методов <strong>сборочных заданий DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -704,7 +750,7 @@ paths:
         Отменить сборочные задания в статусе `deliver` невозможно.
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -782,7 +828,7 @@ paths:
         Метод переводит [сборочные задания](/openapi/dbs#tag/dbsAssemblyOrders) из [статуса](/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusInfo) `new` в статус `confirm` — на сборке.
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -871,7 +917,7 @@ paths:
         Получить стикеры можно только в размере 580x400 px в формате PDF.
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца для методов <strong>сборочных заданий DBS</strong>:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца для методов <strong>сборочных заданий DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1025,7 +1071,7 @@ paths:
         Метод переводит [сборочные задания](/openapi/dbs#tag/dbsAssemblyOrders) из [статуса](/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusInfo) `confirm` в статус `deliver` — в доставке.
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1103,7 +1149,7 @@ paths:
         Метод переводит [сборочные задания](/openapi/dbs#tag/dbsAssemblyOrders) из [статуса](/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusInfo) `deliver` в статус `receive` — получено покупателем.
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1128,6 +1174,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - requestId
+                  - results
                 example:
                   requestId: 03615778-eb9e-4f55-b4Of-fd3ac0fad2сc
                   results:
@@ -1147,6 +1196,9 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - orderId
+                        - isError
                       properties:
                         errors:
                           items:
@@ -1225,7 +1277,7 @@ paths:
         Метод переводит [сборочные задания](/openapi/dbs#tag/dbsAssemblyOrders) из [статуса](/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusInfo) `deliver` в статус `reject` — отказ покупателя при получении.
 
         <div class="description_limit">
-        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один аккаунт продавца:
+        <a href='/docs/openapi/api-information#tag/introduction/Limity-zaprosov'>Лимит запросов</a> на один профиль продавца:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1305,7 +1357,7 @@ paths:
           - `originCountryCode` — [числовой код страны происхождения товара](/openapi/dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaCustomsDeclaration) из [Общероссийского классификатора стран мира](https://esnsi.gosuslugi.ru/classifiers/16269)
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>получения и удаления идентификаторов маркировки DBS</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>получения и удаления идентификаторов маркировки DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1386,7 +1438,7 @@ paths:
           - `customsDeclaration` — [номер ДТ](/openapi/dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaCustomsDeclaration). При удалении номера ДТ также удаляется код страны происхождения товара — `originCountryCode`
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>получения и удаления идентификаторов маркировки DBS</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>получения и удаления идентификаторов маркировки DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1473,7 +1525,7 @@ paths:
         Получить загруженные маркировки можно в [идентификаторах маркировки сборочного задания](/openapi/dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaDetails).
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
 
 
         | Тип | Период | Лимит | Интервал | Всплеск |
@@ -1557,7 +1609,7 @@ paths:
         Закрепить УИН можно только за сборочным заданием в [статусе](/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusInfo) `confirm` и если в [идентификаторах маркировки сборочного задания](/openapi/dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaDetails) есть поле `uin`.
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1643,7 +1695,7 @@ paths:
         Закрепить IMEI можно только за сборочным заданием в [статусе](/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusInfo) `confirm` и если в [идентификаторах маркировки сборочного задания](/openapi/dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaDetails) есть поле `imei`.<br>
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1728,7 +1780,7 @@ paths:
         Закрепить GTIN можно только за сборочным заданием в [статусе](/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersStatusInfo) `confirm` и если в [идентификаторах маркировки сборочного задания](/openapi/dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaDetails) есть поле `gtin`.<br>
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -1816,7 +1868,7 @@ paths:
           - поле `customsDeclaration` есть в [идентификаторах маркировки сборочных заданий](/openapi/dbs#tag/dbsLabelIdentifiers/operation/postV3DbsOrdersMetaDetails)
 
         <div class="description_limit">
-        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один аккаунт продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
+        <a href="/openapi/api-information#tag/introduction/Limity-zaprosov">Лимит запросов</a> на один профиль продавца для всех методов <strong>закрепления идентификаторов маркировки DBS</strong>:
 
         | Период | Лимит | Интервал | Всплеск |
         | --- | --- | --- | --- |
@@ -2147,6 +2199,7 @@ components:
       type: object
       required:
         - orderId
+        - isError
       properties:
         orderId:
           description: ID сборочного задания
@@ -2246,6 +2299,12 @@ components:
       nullable: true
       items:
         type: object
+        required:
+          - groupID
+          - deliveryCost
+          - convertedDeliveryCost
+          - currencyCode
+          - convertedCurrencyCode
         properties:
           groupID:
             description: ID группы сборочных заданий
@@ -2290,6 +2349,33 @@ components:
       example: 13833711
     OrderNewDBS:
       type: object
+      required:
+        - salePrice
+        - requiredMeta
+        - options
+        - address
+        - comment
+        - orderUid
+        - groupId
+        - article
+        - colorCode
+        - rid
+        - createdAt
+        - deliveryType
+        - wbStickerId
+        - skus
+        - id
+        - warehouseId
+        - nmId
+        - chrtId
+        - price
+        - finalPrice
+        - convertedFinalPrice
+        - convertedPrice
+        - currencyCode
+        - convertedCurrencyCode
+        - cargoType
+        - isZeroOrder
       properties:
         salePrice:
           description: |
@@ -2314,6 +2400,8 @@ components:
         options:
           type: object
           description: Опции заказа
+          required:
+            - isB2b
           properties:
             isB2b:
               type: boolean
@@ -2436,7 +2524,7 @@ components:
             <br>
             Предоставляется в информационных целях.
             <br><br>
-            Используйте значение поля `finalPrice`, только если в ответе метода [POST /api/marketplace/v3/dbs/orders/final-price](./docs/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersFinalPrice) вернулось `"data": null`. Во всех остальных случаях используйте значение поля `originalFinalPrice` из ответа того же метода
+            Используйте значение поля `finalPrice`, только если в ответе метода получения [цен продавца и сумм к оплате](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersFinalPrice) вернулось `"data": null`. Во всех остальных случаях используйте значение поля `originalFinalPrice` из ответа того же метода
           type: integer
           example: 1014
         convertedFinalPrice:
@@ -2445,7 +2533,7 @@ components:
             <br>
             Предоставляется в информационных целях.
             <br><br>
-            Используйте значение поля `convertedFinalPrice`, только если в ответе метода [POST /api/marketplace/v3/dbs/orders/final-price](./docs/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersFinalPrice) вернулось `"data": null`. Во всех остальных случаях используйте значение поля `convertedOriginalFinalPrice` из ответа того же метода
+            Используйте значение поля `convertedFinalPrice`, только если в ответе метода получения [цен продавца и сумм к оплате](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersFinalPrice) вернулось `"data": null`. Во всех остальных случаях используйте значение поля `convertedOriginalFinalPrice` из ответа того же метода
           type: integer
           example: 1014
         convertedPrice:
@@ -2491,11 +2579,41 @@ components:
           example: 123456
     OrderDBS:
       type: object
+      required:
+        - options
+        - address
+        - comment
+        - orderUid
+        - groupId
+        - article
+        - colorCode
+        - rid
+        - createdAt
+        - deliveryType
+        - scanPrice
+        - wbStickerId
+        - skus
+        - id
+        - warehouseId
+        - nmId
+        - chrtId
+        - price
+        - finalPrice
+        - convertedFinalPrice
+        - convertedPrice
+        - currencyCode
+        - convertedCurrencyCode
+        - cargoType
+        - isZeroOrder
       properties:
         address:
           type: object
           nullable: true
           description: Адрес покупателя для доставки. При доставке заказов в ПВЗ указан адрес ПВЗ
+          required:
+            - fullAddress
+            - longitude
+            - latitude
           properties:
             fullAddress:
               description: Адрес доставки
@@ -2632,7 +2750,7 @@ components:
             <br>
             Предоставляется в информационных целях.
             <br><br>
-            Используйте значение поля `convertedFinalPrice`, только если в ответе метода [POST /api/marketplace/v3/dbs/orders/final-price](./docs/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersFinalPrice) вернулось `"data": null`. Во всех остальных случаях используйте значение поля `convertedOriginalFinalPrice` из ответа того же метода
+            Используйте значение поля `convertedFinalPrice`, только если в ответе метода получения [цен продавца и сумм к оплате](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersFinalPrice) вернулось `"data": null`. Во всех остальных случаях используйте значение поля `convertedOriginalFinalPrice` из ответа того же метода
           type: integer
           example: 1014
         finalPrice:
@@ -2643,7 +2761,7 @@ components:
             <br>
             Предоставляется в информационных целях.
             <br><br>
-            Используйте значение поля `finalPrice`, только если в ответе метода [POST /api/marketplace/v3/dbs/orders/final-price](./docs/openapi/dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersFinalPrice) вернулось `"data": null`. Во всех остальных случаях используйте значение поля `originalFinalPrice` из ответа того же метода
+            Используйте значение поля `finalPrice`, только если в ответе метода получения [цен продавца и сумм к оплате](./dbs#tag/dbsAssemblyOrders/operation/postV3DbsOrdersFinalPrice) вернулось `"data": null`. Во всех остальных случаях используйте значение поля `originalFinalPrice` из ответа того же метода
           type: integer
           example: 1014
         cargoType:
@@ -2677,6 +2795,16 @@ components:
           nullable: false
           example: 123456
     DbsOnlyClientInfo:
+      required:
+        - replacementPhone
+        - phone
+        - firstName
+        - fullName
+        - additionalPhones
+        - replacementAdditionalPhones
+        - additionalPhoneCodes
+        - orderID
+        - phoneCode
       properties:
         replacementPhone:
           type: string
@@ -2747,6 +2875,8 @@ components:
             - '65498'
       type: object
     DbsOnlyClientInfoResp:
+      required:
+        - orders
       properties:
         orders:
           nullable: true
@@ -2757,11 +2887,21 @@ components:
       type: object
     DeliveryDatesInfoResp:
       type: object
+      required:
+        - orders
       properties:
         orders:
           type: array
           items:
             type: object
+            required:
+              - dTimeFrom
+              - dTimeTo
+              - dTimeFromOld
+              - dTimeToOld
+              - dDateOld
+              - dDate
+              - id
             properties:
               dTimeFrom:
                 type: string
@@ -2956,6 +3096,9 @@ components:
             type: integer
     api.StatusSetResponses:
       type: object
+      required:
+        - requestId
+        - results
       example:
         requestId: 03615778-eb9e-4f55-b4Of-fd3ac0fad2сc
         results:
@@ -2977,6 +3120,9 @@ components:
             $ref: '#/components/schemas/api.StatusSetResponse'
     api.StatusSetResponse:
       type: object
+      required:
+        - orderId
+        - isError
       properties:
         errors:
           items:
@@ -2993,6 +3139,9 @@ components:
           example: 123456
     api.StatusSetDeliverResponses:
       type: object
+      required:
+        - requestId
+        - results
       example:
         requestId: 03615778-eb9e-4f55-b4Of-fd3ac0fad2сc
         results:
@@ -3023,6 +3172,9 @@ components:
             $ref: '#/components/schemas/api.StatusSetDeliverResponse'
     api.StatusSetDeliverResponse:
       type: object
+      required:
+        - orderId
+        - isError
       properties:
         errors:
           items:
@@ -3041,6 +3193,7 @@ components:
       type: object
       required:
         - requestId
+        - orders
       properties:
         requestId:
           type: string
@@ -3053,6 +3206,8 @@ components:
             type: object
             required:
               - isError
+              - metaDetails
+              - orderId
             properties:
               orderId:
                 type: integer
@@ -3082,6 +3237,10 @@ components:
                 description: Идентификаторы маркировки и статусы их валидации
                 items:
                   type: object
+                  required:
+                    - key
+                    - value
+                    - decision
                   properties:
                     key:
                       type: string
@@ -3143,6 +3302,8 @@ components:
                           - `filled` — Валидация пройдена
     api.OrderStatusesV2:
       type: object
+      required:
+        - orders
       example:
         orders:
           - supplierStatus: confirm
@@ -3163,6 +3324,11 @@ components:
             $ref: '#/components/schemas/api.OrderStatusV2'
     api.OrderStatusV2:
       type: object
+      required:
+        - errors
+        - orderId
+        - supplierStatus
+        - wbStatus
       properties:
         errors:
           description: Информация об ошибке
@@ -3292,6 +3458,9 @@ components:
                 example: sgtinEmitted
       type: object
     api.BatchErrorResponse:
+      required:
+        - detail
+        - code
       properties:
         code:
           type: integer
@@ -3334,6 +3503,7 @@ components:
       type: object
       required:
         - requestId
+        - results
       example:
         requestId: 03615778-eb9e-4f55-b4O4-fd3ac0fad2сc
         results:
@@ -3386,6 +3556,10 @@ components:
           example: 123456
     api.B2bClientInfo:
       type: object
+      required:
+        - orgName
+        - inn
+        - kpp
       description: Данные покупателя B2B
       properties:
         inn:
@@ -3399,6 +3573,14 @@ components:
           description: Наименование организации
     Response4XX:
       type: object
+      required:
+        - title
+        - detail
+        - requestId
+        - origin
+        - status
+        - statusText
+        - timestamp
       properties:
         title:
           type: string
