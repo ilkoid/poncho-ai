@@ -336,6 +336,8 @@ func (m *MockReader) GetCalendarPromotionIDs(ctx context.Context) ([]int, error)
 }
 
 // GetCalendarPromotionIDsByType returns IDs excluding the given type.
-func (m *MockReader) GetCalendarPromotionIDsByType(ctx context.Context, excludeType string) ([]int, error) {
+// minEndDate is accepted for interface parity but ignored: mock promos carry
+// no dates.
+func (m *MockReader) GetCalendarPromotionIDsByType(ctx context.Context, excludeType, minEndDate string) ([]int, error) {
 	return []int{1, 2}, nil
 }

@@ -788,8 +788,19 @@ func (r *PgPromotionRepo) GetCalendarPromotionIDs(ctx context.Context) ([]int, e
 }
 
 // GetCalendarPromotionIDsByType returns promotion IDs excluding a specific type.
-func (r *PgPromotionRepo) GetCalendarPromotionIDsByType(ctx context.Context, excludeType string) ([]int, error) {
-	rows, err := r.pool.Query(ctx, "SELECT promotion_id FROM wb_calendar_promotions WHERE type != $1 ORDER BY promotion_id", excludeType)
+// minEndDate (YYYY-MM-DD, inclusive) drops promos finished before that date:
+// the nomenclatures endpoint answers 422 "неприменим" on ended promos
+// (08-promotion.yaml), and wb_calendar_promotions is append-only — without the
+// cut the phase burns 2 dead requests per closed promo daily (VPS2: 286/day).
+// ISO TEXT dates compare correctly as strings; NULL/empty end_date is kept
+// defensively (anomaly is not a reason to drop a promo). The end date itself
+// still passes the filter, so the final participation snapshot is taken.
+func (r *PgPromotionRepo) GetCalendarPromotionIDsByType(ctx context.Context, excludeType, minEndDate string) ([]int, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT promotion_id FROM wb_calendar_promotions
+		 WHERE type != $1 AND (end_date IS NULL OR end_date = '' OR end_date >= $2)
+		 ORDER BY promotion_id`,
+		excludeType, minEndDate)
 	if err != nil {
 		return nil, fmt.Errorf("query calendar promotion ids by type: %w", err)
 	}

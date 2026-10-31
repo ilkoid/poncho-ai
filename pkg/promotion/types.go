@@ -163,7 +163,10 @@ type Reader interface {
 
 	// GetCalendarPromotionIDsByType returns IDs excluding a specific type.
 	// Used by calendar nomenclatures phase (skips "auto" type — API returns 422).
-	GetCalendarPromotionIDsByType(ctx context.Context, excludeType string) ([]int, error)
+	// minEndDate (YYYY-MM-DD, inclusive) drops promos already finished: the
+	// nomenclatures endpoint also 422s on ended promos, and wb_calendar_promotions
+	// is append-only — without the cut the phase re-asks every closed promo daily.
+	GetCalendarPromotionIDsByType(ctx context.Context, excludeType, minEndDate string) ([]int, error)
 }
 
 // ============================================================================

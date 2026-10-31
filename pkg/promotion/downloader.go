@@ -689,7 +689,12 @@ func (d *Downloader) downloadCalendarPromotionDetails(ctx context.Context, rateL
 // ============================================================================
 
 func (d *Downloader) downloadCalendarPromotionNomenclatures(ctx context.Context, rateLimit, burst int) error {
-	ids, err := d.reader.GetCalendarPromotionIDsByType(ctx, "auto")
+	today := time.Now().Format("2006-01-02")
+	// Отсечка оконченных акций: ручка номенклатур отвечает на них 422
+	// «неприменим» (08-promotion.yaml), а таблица промо append-only — без
+	// фильтра каждая закрытая акция жжёт 2 пустых запроса в день. Граница
+	// включительная: день окончания ещё проходит (финальный снапшот).
+	ids, err := d.reader.GetCalendarPromotionIDsByType(ctx, "auto", today)
 	if err != nil {
 		return fmt.Errorf("get promotion ids: %w", err)
 	}
@@ -698,7 +703,7 @@ func (d *Downloader) downloadCalendarPromotionNomenclatures(ctx context.Context,
 		return nil
 	}
 
-	snapshotDate := time.Now().Format("2006-01-02")
+	snapshotDate := today
 	t0 := time.Now()
 	totalNoms := 0
 	total := len(ids)

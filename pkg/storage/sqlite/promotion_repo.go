@@ -1348,8 +1348,16 @@ func (r *SQLiteSalesRepository) GetCalendarPromotionIDs(ctx context.Context) ([]
 
 // GetCalendarPromotionIDsByType returns promotion IDs excluding a specific type.
 // Used to skip "auto" promotions for /nomenclatures (API returns 422 for them).
-func (r *SQLiteSalesRepository) GetCalendarPromotionIDsByType(ctx context.Context, excludeType string) ([]int, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT promotion_id FROM wb_calendar_promotions WHERE type != ? ORDER BY promotion_id", excludeType)
+// minEndDate (YYYY-MM-DD, inclusive) additionally drops promos already finished:
+// /nomenclatures also 422s on ended promos, and the table is append-only —
+// without the cut each closed promo costs 2 dead requests daily. NULL/empty
+// end_date is kept defensively; the end date itself still passes (final snapshot).
+func (r *SQLiteSalesRepository) GetCalendarPromotionIDsByType(ctx context.Context, excludeType, minEndDate string) ([]int, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT promotion_id FROM wb_calendar_promotions
+		 WHERE type != ? AND (end_date IS NULL OR end_date = '' OR end_date >= ?)
+		 ORDER BY promotion_id`,
+		excludeType, minEndDate)
 	if err != nil {
 		return nil, fmt.Errorf("query calendar promotion ids by type: %w", err)
 	}
