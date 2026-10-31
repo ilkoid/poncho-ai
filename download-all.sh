@@ -107,6 +107,15 @@ PG_START=$SECONDS
 echo ""
 echo "═══════  Pass 1: PostgreSQL  ═══════"
 
+# ── Phase 0: Funnel CSV — первым в очереди на дневную квоту СОЗДАНИЯ отчётов
+#    (20/сутки на ключ, 11-analytics.yaml:163; внешние сервисы с нашим ключом
+#    съедают её до утра: 30–31.10 исчерпана уже к 07:25 → обе машины падали).
+#    03:00 = до дренажа. Промо-фаза днём заберёт этот же отчёт через resume
+#    (resume: true в конфиге, периоды совпадают день-в-день при days: 30) —
+#    второй create не нужен. Без --days: период всегда от конфига ──
+echo "── Phase 0: Funnel CSV ──"
+run go run "$PONCHO/cmd/data-downloaders/download-wb-funnel-csv-v2" --config "$C/download-wb-funnel-csv-v2-PG.yaml" --backend postgres
+
 # ── Phase 1: Catalog ──
 echo "── Phase 1: Catalog ──"
 
