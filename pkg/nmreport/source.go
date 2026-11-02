@@ -29,3 +29,9 @@ func (s *WBSource) PollStatus(ctx context.Context, downloadID string) (*wb.Stock
 func (s *WBSource) DownloadFile(ctx context.Context, downloadID string) ([]byte, error) {
 	return s.client.DownloadNmFunnelReport(ctx, downloadID, s.rateLimit, s.burst)
 }
+
+// ListReports implements NmReportLister: полный GET-список отчётов аккаунта
+// (тот же endpoint, что и poll, но без фильтра — квоту не тратит).
+func (s *WBSource) ListReports(ctx context.Context) ([]wb.StockHistoryReportItem, error) {
+	return s.client.ListStockHistoryReports(ctx, s.rateLimit, s.burst)
+}

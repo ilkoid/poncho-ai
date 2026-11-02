@@ -43,7 +43,6 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 	d.progress("Period: %s -> %s", from, to)
 
 	reportType := d.reportType()
-	downloadID := uuid.New().String()
 
 	// Resume: check if we already have a successful report for this period
 	if d.opts.Resume {
@@ -60,36 +59,57 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 		}
 	}
 
-	// Create report request
-	req := wb.StockHistoryReportRequest{
-		ID:             downloadID,
-		ReportType:     reportType,
-		UserReportName: fmt.Sprintf("Stock History %s %s-%s", d.opts.ReportType, from, to),
-		Params: wb.StockHistoryReportParams{
-			CurrentPeriod: wb.StockHistoryPeriod{
-				Start: from,
-				End:   to,
-			},
-			StockType:     d.opts.StockType,
-			SkipDeletedNm: true,
-		},
-	}
-
-	// Metrics-specific params
-	if d.opts.ReportType == "metrics" {
-		req.Params.AvailabilityFilters = []string{"deficient", "actual", "balanced"}
-		req.Params.OrderBy = &wb.StockHistoryOrderBy{
-			Field: "avgOrders",
-			Mode:  "desc",
+	// Adopt from list: этот период могла создать другая машина нашего
+	// аккаунта (квота созданий общая — 20/сутки). Если в бесплатном
+	// GET-списке есть свежий отчёт того же периода — забираем его вместо
+	// создания нового слота. Источники без листинга путь пропускают.
+	var adoptedID string
+	if d.opts.Resume {
+		if lister, ok := d.source.(StockHistoryLister); ok {
+			id, err := d.adoptFromList(ctx, lister, from, to)
+			if err != nil {
+				d.progress("Adopt check failed: %v (fallback to create)", err)
+			} else {
+				adoptedID = id
+			}
 		}
 	}
 
-	id, err := d.source.CreateReport(ctx, req)
-	if err != nil {
-		return result, fmt.Errorf("create report: %w", err)
+	id := adoptedID
+	if id == "" {
+		req := wb.StockHistoryReportRequest{
+			ID:             uuid.New().String(),
+			ReportType:     reportType,
+			UserReportName: stockReportName(d.opts.ReportType, from, to),
+			Params: wb.StockHistoryReportParams{
+				CurrentPeriod: wb.StockHistoryPeriod{
+					Start: from,
+					End:   to,
+				},
+				StockType:     d.opts.StockType,
+				SkipDeletedNm: true,
+			},
+		}
+
+		// Metrics-specific params
+		if d.opts.ReportType == "metrics" {
+			req.Params.AvailabilityFilters = []string{"deficient", "actual", "balanced"}
+			req.Params.OrderBy = &wb.StockHistoryOrderBy{
+				Field: "avgOrders",
+				Mode:  "desc",
+			}
+		}
+
+		created, err := d.source.CreateReport(ctx, req)
+		if err != nil {
+			return result, fmt.Errorf("create report: %w", err)
+		}
+		id = created
+		d.progress("Report created: %s", id)
+	} else {
+		d.progress("Adopted from list: %s (period already built by another machine, no quota slot spent)", id)
 	}
 	result.DownloadID = id
-	d.progress("Report created: %s", id)
 
 	// Poll until ready
 	d.progress("Polling status (interval=%ds, timeout=%dm)...", d.opts.PollIntervalSec, d.opts.PollTimeoutMin)
@@ -204,6 +224,54 @@ func (d *Downloader) Run(ctx context.Context) (*DownloadResult, error) {
 	result.Status = "SUCCESS"
 	result.Duration = time.Since(start)
 	return result, nil
+}
+
+// stockReportName — userReportName сток-отчётов: ставится при создании и по
+// нему же вторая машина аккаунта находит отчёт в GET-списке для adopt.
+func stockReportName(reportKind, from, to string) string {
+	return fmt.Sprintf("Stock History %s %s-%s", reportKind, from, to)
+}
+
+// adoptFromList ищет в GET-списке свежий отчёт того же периода, созданный
+// другой машиной аккаунта. Готовые файлы WB хранит 48 ч — берём не старше
+// 40 ч; при дублях периода выигрывает свежейший. "" → обычное создание.
+func (d *Downloader) adoptFromList(ctx context.Context, lister StockHistoryLister, from, to string) (string, error) {
+	items, err := lister.ListReports(ctx)
+	if err != nil {
+		return "", err
+	}
+	want := stockReportName(d.opts.ReportType, from, to)
+	var bestID string
+	var bestAt time.Time
+	for i := range items {
+		it := &items[i]
+		// Период полностью закодирован в имени (мы же его и построили);
+		// endDate в списке не сверяем строго — WB эхает его иначе для
+		// metrics (наблюдение 02.11: имя «…-2026-11-02», endDate=2026-11-01).
+		if it.Name != want || it.StartDate != from {
+			continue
+		}
+		if it.Status == wb.StockHistoryStatusFailed {
+			continue // слот creation потрачен, файла нет — не подбираем
+		}
+		at, ok := parseListedAt(it.CreatedAt)
+		if !ok || time.Since(at) > 40*time.Hour {
+			continue
+		}
+		if bestID == "" || at.After(bestAt) {
+			bestID, bestAt = it.ID, at
+		}
+	}
+	return bestID, nil
+}
+
+// parseListedAt парсит createdAt из списка отчётов («2024-06-26 20:05:32», UTC).
+func parseListedAt(s string) (time.Time, bool) {
+	t, err := time.Parse("2006-01-02 15:04:05", s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // resolveDates returns (from, to) as YYYY-MM-DD strings.

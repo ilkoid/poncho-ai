@@ -24,6 +24,16 @@ type StockHistorySource interface {
 	DownloadFile(ctx context.Context, downloadID string) ([]byte, error)
 }
 
+// StockHistoryLister is OPTIONALLY implemented by sources that can list all
+// reports of the account (GET /api/v2/nm-report/downloads без фильтра —
+// бесплатный, квоту созданий не тратит). Даёт второй машине аккаунта
+// «adopt»: забрать готовый отчёт того же периода вместо создания нового
+// (квота созданий общая на аккаунт — 20/сутки, 11-analytics.yaml:163).
+// Моки интерфейс не реализуют → в --mock и тестах путь выключен.
+type StockHistoryLister interface {
+	ListReports(ctx context.Context) ([]wb.StockHistoryReportItem, error)
+}
+
 // StockHistoryWriter is the persistence interface for stock history data.
 // Declared here (consumer), implemented by pkg/storage/{sqlite,postgres} (adapters).
 //

@@ -6,6 +6,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
@@ -255,4 +256,156 @@ func (s *slowSource) PollStatus(ctx context.Context, downloadID string) (*wb.Sto
 
 func (s *slowSource) DownloadFile(ctx context.Context, downloadID string) ([]byte, error) {
 	return nil, ctx.Err()
+}
+
+// ── Adopt from GET-list (вторая машина забирает готовый отчёт, квота не тратится) ──
+
+// listSource — MockSource с листингом; Created считает создания (= слоты квоты).
+type listSource struct {
+	MockSource
+	items   []wb.StockHistoryReportItem
+	Created int
+}
+
+func (s *listSource) CreateReport(ctx context.Context, req wb.NmReportFunnelRequest) (string, error) {
+	s.Created++
+	return s.MockSource.CreateReport(ctx, req)
+}
+
+func (s *listSource) ListReports(ctx context.Context) ([]wb.StockHistoryReportItem, error) {
+	return s.items, nil
+}
+
+// testPeriod повторяет resolveDates(Days) без доступа к приватному методу.
+func testPeriod(days int) (from, to string) {
+	now := time.Now()
+	return now.AddDate(0, 0, -(days - 1)).Format("2006-01-02"), now.Format("2006-01-02")
+}
+
+func utcStamp(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
+}
+
+func TestDownloader_AdoptFromList(t *testing.T) {
+	from, to := testPeriod(3)
+	src := &listSource{items: []wb.StockHistoryReportItem{{
+		ID:        "adopted-1",
+		Status:    wb.StockHistoryStatusSuccess,
+		Name:      "Funnel detail " + from + ".." + to,
+		StartDate: from,
+		EndDate:   to,
+		CreatedAt: utcStamp(time.Now()),
+	}}}
+	writer := &MockWriter{}
+	dl := NewDownloader(src, writer, DownloadOptions{
+		Days: 3, ReportType: "detail", Resume: true,
+		PollIntervalSec: 1, PollTimeoutMin: 1,
+	})
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if result.Status != "SUCCESS" {
+		t.Errorf("Status = %q, want SUCCESS", result.Status)
+	}
+	if src.Created != 0 {
+		t.Errorf("CreateReport called %d times, want 0 (adopt must not spend a quota slot)", src.Created)
+	}
+	if result.DownloadID != "adopted-1" {
+		t.Errorf("DownloadID = %q, want adopted-1", result.DownloadID)
+	}
+	if len(writer.Reports) != 1 || writer.Reports[0].ID != "adopted-1" {
+		t.Errorf("Reports = %+v, want 1 record under adopted-1", writer.Reports)
+	}
+	if len(writer.DetailRows) != 3 {
+		t.Errorf("DetailRows = %d, want 3 (adopted file must be parsed and saved)", len(writer.DetailRows))
+	}
+}
+
+func TestDownloader_AdoptLegacyName(t *testing.T) {
+	// Отчёт, созданный кодом ДО adopt: userReportName не ставился → WB
+	// показывает в списке авто-имя = тип отчёта в НИЖНЕМ регистре
+	// (наблюдение 02.11: «detail_history_report»).
+	from, to := testPeriod(3)
+	src := &listSource{items: []wb.StockHistoryReportItem{{
+		ID:        "legacy-1",
+		Status:    wb.StockHistoryStatusSuccess,
+		Name:      "detail_history_report",
+		StartDate: from,
+		EndDate:   to,
+		CreatedAt: utcStamp(time.Now()),
+	}}}
+	dl := NewDownloader(src, &MockWriter{}, DownloadOptions{
+		Days: 3, ReportType: "detail", Resume: true,
+		PollIntervalSec: 1, PollTimeoutMin: 1,
+	})
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if src.Created != 0 {
+		t.Errorf("CreateReport called %d times, want 0", src.Created)
+	}
+	if result.DownloadID != "legacy-1" {
+		t.Errorf("DownloadID = %q, want legacy-1", result.DownloadID)
+	}
+}
+
+func TestDownloader_AdoptNoMatch_Creates(t *testing.T) {
+	from, to := testPeriod(3)
+	now := utcStamp(time.Now())
+	src := &listSource{items: []wb.StockHistoryReportItem{
+		// чужой отчёт (пакет нарушителя): имя и период не наши
+		{ID: "foreign", Status: wb.StockHistoryStatusSuccess, Name: "Inventory report " + to, StartDate: to, EndDate: to, CreatedAt: now},
+		// наше имя, но другой период
+		{ID: "wrong-period", Status: wb.StockHistoryStatusSuccess, Name: "Funnel detail 2000-01-01..2000-01-03", StartDate: "2000-01-01", EndDate: "2000-01-03", CreatedAt: now},
+		// наш период, но генерация FAILED — не подбираем
+		{ID: "failed", Status: wb.StockHistoryStatusFailed, Name: "Funnel detail " + from + ".." + to, StartDate: from, EndDate: to, CreatedAt: now},
+	}}
+	dl := NewDownloader(src, &MockWriter{}, DownloadOptions{
+		Days: 3, ReportType: "detail", Resume: true,
+		PollIntervalSec: 1, PollTimeoutMin: 1,
+	})
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if src.Created != 1 {
+		t.Errorf("CreateReport called %d times, want 1 (no match → create as before)", src.Created)
+	}
+	if result.Status != "SUCCESS" || result.DownloadID == "" {
+		t.Errorf("result = %+v, want SUCCESS with fresh ID", result)
+	}
+}
+
+func TestDownloader_AdoptStaleIgnored(t *testing.T) {
+	// Готовые файлы WB хранит 48 ч: отчёт трёхдневной давности не существует —
+	// adopt не должен его подбирать.
+	from, to := testPeriod(3)
+	src := &listSource{items: []wb.StockHistoryReportItem{{
+		ID:        "stale-1",
+		Status:    wb.StockHistoryStatusSuccess,
+		Name:      "Funnel detail " + from + ".." + to,
+		StartDate: from,
+		EndDate:   to,
+		CreatedAt: utcStamp(time.Now().Add(-72 * time.Hour)),
+	}}}
+	dl := NewDownloader(src, &MockWriter{}, DownloadOptions{
+		Days: 3, ReportType: "detail", Resume: true,
+		PollIntervalSec: 1, PollTimeoutMin: 1,
+	})
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if src.Created != 1 {
+		t.Errorf("CreateReport called %d times, want 1 (stale item must be ignored)", src.Created)
+	}
+	if result.DownloadID == "stale-1" {
+		t.Errorf("DownloadID = stale-1, want a fresh creation")
+	}
 }

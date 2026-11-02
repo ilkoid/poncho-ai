@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
 // ============================================================================
@@ -274,5 +276,91 @@ func TestParseDailyCSV(t *testing.T) {
 	}
 	if r.DailyData["03.06.2026"] != 45 {
 		t.Errorf("DailyData[03.06.2026]: expected 45, got %d", r.DailyData["03.06.2026"])
+	}
+}
+
+// ── Adopt from GET-list (вторая машина забирает готовый отчёт, квота не тратится) ──
+
+// listSource — MockDailySource с листингом; Created считает создания (= слоты квоты).
+type listSource struct {
+	MockDailySource
+	items   []wb.StockHistoryReportItem
+	Created int
+}
+
+func (s *listSource) CreateReport(ctx context.Context, req wb.StockHistoryReportRequest) (string, error) {
+	s.Created++
+	return s.MockDailySource.CreateReport(ctx, req)
+}
+
+func (s *listSource) ListReports(ctx context.Context) ([]wb.StockHistoryReportItem, error) {
+	return s.items, nil
+}
+
+// testPeriod повторяет resolveDates(Days) без доступа к приватному методу.
+func testPeriod(days int) (from, to string) {
+	now := time.Now()
+	return now.AddDate(0, 0, -(days - 1)).Format("2006-01-02"), now.Format("2006-01-02")
+}
+
+func TestDownloader_AdoptFromList(t *testing.T) {
+	from, to := testPeriod(3)
+	src := &listSource{items: []wb.StockHistoryReportItem{{
+		ID:        "adopted-d1",
+		Status:    wb.StockHistoryStatusSuccess,
+		Name:      "Stock History daily " + from + "-" + to,
+		StartDate: from,
+		EndDate:   to,
+		CreatedAt: time.Now().UTC().Format("2006-01-02 15:04:05"),
+	}}}
+	writer := &MockWriter{}
+	dl := NewDownloader(src, writer, DownloadOptions{
+		ReportType: "daily", Days: 3, Resume: true,
+		PollIntervalSec: 1, PollTimeoutMin: 1,
+	})
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if result.Status != "SUCCESS" {
+		t.Errorf("Status = %q, want SUCCESS", result.Status)
+	}
+	if src.Created != 0 {
+		t.Errorf("CreateReport called %d times, want 0 (adopt must not spend a quota slot)", src.Created)
+	}
+	if result.DownloadID != "adopted-d1" {
+		t.Errorf("DownloadID = %q, want adopted-d1", result.DownloadID)
+	}
+	if len(writer.Reports) != 1 || writer.Reports[0].ID != "adopted-d1" {
+		t.Errorf("Reports = %+v, want 1 record under adopted-d1", writer.Reports)
+	}
+}
+
+func TestDownloader_AdoptNoMatch_Creates(t *testing.T) {
+	from, to := testPeriod(3)
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	src := &listSource{items: []wb.StockHistoryReportItem{
+		// чужой отчёт (пакет нарушителя): имя и период не наши
+		{ID: "foreign", Status: wb.StockHistoryStatusSuccess, Name: "Inventory report " + to, StartDate: to, EndDate: to, CreatedAt: now},
+		// наш тип имени, но другой период
+		{ID: "wrong-period", Status: wb.StockHistoryStatusSuccess, Name: "Stock History daily 2000-01-01-2000-01-03", StartDate: "2000-01-01", EndDate: "2000-01-03", CreatedAt: now},
+		// наш период, но генерация FAILED — не подбираем
+		{ID: "failed", Status: wb.StockHistoryStatusFailed, Name: "Stock History daily " + from + "-" + to, StartDate: from, EndDate: to, CreatedAt: now},
+	}}
+	dl := NewDownloader(src, &MockWriter{}, DownloadOptions{
+		ReportType: "daily", Days: 3, Resume: true,
+		PollIntervalSec: 1, PollTimeoutMin: 1,
+	})
+
+	result, err := dl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if src.Created != 1 {
+		t.Errorf("CreateReport called %d times, want 1 (no match → create as before)", src.Created)
+	}
+	if result.Status != "SUCCESS" || result.DownloadID == "" {
+		t.Errorf("result = %+v, want SUCCESS with fresh ID", result)
 	}
 }

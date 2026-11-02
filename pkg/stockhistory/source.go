@@ -29,3 +29,9 @@ func (s *WBSource) PollStatus(ctx context.Context, downloadID string) (*wb.Stock
 func (s *WBSource) DownloadFile(ctx context.Context, downloadID string) ([]byte, error) {
 	return s.client.DownloadStockHistoryReport(ctx, downloadID, s.rateLimit, s.burst)
 }
+
+// ListReports implements StockHistoryLister: полный GET-список отчётов
+// аккаунта (квоту не тратит) — для adopt второй машиной.
+func (s *WBSource) ListReports(ctx context.Context) ([]wb.StockHistoryReportItem, error) {
+	return s.client.ListStockHistoryReports(ctx, s.rateLimit, s.burst)
+}
