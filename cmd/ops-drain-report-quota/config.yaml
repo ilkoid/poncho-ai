@@ -1,0 +1,23 @@
+# ops-drain-report-quota — ВРЕМЕННАЯ кампания давления по квоте созданий
+# отчётов WB (20/сутки на аккаунт, 11-analytics.yaml:163). Подробности —
+# шапка main.go. Выключатель кампании — маркер .quota-drain-enabled
+# (проверяет run-quota-drain.sh, не эта утилита).
+
+wb:
+  api_key_env: "WB_API_ANALYTICS_AND_PROMO_KEY"
+
+drain:
+  daily_limit: 20            # созданий/сутки на аккаунт (сброс 00:00 МСК)
+  max_fillers: 19            # предохранитель: больше этого не создавать
+  reserve: 0                 # слоты, которые НЕ занимать (для другой машины)
+  deadline: "01:05"          # локальное время (МСК на VPS2): до пакета нарушителя 01:10
+  poll_interval_sec: 60      # каденс guard-поллинга GET-списка (бесплатный)
+  main_lock_dir: ".download-all.lock"  # жив → ночной блок ещё работает
+
+  filler_name_prefix: "Quota drain"    # имена наполнителей: «Quota drain <дата> #N»
+
+  # Наши маркеры «строго после наших утилит» (появились = наши создания готовы):
+  funnel_name_prefix: "Funnel detail"        # ставит funnel-csv-v2 (после adopt)
+  funnel_legacy_name: "DETAIL_HISTORY_REPORT" # авто-имя до adopt
+  stock_daily_prefix: "Stock History daily"   # ставит stock-history-v2
+  stock_metrics_prefix: "Stock History metrics"
