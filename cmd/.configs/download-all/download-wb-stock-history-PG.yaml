@@ -7,7 +7,11 @@ stock_history:
   days: 3
   report_type: "daily"
   stock_type: ""
-  resume: false
+  # true = семейство resume+adopt: локальная запись → RESUMED, иначе готовый
+  # отчёт второй машины из GET-списка → ADOPTED (без слота квоты 20/сутки);
+  # создание — только если периода нет нигде. Ночь 03.11: false = сток Mac
+  # падал на 429 при живых отчётах VPS2.
+  resume: true
   rate_limits:
     create: 3
     create_burst: 3
