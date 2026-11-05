@@ -58,17 +58,18 @@ type Config struct {
 
 // DrainConfig — параметры кампании дренажа.
 type DrainConfig struct {
-	DailyLimit        int    `yaml:"daily_limit"`         // 20 (11-analytics.yaml:163)
-	MaxFillers        int    `yaml:"max_fillers"`         // предохранитель: ≤19
-	Reserve           int    `yaml:"reserve"`             // слоты, которые НЕ занимать
-	Deadline          string `yaml:"deadline"`            // "01:05" локального времени (МСК на VPS2)
-	PollIntervalSec   int    `yaml:"poll_interval_sec"`   // каденс guard-поллинга
-	MainLockDir       string `yaml:"main_lock_dir"`       // жив → ночной блок ещё работает
-	FillerNamePrefix  string `yaml:"filler_name_prefix"`  // "Quota drain"
-	FunnelNamePrefix  string `yaml:"funnel_name_prefix"`  // наш маркер воронки
-	FunnelLegacyName  string `yaml:"funnel_legacy_name"`  // авто-имя до adopt
-	StockDailyPrefix  string `yaml:"stock_daily_prefix"`  // наш маркер стока
-	StockMetricsPrefix string `yaml:"stock_metrics_prefix"`
+	DailyLimit         int      `yaml:"daily_limit"`        // 20 (11-analytics.yaml:163)
+	MaxFillers         int      `yaml:"max_fillers"`        // предохранитель: ≤19
+	Reserve            int      `yaml:"reserve"`            // слоты, которые НЕ занимать
+	Deadline           string   `yaml:"deadline"`           // "01:05" локального времени (МСК на VPS2)
+	PollIntervalSec    int      `yaml:"poll_interval_sec"`  // каденс guard-поллинга
+	MainLockDir        string   `yaml:"main_lock_dir"`      // жив → ночной блок ещё работает
+	FillerNamePrefix   string   `yaml:"filler_name_prefix"` // легаси: одна строка (→ lines[0])
+	FillerNameLines    []string `yaml:"filler_name_lines"`  // «письмо»: i-й наполнитель = i-я строка
+	FunnelNamePrefix   string   `yaml:"funnel_name_prefix"` // наш маркер воронки
+	FunnelLegacyName   string   `yaml:"funnel_legacy_name"` // авто-имя до adopt
+	StockDailyPrefix   string   `yaml:"stock_daily_prefix"` // наш маркер стока
+	StockMetricsPrefix string   `yaml:"stock_metrics_prefix"`
 }
 
 func (c *Config) applyDefaults() {
@@ -91,8 +92,12 @@ func (c *Config) applyDefaults() {
 	if d.MainLockDir == "" {
 		d.MainLockDir = ".download-all.lock"
 	}
-	if d.FillerNamePrefix == "" {
-		d.FillerNamePrefix = "Quota drain"
+	if len(d.FillerNameLines) == 0 {
+		if d.FillerNamePrefix != "" {
+			d.FillerNameLines = []string{d.FillerNamePrefix}
+		} else {
+			d.FillerNameLines = []string{"Quota drain"}
+		}
 	}
 	if d.FunnelNamePrefix == "" {
 		d.FunnelNamePrefix = "Funnel detail"
@@ -218,6 +223,45 @@ func isDailyLimit(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "daily response limit")
 }
 
+// fillerName — имя i-го наполнителя: i-я строка «письма» + дата + номер.
+// Строк меньше, чем наполнителей → последняя повторяется: список WB отдаёт
+// отчёты НОВЫМИ ПЕРВЫМИ, поэтому повтор последней строки виден сверху списка
+// и работает как краткий билборд над полным письмом.
+func fillerName(lines []string, todayStr string, i int) string {
+	idx := i - 1
+	if idx >= len(lines) {
+		idx = len(lines) - 1
+	}
+	return fmt.Sprintf("%s %s #%02d", lines[idx], todayStr, i)
+}
+
+// validateFillerLines — fail-fast ДО первого создания: сервер WB режет
+// userReportName длиннее 70 символов (400 «greater than maximum 70», ночь
+// 06.11 — в сваггере лимит отсутствует) и запрещает эмодзи (11-analytics
+// :723). Суффикс " <дата> #NN" занимает 15 символов → строка ≤55, ASCII.
+func validateFillerLines(lines []string) error {
+	for n, l := range lines {
+		if l == "" {
+			return fmt.Errorf("filler_name_lines[%d]: пустая строка", n)
+		}
+		for _, r := range l {
+			if r > 127 {
+				return fmt.Errorf("filler_name_lines[%d]: не-ASCII символ %q — WB запрещает эмодзи, рискуем только ASCII", n, r)
+			}
+		}
+		if total := len(l) + 15; total > 70 {
+			return fmt.Errorf("filler_name_lines[%d]: %d симв. + суффикс 15 = %d > 70 (серверный лимит userReportName)", n, len(l), total)
+		}
+	}
+	return nil
+}
+
+// isNameValidationError — 400 по userReportName (длина/эмодзи): повод
+// пересоздать с коротким запасным именем, а не терять ночь дренажа.
+func isNameValidationError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "userReportName")
+}
+
 // decideAtDeadline решает, дренажить ли при неполных маркерах после дедлайна.
 func decideAtDeadline(m markers, lockDir string) (drain bool, reason string) {
 	if !m.funnel {
@@ -303,6 +347,10 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		return 2
 	}
+	if err := validateFillerLines(cfg.Drain.FillerNameLines); err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err, "— исправь до ночи, иначе дренаж не стартует")
+		return 2
+	}
 	reserve := cfg.Drain.Reserve
 	if *reserveFlag >= 0 {
 		reserve = *reserveFlag
@@ -327,6 +375,8 @@ func run() int {
 	ev.p("═══════  ops-drain-report-quota — кампания давления по квоте отчётов WB  ═══════")
 	ev.p("  режим: %s | лимит %d/сутки | reserve=%d | дедлайн %s | max_fillers=%d",
 		mode, cfg.Drain.DailyLimit, reserve, cfg.Drain.Deadline, cfg.Drain.MaxFillers)
+	ev.p("  письмо: %d строк(и) в именах наполнителей (лимит имени 70, фолбэк включён)",
+		len(cfg.Drain.FillerNameLines))
 
 	client := wb.New(apiKey)
 	client.SetRateLimit("stock_history_create", createPerMin, createBurst, createPerMin, createBurst)
@@ -408,20 +458,30 @@ func run() int {
 	}
 
 	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
-	created := 0
-	exhausted := false
-	for i := 1; i <= target; i++ {
-		req := wb.StockHistoryReportRequest{
+	fillerReq := func(name string) wb.StockHistoryReportRequest {
+		return wb.StockHistoryReportRequest{
 			ID:             uuid.New().String(),
 			ReportType:     "STOCK_HISTORY_DAILY_CSV",
-			UserReportName: fmt.Sprintf("%s %s #%02d", cfg.Drain.FillerNamePrefix, todayStr, i),
+			UserReportName: name,
 			Params: wb.StockHistoryReportParams{
 				CurrentPeriod: wb.StockHistoryPeriod{Start: yesterday, End: yesterday},
 				StockType:     "",
 				SkipDeletedNm: true,
 			},
 		}
-		if _, err := client.CreateStockHistoryReport(ctx, req, createPerMin, createBurst); err != nil {
+	}
+	created := 0
+	exhausted := false
+	for i := 1; i <= target; i++ {
+		name := fillerName(cfg.Drain.FillerNameLines, todayStr, i)
+		_, err := client.CreateStockHistoryReport(ctx, fillerReq(name), createPerMin, createBurst)
+		if err != nil && isNameValidationError(err) {
+			// Страховка ночи 06.11: 400 по имени не должен стоить дренажа.
+			ev.p("warning: наполнитель %d/%d отклонён по имени (%v) — пересоздаю с коротким", i, target, err)
+			name = fmt.Sprintf("Quota drain %s #%02d", todayStr, i)
+			_, err = client.CreateStockHistoryReport(ctx, fillerReq(name), createPerMin, createBurst)
+		}
+		if err != nil {
 			if isDailyLimit(err) {
 				exhausted = true
 				ev.p("наполнитель %d/%d: 429 дневной лимит — квота исчерпана (это цель)", i, target)
@@ -431,7 +491,7 @@ func run() int {
 			return 1
 		}
 		created++
-		ev.p("наполнитель %d/%d создан: %q", i, target, req.UserReportName)
+		ev.p("наполнитель %d/%d создан: %q", i, target, name)
 	}
 
 	// ── Финальный снимок (evidence) ──

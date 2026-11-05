@@ -9,18 +9,36 @@ wb:
 drain:
   daily_limit: 20            # созданий/сутки на аккаунт (сброс 00:00 МСК)
   max_fillers: 19            # предохранитель: больше этого не создавать
-  reserve: 0                 # слоты, которые НЕ занимать (для другой машины)
+  reserve: 1                 # слоты, которые НЕ занимать: 1 = «одна сессия»
+                             # нарушителю (их первый create в 01:10 пройдёт,
+                             # остальные 17 — 429; канал для их ответа именем
+                             # отчёта). 0 = закрывать квоту целиком.
   deadline: "01:05"          # локальное время (МСК на VPS2): до пакета нарушителя 01:10
   poll_interval_sec: 60      # каденс guard-поллинга GET-списка (бесплатный)
   main_lock_dir: ".download-all.lock"  # жив → ночной блок ещё работает
 
-  # Имя наполнителя = билборд: userReportName читает любой потребитель ключа
-  # в GET-списке отчётов и в ЛК WB (разбор их 18x429 начнётся с этого списка).
-  # Внутренний файл WB называет сам ({uuid}.csv, проверено 05.11) — имя файла
-  # не задаётся, текст живёт только здесь. Текст ASCII, без эмодзи (спека
-  # :723); логика утилиты от префикса не зависит (main.go:417 — только
-  # создание). Контакт добавим, когда выйдут на связь.
-  filler_name_prefix: "Quota drain - shared key: 20 reports/day. 18 nightly 1-day Inventory rebuilds exhaust it. Fix: 1 stock CSV = 3 months, check list before create."
+  # Имя наполнителя = «письмо» нарушителю: userReportName читает любой
+  # потребитель ключа в GET-списке отчётов и в ЛК WB (разбор их 429 начнётся
+  # с этого списка). i-й наполнитель получает i-ю строку; если строк меньше,
+  # последняя повторяется (список WB отдаёт НОВЫМИ ПЕРВЫМИ — повтор сверху
+  # работает как билборд). Серверный лимит имени 70 симв. (задокументирован
+  # 400-ответом ночи 06.11 «len 159 greater than maximum 70», в сваггере
+  # отсутствует): строка ≤55 + " <дата> #NN" (15). Утилита валидирует
+  # fail-fast до первого создания и умеет фолбэк на короткое имя при 400.
+  filler_name_lines:
+    - "Quota drain - this API key is shared by several teams"
+    - "Report quota: 20 creates per day, one pool per key"
+    - "Your 01:10 job rebuilds 18 one-day Inventory reports"
+    - "Those 18 rebuilds eat the whole pool: others get 429"
+    - "Fix: one stock-history CSV covers 3 months of data"
+    - "One report replaces all 18 rebuilds, quota stays free"
+    - "Before creating, count today's reports in this list"
+    - "We drain leftovers nightly until the rebuilds stop"
+    - "One slot per day stays free for your reply"
+    - "To reply: name your report ANSWER + short message"
+    - "Keep reply under 70 chars, we read this list daily"
+    # 12-я и далее повторяются (в списке они сверху) — краткая суть:
+    - "Quota drain - shared key. Fix: 1 stock CSV = 3mo"
 
   # Наши маркеры «строго после наших утилит» (появились = наши создания готовы):
   funnel_name_prefix: "Funnel detail"        # ставит funnel-csv-v2 (после adopt)

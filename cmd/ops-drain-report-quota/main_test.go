@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ilkoid/poncho-ai/pkg/config"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
 
@@ -30,9 +31,9 @@ func TestIsDailyLimit(t *testing.T) {
 
 func TestComputeTarget(t *testing.T) {
 	cases := []struct {
-		name                       string
+		name                         string
 		already, limit, reserve, max int
-		want                       int
+		want                         int
 	}{
 		{"обычная ночь: наши 3 заняты", 3, 20, 0, 19, 17},
 		{"квота пуста полностью", 0, 20, 0, 19, 19},
@@ -157,5 +158,78 @@ func TestDecideAtDeadline(t *testing.T) {
 	drain, reason = decideAtDeadline(markers{funnel: true}, tmp+"/.no-such-lock")
 	if !drain {
 		t.Errorf("released lock must drain anyway, reason=%q", reason)
+	}
+}
+
+func TestFillerName(t *testing.T) {
+	lines := []string{"first line", "second line", "tail billboard"}
+	if got := fillerName(lines, "2026-11-07", 1); got != "first line 2026-11-07 #01" {
+		t.Errorf("i=1: got %q", got)
+	}
+	if got := fillerName(lines, "2026-11-07", 3); got != "tail billboard 2026-11-07 #03" {
+		t.Errorf("i=3: got %q", got)
+	}
+	// Наполнителей больше, чем строк: последняя повторяется.
+	if got := fillerName(lines, "2026-11-07", 17); got != "tail billboard 2026-11-07 #17" {
+		t.Errorf("i>len: got %q", got)
+	}
+	// Длина — под серверный лимит 70 даже на двузначных номерах.
+	for _, tc := range []struct {
+		line string
+		want int
+	}{{"Quota drain - this API key is shared by several teams", 68}, {"tail billboard", 29}} {
+		if got := len(fillerName([]string{tc.line}, "2026-11-07", 17)); got != tc.want {
+			t.Errorf("len(%q) = %d, want %d", tc.line, got, tc.want)
+		}
+	}
+}
+
+func TestValidateFillerLines(t *testing.T) {
+	ok := []string{"Quota drain - this API key is shared by several teams", "Report quota: 20 creates per day, one pool per key"}
+	if err := validateFillerLines(ok); err != nil {
+		t.Errorf("valid lines must pass, got %v", err)
+	}
+	long := make([]byte, 56) // 56 + 15 = 71 > 70
+	for i := range long {
+		long[i] = 'a'
+	}
+	if err := validateFillerLines([]string{string(long)}); err == nil {
+		t.Error("line longer than 55 chars must fail (server cap 70)")
+	}
+	if err := validateFillerLines([]string{"ok", ""}); err == nil {
+		t.Error("empty line must fail")
+	}
+	if err := validateFillerLines([]string{"привет"}); err == nil {
+		t.Error("non-ASCII line must fail (emoji-adjacent risk, we are ASCII-only)")
+	}
+}
+
+func TestIsNameValidationError(t *testing.T) {
+	body := `wb api error: status 400, body: {"detail":"Validate: invalid: userReportName (string: len 159 greater than maximum 70)"}`
+	if !isNameValidationError(errors.New(body)) {
+		t.Error("400 with userReportName detail must be detected")
+	}
+	if isNameValidationError(errors.New("wb api error: status 429, body: rate limit")) {
+		t.Error("429 must not be classified as name-validation error")
+	}
+	if isNameValidationError(nil) {
+		t.Error("nil must not be classified")
+	}
+}
+
+// TestConfigFileLetter валидирует РЕАЛЬНЫЙ config.yaml (не мок): класс
+// промаха ночи 06.11 — текст в конфиге длиннее серверного лимита, юнит-тесты
+// кода этого не видят.
+func TestConfigFileLetter(t *testing.T) {
+	var cfg Config
+	if err := config.LoadYAML("config.yaml", &cfg); err != nil {
+		t.Fatalf("config.yaml: %v", err)
+	}
+	cfg.applyDefaults()
+	if len(cfg.Drain.FillerNameLines) == 0 {
+		t.Fatal("filler_name_lines пусты после defaults")
+	}
+	if err := validateFillerLines(cfg.Drain.FillerNameLines); err != nil {
+		t.Fatalf("письмо в config.yaml не проходит серверный лимит 70: %v", err)
 	}
 }
