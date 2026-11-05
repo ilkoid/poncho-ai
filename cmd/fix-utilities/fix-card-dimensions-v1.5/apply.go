@@ -80,8 +80,8 @@ func buildDimensionUpdatePayload(ctx context.Context, u *cardupdate.CardUpdater,
 //
 // Честный exit: при failed>0 (или ошибке read-after-write) возвращается ошибка —
 // прежде runApply возвращал nil при поломке, и статус-файл ночного скрипта
-// 8 ночей писал «OK» при нулём применённых (инцидент 28.10–05.11).
-// skipped_hollow — не провал: полые карточки ждут дозаполнения и возвращаются
+// 8 ночей писал «OK» при 0 применённых (инцидент 28.10–05.11).
+// skipped_hollow — не провал: неполные карточки ждут дозаполнения и возвращаются
 // следующей ночью (staging пересоздаётся каждым --stage).
 func runApply(ctx context.Context, db *sql.DB, client wbUpdateClient, cfg *Config, dryRun, allowHollow bool) error {
 	if !dryRun {
@@ -182,8 +182,8 @@ func loadPendingStaging(ctx context.Context, db *sql.DB) ([]stagedDimRow, error)
 	return batch, nil
 }
 
-// buildAll строит payload для каждой pending-строки; полые карточки (гард)
-// уходят в skipped_hollow с поимённой причиной — в ОБЕИХ режимах
+// buildAll строит payload для каждой pending-строки; неполные карточки (гард
+// неполноты) уходят в skipped_hollow с поимённой причиной — в ОБЕИХ режимах
 // (прецедент: build-ошибки и прежде писали статус в dry-run).
 func (a *applyRun) buildAll(ctx context.Context, u *cardupdate.CardUpdater, batch []stagedDimRow, allowHollow bool) ([]cardSend, error) {
 	out := make([]cardSend, 0, len(batch))
@@ -212,8 +212,8 @@ func (a *applyRun) buildAll(ctx context.Context, u *cardupdate.CardUpdater, batc
 	return out, nil
 }
 
-// hollowCardReasons — гард полоты на границе с WB API (dev_best_practices.md:35):
-// валидирует ПОСТРОЕННЫЙ payload (после Smart Merge). Полая карточка (пустой
+// hollowCardReasons — гард неполноты на границе с WB API (dev_best_practices.md:35):
+// валидирует ПОСТРОЕННЫЙ payload (после Smart Merge). Неполная карточка (пустой
 // description/wbSize/баркоды и т.п.) отравляла весь батч — WB отвечал 400
 // «Invalid request format» на все 76-101 карточки скопом (инцидент 28.10–05.11).
 // Инвариант: nil ⇔ payload полный. Причины — человекочитаемые, уходят в staging.

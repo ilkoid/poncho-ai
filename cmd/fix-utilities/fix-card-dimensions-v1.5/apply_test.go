@@ -86,8 +86,8 @@ func newApplyTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// cardSeed — карточка для fixture: full=true даёт заполненные поля;
-// поля hollowDesc/hollowWBSize «продалбливают» description/wbSize.
+// cardSeed — карточка для fixture: заполненные поля по умолчанию;
+// hollowDesc/hollowSize оставляют пустыми description/wbSize.
 type cardSeed struct {
 	nmID       int
 	vendorCode string
@@ -209,7 +209,7 @@ func applyTestConfig(batchSize int) *Config {
 }
 
 // ============================================================================
-// 1. Гард полоты — чистая функция
+// 1. Гард неполноты — чистая функция
 // ============================================================================
 
 func fullUpdateItem() wb.CardUpdateItem {
@@ -300,7 +300,7 @@ func TestRunApplyGuardSkipsHollow(t *testing.T) {
 
 	st := stagingStatuses(t, db)
 	if st[3][0] != "skipped_hollow" || !strings.Contains(st[3][1], "description пустой") {
-		t.Fatalf("полая карточка: получено %v", st[3])
+		t.Fatalf("неполная карточка: получено %v", st[3])
 	}
 	for _, nm := range []int{1, 2} {
 		if st[nm][0] != "applied" {
@@ -432,7 +432,7 @@ func TestSendChunkCoverageInvariant(t *testing.T) {
 		dryRun bool
 	}{
 		{"чистый прогон", &fakeWBClient{}, false, false},
-		{"гард полоты", &fakeWBClient{}, false, false},
+		{"гард неполноты", &fakeWBClient{}, false, false},
 		{"один яд", &fakeWBClient{poison: map[int]bool{4: true}}, false, false},
 		{"мёртвый сервер", &fakeWBClient{rejectAll: true}, false, false},
 		{"транспорт", &fakeWBClient{transportErr: errors.New("timeout")}, false, false},
@@ -444,7 +444,7 @@ func TestSendChunkCoverageInvariant(t *testing.T) {
 			db := newApplyTestDB(t)
 			nms := []int{1, 2, 3, 4, 5, 6, 7}
 			for i, nm := range nms {
-				// карточка 2 — полая по description, 5 — полая по wbSize
+				// карточка 2 — неполная по description, 5 — неполная по wbSize
 				seedCard(t, db, cardSeed{nmID: nm, hollowDesc: nm == 2, hollowSize: nm == 5, vendorCode: fmt.Sprintf("1000%d", i)})
 				seedStaging(t, db, nm, "")
 			}
@@ -494,7 +494,7 @@ func TestRunApplyDryRunMarksHollowNoPosts(t *testing.T) {
 	}
 	st := stagingStatuses(t, db)
 	if st[2][0] != "skipped_hollow" {
-		t.Fatalf("dry-run должен пометить полую: %v", st[2])
+		t.Fatalf("dry-run должен пометить неполную: %v", st[2])
 	}
 	if st[1][0] != "pending" {
 		t.Fatalf("чистая в dry-run остаётся pending: %v", st[1])
@@ -515,7 +515,7 @@ func TestAllowHollowOverridesGuard(t *testing.T) {
 		t.Fatalf("allow-hollow прогон должен пройти: %v", err)
 	}
 	if len(fake.posts) != 1 {
-		t.Fatalf("полая карточка должна уйти в POST: %v", fake.posts)
+		t.Fatalf("неполная карточка должна уйти в POST: %v", fake.posts)
 	}
 	if st := stagingStatuses(t, db)[1]; st[0] != "applied" {
 		t.Fatalf("ожидался applied: %v", st)
