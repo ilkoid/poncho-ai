@@ -251,6 +251,8 @@ func showDiff(ctx context.Context, db *sql.DB) error {
 			status = " [APPLIED]"
 		} else if r.Status == "error" {
 			status = " [ERROR: " + r.ErrorMsg + "]"
+		} else if r.Status == "skipped_hollow" {
+			status = " [SKIPPED_HOLLOW: " + r.ErrorMsg + "]"
 		}
 		fmt.Printf("%-12d %-20s | %-30s | %-30s%s\n", r.NmID, r.VendorCode, old, new, status)
 	}

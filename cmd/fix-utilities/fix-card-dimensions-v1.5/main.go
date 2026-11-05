@@ -27,6 +27,7 @@ func main() {
 	check := flag.Bool("check", false, "Query WB error list for recent card validation errors")
 	compare := flag.Bool("compare", false, "Compare WB vs 1C dimensions, show discrepancies")
 	force := flag.Bool("force", false, "Stage cards even if dimensions already set (overwrite from 1C)")
+	allowHollow := flag.Bool("allow-hollow", false, "Bypass hollow-card guard in --apply (manual emergency mode)")
 	dbPath := flag.String("db", "", "Override db_path from config")
 	flag.Parse()
 
@@ -128,7 +129,7 @@ func main() {
 		client.SetRateLimit("cards_content",
 			cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst,
 			cfg.WBUpdate.APIFloorPerMin, cfg.WBUpdate.APIFloorBurst)
-		if err := runApply(ctx, dbConn, client, cfg, *dryRun); err != nil {
+		if err := runApply(ctx, dbConn, client, cfg, *dryRun, *allowHollow); err != nil {
 			log.Fatalf("apply: %v", err)
 		}
 	}

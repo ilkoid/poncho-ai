@@ -7,11 +7,56 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ilkoid/poncho-ai/pkg/cardupdate"
 	"github.com/ilkoid/poncho-ai/pkg/wb"
 )
+
+// wbUpdateClient — узкое отверстие к WB вместо *wb.Client: даёт фейк в тестах
+// (зависимость от интерфейса, а не от конкретного типа SDK).
+type wbUpdateClient interface {
+	UpdateCards(ctx context.Context, baseURL string, rateLimit, burst int, cards []wb.CardUpdateItem) (string, string, error)
+	GetCardErrorsList(ctx context.Context, baseURL string, rateLimit, burst int, req wb.CardErrorsListRequest) ([]wb.CardErrorItem, error)
+}
+
+// Гарантия: реальный клиент удовлетворяет интерфейсу (ловит дрейф сигнатур).
+var _ wbUpdateClient = (*wb.Client)(nil)
+
+// cardSend — неразрывная пара строка staging ↔ готовый payload: бисект режет их
+// вместе, исключая рассинхрон параллельных слайсов (в items из-за build-ошибок
+// попадают не все строки чанка).
+type cardSend struct {
+	row  stagedDimRow
+	item wb.CardUpdateItem
+}
+
+// maxConsecutiveSingleRejects — предохранитель деградации: после стольких
+// одиночных WB-отказов подряд без единого успешного POST за прогон остаток
+// батча помечается error без отправки. Профиль «мёртвого сервера»: ~8-10 POST
+// вместо ~155 полного бисекта (у WB 4XX-запросы тарифицируются с коэффициентом).
+// Именованная константа поведения, не лимит API.
+const maxConsecutiveSingleRejects = 3
+
+// bisectState — состояние авто-бисекта на один прогон apply.
+type bisectState struct {
+	singleRejects int    // одиночные WB-отказы подряд; любой успех сбрасывает
+	aborted       bool   // сервер признан мёртвым: остаток не отправляется
+	lastText      string // последний errorText — в сообщение unattributed-ошибок
+}
+
+// applyRun — состояние одного прогона apply: доступы, счётчики, предохранитель.
+type applyRun struct {
+	db               *sql.DB
+	client           wbUpdateClient
+	cfg              *Config
+	bisect           bisectState
+	sent             int
+	failed           int
+	skippedHollow    int
+	appliedThisChunk []cardSend
+}
 
 // buildDimensionUpdatePayload creates a complete CardUpdateItem with updated dimensions.
 func buildDimensionUpdatePayload(ctx context.Context, u *cardupdate.CardUpdater, staged stagedDimRow) (wb.CardUpdateItem, error) {
@@ -32,13 +77,76 @@ func buildDimensionUpdatePayload(ctx context.Context, u *cardupdate.CardUpdater,
 }
 
 // runApply sends staged dimension updates to WB API (or prints payloads in dry-run mode).
-func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg *Config, dryRun bool) error {
+//
+// Честный exit: при failed>0 (или ошибке read-after-write) возвращается ошибка —
+// прежде runApply возвращал nil при поломке, и статус-файл ночного скрипта
+// 8 ночей писал «OK» при нулём применённых (инцидент 28.10–05.11).
+// skipped_hollow — не провал: полые карточки ждут дозаполнения и возвращаются
+// следующей ночью (staging пересоздаётся каждым --stage).
+func runApply(ctx context.Context, db *sql.DB, client wbUpdateClient, cfg *Config, dryRun, allowHollow bool) error {
 	if !dryRun {
 		if err := checkSnapshotFreshness(ctx, db, cfg.maxSnapshotAgeHours()); err != nil {
 			return err
 		}
 	}
 
+	batch, err := loadPendingStaging(ctx, db)
+	if err != nil {
+		return err
+	}
+	if len(batch) == 0 {
+		fmt.Println("No rows to apply. Run --stage first or check status.")
+		return nil
+	}
+
+	a := &applyRun{db: db, client: client, cfg: cfg}
+	cards, err := a.buildAll(ctx, cardupdate.NewCardUpdater(db), batch, allowHollow)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Applying %d cards (batch size %d, dry-run=%v): %d to send, %d skipped_hollow, %d failed-build\n",
+		len(batch), cfg.WBUpdate.BatchSize, dryRun, len(cards), a.skippedHollow, a.failed)
+
+	if dryRun {
+		a.dryRunPrint(cards)
+		return nil
+	}
+
+	var stopErr error
+	bs := cfg.WBUpdate.BatchSize
+	for i := 0; i < len(cards) && stopErr == nil; i += bs {
+		end := min(i+bs, len(cards))
+		a.appliedThisChunk = a.appliedThisChunk[:0]
+		a.sendChunk(ctx, cards[i:end])
+
+		// read-after-write один раз на top-level чанк по применённому
+		// подмножеству (не после каждого листа бисекта — лимит общий).
+		if len(a.appliedThisChunk) > 0 {
+			if err := checkWBErrors(ctx, client, cfg, rowsOf(a.appliedThisChunk)); err != nil {
+				log.Printf("  STOPPING: %v", err)
+				stopErr = err
+			}
+		}
+
+		if i+bs < len(cards) {
+			time.Sleep(time.Duration(cfg.WBUpdate.IntervalSeconds) * time.Second)
+		}
+	}
+
+	fmt.Printf("\nDone: %d sent, %d failed, %d skipped_hollow\n", a.sent, a.failed, a.skippedHollow)
+	switch {
+	case stopErr != nil:
+		return stopErr
+	case a.failed > 0:
+		return fmt.Errorf("apply: %d карточек не применено — см. fix_card_dimensions_staging", a.failed)
+	}
+	return nil
+}
+
+// loadPendingStaging — pending-строки staging (запрос без изменений против
+// прежнего инлайн-кода runApply).
+func loadPendingStaging(ctx context.Context, db *sql.DB) ([]stagedDimRow, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT nm_id, vendor_code, old_length, old_width, old_height, old_weight,
 		       new_length, new_width, new_height, new_weight, status, error_msg
@@ -47,7 +155,7 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg *Config, d
 		ORDER BY nm_id
 	`)
 	if err != nil {
-		return fmt.Errorf("query staging: %w", err)
+		return nil, fmt.Errorf("query staging: %w", err)
 	}
 	defer rows.Close()
 
@@ -61,7 +169,7 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg *Config, d
 			&r.NewLength, &r.NewWidth, &r.NewHeight, &r.NewWeight,
 			&r.Status, &errMsg,
 		); err != nil {
-			return fmt.Errorf("scan: %w", err)
+			return nil, fmt.Errorf("scan: %w", err)
 		}
 		if errMsg.Valid {
 			r.ErrorMsg = errMsg.String
@@ -69,87 +177,218 @@ func runApply(ctx context.Context, db *sql.DB, client *wb.Client, cfg *Config, d
 		batch = append(batch, r)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("rows: %w", err)
+		return nil, fmt.Errorf("rows: %w", err)
 	}
+	return batch, nil
+}
 
-	if len(batch) == 0 {
-		fmt.Println("No rows to apply. Run --stage first or check status.")
-		return nil
-	}
-
-	fmt.Printf("Applying %d cards (batch size %d, dry-run=%v)\n", len(batch), cfg.WBUpdate.BatchSize, dryRun)
-
-	updater := cardupdate.NewCardUpdater(db)
-	sent := 0
-	failed := 0
-
-	for i := 0; i < len(batch); i += cfg.WBUpdate.BatchSize {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+// buildAll строит payload для каждой pending-строки; полые карточки (гард)
+// уходят в skipped_hollow с поимённой причиной — в ОБЕИХ режимах
+// (прецедент: build-ошибки и прежде писали статус в dry-run).
+func (a *applyRun) buildAll(ctx context.Context, u *cardupdate.CardUpdater, batch []stagedDimRow, allowHollow bool) ([]cardSend, error) {
+	out := make([]cardSend, 0, len(batch))
+	for _, r := range batch {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-
-		end := i + cfg.WBUpdate.BatchSize
-		if end > len(batch) {
-			end = len(batch)
+		item, err := buildDimensionUpdatePayload(ctx, u, r)
+		if err != nil {
+			log.Printf("  ERROR build payload nm_id=%d: %v", r.NmID, err)
+			a.markStatus(ctx, r.NmID, "error", err.Error())
+			a.failed++
+			continue
 		}
-		chunk := batch[i:end]
-
-		items := make([]wb.CardUpdateItem, 0, len(chunk))
-		for _, r := range chunk {
-			item, err := buildDimensionUpdatePayload(ctx, updater, r)
-			if err != nil {
-				log.Printf("  ERROR build payload nm_id=%d: %v", r.NmID, err)
-				updateStagingStatus(ctx, db, r.NmID, "error", err.Error())
-				failed++
+		if !allowHollow {
+			if reasons := hollowCardReasons(item); len(reasons) > 0 {
+				msg := "hollow: " + strings.Join(reasons, "; ")
+				log.Printf("  SKIP hollow nm_id=%d %s: %s", r.NmID, r.VendorCode, msg)
+				a.markStatus(ctx, r.NmID, "skipped_hollow", msg)
+				a.skippedHollow++
 				continue
 			}
-			items = append(items, item)
 		}
+		out = append(out, cardSend{row: r, item: item})
+	}
+	return out, nil
+}
 
-		if len(items) == 0 {
-			continue
-		}
-
-		if dryRun {
-			payload, _ := json.MarshalIndent(items, "", "  ")
-			fmt.Printf("\n--- Batch %d-%d (%d cards) ---\n%s\n", i+1, end, len(items), payload)
-			sent += len(items)
-			continue
-		}
-
-		_, errorText, err := client.UpdateCards(ctx, wb.CardsBaseURL, cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst, items)
-		if err != nil {
-			log.Printf("batch %d-%d: %v (WB: %s)", i+1, end, err, errorText)
-			for _, r := range chunk {
-				updateStagingStatus(ctx, db, r.NmID, "error", err.Error())
+// hollowCardReasons — гард полоты на границе с WB API (dev_best_practices.md:35):
+// валидирует ПОСТРОЕННЫЙ payload (после Smart Merge). Полая карточка (пустой
+// description/wbSize/баркоды и т.п.) отравляла весь батч — WB отвечал 400
+// «Invalid request format» на все 76-101 карточки скопом (инцидент 28.10–05.11).
+// Инвариант: nil ⇔ payload полный. Причины — человекочитаемые, уходят в staging.
+func hollowCardReasons(item wb.CardUpdateItem) []string {
+	var reasons []string
+	if strings.TrimSpace(item.Brand) == "" {
+		reasons = append(reasons, "brand пустой")
+	}
+	if strings.TrimSpace(item.Title) == "" {
+		reasons = append(reasons, "title пустой")
+	}
+	if strings.TrimSpace(item.Description) == "" {
+		reasons = append(reasons, "description пустой")
+	}
+	if len(item.Sizes) == 0 {
+		reasons = append(reasons, "sizes пустой")
+	} else {
+		var noChrt, noWbSize, noSkus int
+		for _, s := range item.Sizes {
+			if s.ChrtID <= 0 {
+				noChrt++
 			}
-			failed += len(chunk)
-		} else {
-			for _, r := range chunk {
-				updateStagingStatus(ctx, db, r.NmID, "applied", "")
+			if strings.TrimSpace(s.WBSize) == "" {
+				noWbSize++
 			}
-			sent += len(chunk)
-			fmt.Printf("  batch %d-%d: OK (%d cards)\n", i+1, end, len(chunk))
-
-			if err := checkWBErrors(ctx, client, cfg, chunk); err != nil {
-				log.Printf("  STOPPING: %v", err)
-				break
+			if len(s.Skus) == 0 {
+				noSkus++
 			}
 		}
-
-		if i+cfg.WBUpdate.BatchSize < len(batch) {
-			time.Sleep(time.Duration(cfg.WBUpdate.IntervalSeconds) * time.Second)
+		if noChrt > 0 {
+			reasons = append(reasons, fmt.Sprintf("chrtID=0 у %d размеров", noChrt))
+		}
+		if noWbSize > 0 {
+			reasons = append(reasons, fmt.Sprintf("wbSize пустой у %d размеров", noWbSize))
+		}
+		if noSkus > 0 {
+			reasons = append(reasons, fmt.Sprintf("нет баркодов у %d размеров", noSkus))
 		}
 	}
+	if d := item.Dimensions; d == nil || d.Length <= 0 || d.Width <= 0 || d.Height <= 0 || d.WeightBrutto <= 0 {
+		reasons = append(reasons, "dimensions неполные")
+	}
+	for _, ch := range item.Characteristics {
+		if ch.ID <= 0 || !charcValueFilled(ch.Value) {
+			reasons = append(reasons, fmt.Sprintf("характеристика id=%d без значения", ch.ID))
+			break
+		}
+	}
+	return reasons
+}
 
-	fmt.Printf("\nDone: %d sent, %d failed\n", sent, failed)
-	return nil
+// charcValueFilled — непустое значение характеристики (Value interface{}:
+// после UnwrapValue бывает string / []any / число).
+func charcValueFilled(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(t) != ""
+	case []any:
+		return len(t) > 0
+	default:
+		return true
+	}
+}
+
+// sendChunk — POST чанка; при WB-уровневом отказе (errorText != "" — WB не даёт
+// типизированных ошибок, сравнение с пустотой, не string-match по тексту)
+// делит пополам до одиночных карточек: чистые под-чанки применяются, яд
+// получает поимённый error со своим nm_id.
+//
+// Инварианты рекурсии (проверены мысленным экспериментом, см. тесты):
+//   - завершимость: рекурсия только при len ≥ 2; потомки floor(n/2) и
+//     n-floor(n/2), оба ≥1 и <n → глубина ≤ ⌈log2 n⌉+1 (5 кадров при batch 20);
+//   - покрытие: потомки [:mid] и [mid:] не пересекаются и в объединении равны
+//     срезу; ветвь сплита ничего не помечает сама → каждая карточка получает
+//     ровно один терминальный статус, sent+failed+skipped == размер выборки;
+//   - память: подслайсы — views одного backing array из buildAll, горутин нет.
+func (a *applyRun) sendChunk(ctx context.Context, cards []cardSend) {
+	if len(cards) == 0 {
+		return
+	}
+	if err := ctx.Err(); err != nil {
+		a.failAll(ctx, cards, "cancel: "+err.Error())
+		return
+	}
+	if a.bisect.aborted {
+		a.failAll(ctx, cards, "WB-отказ без атрибуции (стоп после 3 одиночных при 0 успехов): "+a.bisect.lastText)
+		return
+	}
+
+	_, errorText, err := a.client.UpdateCards(ctx, wb.CardsBaseURL,
+		a.cfg.WBUpdate.RatePerMin, a.cfg.WBUpdate.RateBurst, itemsOf(cards))
+	switch {
+	case err == nil:
+		for _, c := range cards {
+			a.markStatus(ctx, c.row.NmID, "applied", "")
+		}
+		a.sent += len(cards)
+		a.appliedThisChunk = append(a.appliedThisChunk, cards...)
+		a.bisect.singleRejects = 0 // любой успех сбрасывает счётчик деградации
+		fmt.Printf("  batch %d-%d: OK (%d cards)\n", cards[0].row.NmID, cards[len(cards)-1].row.NmID, len(cards))
+	case errorText == "":
+		// Транспорт/исчерпанные 429 — транзиентно: чанк целиком в error,
+		// бисекта нет (не наказывать хорошие карточки за погоду).
+		log.Printf("  batch %d cards: %v", len(cards), err)
+		a.failAll(ctx, cards, "транспорт: "+err.Error())
+	case len(cards) == 1:
+		a.markStatus(ctx, cards[0].row.NmID, "error", "WB: "+errorText)
+		a.failed++
+		a.noteSingleReject(errorText)
+	default:
+		mid := len(cards) / 2
+		a.sendChunk(ctx, cards[:mid])
+		a.sendChunk(ctx, cards[mid:])
+	}
+}
+
+// noteSingleReject фиксирует одиночный WB-отказ; maxConsecutiveSingleRejects
+// подряд без единого успеха за прогон взводят abort (мёртвый сервер).
+// Trade-off: 3+ неизвестных ядов подряд до первого успеха тоже взводят abort —
+// оставшиеся карточки уедут следующей ночью (staging пересоздаётся), потери нет.
+func (a *applyRun) noteSingleReject(errorText string) {
+	a.bisect.singleRejects++
+	a.bisect.lastText = errorText
+	if a.bisect.singleRejects >= maxConsecutiveSingleRejects && a.sent == 0 {
+		a.bisect.aborted = true
+	}
+}
+
+// failAll помечает срез ошибкой и увеличивает счётчик провала.
+func (a *applyRun) failAll(ctx context.Context, cards []cardSend, msg string) {
+	for _, c := range cards {
+		a.markStatus(ctx, c.row.NmID, "error", msg)
+	}
+	a.failed += len(cards)
+}
+
+// markStatus — updateStagingStatus с видимым сбоем записи
+// (прежде ошибки записи статусов молча глотались всеми вызовами).
+func (a *applyRun) markStatus(ctx context.Context, nmID int, status, msg string) {
+	if err := updateStagingStatus(ctx, a.db, nmID, status, msg); err != nil {
+		log.Printf("  WARN: staging status nm_id=%d -> %s: %v", nmID, status, err)
+	}
+}
+
+// dryRunPrint печатает батчи payload'ов как прежний dry-run (WB не зовётся).
+func (a *applyRun) dryRunPrint(cards []cardSend) {
+	bs := a.cfg.WBUpdate.BatchSize
+	for i := 0; i < len(cards); i += bs {
+		end := min(i+bs, len(cards))
+		payload, _ := json.MarshalIndent(itemsOf(cards[i:end]), "", "  ")
+		fmt.Printf("\n--- Batch %d-%d (%d cards) ---\n%s\n", i+1, end, end-i, payload)
+	}
+	fmt.Printf("\nDone (dry-run): %d to send, %d skipped_hollow, %d failed-build\n", len(cards), a.skippedHollow, a.failed)
+}
+
+func itemsOf(cards []cardSend) []wb.CardUpdateItem {
+	items := make([]wb.CardUpdateItem, len(cards))
+	for i, c := range cards {
+		items[i] = c.item
+	}
+	return items
+}
+
+func rowsOf(cards []cardSend) []stagedDimRow {
+	rows := make([]stagedDimRow, len(cards))
+	for i, c := range cards {
+		rows[i] = c.row
+	}
+	return rows
 }
 
 // checkWBErrors queries WB error list after a successful UpdateCards batch.
-func checkWBErrors(ctx context.Context, client *wb.Client, cfg *Config, batch []stagedDimRow) error {
+func checkWBErrors(ctx context.Context, client wbUpdateClient, cfg *Config, batch []stagedDimRow) error {
 	items, err := client.GetCardErrorsList(ctx, wb.CardsBaseURL,
 		cfg.WBUpdate.RatePerMin, cfg.WBUpdate.RateBurst,
 		wb.CardErrorsListRequest{
