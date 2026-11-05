@@ -14,7 +14,13 @@ drain:
   poll_interval_sec: 60      # каденс guard-поллинга GET-списка (бесплатный)
   main_lock_dir: ".download-all.lock"  # жив → ночной блок ещё работает
 
-  filler_name_prefix: "Quota drain"    # имена наполнителей: «Quota drain <дата> #N»
+  # Имя наполнителя = билборд: userReportName читает любой потребитель ключа
+  # в GET-списке отчётов и в ЛК WB (разбор их 18x429 начнётся с этого списка).
+  # Внутренний файл WB называет сам ({uuid}.csv, проверено 05.11) — имя файла
+  # не задаётся, текст живёт только здесь. Текст ASCII, без эмодзи (спека
+  # :723); логика утилиты от префикса не зависит (main.go:417 — только
+  # создание). Контакт добавим, когда выйдут на связь.
+  filler_name_prefix: "Quota drain - shared key: 20 reports/day. 18 nightly 1-day Inventory rebuilds exhaust it. Fix: 1 stock CSV = 3 months, check list before create."
 
   # Наши маркеры «строго после наших утилит» (появились = наши создания готовы):
   funnel_name_prefix: "Funnel detail"        # ставит funnel-csv-v2 (после adopt)
