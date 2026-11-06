@@ -362,6 +362,19 @@ type CardDimensions struct {
 	IsValid      bool    `json:"isValid"`
 }
 
+// CardDimensionsUpdate — габариты для КАРТЫ ОБНОВЛЕНИЯ (POST cards/update).
+// Отдельная от CardDimensions (GET): поле isValid существует только в ответах
+// чтения — в схеме cards/update его НЕТ. Отправлялось с июня 2026 и
+// терпелось, но после серверного ужесточения WB в окне 27–28.10 стало
+// кандидатом №1 на 400 «Invalid request format» (инцидент fill-dims: ночь
+// 06.11 — 400 даже на гард-чистых карточках). НЕ добавлять сюда поля GET.
+type CardDimensionsUpdate struct {
+	Length       float64 `json:"length"`
+	Width        float64 `json:"width"`
+	Height       float64 `json:"height"`
+	WeightBrutto float64 `json:"weightBrutto"`
+}
+
 // CardCharacteristic — характеристика товара.
 // Value — массив значений произвольного типа (string, float64, bool).
 // WB API может возвращать как массивы, так и скаляры в поле value.
@@ -449,7 +462,7 @@ type CardUpdateItem struct {
 	Brand           string               `json:"brand"`
 	Title           string               `json:"title"`
 	Description     string               `json:"description"`
-	Dimensions      *CardDimensions      `json:"dimensions"`
+	Dimensions      *CardDimensionsUpdate `json:"dimensions"`
 	Characteristics []CardUpdateCharc    `json:"characteristics"`
 	Sizes           []CardSize           `json:"sizes"`
 	Documents       *CardUpdateDocuments `json:"documents,omitempty"`

@@ -170,6 +170,14 @@ type fakeWBClient struct {
 	poison       map[int]bool
 	rejectAll    bool
 	transportErr error
+	// realistic400 моделирует РЕАЛЬНЫЙ клиент при HTTP 4xx (ночь 06.11):
+	// errorText="" , тело ответа зашито в текст ошибки (content.go:576-578).
+	realistic400 bool
+}
+
+// wrapped400 — ошибка в формате pkg/wb: HTTP-обёртка + тело ответа WB.
+func wrapped400() error {
+	return errors.New(`update cards: wb api error: status 400, body: {"title":"Invalid request body","detail":"Invalid request format"}`)
 }
 
 func (f *fakeWBClient) UpdateCards(_ context.Context, _ string, _, _ int, cards []wb.CardUpdateItem) (string, string, error) {
@@ -181,13 +189,20 @@ func (f *fakeWBClient) UpdateCards(_ context.Context, _ string, _, _ int, cards 
 	if f.transportErr != nil {
 		return "", "", f.transportErr
 	}
-	if f.rejectAll {
-		return "", "Invalid request format", errors.New("wb api error: status 400")
-	}
-	for _, c := range cards {
-		if f.poison[c.NmID] {
-			return "", "Invalid request format", errors.New("wb api error: status 400")
+	rejected := f.rejectAll
+	if !rejected {
+		for _, c := range cards {
+			if f.poison[c.NmID] {
+				rejected = true
+				break
+			}
 		}
+	}
+	if rejected {
+		if f.realistic400 {
+			return "", "", wrapped400()
+		}
+		return "", "Invalid request format", errors.New("wb api error: status 400")
 	}
 	return "{}", "", nil
 }
@@ -219,7 +234,7 @@ func fullUpdateItem() wb.CardUpdateItem {
 		Brand:       "PlayToday",
 		Title:       "Тестовый товар",
 		Description: "Полное описание",
-		Dimensions:  &wb.CardDimensions{Length: 40, Width: 10, Height: 30, WeightBrutto: 0.5},
+		Dimensions:  &wb.CardDimensionsUpdate{Length: 40, Width: 10, Height: 30, WeightBrutto: 0.5},
 		Characteristics: []wb.CardUpdateCharc{
 			{ID: 14177451, Value: "Китай"},
 		},
@@ -519,5 +534,82 @@ func TestAllowHollowOverridesGuard(t *testing.T) {
 	}
 	if st := stagingStatuses(t, db)[1]; st[0] != "applied" {
 		t.Fatalf("ожидался applied: %v", st)
+	}
+}
+
+// ============================================================================
+// 3b. Реальный клиент при HTTP 4xx: errorText="" , тело в тексте ошибки —
+//     бисект обязан зажигаться (регресс ночи 06.11: триггер был мёртв)
+// ============================================================================
+
+func TestIsWBRejectionError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"HTTP 400 с телом — WB-отказ", wrapped400(), true},
+		{"HTTP 404 — WB-отказ", errors.New("wb api error: status 404, body: {}"), true},
+		{"HTTP 429 — рейт-лимит, НЕ яд", errors.New("max retries exceeded, last error: wb api error: status 429, body: limited"), false},
+		{"транспортный таймаут", errors.New(`Post "https://...": dial tcp: i/o timeout`), false},
+		{"контекст отменён", errors.New("context deadline exceeded"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isWBRejectionError(tc.err); got != tc.want {
+				t.Fatalf("isWBRejectionError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunApplyBisectsOnWrappedHTTP400(t *testing.T) {
+	db := newApplyTestDB(t)
+	nms := []int{1, 2, 3, 4, 5, 6, 7, 8}
+	for _, nm := range nms {
+		seedCard(t, db, cardSeed{nmID: nm})
+		seedStaging(t, db, nm, "")
+	}
+
+	fake := &fakeWBClient{poison: map[int]bool{8: true}, realistic400: true}
+	err := runApply(context.Background(), db, fake, applyTestConfig(8), false, false)
+	if err == nil {
+		t.Fatal("ожидалась ошибка: failed=1 (честный exit)")
+	}
+
+	st := stagingStatuses(t, db)
+	if st[8][0] != "error" || !strings.Contains(st[8][1], "WB: ") || !strings.Contains(st[8][1], "Invalid request format") {
+		t.Fatalf("яд не атрибутирован при errorText=\"\": %v", st[8])
+	}
+	for _, nm := range nms[:7] {
+		if st[nm][0] != "applied" {
+			t.Fatalf("чистая карточка %d не применена: %v", nm, st[nm])
+		}
+	}
+	// Тот же трейс, что и с errorText: [8]F → … → 7 POST
+	if len(fake.posts) != 7 {
+		t.Fatalf("ожидалось 7 POST, получено %d: %v", len(fake.posts), fake.posts)
+	}
+}
+
+func TestRunApplyTransportStillNoBisect(t *testing.T) {
+	// Регресс-страховка: классификатор не должен превращать транспорт в яд.
+	db := newApplyTestDB(t)
+	for _, nm := range []int{1, 2, 3, 4} {
+		seedCard(t, db, cardSeed{nmID: nm})
+		seedStaging(t, db, nm, "")
+	}
+	fake := &fakeWBClient{transportErr: errors.New(`Post "https://content-api.wildberries.ru/content/v2/cards/update": http2: timeout awaiting response headers`)}
+	_ = runApply(context.Background(), db, fake, applyTestConfig(4), false, false)
+
+	st := stagingStatuses(t, db)
+	if len(fake.posts) != 1 {
+		t.Fatalf("транспорт не должен бисектить: %d POST: %v", len(fake.posts), fake.posts)
+	}
+	for _, nm := range []int{1, 2, 3, 4} {
+		if !strings.Contains(st[nm][1], "транспорт") {
+			t.Fatalf("карточка %d должна быть «транспорт», а не бисект: %v", nm, st[nm])
+		}
 	}
 }

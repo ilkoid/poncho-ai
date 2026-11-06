@@ -18,12 +18,11 @@ func buildDimensionUpdatePayload(ctx context.Context, u *cardupdate.CardUpdater,
 	}
 
 	item := cardupdate.ToUpdateItem(card)
-	item.Dimensions = &wb.CardDimensions{
+	item.Dimensions = &wb.CardDimensionsUpdate{
 		Length:       staged.NewLength,
 		Width:        staged.NewWidth,
 		Height:       staged.NewHeight,
 		WeightBrutto: staged.NewWeight,
-		IsValid:      true,
 	}
 	return item, nil
 }

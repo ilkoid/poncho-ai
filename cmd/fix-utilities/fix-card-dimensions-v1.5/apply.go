@@ -66,12 +66,11 @@ func buildDimensionUpdatePayload(ctx context.Context, u *cardupdate.CardUpdater,
 	}
 
 	item := cardupdate.ToUpdateItem(card)
-	item.Dimensions = &wb.CardDimensions{
+	item.Dimensions = &wb.CardDimensionsUpdate{
 		Length:       staged.NewLength,
 		Width:        staged.NewWidth,
 		Height:       staged.NewHeight,
 		WeightBrutto: staged.NewWeight,
-		IsValid:      true,
 	}
 	return item, nil
 }
@@ -280,10 +279,26 @@ func charcValueFilled(v any) bool {
 	}
 }
 
-// sendChunk — POST чанка; при WB-уровневом отказе (errorText != "" — WB не даёт
-// типизированных ошибок, сравнение с пустотой, не string-match по тексту)
-// делит пополам до одиночных карточек: чистые под-чанки применяются, яд
-// получает поимённый error со своим nm_id.
+// isWBRejectionError отличает WB-уровневый отказ от транспортного сбоя по
+// стабильному формату ошибки нашего клиента. Ночь 06.11 показала: при HTTP
+// 4xx клиент возвращает errorText="" (тело ответа зашито в текст err,
+// pkg/wb/content.go:576-578) — триггер «errorText != ""» был мёртв, все
+// отказы неверно помечались «транспорт». Формат HTTP-обёртки стабилен:
+// «wb api error: status NNN, body: …» (pkg/wb/client.go). 429 исключаем —
+// это исчерпанный рейт-лимит (погода, ретраи уже исчерпаны внутри клиента),
+// а не валидационный отказ: бисект по нему не атрибутирует яд.
+func isWBRejectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "wb api error: status 4") && !strings.Contains(msg, "status 429")
+}
+
+// sendChunk — POST чанка; при WB-уровневом отказе (errorText != "" ИЛИ
+// HTTP-обёртка 4xx в тексте ошибки — см. isWBRejectionError) делит пополам
+// до одиночных карточек: чистые под-чанки применяются, яд получает
+// поимённый error со своим nm_id. Транспортные сбои бисектом не являются.
 //
 // Инварианты рекурсии (проверены мысленным экспериментом, см. тесты):
 //   - завершимость: рекурсия только при len ≥ 2; потомки floor(n/2) и
@@ -307,6 +322,11 @@ func (a *applyRun) sendChunk(ctx context.Context, cards []cardSend) {
 
 	_, errorText, err := a.client.UpdateCards(ctx, wb.CardsBaseURL,
 		a.cfg.WBUpdate.RatePerMin, a.cfg.WBUpdate.RateBurst, itemsOf(cards))
+	wbReject := err != nil && (errorText != "" || isWBRejectionError(err))
+	detail := errorText
+	if detail == "" && err != nil {
+		detail = err.Error() // тело ответа WB зашито клиентом в текст ошибки
+	}
 	switch {
 	case err == nil:
 		for _, c := range cards {
@@ -316,15 +336,15 @@ func (a *applyRun) sendChunk(ctx context.Context, cards []cardSend) {
 		a.appliedThisChunk = append(a.appliedThisChunk, cards...)
 		a.bisect.singleRejects = 0 // любой успех сбрасывает счётчик деградации
 		fmt.Printf("  batch %d-%d: OK (%d cards)\n", cards[0].row.NmID, cards[len(cards)-1].row.NmID, len(cards))
-	case errorText == "":
+	case !wbReject:
 		// Транспорт/исчерпанные 429 — транзиентно: чанк целиком в error,
 		// бисекта нет (не наказывать хорошие карточки за погоду).
 		log.Printf("  batch %d cards: %v", len(cards), err)
 		a.failAll(ctx, cards, "транспорт: "+err.Error())
 	case len(cards) == 1:
-		a.markStatus(ctx, cards[0].row.NmID, "error", "WB: "+errorText)
+		a.markStatus(ctx, cards[0].row.NmID, "error", "WB: "+detail)
 		a.failed++
-		a.noteSingleReject(errorText)
+		a.noteSingleReject(detail)
 	default:
 		mid := len(cards) / 2
 		a.sendChunk(ctx, cards[:mid])

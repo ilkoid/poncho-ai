@@ -298,8 +298,9 @@ func (r *SourceRepo) LoadTitleDescriptionBrand(ctx context.Context, nmID int) (t
 }
 
 // LoadDimensions загружает весо-габаритные данные карточки из cards (dim_* columns).
-// Возвращает nil если все значения нулевые (нет данных).
-func (r *SourceRepo) LoadDimensions(ctx context.Context, nmID int) (*wb.CardDimensions, error) {
+// Возвращает nil если все значения нулевые (нет данных). Тип — update-payload
+// (без isValid: поле GET-ответа, в схеме cards/update его нет).
+func (r *SourceRepo) LoadDimensions(ctx context.Context, nmID int) (*wb.CardDimensionsUpdate, error) {
 	var l, w, h, wt float64
 	var valid int
 	err := r.db.QueryRowContext(ctx, `
@@ -312,7 +313,8 @@ func (r *SourceRepo) LoadDimensions(ctx context.Context, nmID int) (*wb.CardDime
 	if l == 0 && w == 0 && h == 0 && wt == 0 {
 		return nil, nil
 	}
-	return &wb.CardDimensions{Length: l, Width: w, Height: h, WeightBrutto: wt, IsValid: valid != 0}, nil
+	_ = valid // dim_is_valid читается из кеша, но в update-payload не входит
+	return &wb.CardDimensionsUpdate{Length: l, Width: w, Height: h, WeightBrutto: wt}, nil
 }
 
 	// LoadSizes загружает размеры для указанных nm_id из card_sizes.

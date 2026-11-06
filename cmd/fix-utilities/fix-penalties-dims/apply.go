@@ -22,12 +22,11 @@ func buildPenaltiesDimPayload(ctx context.Context, u *cardupdate.CardUpdater, r 
 		return wb.CardUpdateItem{}, fmt.Errorf("load full card: %w", err)
 	}
 	item := cardupdate.ToUpdateItem(card)
-	item.Dimensions = &wb.CardDimensions{
+	item.Dimensions = &wb.CardDimensionsUpdate{
 		Length:       r.NewLength,
 		Width:        r.NewWidth,
 		Height:       r.NewHeight,
 		WeightBrutto: card.Dimensions.WeightBrutto, // preserved — no omitempty on the field
-		IsValid:      true,
 	}
 	return item, nil
 }

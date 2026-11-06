@@ -276,7 +276,14 @@ func ToUpdateItem(card FullCardData) wb.CardUpdateItem {
 		Brand:           card.Brand,
 		Title:           card.Title,
 		Description:     card.Description,
-		Dimensions:      &card.Dimensions,
+		// Поле-в-поле, НЕ &card.Dimensions: isValid — поле GET-ответа, в
+		// схеме cards/update его нет (см. CardDimensionsUpdate).
+		Dimensions: &wb.CardDimensionsUpdate{
+			Length:       card.Dimensions.Length,
+			Width:        card.Dimensions.Width,
+			Height:       card.Dimensions.Height,
+			WeightBrutto: card.Dimensions.WeightBrutto,
+		},
 		Characteristics: chars,
 		Sizes:           card.Sizes,
 		Documents:       documents,

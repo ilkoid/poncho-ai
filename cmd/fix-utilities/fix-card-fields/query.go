@@ -197,20 +197,18 @@ func loadSizes(ctx context.Context, db *sql.DB, nmIDs []int) (map[int][]wb.CardS
 // loadCardFields returns brand, title, description, dimensions and kizMarked for a single card.
 // kizMarked is *bool (3-value logic): NULL → nil → omitted from the WB payload (WB applies
 // default false); non-NULL → explicit *true/*false from cards.kiz_marked.
-func loadCardFields(ctx context.Context, db *sql.DB, nmID int) (brand, title, desc string, dims wb.CardDimensions, kizMarked *bool, err error) {
-	var dimValid int
+func loadCardFields(ctx context.Context, db *sql.DB, nmID int) (brand, title, desc string, dims wb.CardDimensionsUpdate, kizMarked *bool, err error) {
 	var kiz sql.NullInt64
 	err = db.QueryRowContext(ctx, `
 		SELECT COALESCE(brand,''), COALESCE(title,''), COALESCE(description,''),
 		       COALESCE(dim_length,0), COALESCE(dim_width,0), COALESCE(dim_height,0),
-		       COALESCE(dim_weight_brutto,0), COALESCE(dim_is_valid,0), kiz_marked
+		       COALESCE(dim_weight_brutto,0), kiz_marked
 		FROM cards WHERE nm_id = ?
 	`, nmID).Scan(&brand, &title, &desc,
-		&dims.Length, &dims.Width, &dims.Height, &dims.WeightBrutto, &dimValid, &kiz)
+		&dims.Length, &dims.Width, &dims.Height, &dims.WeightBrutto, &kiz)
 	if err != nil {
 		return
 	}
-	dims.IsValid = dimValid != 0
 	if kiz.Valid {
 		v := kiz.Int64 != 0
 		kizMarked = &v
