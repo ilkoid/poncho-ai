@@ -33,3 +33,47 @@ func TestCardUpdateItemPayloadOmitsIsValid(t *testing.T) {
 		}
 	}
 }
+
+// TestCardUpdateDocumentOmitsEmptyOptionalFields — родное эхо документов:
+// cards/list НЕ возвращает отсутствующие productNumber/tradeName/applicant/
+// endDate, значит и в cards/update этих ключей быть не должно. Пустые строки ""
+// в опциональных/date-полях с 27–28.10 дают 400 «Invalid request format»
+// на весь запрос — корневая причина инцидента fill-dims 28.10–08.11
+// (доказано пробами 08.11: docs с "" → 400, docs в форме WB → 200).
+func TestCardUpdateDocumentOmitsEmptyOptionalFields(t *testing.T) {
+	doc := CardUpdateDocument{
+		ID:        "7ab9e8d2-0000-0000-0000-000000000000",
+		Type:      1,
+		Number:    "ЕАЭС RU.Д-RU.АБ01.В.00000/0000",
+		StartDate: "2026-10-20T00:00:00Z",
+		IsEndless: true,
+		// ProductNumber/TradeName/Applicant/EndDate не заданы — как в ответе cards/list
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := string(raw)
+	for _, banned := range []string{"productNumber", "tradeName", "applicant", "endDate"} {
+		if strings.Contains(payload, `"`+banned+`"`) {
+			t.Fatalf("пустое опциональное поле %q ушло в payload: %s", banned, payload)
+		}
+	}
+	for _, want := range []string{`"id":"7ab9e8d2`, `"type":1`, `"number":`, `"startDate":"2026-10-20`, `"isEndless":true`} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("payload потерял обязательное поле (%s): %s", want, payload)
+		}
+	}
+
+	// Заполненные опциональные поля обязаны остаться в эхе (реальные end-даты).
+	doc.EndDate = "2030-10-20T00:00:00Z"
+	doc.TradeName = "PlayToday"
+	raw2, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload2 := string(raw2)
+	if !strings.Contains(payload2, `"endDate":"2030-10-20`) || !strings.Contains(payload2, `"tradeName":"PlayToday"`) {
+		t.Fatalf("заполненные опциональные поля потерялись: %s", payload2)
+	}
+}

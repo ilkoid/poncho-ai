@@ -478,15 +478,22 @@ type CardUpdateDocuments struct {
 // CardUpdateDocument — разрешительный документ в запросе обновления.
 // Непустой ID = изменить существующий документ (id из cards/list); без id — добавить новый.
 // Поля должны повторять значения из ответа cards/list один в один (даты — date-time эхом).
+//
+// Опциональные поля с omitempty: сам cards/list НЕ возвращает отсутствующие
+// productNumber/tradeName/applicant/endDate — родное эхо не должно содержать
+// этих ключей вовсе. Пустые строки "" в опциональных/date-полях с 27–28.10
+// (запуск системы вердиктов документов, спека 29.10) режутся как 400
+// «Invalid request format» на весь запрос (инцидент fill-dims 28.10–08.11,
+// доказано пробами: {docs ""}=400, {docs в форме WB}=200).
 type CardUpdateDocument struct {
 	ID            string `json:"id,omitempty"`
 	Type          int    `json:"type"`
 	Number        string `json:"number"`
-	ProductNumber string `json:"productNumber"`
-	TradeName     string `json:"tradeName"`
-	Applicant     string `json:"applicant"`
-	StartDate     string `json:"startDate"`
-	EndDate       string `json:"endDate"`
+	ProductNumber string `json:"productNumber,omitempty"`
+	TradeName     string `json:"tradeName,omitempty"`
+	Applicant     string `json:"applicant,omitempty"`
+	StartDate     string `json:"startDate,omitempty"`
+	EndDate       string `json:"endDate,omitempty"`
 	IsEndless     bool   `json:"isEndless"`
 }
 
