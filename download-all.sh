@@ -144,8 +144,10 @@ maint opsales
 run go run "$PONCHO/cmd/data-downloaders/download-wb-opsales-v2" --config "$C/download-wb-opsales-PG.yaml" --backend postgres
 maint sales
 run go run "$PONCHO/cmd/data-downloaders/download-wb-sales-v2" --config "$C/download-wb-sales-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
-maint region-sales
-run go run "$PONCHO/cmd/data-downloaders/download-wb-region-sales-v2" --config "$C/download-wb-region-sales-v2-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
+# Регион-продажи (API) сняты 10.11.2026: ручка /api/v1/analytics/region-sale
+# отключена WB окончательно — 404 «This method is deprecated» каждую ночь
+# с 07.11 (release-notes id=590); из спеки 08.11 путь удалён. Данные даёт
+# агрегат region-sales-agg в Phase 4 (region_sales_daily, живёт с 03.11).
 
 # ── Phase 4: Stock & Logistics ──
 echo "── Phase 4: Stock & Logistics ──"
@@ -164,7 +166,7 @@ maint fbs-orders
 run go run "$PONCHO/cmd/data-downloaders/download-wb-fbs-orders-v2" --config "$C/download-wb-fbs-orders-PG.yaml" --backend postgres ${DAYS:+--days=$DAYS}
 # Агрегат «продажи по регионам» (ANALYTICAL) из уже скачанного: order_feed ⋈
 # orders ⋈ operational_sales по srid. Замена отчёта region-sale — WB отключает
-# метод 3.11.2026 (release-notes id=590); фаза region-sales выше погаснет.
+# метод 3.11.2026 (release-notes id=590); фаза region-sales снята 10.11.2026.
 maint region-sales-agg
 run go run "$PONCHO/cmd/data-analyzers/build-region-sales-daily" --config "$C/region-sales-daily-PG.yaml"
 
