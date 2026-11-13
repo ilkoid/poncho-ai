@@ -81,7 +81,7 @@ func pgInt64Ptr(v int64) *int64 { return &v }
 //
 //	WB_TEST_PG=1 PG_PWD=... go test ./pkg/storage/postgres/ -run TestPgWbscraper -v
 //
-// Coordinates come from inst.md: 192.168.10.7:15432 / postgres / $PG_PWD. The DSN
+// Coordinates come from inst.md: localhost:5432 / postgres / $PG_PWD. The DSN
 // is built via the SAME production path (config.V2StorageConfig.GetEffectiveDSN),
 // so env overrides PGHOST/PGPORT/PGUSER/PGDATABASE apply. PG_PWD must hold the
 // real password (the production injectPassword path reads it). Each test uses a

@@ -110,7 +110,7 @@ tg_send() {
 # хостом, видимо, SYN-прокси роутера), а реальные подключения получали
 # no route to host. pg_isready ждёт ответа самого PG — его не обмануть.
 pg_ok() {
-  local host="${PGHOST:-192.168.10.7}" port="${PGPORT:-15432}"
+  local host="${PGHOST:-localhost}" port="${PGPORT:-5432}"
   if [ -x /opt/homebrew/opt/libpq/bin/pg_isready ]; then
     /opt/homebrew/opt/libpq/bin/pg_isready -h "$host" -p "$port" -t 5 >/dev/null 2>&1
   else
@@ -120,7 +120,7 @@ pg_ok() {
 
 # wait_for_pg: ждём живого PG до 15 мин (30 × 30с); 0 = доступен, 1 = сдались.
 wait_for_pg() {
-  local host="${PGHOST:-192.168.10.7}" port="${PGPORT:-15432}" tries=0
+  local host="${PGHOST:-localhost}" port="${PGPORT:-5432}" tries=0
   until pg_ok; do
     tries=$(( tries + 1 ))
     if [ "$tries" -ge 30 ]; then
@@ -176,7 +176,7 @@ nightly_run() {
   NIGHT_START=$SECONDS
   if ! wait_for_pg; then
     rc=1
-    fail_lines="PG ${PGHOST:-192.168.10.7}:${PGPORT:-15432} не отвечает дольше ~15 мин (wait_for_pg)"
+    fail_lines="PG ${PGHOST:-localhost}:${PGPORT:-5432} не отвечает дольше ~15 мин (wait_for_pg)"
     log "FAIL: $fail_lines"
   else
     # Лестница ретраев: быстрый провал (<5 мин) — это инфраструктура (сеть/PG),

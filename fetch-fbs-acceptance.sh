@@ -39,8 +39,8 @@
 #
 # Пример: FEED_DAYS=3 bash fetch-fbs-acceptance.sh
 
-export PGHOST="${PGHOST:-192.168.10.7}"
-export PGPORT="${PGPORT:-15432}"
+export PGHOST="${PGHOST:-localhost}"
+export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-postgres}"
 
 PONCHO="$(cd "$(dirname "$0")" && pwd)"

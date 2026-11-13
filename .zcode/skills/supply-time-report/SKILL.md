@@ -77,15 +77,15 @@ nm_id лежит на складе месяцами от множества по
 **DSN по умолчанию** (повторяет `pkg/config/pgconfig.go:187-193`):
 
 ```
-postgresql://postgres@192.168.10.7:15432/wb_data_prod?sslmode=disable
+postgresql://postgres@localhost:5432/wb_data_prod?sslmode=disable
 ```
 
 **Env-переменные** (стандарт проекта):
 
 | Переменная | Default | Назначение |
 |---|---|---|
-| `PGHOST` | `192.168.10.7` | Хост PG |
-| `PGPORT` | `15432` | Порт PG |
+| `PGHOST` | `localhost` | Хост PG |
+| `PGPORT` | `5432` | Порт PG |
 | `PGUSER` | `postgres` | Юзер PG |
 | `PGDATABASE` | `wb_data_prod` | БД (✓ содержит supplies; `wb_data_test` НЕ содержит) |
 | `PG_PWD` | (обязательно) | Пароль PG |
@@ -101,7 +101,7 @@ shell-синтаксис `export VAR='...'` с одинарными кавычк
 
 ```bash
 set -a; source /Users/ilkoid/dev/poncho-ai/.env; set +a
-PGPASSWORD="$PG_PWD" psql -h "${PGHOST:-192.168.10.7}" -p "${PGPORT:-15432}" \
+PGPASSWORD="$PG_PWD" psql -h "${PGHOST:-localhost}" -p "${PGPORT:-5432}" \
   -U "${PGUSER:-postgres}" -d "${PGDATABASE:-wb_data_prod}"
 ```
 
@@ -234,7 +234,7 @@ python3 -m venv .venv                              # изолируем от с�
 **Отчёт по складам (markdown):**
 
 ```
-DSN: wb_data_prod@192.168.10.7:15432 · фильтр: все склады · статус: 5 (Принято)
+DSN: wb_data_prod@localhost:5432 · фильтр: все склады · статус: 5 (Принято)
 | Склад          | Поставок | Среднее, дн | P50  | P25  | P75  | P90  | Min | Max |
 |----------------|----------|-------------|------|------|------|------|-----|-----|
 | Электросталь   | 45       | 2.4         | 2.0  | 1.0  | 3.0  | 5.0  | 0   | 9   |

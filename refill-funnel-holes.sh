@@ -32,7 +32,7 @@ DRY_RUN=0
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 PSQL="$(command -v psql || echo /opt/homebrew/opt/libpq/bin/psql)"
-PGH="${PGHOST:-192.168.10.7}"; PGP="${PGPORT:-15432}"; PGU="${PGUSER:-postgres}"
+PGH="${PGHOST:-localhost}"; PGP="${PGPORT:-5432}"; PGU="${PGUSER:-postgres}"
 DB="${FUNNEL_DB:-wb_data_prod}"
 
 mkdir -p "$LOGDIR"

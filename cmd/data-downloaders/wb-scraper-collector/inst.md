@@ -1,5 +1,5 @@
 Тест расширения → Go-сервер → PG
-Среда: local dev RYZEN-ILKOID, PG 192.168.10.7:15432 / postgres / $PG_PWD. Сервер сам поднимает wbscraper-схему при старте. Только wb_data_test, никогда prod//var/db.
+Среда: local dev RYZEN-ILKOID, PG localhost:5432 / postgres / $PG_PWD. Сервер сам поднимает wbscraper-схему при старте. Только wb_data_test, никогда prod//var/db.
 
 1. Smoke: mock-сервер (без БД, ~30 сек)
 Terminal A:
@@ -28,7 +28,7 @@ go run . --config cmd/.configs/download-all/wb-scraper-collector.yaml \
 Terminal B — тот же curl (body из п.1), потом проверка строк:
 
 
-PGPASSWORD="$PG_PWD" psql -h 192.168.10.7 -p 15432 -U postgres -d wb_data_test -c "
+PGPASSWORD="$PG_PWD" psql -h localhost -p 5432 -U postgres -d wb_data_test -c "
 SELECT snapshot_ts,nm_id,brand_name,imt_name FROM competitor_card_meta ORDER BY snapshot_ts DESC LIMIT 5;
 SELECT query_id,query,subject,brand FROM search_queries WHERE query='кроссовки';"
 → 1 строка в competitor_card_meta, 1 в search_queries.
@@ -36,7 +36,7 @@ SELECT query_id,query,subject,brand FROM search_queries WHERE query='кросс�
 Идемпотентность — повторить curl, затем:
 
 
-PGPASSWORD="$PG_PWD" psql -h 192.168.10.7 -p 15432 -U postgres -d wb_data_test -tAc \
+PGPASSWORD="$PG_PWD" psql -h localhost -p 5432 -U postgres -d wb_data_test -tAc \
 "SELECT count(*) FROM competitor_card_meta WHERE snapshot_ts='2026-07-09T12:00:00Z';"
 → 1 (не 2): ReplaceSnapshot = DELETE+INSERT, без дублей.
 

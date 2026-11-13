@@ -125,7 +125,7 @@ cmd/.../download-<domain>-v2/ → flags → config → switch backend → DI →
   var _ cards.CardsWriter = (*PgCardsRepo)(nil)
   ```
 - **Backend selection:** CLI creates the concrete Writer via `switch cfg.Backend` (case `"postgres"` / default `"sqlite"`). **No BackendFactory** — factory = god-interface violating ISP; the CLI knows which Writer it needs, so it creates it directly.
-- **Config:** `V2StorageConfig` in `pkg/config/pgconfig.go`. `GetEffectiveDSN()`: non-empty `pg_dsn` used as-is; else `BuildPgDSN()` from `PGHOST` (|| `192.168.10.7`), `PGPORT` (|| `15432`), `PGUSER` (|| `postgres`), `os.Getenv(pg_password_env)`, `pg_database`.
+- **Config:** `V2StorageConfig` in `pkg/config/pgconfig.go`. `GetEffectiveDSN()`: non-empty `pg_dsn` used as-is; else `BuildPgDSN()` from `PGHOST` (|| `localhost`), `PGPORT` (|| `5432`), `PGUSER` (|| `postgres`), `os.Getenv(pg_password_env)`, `pg_database`.
 - **pgxpool** (`github.com/jackc/pgx/v5/pgxpool`) — native PG driver, NOT `database/sql` + `lib/pq`. Dual-backend error warning: `sql.ErrNoRows` (SQLite) and `pgx.ErrNoRows` (PG) are different types — use `errors.Is()`.
 - **DiscardWriter for `--mock`** — `--mock` NEVER writes to DB. New domains MUST define `DiscardWriter` in `pkg/<domain>/mock.go` and wire `writer = &domain.DiscardWriter{}` when `*mockMode`. Legacy tech debt: `cards` and `sales` v2 still open the DB in `--mock` (they predate DiscardWriter).
 - **No `fmt.Printf` in `pkg/<domain>/`** — use `dllog` (`dllog.PrintHeader()`, `dllog.Progress()`, `dllog.Done()`), one line per page.

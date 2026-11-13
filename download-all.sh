@@ -23,8 +23,8 @@
 # Прогон вручную на Mac: запускай под caffeinate, чтобы сон Mac не рвал длинные
 # фазы (прогон ~50 мин): caffeinate -is bash download-all.sh
 
-export PGHOST="${PGHOST:-192.168.10.7}"
-export PGPORT="${PGPORT:-15432}"
+export PGHOST="${PGHOST:-localhost}"
+export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-postgres}"
 
 PONCHO="$(cd "$(dirname "$0")" && pwd)"
@@ -50,7 +50,7 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 fi
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
 
-# ── Fail fast if PG is unreachable (default 192.168.10.7:15432 unless overridden via .env).
+# ── Fail fast if PG is unreachable (default localhost:5432 unless overridden via .env).
 #    Проверяем pg_isready (протокол PG), не nc -z: ночью 05-06.09.2026 nc «подключался»
 #    к спящему хосту (SYN-прокси?), а утилиты падали с no route to host. ──
 PG_HOST="${PGHOST}"; PG_PORT="${PGPORT}"

@@ -23,12 +23,12 @@ when_to_use: >-
 
 Канонический DSN проекта (см. `pkg/config/pgconfig.go:187-193`):
 ```
-postgres://postgres@192.168.10.7:15432/wb_data_prod?sslmode=disable
+postgres://postgres@localhost:5432/wb_data_prod?sslmode=disable
 ```
 
 Env-источник DSN (стандарт проекта):
-- `PGHOST` (default `192.168.10.7`) — хост
-- `PGPORT` (default `15432`) — порт
+- `PGHOST` (default `localhost`) — хост
+- `PGPORT` (default `5432`) — порт
 - `PGUSER` (default `postgres`) — пользователь
 - `PGDATABASE` (default `wb_data_prod`) — база
 - `PG_PWD` — пароль (обязателен)
@@ -39,7 +39,7 @@ Env-источник DSN (стандарт проекта):
 ```bash
 zsh -c '
   set -a; source /Users/ilkoid/dev/poncho-ai/.env 2>/dev/null; set +a
-  PGPASSWORD="$PG_PWD" psql -h "${PGHOST:-192.168.10.7}" -p "${PGPORT:-15432}" \
+  PGPASSWORD="$PG_PWD" psql -h "${PGHOST:-localhost}" -p "${PGPORT:-5432}" \
     -U "${PGUSER:-postgres}" -d "${PGDATABASE:-wb_data_prod}" \
     -A -F"|" --pset=footer=off -f /tmp/q.sql
 '
@@ -47,7 +47,7 @@ zsh -c '
 - `set -a` — экспортирует все переменные из `.env` в окружение.
 - `source ... .env` — файл в формате `export VAR=...` (zsh/bash-совместимый).
 - `PGPASSWORD="$PG_PWD"` — pg-клиент читает пароль отсюда, а не из `ps`.
-- `${PGHOST:-192.168.10.7}` — фолбэк на дефолт, если в `.env` нет хоста.
+- `${PGHOST:-localhost}` — фолбэк на дефолт, если в `.env` нет хоста.
 
 **⚠ Важно про zsh non-interactive:** `~/.zshrc` НЕ исполняется в `zsh -c` (non-interactive) — там `PG_PWD` пуст, даже если в интерактивной сессии он есть. Поэтому всегда `source .env` явно. Если встретишь `PG_PWD not found` — это значит, что `.env` забыли `source`-нуть.
 
@@ -115,7 +115,7 @@ WHERE doc_type_name='Продажа' AND is_cancel=false;
 ```markdown
 ## Тренд продаж по артикулам — за последние 28 дней
 
-DSN: `wb_data_prod@192.168.10.7:15432` · фильтр: `subject_name = 'Панама'` · окно: 28 дней
+DSN: `wb_data_prod@localhost:5432` · фильтр: `subject_name = 'Панама'` · окно: 28 дней
 
 | Артикул | Предмет | 28d шт | 14d шт | 7d шт | 3d шт | Тренд qty | R² | 28d выручка | Тренд rev |
 |---|---|---:|---:|---:|---:|:---:|---:|---:|:---:|

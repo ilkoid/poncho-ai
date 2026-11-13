@@ -17,8 +17,8 @@
 #
 # Summary в конце перечисляет упавшие утилиты; код выхода = 1, если хоть одна упала.
 
-export PGHOST="${PGHOST:-192.168.10.7}"
-export PGPORT="${PGPORT:-15432}"
+export PGHOST="${PGHOST:-localhost}"
+export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-postgres}"
 
 PONCHO="$(cd "$(dirname "$0")" && pwd)"

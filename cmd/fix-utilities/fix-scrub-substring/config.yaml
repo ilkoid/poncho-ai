@@ -13,8 +13,13 @@
 
 # --- PostgreSQL connection (all required; password expanded from env by LoadYAML) ---
 pg:
-  host: "192.168.10.7"
-  port: 15432
+  # host/port — env-плейсхолдеры: config.LoadYAML разворачивает ${VAR} до парсинга
+  # (прецедент — ${PG_PWD} ниже). У каждой машины свой .env: Mac — localhost:5432,
+  # VPS2 — свой PG (10.120.24.155:5432). Не править эти строки локально — иначе
+  # каждый ночной ff-pull конфликтует; переопределять через PGHOST/PGPORT в .env
+  # (перед запуском: set -a; source .env; set +a).
+  host: "${PGHOST}"
+  port: ${PGPORT}
   user: "postgres"
   password: "${PG_PWD}"      # set PG_PWD in your shell; expanded before parsing
   database: "wb_data_prod"

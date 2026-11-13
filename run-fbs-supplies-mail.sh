@@ -44,8 +44,8 @@ TEST_TO="kashparov.i@playtoday.ru"
 
 # ── Окружение: cron видит урезанный PATH — дополним типовыми локациями go ──
 export PATH="$PATH:/usr/local/go/bin:/opt/homebrew/bin:${HOME}/go/bin"
-export PGHOST="${PGHOST:-192.168.10.7}"
-export PGPORT="${PGPORT:-15432}"
+export PGHOST="${PGHOST:-localhost}"
+export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-postgres}"
 
 PONCHO="$(cd "$(dirname "$0")" && pwd)"

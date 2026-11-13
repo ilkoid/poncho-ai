@@ -8,8 +8,8 @@ set -euo pipefail
 
 DIR="${1:?usage: import-fbs-snapshot.sh /tmp/fbs-snapshot-<dir>}"
 ENV_FILE="${ENV_FILE:-/Users/ilkoid/dev/poncho-ai/.env}"
-PGHOST_="${PGHOST:-192.168.10.7}"
-PGPORT_="${PGPORT:-15432}"
+PGHOST_="${PGHOST:-localhost}"
+PGPORT_="${PGPORT:-5432}"
 PGDB="${PGDB:-wb_data_prod}"
 PGUSER_="${PGUSER:-postgres}"
 

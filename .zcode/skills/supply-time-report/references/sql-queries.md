@@ -16,7 +16,7 @@ SQL
 
 zsh -c '
   set -a; source /Users/ilkoid/dev/poncho-ai/.env 2>/dev/null; set +a
-  PGPASSWORD="$PG_PWD" psql -h "${PGHOST:-192.168.10.7}" -p "${PGPORT:-15432}" \
+  PGPASSWORD="$PG_PWD" psql -h "${PGHOST:-localhost}" -p "${PGPORT:-5432}" \
     -U "${PGUSER:-postgres}" -d "${PGDATABASE:-wb_data_prod}" \
     -f /tmp/q.sql
 '

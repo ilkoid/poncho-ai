@@ -86,7 +86,7 @@ go run ./cmd/data-maintenance/pg-maintenance \
 
 ```bash
 set -a; source .env; set +a
-PGPASSWORD="$PG_PWD" psql -h "${PGHOST:-192.168.10.7}" -p "${PGPORT:-15432}" \
+PGPASSWORD="$PG_PWD" psql -h "${PGHOST:-localhost}" -p "${PGPORT:-5432}" \
   -U "${PGUSER:-postgres}" -d wb_data_prod \
   -c "SET statement_timeout = 0" \
   -c "REINDEX TABLE operational_sales"      -c "ANALYZE operational_sales" \

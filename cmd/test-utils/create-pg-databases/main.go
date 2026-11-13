@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	defaultHost = "192.168.10.7"
-	defaultPort = "15432"
+	defaultHost = "localhost"
+	defaultPort = "5432"
 	defaultUser = "postgres"
 	pwdEnvVar   = "PG_PWD"
 

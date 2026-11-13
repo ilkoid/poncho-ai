@@ -30,7 +30,7 @@ END="${2:-2026-07-19}"
 
 echo "═══════  WB Sales Downloader v2 (PG)  ═══════"
 echo "  Period:  $BEGIN → $END"
-echo "  PG:      ${PGHOST:-192.168.10.7}:${PGPORT:-15432}/${PGDATABASE:-wb_data_prod}"
+echo "  PG:      ${PGHOST:-localhost}:${PGPORT:-5432}/${PGDATABASE:-wb_data_prod}"
 echo "  Key:     WB_STAT(len=${#WB_STAT}) + WB_API_KEY(len=${#WB_API_KEY}) fallback"
 echo "═════════════════════════════════════════════"
 
