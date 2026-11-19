@@ -1,0 +1,20 @@
+# ops-token-watchdog — сторож срока жизни WB-токенов (JWT exp).
+# Запуск: крон 09:00 (Mac) / 09:10 (VPS2) через run-token-watchdog.sh;
+# при тревоге раннер шлёт письмо через mail-notify. Подробности — шапка main.go.
+
+watchdog:
+  env_path: ".env"        # канонический источник секретов (AGENTS.md)
+  alert_days: 7           # осталось ≤N дней до exp → ТРЕВОГА + письмо
+  remind_days: 14         # ≤N дней → строка-напоминание в лог (без письма)
+
+  # Контур 2: сегодняшние логи конвейера (по mtime) на следы 401 «token
+  # is expired» — если токен умер между проверками, утренний вердикт
+  # назовёт виновника по происхождению (ag-advert / ag-content / …).
+  scan_log_globs:
+    - "logs/download-all*.log"
+    - "logs/download-day-snapshots*.log"
+
+  # Не тревожить (токен известен истёкшим и ждёт перевыпуска).
+  # WB_API_TEST истёк 17.11.2026 — убрать из списка после замены.
+  ignore_vars:
+    - "WB_API_TEST"

@@ -1,0 +1,19 @@
+# mail-notify → token-watchdog — адресаты алертов сторожа WB-токенов.
+# Копия smtp-секции config.yaml (формат = типы pkg/email), свои получатели —
+# прецедент config-fbs-supplies.yaml. Пароль: ${SMTP_PASSWORD} из env (.env).
+smtp:
+  host: 10.120.11.31
+  port: 587
+  from: it_service@playtoday.ru
+  username: it_service@playtoday.ru
+  password: ${SMTP_PASSWORD}
+  auth: true
+  auth_mechanism: login
+  tls_mode: starttls
+  tls_certcheck: false
+  keepbcc: false
+  timeout: 30s
+
+recipients:
+  to:
+    - kashparov.i@playtoday.ru
