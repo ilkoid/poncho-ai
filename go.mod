@@ -1,6 +1,8 @@
 module github.com/ilkoid/poncho-ai
 
-go 1.26
+go 1.26.0
+
+toolchain go1.26.11
 
 require (
 	github.com/charmbracelet/bubbles v0.21.0
@@ -12,8 +14,8 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/muesli/reflow v0.3.0
 	github.com/stretchr/testify v1.11.1
-	github.com/xuri/excelize/v2 v2.10.1
-	golang.org/x/image v0.40.0
+	github.com/xuri/excelize/v2 v2.11.1
+	golang.org/x/image v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
 )
@@ -40,17 +42,17 @@ require (
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/richardlehane/mscfb v1.0.6 // indirect
+	github.com/richardlehane/mscfb v1.0.9 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/tiendc/go-deepcopy v1.7.2 // indirect
 	github.com/tinylib/msgp v1.3.0 // indirect
-	github.com/xuri/efp v0.0.1 // indirect
+	github.com/xuri/efp v0.0.3-0.20260924042702-217b81952dec // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
@@ -78,7 +80,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.14.0
 )

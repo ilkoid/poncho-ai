@@ -1,0 +1,62 @@
+# CI — обязательные проверки для ветки master (стандарт перенесён из
+# poncho-repricer, этап 1, 21.11; в репрайсере триггер — main, здесь
+# основная ветка — master). Секреты кабинетов и БД здесь не нужны и не
+# передаются: обычный go test не обращается к реальным API — PG-тесты
+# закрыты гейтами WB_TEST_PG / PG_RO_PWD / PONCHO_AUDIT_CACHE и скипаются.
+name: ci
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Точная версия Go — строка toolchain в go.mod (GOTOOLCHAIN=auto по умолчанию).
+  GOWORK: "off"
+  GOFLAGS: "-mod=readonly"
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    # race-тесты CGO-SQLite на 2 vCPU заметно медленнее локальной машины.
+    timeout-minutes: 40
+    steps:
+      # fetch-depth: 2 — HEAD^ обязан существовать для храповика
+      # new-from-rev в .golangci.yml (на push-событиях).
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: go.mod # версия — из строки toolchain
+
+      # Отдельного шага gofmt нет: форматирование проверяет golangci-lint
+      # (formatters.gofmt) под тем же храповиком — только изменённые строки.
+      - name: go mod tidy (go.mod/go.sum согласованы с кодом)
+        run: go mod tidy -diff
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test (race)
+        run: go test -race -count=1 ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.12.2
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...

@@ -1,0 +1,67 @@
+# Конфигурация golangci-lint v2 — стандарт перенесён из poncho-repricer
+# (этап 1, 21.11), адаптирован под poncho-ai:
+#   - БЕЗ depguard/forbidigo: их правила скоуплены на internal/domain|internal/core
+#     репрайсера, которых здесь нет; домены pkg/<domain>/ легитимно работают
+#     с SQL/HTTP/os. Вернуть осознанно, когда появится карта канонов (этап 2).
+#   - gofmt подключён форматором под общим храповиком (см. issues ниже).
+#
+# ХРАПОВИК (issues.new-from-rev): исторический долг на 21.11 — 205 находок
+# линтеров и 262 неформатированных файла. Долг НЕ валит CI; валит любая
+# находка в ИЗМЕНЁННЫХ строках. Поэтому CI обязан делать checkout с
+# fetch-depth: 2 (HEAD^ должен существовать на push-событиях).
+# Когда долг будет погашен — удалите new-from-rev и этот абзац.
+version: "2"
+
+run:
+  timeout: 15m
+
+linters:
+  default: standard # govet, errcheck, ineffassign, staticcheck, unused
+  enable:
+    # Ошибки не теряются; ветвление через errors.Is/As.
+    - errorlint
+    - nilerr
+    # Ресурсы: тело HTTP-ответа, sql.Rows, rows.Err().
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+    # context проходит через весь ввод-вывод.
+    - noctx
+    - contextcheck
+    # Все варианты enum обработаны.
+    - exhaustive
+    # Хардкод учётных данных, URL/пути из переменных, TLS.
+    - gosec
+    # //nolint только с указанием линтера и причины.
+    - nolintlint
+
+  settings:
+    exhaustive:
+      # default: в switch не заменяет явную обработку каждого варианта.
+      default-signifies-exhaustive: false
+
+    gosec:
+      includes:
+        - G101 # хардкод учётных данных
+        - G107 # URL запроса из переменной
+        - G304 # путь файла из переменной
+        - G402 # небезопасный TLS
+
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    presets:
+      - std-error-handling
+
+formatters:
+  # gofmt под тем же храповиком: требование форматирования — только к
+  # изменённым строкам; 262 исторических файла не переформатируются,
+  # пока их не коснутся правками.
+  enable:
+    - gofmt
+
+issues:
+  # Храповик: находки только в строках, изменившихся относительно HEAD^.
+  new-from-rev: HEAD^
