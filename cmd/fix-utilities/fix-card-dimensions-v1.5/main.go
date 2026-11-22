@@ -20,6 +20,7 @@ import (
 func main() {
 	configPath := flag.String("config", "config.yaml", "YAML config file path")
 	importXLS := flag.String("import-xls", "", "Import XLS file into onec_dimensions table")
+	syncTrash := flag.Bool("sync-trash", false, "Refresh cards_trash table from WB basket (read-only)")
 	stage := flag.Bool("stage", false, "Stage: join dimensions with cards, write to staging table")
 	diff := flag.Bool("diff", false, "Show before/after for staged cards")
 	apply := flag.Bool("apply", false, "Apply staged changes via WB API")
@@ -31,11 +32,12 @@ func main() {
 	dbPath := flag.String("db", "", "Override db_path from config")
 	flag.Parse()
 
-	if *importXLS == "" && !*stage && !*diff && !*apply && !*check && !*compare {
+	if *importXLS == "" && !*syncTrash && !*stage && !*diff && !*apply && !*check && !*compare {
 		fmt.Println("fix-card-dimensions — update L/W/H/weight on WB cards from 1C WMS data")
 		fmt.Println()
 		fmt.Println("Usage:")
 		fmt.Println("  fix-card-dimensions --import-xls file.xlsx --db /var/db/wb-sales.db")
+		fmt.Println("  fix-card-dimensions --sync-trash --config config.yaml")
 		fmt.Println("  fix-card-dimensions --stage --config config.yaml")
 		fmt.Println("  fix-card-dimensions --diff --config config.yaml")
 		fmt.Println("  fix-card-dimensions --check --config config.yaml")
@@ -67,6 +69,24 @@ func main() {
 			log.Fatalf("import: %v", err)
 		}
 		fmt.Printf("\nDone: imported %d rows into onec_dimensions\n", count)
+
+	case *syncTrash:
+		dbConn, err := openDB(db)
+		if err != nil {
+			log.Fatalf("open db: %v", err)
+		}
+		defer dbConn.Close()
+
+		// Корзина — эндпоинт категории «Контент»: читаем контент-ключом.
+		// Промо/аналитик-ключ видел усечённый список (наблюдение 22.11:
+		// 2100 карточек против 8000+, наши 4 корзинные отсутствовали).
+		client := wb.New(resolveContentAPIKey())
+		// Сваггер (02-items.yaml): категория «Контент» — 100 req/min, всплеск 5.
+		// toolID get_cards_trash — как в каноническом методе pkg/wb.
+		client.SetRateLimit("get_cards_trash", trashRatePerMin, trashRateBurst, trashRatePerMin, trashRateBurst)
+		if err := runSyncTrash(ctx, dbConn, client); err != nil {
+			log.Fatalf("sync-trash: %v", err)
+		}
 
 	case *stage:
 		dbConn, err := openDB(db)
@@ -150,6 +170,14 @@ func openDB(path string) (*sql.DB, error) {
 
 func resolveAPIKey() string {
 	if k := os.Getenv("WB_API_ANALYTICS_AND_PROMO_KEY"); k != "" {
+		return k
+	}
+	return os.Getenv("WB_API_KEY")
+}
+
+// resolveContentAPIKey — ключ категории «Контент» для чтения корзины карточек.
+func resolveContentAPIKey() string {
+	if k := os.Getenv("WB_API_CONTENT_KEY"); k != "" {
 		return k
 	}
 	return os.Getenv("WB_API_KEY")

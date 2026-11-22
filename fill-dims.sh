@@ -79,6 +79,14 @@ go run "$REPO/cmd/data-downloaders/download-1c-data-v2" \
     --config "$REPO/cmd/data-downloaders/download-1c-data-v2/config-fixdims.yaml" \
     --backend sqlite --db "$DB"
 
+# 2.5. Корзина WB: полный список выгруженных карточек → cards_trash (чтение,
+# ~60 страниц ≈ 1 мин). Корзинные недоступны для cards/update (400 «in the
+# basket», инцидент 21–22.11) — stage пометит их skipped_basket, apply не
+# увидит. Фаза не фатальна: при ошибке stage пойдёт по вчерашней таблице.
+echo "=== $(date '+%F %T') фаза 2.5: корзина WB (trash-sync) ==="
+go run "$FIX" --sync-trash --config "$CFG" \
+    || echo "⚠️  sync-trash упал (код $?) — stage пойдёт по вчерашней cards_trash" >&2
+
 # 3-4. Staging + diff (локально)
 echo "=== $(date '+%F %T') stage ==="
 go run "$FIX" --stage --config "$CFG"

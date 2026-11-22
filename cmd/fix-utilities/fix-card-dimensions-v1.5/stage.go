@@ -49,6 +49,12 @@ func runStage(ctx context.Context, db *sql.DB, cfg *Config, force bool) (int, er
 		return 0, fmt.Errorf("create staging table: %w", err)
 	}
 
+	// cards_trash нужна и ручному --stage без предварительного --sync-trash:
+	// пустая таблица = фильтр корзины выключен (безопасный дефолт).
+	if _, err := db.ExecContext(ctx, cardsTrashDDL); err != nil {
+		return 0, fmt.Errorf("create cards_trash: %w", err)
+	}
+
 	if _, err := db.ExecContext(ctx, "DELETE FROM fix_card_dimensions_staging"); err != nil {
 		return 0, fmt.Errorf("clear staging: %w", err)
 	}
@@ -129,6 +135,16 @@ func runStage(ctx context.Context, db *sql.DB, cfg *Config, force bool) (int, er
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit staging: %w", err)
+	}
+
+	// Корзинные карточки WB не редактируются (400 на весь батч) — помечаем
+	// до apply; в отправку не попадают, остаются видимыми в staging/diff.
+	basketMarked, err := markBasketCards(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("mark basket cards: %w", err)
+	}
+	if basketMarked > 0 {
+		fmt.Printf("basket filter: %d → skipped_basket\n", basketMarked)
 	}
 
 	var both, dimOnly, weightOnly int
@@ -253,6 +269,8 @@ func showDiff(ctx context.Context, db *sql.DB) error {
 			status = " [ERROR: " + r.ErrorMsg + "]"
 		} else if r.Status == "skipped_hollow" {
 			status = " [SKIPPED_HOLLOW: " + r.ErrorMsg + "]"
+		} else if r.Status == "skipped_basket" {
+			status = " [SKIPPED_BASKET: " + r.ErrorMsg + "]"
 		}
 		fmt.Printf("%-12d %-20s | %-30s | %-30s%s\n", r.NmID, r.VendorCode, old, new, status)
 	}
