@@ -9,9 +9,10 @@ info:
 
     <div class="api-block">
 
-    В разделе описаны методы получения:
-      - [информации для формирования поставок](/openapi/orders-fbw#tag/informationForFormingSupplies)
-      - [информации о поставках](/openapi/orders-fbw#tag/suppliesInformation)
+    С помощью методов этого раздела вы можете:
+      - получить [информацию для формирования поставок](/openapi/orders-fbw#tag/informationForFormingSupplies)
+      - получить [информацию о поставках](/openapi/orders-fbw#tag/suppliesInformation)
+      - управлять [черновиками поставок](/openapi/orders-fbw#tag/supplyDrafts)
 
     </div>
   x-file-name: orders-fbw
@@ -556,6 +557,9 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/models.Box'
+              examples:
+                GetPackageSuccessResponse:
+                  $ref: '#/components/examples/GetPackageSuccessResponse'
         '400':
           description: Неправильный запрос
           content:
@@ -680,7 +684,16 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/403'
+          description: Доступ запрещён
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
         '429':
           $ref: '#/components/responses/429'
       x-tagKey: supplyDrafts
@@ -723,7 +736,16 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/403'
+          description: Доступ запрещён
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
         '429':
           $ref: '#/components/responses/429'
       x-tagKey: supplyDrafts
@@ -785,7 +807,16 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/403'
+          description: Доступ запрещён
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
         '404':
           description: Не найдено
           content:
@@ -873,7 +904,16 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/403'
+          description: Доступ запрещён
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
         '404':
           description: Не найдено
           content:
@@ -972,7 +1012,16 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/403'
+          description: Доступ запрещён
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
         '404':
           description: Не найдено
           content:
@@ -1062,7 +1111,16 @@ paths:
         '402':
           $ref: '#/components/responses/402'
         '403':
-          $ref: '#/components/responses/403'
+          description: Доступ запрещён
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Response4XX'
+              examples:
+                Response403TokenCategory:
+                  $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
         '404':
           description: Не найдено
           content:
@@ -1166,18 +1224,18 @@ paths:
         '403':
           description: Доступ запрещён
           content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/models.SupplyAcceptedMoreThanYearAgo'
-              examples:
-                SupplyAcceptedMoreThanYearAgo:
-                  $ref: '#/components/examples/SupplyAcceptedMoreThanYearAgo'
             application/problem+json:
               schema:
-                $ref: '#/components/schemas/Response4XX'
+                anyOf:
+                  - $ref: '#/components/schemas/Response4XX'
+                  - $ref: '#/components/schemas/models.SupplyAcceptedMoreThanYearAgo'
               examples:
                 Response403TokenCategory:
                   $ref: '#/components/examples/Response403TokenCategory'
+                Response403TokenType:
+                  $ref: '#/components/examples/Response403TokenType'
+                SupplyAcceptedMoreThanYearAgo:
+                  $ref: '#/components/examples/SupplyAcceptedMoreThanYearAgo'
         '404':
           description: Не найдено
           content:
@@ -1569,10 +1627,17 @@ components:
           description: Тариф, ₽ за литр
     models.Box:
       type: object
+      required:
+        - packageCode
+        - quantity
+        - barcodes
       properties:
         packageCode:
           type: string
-          description: Штрих-код упаковки
+          description: Закодированное значение стикера упаковки
+        packageId:
+          type: string
+          description: ID стикера упаковки
         quantity:
           type: integer
           description: Суммарное количество товара в упаковке, шт
@@ -1581,12 +1646,6 @@ components:
           description: Список упакованных товаров
           items:
             $ref: '#/components/schemas/models.GoodInBox'
-      example:
-        packageCode: WB_689
-        quantity: 1
-        barcodes:
-          - barcode: '1234567891234'
-            quantity: 1
     models.GoodInBox:
       type: object
       properties:
@@ -2293,6 +2352,14 @@ components:
         requestId: aee7d3a5378ef3c7ec0e7a5bc94abfcf
         origin: supply-api
       description: Значение параметра `ID` не указано или некорректно
+    GetPackageSuccessResponse:
+      value:
+        - packageCode: $Ts;G8Z;tXcC;1;TuLY5Lo;TAS
+          packageId: '123456'
+          quantity: 1
+          barcodes:
+            - barcode: '1234567891234'
+              quantity: 1
     PreorderIdSearchError:
       value:
         status: 400
@@ -2384,6 +2451,17 @@ components:
         origin: ag-marketplace
         timestamp: '2026-09-03T13:55:15Z'
       description: Неверная категория токена
+    Response403TokenType:
+      value:
+        title: forbidden
+        detail: base token is not allowed
+        code: base token is not allowed for this path
+        requestId: 722199b2e15bbca48cc1d488a7989976
+        origin: ag-marketplace
+        status: 403
+        statusText: Forbidden
+        timestamp: '2026-05-25T02:47:09Z'
+      description: Неверный тип токена
   responses:
     '401':
       description: Не авторизован
