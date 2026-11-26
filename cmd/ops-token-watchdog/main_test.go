@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,8 +128,10 @@ func TestScanTodayLogs(t *testing.T) {
 	today := filepath.Join(dir, "download-all-2026-11-19.log")
 	yesterday := filepath.Join(dir, "download-all-2026-11-18.log")
 
-	withOrigin := `2026/11/18 error: wb api error: status 401, body: {"status":401,"detail":"token is expired","origin":"ag-advert"}`
-	if err := os.WriteFile(today, []byte("ok line\n"+withOrigin+"\nok\n"+withOrigin+"\n"), 0o644); err != nil {
+	withOrigin := `2026/11/19 error: wb api error: status 401, body: {"status":401,"detail":"token is expired","origin":"ag-advert"}`
+	// Кросс-полуночный хвост вчерашнего прогона в сегодняшнем файле — не след.
+	fromYesterday := `2026/11/18 23:59:01 error: wb api error: status 401, body: {"status":401,"detail":"token is expired","origin":"ag-advert"}`
+	if err := os.WriteFile(today, []byte("ok line\n"+withOrigin+"\nok\n"+fromYesterday+"\n"+withOrigin+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(yesterday, []byte(withOrigin+"\n"), 0o644); err != nil {
@@ -148,11 +151,99 @@ func TestScanTodayLogs(t *testing.T) {
 	if got.total != 2 {
 		t.Fatalf("total: хочу 2 (только сегодняшний файл), got %d (perFile=%v)", got.total, got.perFile)
 	}
+	if got.scanned != 1 {
+		t.Errorf("scanned: хочу 1 (вчерашний по mtime не читаем), got %d", got.scanned)
+	}
 	if len(got.origins) != 1 || got.origins[0] != "ag-advert" {
 		t.Fatalf("origins: хочу [ag-advert], got %v", got.origins)
 	}
 	if got.perFile[today] != 2 {
 		t.Errorf("perFile[today]: хочу 2, got %d", got.perFile[today])
+	}
+}
+
+// TestScanTodayLogsRobotLogs — логи роботов габаритов обязаны попадать в скан.
+// Регресс инцидента 17–26.11: fix-dims на VPS2 9 дней падал по 401, а сторож
+// проверял только download-all* — глоб должен находить лог каждой машины.
+func TestScanTodayLogsRobotLogs(t *testing.T) {
+	cases := []struct {
+		name, file, glob string
+	}{
+		{"VPS2: дневной лог fix-dims", "fix-dims-2026-11-26.log", "fix-dims-*.log"},
+		{"Mac: cron-fill-dims.log", "cron-fill-dims.log", "cron-fill-dims.log"},
+	}
+	const trace = `2026/11/26 07:17:01 wb api error: status 401, body: ` +
+		`{"status":401,"detail":"token has invalid claims: token is expired","origin":"ag-contentanalytics"}`
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tc.file)
+			if err := os.WriteFile(path, []byte("[07:17] Step 1\n"+trace+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+			got := scanTodayLogs([]string{filepath.Join(dir, tc.glob)}, midnight)
+			if got.scanned != 1 || got.total != 1 {
+				t.Fatalf("scanned/total: хочу 1/1, got %d/%d (perFile=%v)", got.scanned, got.total, got.perFile)
+			}
+			if n := got.perFile[path]; n != 1 {
+				t.Errorf("perFile[%s]: хочу 1, got %d", tc.file, n)
+			}
+			if len(got.origins) != 1 || got.origins[0] != "ag-contentanalytics" {
+				t.Errorf("origins: хочу [ag-contentanalytics], got %v", got.origins)
+			}
+		})
+	}
+}
+
+// TestScanFileForExpiredOnlyToday — след считается только от сегодняшнего дня.
+// logs/cron-fill-dims.log накопительный: в нём постоянно лежит след от 18.11
+// (окно до перевыпуска токенов), и без правила «сегодня» он давал бы ложную
+// тревогу каждое утро. Строки без даты — сегодняшние (вложенные утилиты).
+func TestScanFileForExpiredOnlyToday(t *testing.T) {
+	today := time.Date(2026, 11, 26, 0, 0, 0, 0, time.Local)
+	cases := []struct {
+		name      string
+		line      string
+		otherDay  bool
+		wantTrace bool
+	}{
+		{"Go log, сегодняшний день", `2026/11/26 02:30:02 cards list: token is expired`, false, true},
+		{"log() обёртки, сегодняшний день", `[2026-11-26 07:17:01] Step 1: token is expired`, false, true},
+		{"Go log, прошлый день (окно 18.11)", `2026/11/18 02:30:02 cards list: token is expired`, true, true},
+		{"log() обёртки, прошлый день", `[2026-11-18 07:17:01] Step 1: token is expired`, true, true},
+		{"без даты — вложенная утилита", `  [Page 1] Fetching cards... error: status 401: token is expired`, false, true},
+		{"числа в начале — не дата", `100 cards saved: token is expired`, false, true},
+		{"без следа", `2026/11/26 02:30:02 Done: 1 sent, 0 failed`, false, false},
+	}
+	var lines []string
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := datedOtherDay(tc.line, today); got != tc.otherDay {
+				t.Errorf("datedOtherDay: хочу %v, got %v", tc.otherDay, got)
+			}
+		})
+		lines = append(lines, tc.line)
+	}
+
+	// Файловый уровень: считаются сегодняшний след и след без даты, за
+	// прошлый день — нет; ожидание выводим из той же таблицы.
+	want := 0
+	for _, tc := range cases {
+		if tc.wantTrace && !tc.otherDay {
+			want++
+		}
+	}
+	path := filepath.Join(t.TempDir(), "cron-fill-dims.log")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	origins := map[string]bool{}
+	if got := scanFileForExpired(path, origins, today); got != want {
+		t.Errorf("scanFileForExpired: хочу %d следа (сегодня + без даты), got %d", want, got)
 	}
 }
 
@@ -175,6 +266,17 @@ func TestConfigFileReal(t *testing.T) {
 	}
 	if len(cfg.Watchdog.ScanLogGlobs) == 0 {
 		t.Error("scan_log_globs пуст")
+	}
+	// Логи роботов габаритов — обязательные: инцидент 17–26.11 (fix-dims на
+	// VPS2 9 дней падал по 401 вне скана сторожа).
+	for _, want := range []string{"logs/fix-dims-*.log", "logs/cron-fill-dims.log"} {
+		found := false
+		for _, g := range cfg.Watchdog.ScanLogGlobs {
+			found = found || g == want
+		}
+		if !found {
+			t.Errorf("scan_log_globs: нет %q — лог робота вне скана", want)
+		}
 	}
 	for _, v := range cfg.Watchdog.IgnoreVars {
 		if v == "" {

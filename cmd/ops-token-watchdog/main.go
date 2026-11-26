@@ -9,9 +9,14 @@
 //  1. exp-проверка: читает .env напрямую (канонический источник секретов,
 //     AGENTS.md — независимо от корректности env раннера), берёт все WB_*,
 //     декодирует у JWT-значений exp и печатает таблицу «осталось дней».
-//  2. скан логов: сегодняшние logs/download-all*.log и логи «спасателей» на
+//  2. скан логов: сегодняшние logs/download-all*.log, логи «спасателей» и
+//     логи роботов габаритов (fix-dims на VPS2, fill-dims на Mac) на
 //     «token is expired» — если токен умер между проверками, утренний
 //     вердикт назовёт виновника по происхождению (ag-advert и т.п.).
+//     Инцидент 17–26.11: fix-dims 9 дней падал по 401 вне globs; поэтому
+//     в лог печатается и число просмотренных файлов — «следов нет» должно
+//     быть отличимо от «не смотрел». В накопительных логах учитываются
+//     только строки сегодняшнего дня.
 //
 // Вердикты и exit-коды (канон ops-drain-report-quota):
 //
@@ -74,7 +79,12 @@ func (c *Config) applyDefaults() {
 		w.RemindDays = 14
 	}
 	if len(w.ScanLogGlobs) == 0 {
-		w.ScanLogGlobs = []string{"logs/download-all*.log", "logs/download-day-snapshots*.log"}
+		w.ScanLogGlobs = []string{
+			"logs/download-all*.log",
+			"logs/download-day-snapshots*.log",
+			"logs/fix-dims-*.log",     // VPS2: робот по штрафам за габариты
+			"logs/cron-fill-dims.log", // Mac: fill-dims из 1С
+		}
 	}
 }
 
@@ -201,14 +211,16 @@ var (
 
 // logScan — итог скана логов за сегодня.
 type logScan struct {
-	total   int
+	scanned int // сегодняшние файлы, которые реально читали
+	total   int // число следов «token is expired»
 	perFile map[string]int
 	origins []string // отсортированные уникальные ag-*
 }
 
 // scanTodayLogs ищет «token is expired» в файлах по glob'ам, изменённых
 // сегодня (по mtime — ловит и кросс-полночные прогоны с датой вчерашнего
-// дня в имени). Большие логи читает стримом.
+// дня в имени). В накопительном файле считаются только строки сегодняшнего
+// дня (scanFileForExpired). Большие логи читает стримом.
 func scanTodayLogs(globs []string, midnight time.Time) logScan {
 	out := logScan{perFile: map[string]int{}}
 	originSet := map[string]bool{}
@@ -219,7 +231,8 @@ func scanTodayLogs(globs []string, midnight time.Time) logScan {
 			if err != nil || st.ModTime().Before(midnight) {
 				continue
 			}
-			n := scanFileForExpired(p, originSet)
+			out.scanned++
+			n := scanFileForExpired(p, originSet, midnight)
 			if n > 0 {
 				out.perFile[p] = n
 				out.total += n
@@ -233,7 +246,13 @@ func scanTodayLogs(globs []string, midnight time.Time) logScan {
 	return out
 }
 
-func scanFileForExpired(path string, origins map[string]bool) int {
+// scanFileForExpired считает следы в файле. След — только от сегодняшнего дня:
+// строка с датой в начале, отличной от today, пропускается; без даты —
+// считается сегодняшней (так пишут вложенные утилиты в дневных файлах).
+// Причина: logs/cron-fill-dims.log накопительный, и след от 18.11 (окно до
+// перевыпуска токенов) лежит в нём постоянно — без этой правки давал бы
+// ложную тревогу каждое утро.
+func scanFileForExpired(path string, origins map[string]bool, today time.Time) int {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0
@@ -244,14 +263,28 @@ func scanFileForExpired(path string, origins map[string]bool) int {
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
-		if expiredLineRe.MatchString(line) {
-			n++
-			if m := originRe.FindStringSubmatch(line); m != nil {
-				origins[m[1]] = true
-			}
+		if !expiredLineRe.MatchString(line) || datedOtherDay(line, today) {
+			continue
+		}
+		n++
+		if m := originRe.FindStringSubmatch(line); m != nil {
+			origins[m[1]] = true
 		}
 	}
 	return n
+}
+
+// leadingDateRe — дата в начале строки лога: «2026/11/26 …» (std log Go)
+// или «[2026-11-26 07:17:01] …» (log() крон-обёрток).
+var leadingDateRe = regexp.MustCompile(`^\[?(\d{4})[/-](\d{2})[/-](\d{2})`)
+
+// datedOtherDay — строка помечена датой, отличной от сегодняшней.
+func datedOtherDay(line string, today time.Time) bool {
+	m := leadingDateRe.FindStringSubmatch(line)
+	if m == nil {
+		return false
+	}
+	return m[1]+"-"+m[2]+"-"+m[3] != today.Format("2006-01-02")
 }
 
 // evidence печатает строки в stdout и копит их в
@@ -376,12 +409,12 @@ func run() int {
 			files = append(files, fmt.Sprintf("%s (%d)", filepath.Base(f), scan.perFile[f]))
 		}
 		sort.Strings(files)
-		ev.p("SCAN: %d следов «token is expired» в логах за сегодня: %s; сервисы: %s",
-			scan.total, strings.Join(files, ", "), strings.Join(scan.origins, ", "))
+		ev.p("SCAN: просмотрено сегодняшних логов: %d; следов «token is expired» за сегодня: %d (%s); сервисы: %s",
+			scan.scanned, scan.total, strings.Join(files, ", "), strings.Join(scan.origins, ", "))
 		alerts = append(alerts, fmt.Sprintf("в логах за сегодня %d «token is expired» (сервисы: %s)",
 			scan.total, strings.Join(scan.origins, ", ")))
 	} else {
-		ev.p("SCAN: следов «token is expired» в логах за сегодня нет")
+		ev.p("SCAN: просмотрено сегодняшних логов: %d; следов «token is expired» за сегодня нет", scan.scanned)
 	}
 
 	// ── Вердикт ──
