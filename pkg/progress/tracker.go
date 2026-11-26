@@ -4,6 +4,7 @@ package progress
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -40,16 +41,16 @@ type ProgressTracker interface {
 // CLITracker provides a thread-safe CLI progress tracker with visual feedback.
 // It displays a progress bar, calculates ETA, and updates at reasonable intervals.
 type CLITracker struct {
-	total       int
-	current     int
-	start       time.Time
-	lastPrint   time.Time
-	lastPrintMu sync.Mutex
-	mu          sync.RWMutex
-	prefix      string       // Optional prefix for output
-	width       int          // Progress bar width (default: 30)
+	total         int
+	current       int
+	start         time.Time
+	lastPrint     time.Time
+	lastPrintMu   sync.Mutex
+	mu            sync.RWMutex
+	prefix        string        // Optional prefix for output
+	width         int           // Progress bar width (default: 30)
 	printInterval time.Duration // Minimum time between prints (default: 500ms)
-	done        bool
+	done          bool
 }
 
 // CLITrackerConfig holds configuration for CLITracker.
@@ -318,7 +319,7 @@ func (t *SilentTracker) Elapsed() time.Duration {
 // MultiTracker tracks multiple sub-tasks within a single progress display.
 // Useful for batch operations with multiple stages.
 type MultiTracker struct {
- trackers map[string]ProgressTracker
+	trackers map[string]ProgressTracker
 	mu       sync.RWMutex
 	total    int // Sum of all sub-task totals
 }
@@ -396,12 +397,21 @@ func (m *MultiTracker) ETA() string {
 }
 
 // String returns a summary of all trackers.
+// Names are sorted: Go randomizes map iteration order, and this string
+// feeds Example tests and stable progress output.
 func (m *MultiTracker) String() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var parts []string
-	for name, tracker := range m.trackers {
+	names := make([]string, 0, len(m.trackers))
+	for name := range m.trackers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		tracker := m.trackers[name]
 		parts = append(parts, fmt.Sprintf("%s: %d/%d", name, tracker.Current(), tracker.Total()))
 	}
 
