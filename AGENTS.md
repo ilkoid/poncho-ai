@@ -208,6 +208,28 @@ Rule: more specific document overrides more general.
 - **PG-first for new work:** new marketplace downloaders (Ozon) target PostgreSQL only — SQLite is out of scope. WB keeps dual-backend historically. New analytical/recommendation repositories live in `pkg/storage/postgres/`.
 - Before running write operations, confirm the exact DB path / `pg_database` DSN in the utility config being used.
 
+## Semantic Audit — журнал kb и роль analyst (28.11.2026)
+
+Планы реализации, затрагивающие бизнес-показатели (продажи, заказы, остатки,
+возвраты, деньги), проходят семантический аудит через журнал kb до кода.
+
+Конвенция (асинхронная — аналитик просыпается вручную):
+
+1. Рабочий агент публикует план: `kb_ask` → тред `project=poncho-ai,
+   topic=business-logic`, тело = план (или путь к `.zcode/plans/plan-sess_*.md`
+   + резюме), `kind=question, addressee=analyst, expectation=review`.
+2. До публикации — self-check по скиллу `semantic-audit` (чек-лист SA-1..SA-10):
+   сомнительные пункты перечислить в вопросе явно.
+3. Вердикт аналитика (`kind=verdict`, `reply_to`) приходит в тот же тред; автор
+   вопроса правит план и закрывает тред `resolution` (или уточняет вопросом).
+4. Роль аналитика обслуживается токеном `kb-analyst` (workspace-конфиг
+   `.zcode/config.json`): сессия-аналитик пишет в журнал **только** через
+   инструменты `kb-analyst`, никогда через `kb` (идентичность = токен).
+   Методичка аналитика — скилл `semantic-audit`; заземление — read-only база
+   (`pg-readonly-test`/`pg-readonly`) и `docs/wb_api_swagger/`.
+
+Вопросы по Go/TS-коду — по-прежнему роли `expert` (топики `impl-go`/`impl-ts`).
+
 ## Gotchas
 - ToolID mismatch (`SetRateLimit("tool_A")` + `Get("tool_B")`) creates separate limiter with no adaptive state
 - Analytics v3 API: **3 req/min** — most restrictive endpoint (shared with Seller Analytics v2 search-report)
