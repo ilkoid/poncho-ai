@@ -134,7 +134,7 @@ echo "── агрегат: строки по дням и выкупы"
 psql_db -c "
 SELECT stat_day, count(*) AS cells, sum(events_qty) AS events,
        sum(buyout_qty) AS buyouts, sum(return_qty) AS returns,
-       sum(for_pay_sales_sum - for_pay_returns_sum)::bigint AS net_pay
+       sum(for_pay_sales_sum + for_pay_returns_sum)::bigint AS net_pay
 FROM analytical.region_sales_daily GROUP BY stat_day ORDER BY stat_day;"
 
 echo "── контроль окна: строк новее «вчера МСК» быть не должно (0 = ок)"
@@ -146,7 +146,7 @@ WHERE stat_day > to_char((now() AT TIME ZONE 'Europe/Moscow') - interval '1 day'
 echo "── топ-5 регионов по выкупам (окно)"
 psql_db -c "
 SELECT region_name, sum(buyout_qty) AS buyouts,
-       sum(for_pay_sales_sum - for_pay_returns_sum)::bigint AS net_pay
+       sum(for_pay_sales_sum + for_pay_returns_sum)::bigint AS net_pay
 FROM analytical.region_sales_daily
 WHERE region_name <> '' GROUP BY region_name
 ORDER BY buyouts DESC LIMIT 5;"

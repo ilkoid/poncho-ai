@@ -20,7 +20,8 @@ import (
 //     srid с fallback на operational_sales (выкуп мог ещё не доехать в orders);
 //   - деньги: seller_price — только по выкупам (валовая цена продавца);
 //     price_with_disc / for_pay — из operational_sales с дискриминатором
-//     sale_id 'S*'/'R*' (возвраты положительные — нетто = продажи − возвраты);
+//     sale_id 'S*'/'R*' ('R*' хранит API-знак: for_pay отрицательный —
+//     нетто = продажи + возвраты; семантический аудит kb, 28.11);
 //   - os_rows — юниты со сшитой строкой статистики (COUNT по feed-строкам с
 //     непустым os-матчем): контроль денежного покрытия выкупов.
 const fillSQL = `
@@ -144,7 +145,7 @@ type regionTop struct {
 
 func topRegions(ctx context.Context, db *pgxpool.Pool, from, to time.Time) ([]regionTop, error) {
 	rows, err := db.Query(ctx, `
-		SELECT region_name, SUM(buyout_qty), SUM(for_pay_sales_sum - for_pay_returns_sum)
+		SELECT region_name, SUM(buyout_qty), SUM(for_pay_sales_sum + for_pay_returns_sum)
 		FROM analytical.region_sales_daily
 		WHERE stat_day BETWEEN $1 AND $2 AND region_name <> ''
 		GROUP BY region_name

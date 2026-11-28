@@ -29,8 +29,10 @@ import (
 // одном живом эндпоинте, утрата задокументирована):
 //	seller_price_sum      — валовая цена продавца по выкупам (order_feed);
 //	price_with_disc_sum   — цена со скидкой по продажам 'S*' (operational_sales);
-//	for_pay_sales_sum − for_pay_returns_sum — упрощённый нетто WB
-//	('S*' минус 'R*', оба положительные — конвенция нетто аудита sales).
+//	for_pay_sales_sum + for_pay_returns_sum — упрощённый нетто WB:
+//	'R*' хранит API-знак (for_pay отрицательный), нетто = 'S*' + 'R*'.
+//	Конвенция «возвраты положительные» из аудита таблицы sales сюда НЕ
+//	переносится — в operational_sales знак другой (kb-аудит 28.11).
 const regionSalesDailyTableSQL = `
 -- ============================================================================
 -- REGION SALES DAILY (продажи по регионам, замена region-sale, ANALYTICAL)
@@ -57,7 +59,7 @@ CREATE TABLE IF NOT EXISTS analytical.region_sales_daily (
     seller_price_sum     DOUBLE PRECISION NOT NULL DEFAULT 0, -- валовая цена продавца по выкупам (лента)
     price_with_disc_sum  DOUBLE PRECISION NOT NULL DEFAULT 0, -- цена со скидкой по продажам 'S*'
     for_pay_sales_sum    DOUBLE PRECISION NOT NULL DEFAULT 0, -- упрощённый нетто WB: продажи 'S*'
-    for_pay_returns_sum  DOUBLE PRECISION NOT NULL DEFAULT 0, -- возвраты 'R*' (положительные, вычитать)
+    for_pay_returns_sum  DOUBLE PRECISION NOT NULL DEFAULT 0, -- возвраты 'R*' (≤0, знак API; нетто = S+R)
     os_rows              BIGINT  NOT NULL DEFAULT 0,   -- юнитов со сшитой строкой статистики (контроль денежного покрытия)
 
     updated_at           TEXT    NOT NULL DEFAULT TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
