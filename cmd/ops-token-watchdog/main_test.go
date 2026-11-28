@@ -182,10 +182,13 @@ func TestScanTodayLogsRobotLogs(t *testing.T) {
 			if err := os.WriteFile(path, []byte("[07:17] Step 1\n"+trace+"\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			now := time.Now()
-			midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			// «Сегодня» пинимся к дате следа в фикстуре (26.11), а не к реальным
+			// часам: с 27.11 настоящий today уже не равен дате следа, datedOtherDay
+			// отсекал его и тест краснел (упавший CI 28.11). Приём того же поля,
+			// что и TestScanFileForExpiredOnlyToday.
+			today := time.Date(2026, 11, 26, 0, 0, 0, 0, time.Local)
 
-			got := scanTodayLogs([]string{filepath.Join(dir, tc.glob)}, midnight)
+			got := scanTodayLogs([]string{filepath.Join(dir, tc.glob)}, today)
 			if got.scanned != 1 || got.total != 1 {
 				t.Fatalf("scanned/total: хочу 1/1, got %d/%d (perFile=%v)", got.scanned, got.total, got.perFile)
 			}
