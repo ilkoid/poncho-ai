@@ -19,8 +19,12 @@ set -euo pipefail
 PONCHO="$(cd "$(dirname "$0")" && pwd)"
 cd "$PONCHO"
 
-# PATH для cron: у крона нет окружения юзера (идиома run-quota-drain.sh:25-26).
-export PATH="$PATH:/usr/local/go/bin:${HOME}/go/bin"
+# PATH для cron: у крона нет окружения юзера. Mac: go в /opt/homebrew/bin
+# (идиома fill-dims.sh:26, run-download-all-daily.sh:20); VPS2: /usr/local/go/bin
+# (идиома run-quota-drain.sh:25-26). Инцидент 20–27.11: без homebrew-пути Mac-крон
+# падал «FAIL: go не найден» 8 дней подряд — сторож на маке был слеп, спасала
+# только VPS2-нога (токены те же, канал писем гарантирован).
+export PATH="/opt/homebrew/bin:$PATH:/usr/local/go/bin:${HOME}/go/bin"
 command -v go >/dev/null 2>&1 || { echo "FAIL: go не найден в PATH (cron без профиля?)" >&2; exit 1; }
 
 mkdir -p "$PONCHO/logs"
